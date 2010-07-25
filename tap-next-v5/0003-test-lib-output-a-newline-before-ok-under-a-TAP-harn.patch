@@ -1,0 +1,58 @@
+From 7f5aeb29004b05eba847fbe94e2b5062baeca262 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Tue, 15 Jun 2010 15:14:50 +0000
+Subject: [PATCH v5 3/5] test-lib: output a newline before "ok" under a TAP harness
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Some tests in the testsuite will emit a line that doesn't end with a
+newline, right before we're about to output "ok" or "not ok". This
+breaks the TAP output with "Tests out of sequence" errors since a TAP
+harness can't understand this:
+
+    ok 1 - A test
+    [some output here]ok 2 - Another test
+    ok 3 - Yet another test
+
+Work around it by emitting an empty line before we're about to say
+"ok" or "not ok", but only if we're running under --verbose and
+HARNESS_ACTIVE=1 is set, which'll only be the case when running under
+a harnesses like prove(1).
+
+I think it's better to do this than fix each tests by adding `&& echo'
+everywhere. More tests might be added that break TAP in the future,
+and a human isn't going to look at the extra whitespace, since
+HARNESS_ACTIVE=1 always means a harness is reading it.
+
+The tests that had issues were:
+
+   t1007, t3410, t3413, t3409, t3414, t3415, t3416, t3412, t3404,
+   t5407, t7402, t7003, t9001
+
+With this workaround the entire test suite runs without errors under:
+
+    prove -j 10 ./t[0-9]*.sh :: --verbose
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 7077210..ac496aa 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -371,6 +371,9 @@ test_run_ () {
+ 	eval >&3 2>&4 "$1"
+ 	eval_ret=$?
+ 	eval >&3 2>&4 "$test_cleanup"
++	if test "$verbose" = "t" && test -n "$HARNESS_ACTIVE"; then
++		echo ""
++	fi
+ 	return 0
+ }
+ 
+-- 
+1.7.1.251.g92a7
+

@@ -1,0 +1,132 @@
+From fb27d12be386e88a79dc33e9aab808df1572ab13 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Fri, 2 Jul 2010 19:15:50 +0000
+Subject: [PATCH/RFC] git submodule: add submodules with git add -f <path>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change `git submodule add' to add the new submodule <path> with `git
+add --force'.
+
+I keep my /etc in .git with a .gitignore that contains just
+"*". I.e. `git status' will ignore everything that isn't in the tree
+already. When I do:
+
+    git submodule add <url> hlagh
+
+git-submodule will get as far as checking out the remote repository
+into hlagh, but it'll die right afterwards when it fails to add the
+new path:
+
+    The following paths are ignored by one of your .gitignore files:
+    hlagh
+    Use -f if you really want to add them.
+    fatal: no files added
+    Failed to add submodule 'hlagh'
+
+Currently there's no way to add a submodule in this situation other
+than to remove the ignored path from the .gitignore while I'm at it.
+
+That's silly, when you run `git submodule add' you're explicitly
+saying that you want to add something *new* to the repository. Instead
+it should just add the path with `git add --force'.
+
+Initially I implemented this by adding new -f and --force options to
+`git submodule add'. But if the --force option isn't supplied it'll
+get as far as cloning `hlagh', but won't add it.
+
+So the first thing the user has to do is to remove `hlagh' and then
+try again with the --force option.
+
+That sucks, it should just add the path to begin with. I can't think
+of any usecase where you've gone through the trouble of typing out
+`git submodule add ..', but wish to be overriden by a `gitignore'. The
+submodule semantics should be more like `git init', not `git add'.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-submodule.txt |    4 ++++
+ git-submodule.sh                |    4 ++--
+ t/t7400-submodule-basic.sh      |   24 +++++++++++++++++++++++-
+ 3 files changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/git-submodule.txt b/Documentation/git-submodule.txt
+index cdabfd2..76a832a 100644
+--- a/Documentation/git-submodule.txt
++++ b/Documentation/git-submodule.txt
+@@ -95,6 +95,10 @@ is the superproject and submodule repositories will be kept
+ together in the same relative location, and only the
+ superproject's URL needs to be provided: git-submodule will correctly
+ locate the submodule using the relative URL in .gitmodules.
+++
++The submodule will be added with "git add --force <path>". I.e. git
++doesn't care if the new path is in a `gitignore`. Your invocation of
++"git submodule add" is considered enough to override it.
+ 
+ status::
+ 	Show the status of the submodules. This will print the SHA-1 of the
+diff --git a/git-submodule.sh b/git-submodule.sh
+index d9950c2..ad2417d 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -234,12 +234,12 @@ cmd_add()
+ 		) || die "Unable to checkout submodule '$path'"
+ 	fi
+ 
+-	git add "$path" ||
++	git add --force "$path" ||
+ 	die "Failed to add submodule '$path'"
+ 
+ 	git config -f .gitmodules submodule."$path".path "$path" &&
+ 	git config -f .gitmodules submodule."$path".url "$repo" &&
+-	git add .gitmodules ||
++	git add --force .gitmodules ||
+ 	die "Failed to register submodule '$path'"
+ }
+ 
+diff --git a/t/t7400-submodule-basic.sh b/t/t7400-submodule-basic.sh
+index 97ff074..d9f2785 100755
+--- a/t/t7400-submodule-basic.sh
++++ b/t/t7400-submodule-basic.sh
+@@ -42,7 +42,8 @@ test_expect_success 'setup - hide init subdirectory' '
+ '
+ 
+ test_expect_success 'setup - repository to add submodules to' '
+-	git init addtest
++	git init addtest &&
++	git init addtest-ignore
+ '
+ 
+ # The 'submodule add' tests need some repository to add as a submodule.
+@@ -85,6 +86,27 @@ test_expect_success 'submodule add' '
+ 	test_cmp empty untracked
+ '
+ 
++test_expect_success 'submodule add to .gitignored path' '
++	echo "refs/heads/master" >expect &&
++	>empty &&
++
++	(
++		cd addtest-ignore &&
++		# Does not use test_commit due to the ignore
++		echo "*" > .gitignore &&
++		git add --force .gitignore &&
++		git commit -m"Ignore everything" &&
++		git submodule add "$submodurl" submod &&
++		git submodule init
++	) &&
++
++	rm -f heads head untracked &&
++	inspect addtest/submod ../.. &&
++	test_cmp expect heads &&
++	test_cmp expect head &&
++	test_cmp empty untracked
++'
++
+ test_expect_success 'submodule add --branch' '
+ 	echo "refs/heads/initial" >expect-head &&
+ 	cat <<-\EOF >expect-heads &&
+-- 
+1.7.2.rc1.192.g262ff.dirty
+

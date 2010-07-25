@@ -1,0 +1,131 @@
+From da92d65167150ce6bef89dfdfd610a69b1f406e9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Fri, 4 Jun 2010 15:05:26 +0000
+Subject: [PATCH RFC] gettext: Support building on non-GNU with -lintl
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the build process on non-GNU systems to use -lintl if
+NO_GETTEXT hasn't been set.
+
+Systems that use the GNU C Library don't need this, but on others the
+GNU libintl library is an externally install package, so we need to
+explicitly link to it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+When I got access to a FreeBSD system I found that my gettext series
+didn't link there, because -lintl needed to be supplied. GNU gettext
+is only included in GNU libc, not other C libraries.
+
+So here's a probe to check if we're building on a non-GNU
+system. I.e. not Linux, Hurd or GNU/kFreeBSD. on non-GNU we -lintl
+when linking unless NEEDS_LIBINTL= is supplied.
+
+What I'm unsure about is this part:
+    
+    +ifndef NO_GETTEXT
+    +	# Systems that use GNU gettext and glibc are the exception
+    +	NEEDS_LIBINTL = YesPlease
+    +endif
+
+As far as I can see there's no other NEED_* feature that's on by
+default. I think it makes more sense to explicitly list those
+platforms that are likely to have glibc, rather than try to enumerate
+all those without. Especially since that would break the build process
+on any new platform that the makefile doesn't know about, but perhaps
+there's a better way to do this.
+
+If you're using e.g. glibc on a *BSD you can just build Git as:
+
+    gmake NEEDS_LIBINTL=
+
+This also work, i.e. doesn't link to -lintl because NO_GETTEXT is
+given:
+
+    gmake NEEDS_LIBINTL=YesPlease NO_GETTEXT=YesPlease
+
+But this works now so I'll keep it if there aren't objections, and
+perhaps the "Platform specific defaults" could be used for something
+else.
+
+Should I include a GETTEXTDIR option similar to CURLDIR and EXPATDIR
+in the Makefile? Now it just assumes that it can find gettext.h and
+libintl in the default paths.
+
+ Makefile |   24 +++++++++++++++++++++++-
+ 1 files changed, 23 insertions(+), 1 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 5169aec..1dfcd65 100644
+--- a/Makefile
++++ b/Makefile
+@@ -28,6 +28,15 @@ all::
+ # Define NO_EXPAT if you do not have expat installed.  git-http-push is
+ # not built, and you cannot push using http:// and https:// transports.
+ #
++# Define NO_GETTEXT if you don't have libintl installed, or don't want
++# to build Git with localization support.
++#
++# Define NEEDS_LIBINTL if you haven't defined NO_GETTEXT=YesPlease,
++# but your system needs to be explicitly linked to -lintl. This is
++# defined automatically if we're building gettext support on systems
++# where we expect not to use glibc (which has libintl included in
++# libc).
++#
+ # Define EXPATDIR=/foo/bar if your expat header and library files are in
+ # /foo/bar/include and /foo/bar/lib directories.
+ #
+@@ -741,6 +750,14 @@ EXTLIBS =
+ # Platform specific tweaks
+ #
+ 
++# Platform specific defaults. Where we'd only like some feature on the
++# minority of systems, e.g. if linking to a library isn't needed
++# because its features are included in the GNU C library.
++ifndef NO_GETTEXT
++	# Systems that use GNU gettext and glibc are the exception
++	NEEDS_LIBINTL = YesPlease
++endif
++
+ # We choose to avoid "if .. else if .. else .. endif endif"
+ # because maintaining the nesting to match is a pain.  If
+ # we had "elif" things would have been much nicer...
+@@ -749,11 +766,13 @@ ifeq ($(uname_S),Linux)
+ 	NO_STRLCPY = YesPlease
+ 	NO_MKSTEMPS = YesPlease
+ 	HAVE_PATHS_H = YesPlease
++	NEEDS_LIBINTL =
+ endif
+ ifeq ($(uname_S),GNU/kFreeBSD)
+ 	NO_STRLCPY = YesPlease
+ 	NO_MKSTEMPS = YesPlease
+ 	HAVE_PATHS_H = YesPlease
++	NEEDS_LIBINTL =
+ endif
+ ifeq ($(uname_S),UnixWare)
+ 	CC = cc
+@@ -923,6 +942,7 @@ ifeq ($(uname_S),GNU)
+ 	NO_STRLCPY=YesPlease
+ 	NO_MKSTEMPS = YesPlease
+ 	HAVE_PATHS_H = YesPlease
++	NEEDS_LIBINTL =
+ endif
+ ifeq ($(uname_S),IRIX)
+ 	NO_SETENV = YesPlease
+@@ -1395,7 +1415,9 @@ endif
+ ifdef NO_GETTEXT
+ 	COMPAT_CFLAGS += -DNO_GETTEXT
+ else
+-	LIBINTL = -lintl
++	ifdef NEEDS_LIBINTL
++		EXTLIBS += -lintl
++	endif
+ endif
+ 
+ ifeq ($(TCLTK_PATH),)
+-- 
+1.7.0.4
+

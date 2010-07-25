@@ -1,0 +1,257 @@
+From 6c16c2688c0c962cc38272f98c8ceef3c72caa31 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Thu, 24 Jun 2010 22:28:52 +0000
+Subject: [PATCH v2] fetch: don't output non-errors on stderr
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change git-fetch to only print to stderr if it has encountered an
+error. A normal branch update (like "* branch HEAD -> FETCH_HEAD") is
+no longer output to stderr but on stdout. Genuine errors (like
+"[rejected]" messages) still go to stderr.
+
+With this change I can run a cron script I've been developing
+(http://github.com/avar/github-backup) without redirecting stderr to
+/dev/null.
+
+Before the change error messages were drowned out by git-fetch's
+non-error update notices, which didn't need my attention.
+
+The changes in t/t5521-pull-options.sh invert the previously tested
+for behavior of checking if normal messages are output on stderr. The
+changes in t/t5510-fetch.sh however contain no behavioral changes,
+just assertions that will break if git fetch's behavior is changed
+again.
+
+There still aren't tests for some of the errors output by
+builtin/fetch.c's update_local_ref function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+On Thu, Jun 24, 2010 at 22:34, Ævar Arnfjörð Bjarmason <avarab@gmail.com> wrote:
+
+> The small changes to the test suite that this requires is a testiment
+> to how bad our test coverage is in this area. As far as I can see the
+> error messages that update_local_ref can emit aren't being tested
+> for. Fixing that is outside the scope of this patch, however.
+
+Here's an updated patch that has a some of those supposedly out of
+scope tests. The new tests have the same behavior, but will start
+breaking if this behavior is changed again.
+
+ builtin/fetch.c         |    5 ++-
+ t/t5510-fetch.sh        |   57 +++++++++++++++++++++++++++++++++-------------
+ t/t5521-pull-options.sh |   12 +++++-----
+ 3 files changed, 50 insertions(+), 24 deletions(-)
+
+diff --git a/builtin/fetch.c b/builtin/fetch.c
+index 5cb369c..116b322 100644
+--- a/builtin/fetch.c
++++ b/builtin/fetch.c
+@@ -397,13 +397,14 @@ static int store_updated_refs(const char *raw_url, const char *remote_name,
+ 				TRANSPORT_SUMMARY_WIDTH, *kind ? kind : "branch",
+ 				 REFCOL_WIDTH, *what ? what : "HEAD");
+ 		if (*note) {
++			FILE *fout = rc ? stderr : stdout;
+ 			if (verbosity >= 0 && !shown_url) {
+-				fprintf(stderr, "From %.*s\n",
++				fprintf(fout, "From %.*s\n",
+ 						url_len, url);
+ 				shown_url = 1;
+ 			}
+ 			if (verbosity >= 0)
+-				fprintf(stderr, " %s\n", note);
++				fprintf(fout, " %s\n", note);
+ 		}
+ 	}
+ 	free(url);
+diff --git a/t/t5510-fetch.sh b/t/t5510-fetch.sh
+index 4eb10f6..808b256 100755
+--- a/t/t5510-fetch.sh
++++ b/t/t5510-fetch.sh
+@@ -51,7 +51,9 @@ test_expect_success "fetch test" '
+ 	echo >file updated by origin &&
+ 	git commit -a -m "updated by origin" &&
+ 	cd two &&
+-	git fetch &&
++	git fetch >out 2>err &&
++	test ! -s err &&
++	test -s out &&
+ 	test -f .git/refs/heads/one &&
+ 	mine=`git rev-parse refs/heads/one` &&
+ 	his=`cd ../one && git rev-parse refs/heads/master` &&
+@@ -61,7 +63,9 @@ test_expect_success "fetch test" '
+ test_expect_success "fetch test for-merge" '
+ 	cd "$D" &&
+ 	cd three &&
+-	git fetch &&
++	git fetch >out 2>err &&
++	test ! -s err &&
++	test -s out &&
+ 	test -f .git/refs/heads/two &&
+ 	test -f .git/refs/heads/one &&
+ 	master_in_two=`cd ../two && git rev-parse master` &&
+@@ -81,7 +85,9 @@ test_expect_success 'fetch tags when there is no tags' '
+     cd notags &&
+     git init &&
+ 
+-    git fetch -t ..
++    git fetch -t .. >out 2>err &&
++    test ! -s err &&
++    test ! -s out
+ 
+ '
+ 
+@@ -95,7 +101,10 @@ test_expect_success 'fetch following tags' '
+ 	cd four &&
+ 	git init &&
+ 
+-	git fetch .. :track &&
++	git fetch .. :track >out 2>err &&
++	test ! -s err &&
++	test -s out &&
++
+ 	git show-ref --verify refs/tags/anno &&
+ 	git show-ref --verify refs/tags/light
+ 
+@@ -109,8 +118,9 @@ test_expect_success 'fetch must not resolve short tag name' '
+ 	cd five &&
+ 	git init &&
+ 
+-	test_must_fail git fetch .. anno:five
+-
++	! git fetch .. anno:five >out 2>err &&
++	test -s err &&
++	test ! -s out
+ '
+ 
+ test_expect_success 'fetch must not resolve short remote name' '
+@@ -122,7 +132,9 @@ test_expect_success 'fetch must not resolve short remote name' '
+ 	cd six &&
+ 	git init &&
+ 
+-	test_must_fail git fetch .. six:six
++	! git fetch .. six:six >out 2>err &&
++	test -s err &&
++	test ! -s out
+ 
+ '
+ 
+@@ -148,7 +160,9 @@ test_expect_success 'create bundle 2' '
+ test_expect_success 'unbundle 1' '
+ 	cd "$D/bundle" &&
+ 	git checkout -b some-branch &&
+-	test_must_fail git fetch "$D/bundle1" master:master
++	! git fetch "$D/bundle1" master:master >out 2>err &&
++	test -s err &&
++	test ! -s out
+ '
+ 
+ 
+@@ -167,7 +181,9 @@ test_expect_success 'bundle 1 has only 3 files ' '
+ 
+ test_expect_success 'unbundle 2' '
+ 	cd "$D/bundle" &&
+-	git fetch ../bundle2 master:master &&
++	git fetch ../bundle2 master:master >out 2>err &&
++	test ! -s err &&
++	test -s out &&
+ 	test "tip" = "$(git log -1 --pretty=oneline master | cut -b42-)"
+ '
+ 
+@@ -203,7 +219,9 @@ test_expect_success 'fetch via rsync' '
+ 	mkdir rsynced &&
+ 	(cd rsynced &&
+ 	 git init --bare &&
+-	 git fetch "rsync:$(pwd)/../.git" master:refs/heads/master &&
++	 git fetch "rsync:$(pwd)/../.git" master:refs/heads/master >out 2>err &&
++	 test ! -s err &&
++	 test -s out &&
+ 	 git gc --prune &&
+ 	 test $(git rev-parse master) = $(cd .. && git rev-parse master) &&
+ 	 git fsck --full)
+@@ -237,14 +255,17 @@ test_expect_success 'fetch with a non-applying branch.<name>.merge' '
+ 	git config branch.master.merge refs/heads/bigfoot &&
+ 	git config remote.blub.url one &&
+ 	git config remote.blub.fetch "refs/heads/*:refs/remotes/one/*" &&
+-	git fetch blub
++	git fetch blub >out 2>err &&
++	test ! -s err &&
++	test -s out
+ '
+ 
+ # the strange name is: a\!'b
+ test_expect_success 'quoting of a strangely named repo' '
+-	test_must_fail git fetch "a\\!'\''b" > result 2>&1 &&
+-	cat result &&
+-	grep "fatal: '\''a\\\\!'\''b'\''" result
++	test_must_fail git fetch "a\\!'\''b" >out 2>err &&
++	test -s err &&
++	test ! -s out &&
++	grep "fatal: '\''a\\\\!'\''b'\''" err
+ '
+ 
+ test_expect_success 'bundle should record HEAD correctly' '
+@@ -267,7 +288,9 @@ test_expect_success 'explicit fetch should not update tracking' '
+ 	(
+ 		cd three &&
+ 		o=$(git rev-parse --verify refs/remotes/origin/master) &&
+-		git fetch origin master &&
++		git fetch origin master >out 2>err &&
++		test ! -s err &&
++		test -s out &&
+ 		n=$(git rev-parse --verify refs/remotes/origin/master) &&
+ 		test "$o" = "$n" &&
+ 		test_must_fail git rev-parse --verify refs/remotes/origin/side
+@@ -295,7 +318,9 @@ test_expect_success 'configured fetch updates tracking' '
+ 	(
+ 		cd three &&
+ 		o=$(git rev-parse --verify refs/remotes/origin/master) &&
+-		git fetch origin &&
++		git fetch origin  >out 2>err &&
++		test ! -s err &&
++		test -s out &&
+ 		n=$(git rev-parse --verify refs/remotes/origin/master) &&
+ 		test "$o" != "$n" &&
+ 		git rev-parse --verify refs/remotes/origin/side
+diff --git a/t/t5521-pull-options.sh b/t/t5521-pull-options.sh
+index 1b06691..7ec36e7 100755
+--- a/t/t5521-pull-options.sh
++++ b/t/t5521-pull-options.sh
+@@ -23,16 +23,16 @@ test_expect_success 'git pull' '
+ 	mkdir cloned &&
+ 	(cd cloned && git init &&
+ 	git pull "../parent" >out 2>err &&
+-	test -s err &&
+-	test ! -s out)
++	test ! -s err &&
++	test -s out)
+ '
+ 
+ test_expect_success 'git pull -v' '
+ 	mkdir clonedv &&
+ 	(cd clonedv && git init &&
+ 	git pull -v "../parent" >out 2>err &&
+-	test -s err &&
+-	test ! -s out)
++	test ! -s err &&
++	test -s out)
+ '
+ 
+ test_expect_success 'git pull -v -q' '
+@@ -47,8 +47,8 @@ test_expect_success 'git pull -q -v' '
+ 	mkdir clonedqv &&
+ 	(cd clonedqv && git init &&
+ 	git pull -q -v "../parent" >out 2>err &&
+-	test ! -s out &&
+-	test -s err)
++	test ! -s err &&
++	test -s out)
+ '
+ 
+ test_expect_success 'git pull --force' '
+-- 
+1.7.1.251.g92a7
+

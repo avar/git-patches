@@ -1,0 +1,85 @@
+From a245bcd5d9932ef79508cd7f99bea8a8a8637cc7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Fri, 16 Jul 2010 15:24:10 +0000
+Subject: [PATCH] blame: Add tests for -L/start/,/end/
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+git-pickaxe (later git-blame) gained support for the -L/start/,/end/
+form in 2006 (931233bc66 by Junio C Hamano), but nothing was added to
+test this functionality. Change that by adding more -L tests to
+t8003-blame.sh.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t8003-blame.sh |   53 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 files changed, 53 insertions(+), 0 deletions(-)
+
+diff --git a/t/t8003-blame.sh b/t/t8003-blame.sh
+index 230143c..2a3e169 100755
+--- a/t/t8003-blame.sh
++++ b/t/t8003-blame.sh
+@@ -175,6 +175,59 @@ test_expect_success 'blame -L with invalid end' '
+ 	grep "has only 2 lines" errors
+ '
+ 
++for comma in '' ','
++do
++	# The comma in -L/regex/, is optional
++	test_expect_success "blame -L/start/$comma" "
++		git blame -L'/[E]F/$comma' cow >current 2>errors &&
++		! test -s errors &&
++		head -n 1 current | grep DEF &&
++		tail -n 1 current | grep GHIJK
++	"
++done
++
++test_expect_success 'blame -L/start/,/end/' '
++	git blame -L"/[E]F/,/^X/" cow >current 2>errors &&
++	! test -s errors &&
++	head -n 1 current | grep DEF &&
++	tail -n 1 current | grep XXXX
++'
++
++test_expect_success 'blame -L/start/,INT' '
++	git blame -L"/[C]/,2" cow >current 2>errors &&
++	! test -s errors &&
++	head -n 1 current | grep ABC &&
++	tail -n 1 current | grep DEF
++'
++
++test_expect_success 'blame -LINT,/end/' '
++	git blame -L3,/GH/ cow  >current 2>errors &&
++	! test -s errors &&
++	head -n 1 current | grep XXXX &&
++	tail -n 1 current | grep GHIJK
++'
++
++test_expect_success 'blame -L,/end/' '
++	git blame -L",/^X/" cow >current 2>errors &&
++	! test -s errors &&
++	head -n 1 current | grep ABC &&
++	tail -n 1 current | grep XXXX
++'
++
++test_expect_success 'blame -L/no match/' '
++	! git blame -L/hlagh/ cow >current 2>errors &&
++	grep hlagh errors &&
++	! test -s current
++'
++
++test_expect_success 'blame -L/invalid regex/' '
++	# At least GNU, Solaris and FreeBSD (and by extension, Mac OS X)
++	# complain about this
++	! git blame -L/[b-a]/ cow >current 2>errors &&
++	grep b-a errors &&
++	! test -s current
++'
++
+ test_expect_success 'indent of line numbers, nine lines' '
+ 	git blame nine_lines >actual &&
+ 	test $(grep -c "  " actual) = 0
+-- 
+1.7.0.4
+

@@ -1,0 +1,103 @@
+From 89071acac4fdd2dda4bba475357f91f4088ab616 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Thu, 24 Jun 2010 22:28:52 +0000
+Subject: [PATCH] fetch: don't output non-errors on stderr
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change git-fetch to only print to stderr if it has encountered an
+error.
+
+A normal branch update (like "* branch HEAD -> FETCH_HEAD") is no
+longer output to stderr but on stdout. Genuine errors (like
+"[rejected]" messages) still go to stderr.
+
+With this change I can run a cron script I've been developing
+(http://github.com/avar/github-backup) without redirecting stderr to
+/dev/null.
+
+Before the change error messages were drowned out by git-fetch's
+non-error update notices, which didn't need my attention.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+On Sat, Jun 12, 2010 at 16:52, Ævar Arnfjörð Bjarmason <avarab@gmail.com> wrote:
+
+> Shouldn't that fprintf() be called as:
+>
+>    fprintf((rc ? stderr : stdout), ...)
+
+To answer my own question: Yes it should. This patch fixes git-fetch
+so that it doesn't taint stderr with non-error messages.
+
+The small changes to the test suite that this requires is a testiment
+to how bad our test coverage is in this area. As far as I can see the
+error messages that update_local_ref can emit aren't being tested
+for. Fixing that is outside the scope of this patch, however.
+
+ builtin/fetch.c         |    5 +++--
+ t/t5521-pull-options.sh |   12 ++++++------
+ 2 files changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/fetch.c b/builtin/fetch.c
+index 5cb369c..116b322 100644
+--- a/builtin/fetch.c
++++ b/builtin/fetch.c
+@@ -397,13 +397,14 @@ static int store_updated_refs(const char *raw_url, const char *remote_name,
+ 				TRANSPORT_SUMMARY_WIDTH, *kind ? kind : "branch",
+ 				 REFCOL_WIDTH, *what ? what : "HEAD");
+ 		if (*note) {
++			FILE *fout = rc ? stderr : stdout;
+ 			if (verbosity >= 0 && !shown_url) {
+-				fprintf(stderr, "From %.*s\n",
++				fprintf(fout, "From %.*s\n",
+ 						url_len, url);
+ 				shown_url = 1;
+ 			}
+ 			if (verbosity >= 0)
+-				fprintf(stderr, " %s\n", note);
++				fprintf(fout, " %s\n", note);
+ 		}
+ 	}
+ 	free(url);
+diff --git a/t/t5521-pull-options.sh b/t/t5521-pull-options.sh
+index 1b06691..7ec36e7 100755
+--- a/t/t5521-pull-options.sh
++++ b/t/t5521-pull-options.sh
+@@ -23,16 +23,16 @@ test_expect_success 'git pull' '
+ 	mkdir cloned &&
+ 	(cd cloned && git init &&
+ 	git pull "../parent" >out 2>err &&
+-	test -s err &&
+-	test ! -s out)
++	test ! -s err &&
++	test -s out)
+ '
+ 
+ test_expect_success 'git pull -v' '
+ 	mkdir clonedv &&
+ 	(cd clonedv && git init &&
+ 	git pull -v "../parent" >out 2>err &&
+-	test -s err &&
+-	test ! -s out)
++	test ! -s err &&
++	test -s out)
+ '
+ 
+ test_expect_success 'git pull -v -q' '
+@@ -47,8 +47,8 @@ test_expect_success 'git pull -q -v' '
+ 	mkdir clonedqv &&
+ 	(cd clonedqv && git init &&
+ 	git pull -q -v "../parent" >out 2>err &&
+-	test ! -s out &&
+-	test -s err)
++	test ! -s err &&
++	test -s out)
+ '
+ 
+ test_expect_success 'git pull --force' '
+-- 
+1.7.1.251.g92a7
+
