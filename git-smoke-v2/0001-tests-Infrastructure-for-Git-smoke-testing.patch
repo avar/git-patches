@@ -1,0 +1,253 @@
+From 612e9cdc80c92bc110a6b450f8371b868c7d653c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Thu, 29 Jul 2010 15:44:57 +0000
+Subject: [PATCH/RFC v2 1/2] tests: Infrastructure for Git smoke testing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add the capability to send smoke reports from the Git test suite.
+
+Currently we only notice bugs in the test suite when it's run
+manually. Bugs in Git that only occur on obscure platforms or setups
+that the core developers aren't using can thus go unnoticed.
+
+This series aims to change that. With it anyone that's interested in
+avoiding bitrot in Git can volunteer to run a smoke tester. A smoke
+tester periodically compiles the latest version of Git, runs the test
+suite, and submits a report to a central server indicating how the
+test run went.
+
+A smoke tester might run something like this in cron:
+
+    #!/bin/sh
+    cd ~/g/git
+    git fetch
+    for branch in maint master next pu; do
+        git checkout origin/$i &&
+        make clean all &&
+        cd t &&
+        make smoke_report
+    done
+
+The smoker might want to compile git with non-default flags, include
+bisecting functionality or run the tests under valgrind. Doing that is
+outside the scope of this patch, this just adds a report submission
+mechanism. But including a canonical smoke runner is something we'll
+want to include eventually.
+
+What this does now is add smoke and smoke_report targets to t/Makefile
+(this example only uses a few tests for demonstration):
+
+    $ make clean smoke
+    rm -f -r 'trash directory'.* test-results
+    rm -f t????/cvsroot/CVSROOT/?*
+    rm -f -r valgrind/bin
+    rm -f .prove
+    perl ./harness --git-version="1.7.2.1.173.gc9b40" \
+                    --no-verbose \
+                    --archive="test-results/git-smoke.tar.gz" \
+                    t0000-basic.sh t0001-init.sh t0002-gitfile.sh t0003-attributes.sh t0004-unwritable.sh t0005-signals.sh t0006-date.sh
+    t0000-basic.sh ....... ok
+    t0001-init.sh ........ ok
+    t0002-gitfile.sh ..... ok
+    t0003-attributes.sh .. ok
+    t0004-unwritable.sh .. ok
+    t0005-signals.sh ..... ok
+    t0006-date.sh ........ ok
+    All tests successful.
+
+    Test Summary Report
+    -------------------
+    t0000-basic.sh     (Wstat: 0 Tests: 46 Failed: 0)
+      TODO passed:   5
+    Files=7, Tests=134,  3 wallclock secs ( 0.06 usr  0.05 sys +  0.23 cusr  1.33 csys =  1.67 CPU)
+    Result: PASS
+
+    TAP Archive created at /home/avar/g/git/t/test-results/git-smoke.tar.gz
+
+The smoke target uses TAP::Harness::Archive to aggregate the test
+results into a tarball. The tarball contains two things, the output of
+every test file that was run, and a metadata file:
+
+Tarball contents:
+
+    $ tar xzvf git-smoke.tar.gz
+    t0004-unwritable.sh
+    t0001-init.sh
+    t0002-gitfile.sh
+    t0005-signals.sh
+    t0000-basic.sh
+    t0003-attributes.sh
+    t0006-date.sh
+    meta.yml
+
+A test report:
+
+    $ cat t0005-signals.sh
+    ok 1 - sigchain works
+    # passed all 1 test(s)
+    1..1
+
+A metadata file:
+
+    ---
+    extra_properties:
+    file_attributes:
+      -
+        description: t0000-basic.sh
+        end_time: 1280437324.61398
+        start_time: 1280437324.22186
+      -
+        description: t0001-init.sh
+        end_time: 1280437325.12346
+        start_time: 1280437324.62393
+      -
+        description: t0002-gitfile.sh
+        end_time: 1280437325.29428
+        start_time: 1280437325.13646
+      -
+        description: t0003-attributes.sh
+        end_time: 1280437325.59678
+        start_time: 1280437325.30565
+      -
+        description: t0004-unwritable.sh
+        end_time: 1280437325.77376
+        start_time: 1280437325.61003
+      -
+        description: t0005-signals.sh
+        end_time: 1280437325.85426
+        start_time: 1280437325.78727
+      -
+        description: t0006-date.sh
+        end_time: 1280437326.2362
+        start_time: 1280437325.86768
+    file_order:
+      - t0000-basic.sh
+      - t0001-init.sh
+      - t0002-gitfile.sh
+      - t0003-attributes.sh
+      - t0004-unwritable.sh
+      - t0005-signals.sh
+      - t0006-date.sh
+    start_time: 1280437324
+    stop_time: 1280437326
+
+The "extra_properties" hash is where we'll stick Git-specific info,
+like whether Git was compiled with gettext or the fallback regex
+engine, and what branch we're compiling. Currently no metadata like
+this is included.
+
+The entire tarball is then submitted to a central smokebox at
+smoke.git.nix.is. This is done with curl(1) via the "smoke_report"
+target:
+
+    $ make smoke_report
+    curl \
+                    -H "Expect: " \
+                    -F project=Git \
+                    -F architecture=x86_64 \
+                    -F platform=Linux \
+                    -F revision="1.7.2.1.173.gc9b40" \
+                    -F report_file=@test-results/git-smoke.tar.gz \
+                    http://smoke.git.nix.is/app/projects/process_add_report/1 \
+            | grep -v ^Redirecting
+      % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                     Dload  Upload   Total   Spent    Left  Speed
+    100  117k  100    63  100  117k      3   6430  0:00:21  0:00:18  0:00:03     0
+    Reported #8 added.
+
+Reports are then made available on the smokebox via a web interface:
+
+    http://smoke.git.nix.is/app/projects/smoke_reports/1
+
+The smoke reports are also mirrored to a Git repository hosted on
+GitHub:
+
+    http://github.com/gitsmoke/smoke-reports
+
+The Smolder SQLite database that contains metadata about the reports
+is also made available:
+
+    http://github.com/gitsmoke/smoke-database
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/Makefile |   35 ++++++++++++++++++++++++++++++++++-
+ t/harness  |   21 +++++++++++++++++++++
+ 2 files changed, 55 insertions(+), 1 deletions(-)
+ create mode 100755 t/harness
+
+diff --git a/t/Makefile b/t/Makefile
+index 819b936..169097d 100644
+--- a/t/Makefile
++++ b/t/Makefile
+@@ -49,4 +49,37 @@ full-svn-test:
+ valgrind:
+ 	GIT_TEST_OPTS=--valgrind $(MAKE)
+ 
+-.PHONY: pre-clean $(T) aggregate-results clean valgrind
++# Smoke testing targets
++-include ../GIT-BUILD-OPTIONS
++-include ../GIT-VERSION-FILE
++uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo unknown')
++uname_M := $(shell sh -c 'uname -m 2>/dev/null || echo unknown')
++
++test-results:
++	mkdir -p test-results
++
++test-results/git-smoke.tar.gz:
++	$(PERL_PATH) ./harness \
++		--archive="test-results/git-smoke.tar.gz" \
++		$(T)
++
++smoke: test-results/git-smoke.tar.gz
++
++SMOKE_UPLOAD_FLAGS =
++ifdef SMOKE_USERNAME
++	SMOKE_UPLOAD_FLAGS += -F username=$(SMOKE_USERNAME) -F password=$(SMOKE_PASSWORD)
++endif
++
++smoke_report: smoke
++	curl \
++		-H "Expect: " \
++		-F project=Git \
++		-F architecture=$(uname_M) \
++		-F platform=$(uname_S) \
++		-F revision="$(GIT_VERSION)" \
++		-F report_file=@test-results/git-smoke.tar.gz \
++		$(SMOKE_UPLOAD_FLAGS) \
++		http://smoke.git.nix.is/app/projects/process_add_report/1 \
++	| grep -v ^Redirecting
++
++.PHONY: pre-clean $(T) aggregate-results clean valgrind smoke smoke_report
+diff --git a/t/harness b/t/harness
+new file mode 100755
+index 0000000..f5c02f4
+--- /dev/null
++++ b/t/harness
+@@ -0,0 +1,21 @@
++#!/usr/bin/perl
++use strict;
++use warnings;
++use Getopt::Long ();
++use TAP::Harness::Archive;
++
++Getopt::Long::Parser->new(
++	config => [ qw/ pass_through / ],
++)->getoptions(
++	'jobs:1'    => \(my $jobs = $ENV{TEST_JOBS}),
++	'archive=s' => \my $archive,
++) or die "$0: Couldn't getoptions()";
++
++TAP::Harness::Archive->new({
++	jobs             => $jobs,
++	archive          => $archive,
++	($ENV{GIT_TEST_OPTS}
++	 ? (test_args    => [ split /\s+/, $ENV{GIT_TEST_OPTS} ])
++	 : ()),
++	extra_properties => {},
++})->runtests(@ARGV);
+-- 
+1.7.1
+
