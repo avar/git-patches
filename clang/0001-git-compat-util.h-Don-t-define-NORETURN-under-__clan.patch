@@ -1,0 +1,162 @@
+From b44c11f54158ad0dd0dac0b5e8de64b093463975 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Tue, 3 Aug 2010 09:48:26 +0000
+Subject: [RFC/PATCH] git-compat-util.h: Don't define NORETURN under __clang__
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+clang version 1.0 on Debian testing x86_64 defines __GNUC__, but barfs
+on `void __attribute__((__noreturn__))'. E.g.:
+
+    usage.c:56:1: error: function declared 'noreturn' should not return [-Winvalid-noreturn]
+    }
+    ^
+    1 diagnostic generated.
+    make: *** [usage.o] Error 1
+
+There it's dying on `void __attribute__((__noreturn__)) usagef(const
+char *err, ...)' in usage.c, which doesn't return.
+
+Change the header to define NORETURN to nothing under clang. This was
+the default behavior for non-GNU and non-MSC compilers already. Having
+NORETURN_PTR defined to the GNU C value has no effect on clang
+however.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+I have no experience with Clang so this may not be sane, but on my
+system clang compiles with it and passes all tests. It still spews a
+lot of warnings though:
+    
+    GITGUI_VERSION = 0.12.0.64.g89d61
+        * new build flags or prefix
+    config.c:297:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    connect.c:151:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    date.c:678:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    diff.c:429:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+
+These are valid, as control may not return the advertised type if we
+call die() inside them.
+
+    log-tree.c:297:21: warning: field width should have type 'int', but argument has type 'unsigned int' [-Wformat]
+                             "Subject: [%s %0*d/%d] ",
+                                             ^
+    1 diagnostic generated.
+    notes.c:632:25: warning: field precision should have type 'int', but argument has type 'unsigned int' [-Wformat]
+            strbuf_addf(buf, "%o %.*s%c", mode, path_len, path, '\0');
+                                   ^            ~~~~~~~~
+    1 diagnostic generated.
+
+Should these (and some below) just cast to (int) ?
+
+    object.c:44:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    parse-options.c:155:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    read-cache.c:1361:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    remote.c:658:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    revision.c:253:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    setup.c:79:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    sideband.c:97:25: warning: field precision should have type 'int', but argument has type 'unsigned int' [-Wformat]
+                                            fprintf(stderr, "%.*s", brk + sf, b);
+                                                               ^    ~~~~~~~~
+    1 diagnostic generated.
+    transport.c:1133:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    imap-send.c:548:27: warning: more data arguments than '%' conversions [-Wformat-extra-args]
+                               cmd->tag, cmd->cmd, cmd->cb.dlen);
+                                                   ^
+    1 diagnostic generated.
+    Writing perl.mak for Git
+    GIT_VERSION = 1.7.2.1.7.gb44c1
+    builtin/blame.c:1984:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    builtin/bundle.c:67:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    builtin/commit.c:832:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    builtin/fetch-pack.c:209:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    builtin/grep.c:704:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    builtin/help.c:58:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    builtin/pack-redundant.c:584:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    builtin/push.c:252:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    builtin/reflog.c:782:1: warning: control may reach end of non-void function [-Wreturn-type]
+    }
+    ^
+    1 diagnostic generated.
+    
+ git-compat-util.h |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletions(-)
+
+diff --git a/git-compat-util.h b/git-compat-util.h
+index 02a73ee..c651cb7 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -183,7 +183,10 @@ extern char *gitbasename(char *);
+ #define is_dir_sep(c) ((c) == '/')
+ #endif
+ 
+-#ifdef __GNUC__
++#ifdef __clang__
++#define NORETURN
++#define NORETURN_PTR __attribute__((__noreturn__))
++#elif __GNUC__
+ #define NORETURN __attribute__((__noreturn__))
+ #define NORETURN_PTR __attribute__((__noreturn__))
+ #elif defined(_MSC_VER)
+-- 
+1.7.1
+
