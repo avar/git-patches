@@ -1,0 +1,255 @@
+From 08cc713511b8086f06a873b31d0570e2e1e42c83 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Wed, 4 Aug 2010 11:50:54 +0000
+Subject: [PATCH v2] tests: A SANITY test prereq for testing if we're root
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Some tests depend on not being able to write to files after chmod
+-w. This doesn't work when running the tests as root.
+
+Change test-lib.sh to test if this works, and if so it sets a new
+SANITY test prerequisite. The tests that use this previously failed
+when run under root.
+
+There was already a test for this in t3600-rm.sh, added by Junio C
+Hamano in 2283645 in 2006. That check now uses the new SANITY
+prerequisite.
+
+Some of this was resurrected from the "Tests in Cygwin" thread in May
+2009:
+
+    http://thread.gmane.org/gmane.comp.version-control.git/116729/focus=118385
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+Here's a buch improved v2 of this patch. It goes on top of the
+just-submitted "tests: Better prerequisite handling & documentation"
+series (<1281129565-26124-1-git-send-email-avarab@gmail.com>).
+
+It uses the SANITY prerequisite suggested by Junio in 2009, and uses a
+simpler `test -w /' test to check if we're the superuser.
+
+ t/README                    |    5 +++++
+ t/t0001-init.sh             |    2 +-
+ t/t0004-unwritable.sh       |    8 ++++----
+ t/t1004-read-tree-m-u-wf.sh |    2 +-
+ t/t3600-rm.sh               |   16 ----------------
+ t/t3700-add.sh              |   10 +++++-----
+ t/t7300-clean.sh            |    7 +++----
+ t/t7508-status.sh           |    2 +-
+ t/test-lib.sh               |    4 ++++
+ 9 files changed, 24 insertions(+), 32 deletions(-)
+
+diff --git a/t/README b/t/README
+index dc07939..28effb4 100644
+--- a/t/README
++++ b/t/README
+@@ -523,6 +523,11 @@ use these, and "test_set_prereq" for how to define your own.
+    The filesystem we're on supports symbolic links. E.g. a FAT
+    filesystem doesn't support these. See 704a3143 for details.
+ 
++ - SANITY
++
++   Test is not run by root user, and an attempt to write to an
++   unwritable file is expected to fail correctly.
++
+ Tips for Writing Tests
+ ----------------------
+ 
+diff --git a/t/t0001-init.sh b/t/t0001-init.sh
+index 7c0a698..7a75999 100755
+--- a/t/t0001-init.sh
++++ b/t/t0001-init.sh
+@@ -301,7 +301,7 @@ test_expect_success 'init notices EEXIST (2)' '
+ 	)
+ '
+ 
+-test_expect_success POSIXPERM 'init notices EPERM' '
++test_expect_success POSIXPERM,SANITY 'init notices EPERM' '
+ 	rm -fr newdir &&
+ 	(
+ 		mkdir newdir &&
+diff --git a/t/t0004-unwritable.sh b/t/t0004-unwritable.sh
+index 2342ac5..385b126 100755
+--- a/t/t0004-unwritable.sh
++++ b/t/t0004-unwritable.sh
+@@ -15,7 +15,7 @@ test_expect_success setup '
+ 
+ '
+ 
+-test_expect_success POSIXPERM 'write-tree should notice unwritable repository' '
++test_expect_success POSIXPERM,SANITY 'write-tree should notice unwritable repository' '
+ 
+ 	(
+ 		chmod a-w .git/objects .git/objects/?? &&
+@@ -27,7 +27,7 @@ test_expect_success POSIXPERM 'write-tree should notice unwritable repository' '
+ 
+ '
+ 
+-test_expect_success POSIXPERM 'commit should notice unwritable repository' '
++test_expect_success POSIXPERM,SANITY 'commit should notice unwritable repository' '
+ 
+ 	(
+ 		chmod a-w .git/objects .git/objects/?? &&
+@@ -39,7 +39,7 @@ test_expect_success POSIXPERM 'commit should notice unwritable repository' '
+ 
+ '
+ 
+-test_expect_success POSIXPERM 'update-index should notice unwritable repository' '
++test_expect_success POSIXPERM,SANITY 'update-index should notice unwritable repository' '
+ 
+ 	(
+ 		echo 6O >file &&
+@@ -52,7 +52,7 @@ test_expect_success POSIXPERM 'update-index should notice unwritable repository'
+ 
+ '
+ 
+-test_expect_success POSIXPERM 'add should notice unwritable repository' '
++test_expect_success POSIXPERM,SANITY 'add should notice unwritable repository' '
+ 
+ 	(
+ 		echo b >file &&
+diff --git a/t/t1004-read-tree-m-u-wf.sh b/t/t1004-read-tree-m-u-wf.sh
+index f19b4a2..eb8e3d4 100755
+--- a/t/t1004-read-tree-m-u-wf.sh
++++ b/t/t1004-read-tree-m-u-wf.sh
+@@ -177,7 +177,7 @@ test_expect_success SYMLINKS 'funny symlink in work tree' '
+ 
+ '
+ 
+-test_expect_success SYMLINKS 'funny symlink in work tree, un-unlink-able' '
++test_expect_success SYMLINKS,SANITY 'funny symlink in work tree, un-unlink-able' '
+ 
+ 	rm -fr a b &&
+ 	git reset --hard &&
+diff --git a/t/t3600-rm.sh b/t/t3600-rm.sh
+index b514cbb..b26cabd 100755
+--- a/t/t3600-rm.sh
++++ b/t/t3600-rm.sh
+@@ -28,22 +28,6 @@ embedded' &&
+      git commit -m 'add files with tabs and newlines'
+ "
+ 
+-# Determine rm behavior
+-# Later we will try removing an unremovable path to make sure
+-# git rm barfs, but if the test is run as root that cannot be
+-# arranged.
+-: >test-file
+-chmod a-w .
+-rm -f test-file 2>/dev/null
+-if test -f test-file
+-then
+-	test_set_prereq RO_DIR
+-else
+-	skip_all='skipping removal failure test (perhaps running as root?)'
+-fi
+-chmod 775 .
+-rm -f test-file
+-
+ test_expect_success \
+     'Pre-check that foo exists and is in index before git rm foo' \
+     '[ -f foo ] && git ls-files --error-unmatch foo'
+diff --git a/t/t3700-add.sh b/t/t3700-add.sh
+index 7d7140d..ec71083 100755
+--- a/t/t3700-add.sh
++++ b/t/t3700-add.sh
+@@ -179,7 +179,7 @@ test_expect_success 'git add --refresh' '
+ 	test -z "`git diff-index HEAD -- foo`"
+ '
+ 
+-test_expect_success POSIXPERM 'git add should fail atomically upon an unreadable file' '
++test_expect_success POSIXPERM,SANITY 'git add should fail atomically upon an unreadable file' '
+ 	git reset --hard &&
+ 	date >foo1 &&
+ 	date >foo2 &&
+@@ -190,7 +190,7 @@ test_expect_success POSIXPERM 'git add should fail atomically upon an unreadable
+ 
+ rm -f foo2
+ 
+-test_expect_success POSIXPERM 'git add --ignore-errors' '
++test_expect_success POSIXPERM,SANITY 'git add --ignore-errors' '
+ 	git reset --hard &&
+ 	date >foo1 &&
+ 	date >foo2 &&
+@@ -201,7 +201,7 @@ test_expect_success POSIXPERM 'git add --ignore-errors' '
+ 
+ rm -f foo2
+ 
+-test_expect_success POSIXPERM 'git add (add.ignore-errors)' '
++test_expect_success POSIXPERM,SANITY 'git add (add.ignore-errors)' '
+ 	git config add.ignore-errors 1 &&
+ 	git reset --hard &&
+ 	date >foo1 &&
+@@ -212,7 +212,7 @@ test_expect_success POSIXPERM 'git add (add.ignore-errors)' '
+ '
+ rm -f foo2
+ 
+-test_expect_success POSIXPERM 'git add (add.ignore-errors = false)' '
++test_expect_success POSIXPERM,SANITY 'git add (add.ignore-errors = false)' '
+ 	git config add.ignore-errors 0 &&
+ 	git reset --hard &&
+ 	date >foo1 &&
+@@ -223,7 +223,7 @@ test_expect_success POSIXPERM 'git add (add.ignore-errors = false)' '
+ '
+ rm -f foo2
+ 
+-test_expect_success POSIXPERM '--no-ignore-errors overrides config' '
++test_expect_success POSIXPERM,SANITY '--no-ignore-errors overrides config' '
+        git config add.ignore-errors 1 &&
+        git reset --hard &&
+        date >foo1 &&
+diff --git a/t/t7300-clean.sh b/t/t7300-clean.sh
+index 7d8ed68..fe8abf6 100755
+--- a/t/t7300-clean.sh
++++ b/t/t7300-clean.sh
+@@ -388,16 +388,15 @@ test_expect_success 'core.excludesfile' '
+ 
+ '
+ 
+-test_expect_success 'removal failure' '
++test_expect_success SANITY 'removal failure' '
+ 
+ 	mkdir foo &&
+ 	touch foo/bar &&
+ 	(exec <foo/bar &&
+ 	 chmod 0 foo &&
+-	 test_must_fail git clean -f -d)
+-
++	 test_must_fail git clean -f -d &&
++	 chmod 755 foo)
+ '
+-chmod 755 foo
+ 
+ test_expect_success 'nested git work tree' '
+ 	rm -fr foo bar &&
+diff --git a/t/t7508-status.sh b/t/t7508-status.sh
+index a72fe3a..ee0e573 100755
+--- a/t/t7508-status.sh
++++ b/t/t7508-status.sh
+@@ -793,7 +793,7 @@ test_expect_success 'commit --dry-run submodule summary (--amend)' '
+ 	test_cmp expect output
+ '
+ 
+-test_expect_success POSIXPERM 'status succeeds in a read-only repository' '
++test_expect_success POSIXPERM,SANITY 'status succeeds in a read-only repository' '
+ 	(
+ 		chmod a-w .git &&
+ 		# make dir1/tracked stat-dirty
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 4e0a1c3..ace67a7 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -894,3 +894,7 @@ test -z "$NO_PYTHON" && test_set_prereq PYTHON
+ # test whether the filesystem supports symbolic links
+ ln -s x y 2>/dev/null && test -h y 2>/dev/null && test_set_prereq SYMLINKS
+ rm -f y
++
++# When the tests are run as root, permission tests will report that
++# things are writable when they shouldn't be.
++test -w / || test_set_prereq SANITY
+-- 
+1.7.1
+
