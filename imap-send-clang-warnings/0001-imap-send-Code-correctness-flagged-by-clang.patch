@@ -1,0 +1,67 @@
+From bb3ca01317c756c7233d8cd9c5956cb6adc9bb5d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Sat, 7 Aug 2010 11:53:14 +0000
+Subject: [RFC/PATCH] imap-send: Code correctness flagged by clang
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Clang 1.1 flagged the following issues in imap-send.c, this change
+fixes the warnings by moving some code around:
+
+    imap-send.c:548:27: warning: data argument not used by format string [-Wformat-extra-args]
+                               cmd->tag, cmd->cmd, cmd->cb.dlen);
+                                                   ^
+
+Here the sprintf format didn't use the cmd->cb.dlen argument if
+cmd->cb.data was false. Change the code to use a if/else instead of a
+two-level ternary to work it. This code was introduced with imap-send
+itself in f2561fda.
+
+    imap-send.c:1089:41: warning: conversion specifies type 'unsigned short' but the argument has type 'int' [-Wformat]
+                    snprintf(portstr, sizeof(portstr), "%hu", srvc->port);
+                                                        ~~^   ~~~~~~~~~~
+
+Here sprintf is being given an int with a %hu format. Cast the
+srvc->port to unsigned short to work it. This code was introduced in
+94ad2437 to add IPv6 support.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ imap-send.c |   13 +++++++++----
+ 1 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/imap-send.c b/imap-send.c
+index 1a577a0..4b25375 100644
+--- a/imap-send.c
++++ b/imap-send.c
+@@ -543,9 +543,14 @@ static struct imap_cmd *v_issue_imap_cmd(struct imap_store *ctx,
+ 	while (imap->literal_pending)
+ 		get_cmd_result(ctx, NULL);
+ 
+-	bufl = nfsnprintf(buf, sizeof(buf), cmd->cb.data ? CAP(LITERALPLUS) ?
+-			   "%d %s{%d+}\r\n" : "%d %s{%d}\r\n" : "%d %s\r\n",
+-			   cmd->tag, cmd->cmd, cmd->cb.dlen);
++	if (cmd->cb.data) {
++		bufl = nfsnprintf(buf, sizeof(buf),
++		                  CAP(LITERALPLUS) ? "%d %s{%d+}\r\n" : "%d %s{%d}\r\n",
++		                  cmd->tag, cmd->cmd, cmd->cb.dlen);
++	} else {
++		bufl = nfsnprintf(buf, sizeof(buf), "%d %s\r\n", cmd->tag, cmd->cmd);
++	}
++
+ 	if (Verbose) {
+ 		if (imap->num_in_progress)
+ 			printf("(%d in progress) ", imap->num_in_progress);
+@@ -1086,7 +1091,7 @@ static struct store *imap_open_store(struct imap_server_conf *srvc)
+ 		int gai;
+ 		char portstr[6];
+ 
+-		snprintf(portstr, sizeof(portstr), "%hu", srvc->port);
++		snprintf(portstr, sizeof(portstr), "%hu", (unsigned short)srvc->port);
+ 
+ 		memset(&hints, 0, sizeof(hints));
+ 		hints.ai_socktype = SOCK_STREAM;
+-- 
+1.7.1
+
