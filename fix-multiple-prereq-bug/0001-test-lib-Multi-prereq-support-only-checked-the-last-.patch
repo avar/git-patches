@@ -1,0 +1,98 @@
+From f67a8a89e06e1c58348f9e96c1183272c13e4074 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Tue, 10 Aug 2010 23:20:16 +0000
+Subject: [PATCH] test-lib: Multi-prereq support only checked the last prereq
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The support for multiple test prerequisites added by me in "test-lib:
+Add support for multiple test prerequisites" was broken.
+
+The clever for-loop (which I blindly copied from Junio) iterated over
+each prerequisite and returned true/false within a case statement.
+Thus only the last prerequisite in the list of prerequisites was ever
+considered, the rest were ignored.
+
+Fix that by changing the test_have_prereq code to something less
+clever that keeps a count of the total prereqs and the ones we have
+and compares the count at the end.
+
+This comes with the added advantage that it's easy to list the missing
+prerequisites in the test output.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+I should have spotted this earlier.
+
+ t/t0000-basic.sh |    6 +++++-
+ t/test-lib.sh    |   21 ++++++++++++++++++---
+ 2 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/t/t0000-basic.sh b/t/t0000-basic.sh
+index 2887677..9602085 100755
+--- a/t/t0000-basic.sh
++++ b/t/t0000-basic.sh
+@@ -84,7 +84,11 @@ donthaveit=yes
+ test_expect_success HAVEIT,DONTHAVEIT 'unmet prerequisites causes test to be skipped' '
+     donthaveit=no
+ '
+-if test $haveit$donthaveit != yesyes
++donthaveiteither=yes
++test_expect_success DONTHAVEIT,HAVEIT 'unmet prerequisites causes test to be skipped' '
++    donthaveiteither=no
++'
++if test $haveit$donthaveit$donthaveiteither != yesyesyes
+ then
+ 	say "bug in test framework: multiple prerequisite tags do not work reliably"
+ 	exit 1
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 4e73fff..8c8e129 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -337,15 +337,30 @@ test_have_prereq () {
+ 	IFS=,
+ 	set -- $*
+ 	IFS=$save_IFS
++
++	total_prereq=0
++	ok_prereq=0
++	missing_prereq=
++
+ 	for prerequisite
+ 	do
++		total_prereq=$(($total_prereq + 1))
+ 		case $satisfied in
+ 		*" $prerequisite "*)
+-			: yes, have it ;;
++			ok_prereq=$(($ok_prereq + 1))
++			;;
+ 		*)
+-			! : nope ;;
++			# Keep a list of missing prerequisites
++			if test -z "$missing_prereq"
++			then
++				missing_prereq=$prerequisite
++			else
++				missing_prereq="$prerequisite,$missing_prereq"
++			fi
+ 		esac
+ 	done
++
++	test $total_prereq = $ok_prereq
+ }
+ 
+ # You are not expected to call test_ok_ and test_failure_ directly, use
+@@ -408,7 +423,7 @@ test_skip () {
+ 	case "$to_skip" in
+ 	t)
+ 		say_color skip >&3 "skipping test: $@"
+-		say_color skip "ok $test_count # skip $1 (prereqs: $prereq)"
++		say_color skip "ok $test_count # skip $1 (missing $missing_prereq of $prereq)"
+ 		: true
+ 		;;
+ 	*)
+-- 
+1.7.2.1.295.gd03d
+
