@@ -1,0 +1,127 @@
+From 3de342fc0fb4e45ec46010517cb8022b33f4de55 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Sat, 15 May 2010 16:25:38 +0000
+Subject: [PATCH v2] git-am: Ignore whitespace before patches
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change git-am to ignore whitespace (as defined by sh's read) at the
+beginning of patches.
+
+This makes git-am work with patches downloaded from the GMail web
+interface, here's an example from a raw Gmail attachment produced with
+`hexdump -C':
+
+    20 20 20 20 20 20 20 20  20 20 20 20 20 20 20 20  |                |
+    20 20 20 20 20 20 20 20  20 20 20 20 20 20 20 0a  |               .|
+    52 65 74 75 72 6e 2d 50  61 74 68 3a 20 3c 61 76  |Return-Path: <av|
+
+Having to tell GMail users that they must manually edit their patches
+before git-am will accept them (as this article does:
+http://evag.evn.am/git/git-and-gmail) isn't optimal.
+
+This change is probably useful for other things than GMail patch
+downloads, whitespace is also likely to appear if the user copy/pastes
+the patch around, e.g. via a pastebin, or any any number of other
+cases. This change harms nothing and makes git-am's detection more
+fault tolerant.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+I originally sent this on July 8 but it was never picked up. Junio commented:
+
+>> Whitespace is also likely to appear if the user copy/pastes the patch
+>> around, e.g. via a pastebin, or any any number of other cases. This
+>> harms nothing and makes git-am's detection more fault tolerant.
+>
+> Actually cut-and-paste is often a major source of whitespace breakage
+> (including tabs silently being expanded), and I personally think a patch
+> like this to encourage the practice is going in a wrong direction.
+
+I disagree and think git-am should be smarter. Any human looking at
+something like a GMail mail.txt download will clearly see that it's a
+patch, but git-am is pedantic and doesn't skip past whitespace at the
+beginning of the file.
+
+I think it should have more smarts and less pedanticness, and I run
+into this bug every time I download a patch via GMail.
+
+So please pick it up, thanks.
+
+ git-am.sh     |   16 +++++++++++++++-
+ t/t4150-am.sh |   30 ++++++++++++++++++++++++++++++
+ 2 files changed, 45 insertions(+), 1 deletions(-)
+
+diff --git a/git-am.sh b/git-am.sh
+index e7f008c..4ed8544 100755
+--- a/git-am.sh
++++ b/git-am.sh
+@@ -173,7 +173,21 @@ check_patch_format () {
+ 	# otherwise, check the first few lines of the first patch to try
+ 	# to detect its format
+ 	{
+-		read l1
++		while read -r line
++		do
++			case "$line" in
++				"")
++					# Just skip whitespace
++					continue
++					;;
++				*)
++					# First non-empty line
++					l1=$line
++					break
++					;;
++			esac
++		done
++
+ 		read l2
+ 		read l3
+ 		case "$l1" in
+diff --git a/t/t4150-am.sh b/t/t4150-am.sh
+index 810b04b..3d089de 100755
+--- a/t/t4150-am.sh
++++ b/t/t4150-am.sh
+@@ -318,6 +318,36 @@ test_expect_success 'am without --committer-date-is-author-date' '
+ 	test "$at" != "$ct"
+ '
+ 
++test_expect_success 'am applying a patch that begins with an empty line' '
++	git checkout first &&
++	test_tick &&
++	echo > patch1-white &&
++	cat patch1 >> patch1-white &&
++	git am patch1-white &&
++	git cat-file commit HEAD | sed -e "/^\$/q" >head1 &&
++	at=$(sed -ne "/^author /s/.*> //p" head1) &&
++	ct=$(sed -ne "/^committer /s/.*> //p" head1) &&
++	test "$at" != "$ct"
++'
++
++test_expect_success 'am applying a patch that begins with many empty lines' '
++	git checkout first &&
++	test_tick &&
++	echo "   " > patch1-white2 &&
++	echo "  " >> patch1-white2 &&
++	echo " " >> patch1-white2 &&
++	echo "" >> patch1-white2 &&
++	echo " " >> patch1-white2 &&
++	echo "  " >> patch1-white2 &&
++	echo "   " >> patch1-white2 &&
++	cat patch1 >> patch1-white2 &&
++	git am patch1-white2 &&
++	git cat-file commit HEAD | sed -e "/^\$/q" >head1 &&
++	at=$(sed -ne "/^author /s/.*> //p" head1) &&
++	ct=$(sed -ne "/^committer /s/.*> //p" head1) &&
++	test "$at" != "$ct"
++'
++
+ # This checks for +0000 because TZ is set to UTC and that should
+ # show up when the current time is used. The date in message is set
+ # by test_tick that uses -0700 timezone; if this feature does not
+-- 
+1.7.2.1.295.gdf931
+
