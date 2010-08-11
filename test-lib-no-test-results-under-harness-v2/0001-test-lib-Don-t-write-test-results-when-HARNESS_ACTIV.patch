@@ -1,0 +1,72 @@
+From e8eab006ed38019b738589f2e013706c336db859 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Thu, 8 Jul 2010 18:49:43 +0000
+Subject: [PATCH v2] test-lib: Don't write test-results when HARNESS_ACTIVE
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+TAP harnesses don't need to read test-results/*, since they keep track
+of the number of passing/failing tests internally. Skip the generation
+of these files when HARNESS_ACTIVE is set.
+
+It's now possible to run the Git test suite without writing anything
+to the t/ directory at all if you use a TAP harness and the --root
+switch:
+
+    cd t
+    sudo mount -t tmpfs none /tmp/memory -o size=300m
+    prove -j9 ./t[0-9]*.sh :: --root=/tmp/memory
+
+The I/O that the ~500 test-results/* files contributed was very
+minimal, but I thought this was worth mentioning.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+This one fell through the cracks, and conflicted with Thomas's later
+"Only run aggregate-results over actual counts" patch.
+
+Please apply it, it keeps conflicting with local changes I have to the
+test-lib.sh
+
+ t/test-lib.sh |   23 +++++++++++++----------
+ 1 files changed, 13 insertions(+), 10 deletions(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 4e73fff..956f1a5 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -646,16 +646,19 @@ test_create_repo () {
+ 
+ test_done () {
+ 	GIT_EXIT_OK=t
+-	test_results_dir="$TEST_DIRECTORY/test-results"
+-	mkdir -p "$test_results_dir"
+-	test_results_path="$test_results_dir/${0%.sh}-$$.counts"
+-
+-	echo "total $test_count" >> $test_results_path
+-	echo "success $test_success" >> $test_results_path
+-	echo "fixed $test_fixed" >> $test_results_path
+-	echo "broken $test_broken" >> $test_results_path
+-	echo "failed $test_failure" >> $test_results_path
+-	echo "" >> $test_results_path
++
++	if test -z "$HARNESS_ACTIVE"; then
++		test_results_dir="$TEST_DIRECTORY/test-results"
++		mkdir -p "$test_results_dir"
++		test_results_path="$test_results_dir/${0%.sh}-$$.counts"
++
++		echo "total $test_count" >> $test_results_path
++		echo "success $test_success" >> $test_results_path
++		echo "fixed $test_fixed" >> $test_results_path
++		echo "broken $test_broken" >> $test_results_path
++		echo "failed $test_failure" >> $test_results_path
++		echo "" >> $test_results_path
++	fi
+ 
+ 	if test "$test_fixed" != 0
+ 	then
+-- 
+1.7.2.1.295.gdf931
+
