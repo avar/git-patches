@@ -1,0 +1,91 @@
+From 08f8140638e9f2d94e7c0084399cb0d7b4b27500 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Sat, 14 Aug 2010 19:30:18 +0000
+Subject: [PATCH v2] reset: Better warning message on git reset --mixed <paths>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When you call "git reset --mixed <paths>" git will complain that using
+mixed with paths is deprecated:
+
+    warning: --mixed option is deprecated with paths.
+
+That doesn't tell the user why it's deprecated, or what he should use
+instead. Expand on the warning and tell the user to just omit --mixed:
+
+    warning: --mixed with paths is deprecated; use 'git reset -- <paths>' instead
+
+The exact wording of the warning was suggested by Jonathan Nieder.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+On Sat, Aug 14, 2010 at 21:05, Jonathan Nieder <jrnieder@gmail.com> wrote:
+> Maybe:
+>
+>  warning: --mixed with paths is deprecated; use 'git reset -- <paths>' instead
+
+That's better, thanks. Here's an amended version, and with tests this
+time.
+
+ builtin/reset.c           |    2 +-
+ t/t7112-reset-messages.sh |   33 +++++++++++++++++++++++++++++++++
+ 2 files changed, 34 insertions(+), 1 deletions(-)
+ create mode 100755 t/t7112-reset-messages.sh
+
+diff --git a/builtin/reset.c b/builtin/reset.c
+index 1283068..0037be4 100644
+--- a/builtin/reset.c
++++ b/builtin/reset.c
+@@ -318,7 +318,7 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
+ 	 * affecting the working tree nor HEAD. */
+ 	if (i < argc) {
+ 		if (reset_type == MIXED)
+-			warning("--mixed option is deprecated with paths.");
++			warning("--mixed with paths is deprecated; use 'git reset -- <paths>' instead.");
+ 		else if (reset_type != NONE)
+ 			die("Cannot do %s reset with paths.",
+ 					reset_type_names[reset_type]);
+diff --git a/t/t7112-reset-messages.sh b/t/t7112-reset-messages.sh
+new file mode 100755
+index 0000000..6f2669b
+--- /dev/null
++++ b/t/t7112-reset-messages.sh
+@@ -0,0 +1,33 @@
++#!/bin/sh
++#
++# Copyright (c) 2010 Ævar Arnfjörð Bjarmason
++#
++
++test_description='git reset warning and error messages'
++
++. ./test-lib.sh
++
++test_expect_success 'setup {err,out}-expect' "
++	cat >err-expect <<EOF &&
++warning: --mixed with paths is deprecated; use 'git reset -- <paths>' instead.
++EOF
++	cat >out-expect <<EOF
++Unstaged changes after reset:
++M	hlagh
++EOF
++"
++
++test_expect_success 'git reset --mixed <paths> warning' '
++	# Not test_commit() due to "ambiguous argument [..] both revision
++	# and filename"
++	echo stuff >hlagh &&
++	git add hlagh &&
++	git commit -m"adding stuff" hlagh &&
++	echo more stuff >hlagh &&
++	git add hlagh &&
++	test_must_fail git reset --mixed hlagh >out 2>err &&
++	test_cmp err-expect err &&
++	test_cmp out-expect out
++'
++
++test_done
+-- 
+1.7.2.1.339.gfad93
+
