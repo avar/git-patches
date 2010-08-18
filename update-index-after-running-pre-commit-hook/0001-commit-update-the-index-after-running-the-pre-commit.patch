@@ -23,6 +23,76 @@ we construct the message fixes this bug.
 Reported-by: Hinrik Örn Sigurðsson <hinrik.sig@gmail.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+2009/5/3 Hinrik Örn Sigurðsson <hinrik.sig@gmail.com>:
+> I have a pre-commit hook which extracts documentation from file $foo
+> if it has pending changes to be committed. The hook creates/updates
+> the documentation file and calls "git add" on it.
+>
+> When I do "git commit", the COMMIT_EDITMSG delivered to my editor
+> notes that this documentation file has been created/updated, but not
+> that its changes have been added to the index. However, if I go ahead
+> with the commit, I can see that the doc file changes were indeed
+> committed.
+>
+> Here is a simplified test case:
+>
+> $ cat .git/hooks/pre-commit
+> #!/usr/bin/env perl
+> use strict;
+> use warnings;
+>
+> my $old = qx"git rev-parse HEAD:foo 2>/dev/null";
+> my $new = qx"git rev-parse :foo 2>/dev/null";
+>
+> if (($? >> 8) != 0 || $old ne $new) {
+>    system "cat source > dest";
+>    system "git add dest";
+> }
+>
+> $ ls
+> source
+>
+> $ echo 123 >> source
+>
+> $ git status
+> # On branch master
+> # Changed but not updated:
+> #   (use "git add <file>..." to update what will be committed)
+> #   (use "git checkout -- <file>..." to discard changes in working directory)
+> #
+> #       modified:   source
+> #
+> no changes added to commit (use "git add" and/or "git commit -a")
+>
+> $ git commit -a
+> Test commit
+> # Please enter the commit message for your changes. Lines starting
+> # with '#' will be ignored, and an empty message aborts the commit.
+> # On branch master
+> # Changes to be committed:
+> #   (use "git reset HEAD <file>..." to unstage)
+> #
+> #       modified:   source
+> #
+> # Untracked files:
+> #   (use "git add <file>..." to include in what will be committed)
+> #
+> #       dest
+> [master 535ed7f] Test commit
+>  2 files changed, 3 insertions(+), 0 deletions(-)
+>  create mode 100644 dest
+>
+> $ git status
+> # On branch master
+> nothing to commit (working directory clean)
+
+Thanks for the report. Here's a proposed fix for this. I'm not
+familiar with the commit code so this may be the wrong way to go, but
+it fixes the bug and passes all tests.
+
+The reporter has promised offlist to write a test for this.
+
  builtin/commit.c |   33 +++++++++++++++++++++++++--------
  1 files changed, 25 insertions(+), 8 deletions(-)
 
