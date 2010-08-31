@@ -1,0 +1,149 @@
+From ebeff9efd2fbf731be7245326c6e6123d7c3f150 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Tue, 31 Aug 2010 08:54:36 +0000
+Subject: [PATCH] gettext: Make NO_GETTEXT=YesPlease the default in releases
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the Git build process so that gettext is no longer built by
+default as part of Git releases, and include a loud warning to
+downstream distributors in INSTALL saying that they shouldn't enable
+it.
+
+We're still working out the details of the gettext infrastructure and
+currently only a small portion of Git can be translated, so it's
+premature to enable it by default.
+
+However it's painful for everyone if the source changes needed for
+gettext can't be made in pu without conflicting with other series that
+apply to maint/master/next.
+
+When gettext is disabled the whole functionality basically boils down
+to this macro definition (or Shell and Perl equivalents) and a few
+skipping tests:
+
+    #define _(s) (s)
+
+So it's a lot less to get right than if we were enabling it by
+default.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+On Mon, Aug 30, 2010 at 21:42, Junio C Hamano <gitster@pobox.com> wrote:
+> Ævar Arnfjörð Bjarmason  <avarab@gmail.com> writes:
+>
+>> Now that Git has the infrastructure for translation in next I'm going
+>> to start submitting patches to make the main porcelain translatable.
+>>
+>> This series starts that work, and fixes and also fixes up some of the
+>> infrastructure (like the bug discussed in "Odd encoding issue with
+>> UTF-8 + gettext yields ? on non-ASCII"), and adds tests to make sure
+>> it's all working.
+>>
+>> With it applied git-init is the one and only utility of the porcelain
+>> that's translatable. The series includes a translation of it into
+>> Icelandic and Polish.
+>>
+>> I think it's ready to be applied. I tested it on Solaris, FreeBSD and
+>> Debian. But there's almost definitely something I'm missing in a
+>> series this big, so it's an RFC.
+>
+> Thanks; will queue them.
+
+Thanks!
+
+> I however strongly suspect that we would be better off first kicking the
+> earlier parts of i18n topic out of 'next' back to 'pu', as I am hoping
+> that we can declare feature freeze for 1.7.3 by the end of this week at
+> the latest, and you can never tell if we got the "infrastructure" right
+> without playing with a real "user of the infrastructure" like this 17
+> patch series, which means that the part of i18n topic that is already in
+> 'next' cannot be part of 1.7.3 --- it is way premature.
+
+I definitely agree that it's premature at this point, if for no other
+reason than that I'll never be able to make most of the main-porcelain
+translatable by the end of the week.
+
+However, there's another way to do this. Simply disable it by default
+in releases. Which this patch implements.
+
+I considered the possibility that we might want to disable it in
+select branches when I wrote it, so it's easy to do so. And IMO a
+better option due to the reasons cited in the commit message attached
+to the PATCH.
+
+> It was somewhat unfortunate and sad that your "test" series depended on a
+> few patches from the i18n series, which means it is now taken hostage to
+> the latter.  I'd rather want to have the "test" series in the 1.7.3, and
+> we need to think about a way to untangle the two topics.
+
+Yeah I wasn't very careful about keeping the bits already in pu
+separate. Untangling them shouldn't be that hard though, but hopefully
+with this patch we won't have to go that route.
+
+ INSTALL      |   17 +++++++++++++++--
+ Makefile     |    4 ++++
+ configure.ac |    2 +-
+ 3 files changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/INSTALL b/INSTALL
+index e4e7506..aa477e2 100644
+--- a/INSTALL
++++ b/INSTALL
+@@ -93,8 +93,21 @@ Issues of note:
+ 	  history graphically, and in git-gui.  If you don't want gitk or
+ 	  git-gui, you can use NO_TCLTK.
+ 
+-	- A gettext library is used by default for localizing Git. The
+-	  primary target is GNU libintl, but the Solaris gettext
++	- Git includes EXPERIMENTAL support for localization with gettext
++	  which is currently disabled by default in official Git
++	  releases.
++
++	  If you really want to build it you have to specify NO_GETTEXT=
++	  as a Makefile argument. If you're a downstream distributor
++	  please don't do so without consulting with the Git Mailing List
++	  first about the stability of this feature.
++
++	  It's only being included in releases so that source messages can
++	  be marked for translation without resulting in painful and
++	  inevitable merge conflicts between Git's pu branch and the
++	  rest. END WARNING.
++
++	  The primary target is GNU libintl, but the Solaris gettext
+ 	  implementation also works.
+ 
+ 	  We need a gettext.h on the system for C code, gettext.sh (or
+diff --git a/Makefile b/Makefile
+index 9818a59..bd61a5b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -272,6 +272,10 @@ ALL_CFLAGS = $(CPPFLAGS) $(CFLAGS)
+ ALL_LDFLAGS = $(LDFLAGS)
+ STRIP ?= strip
+ 
++# Disable gettext by default in releases while the implementation is
++# settling
++NO_GETTEXT = YesPleaseForNow
++
+ # Among the variables below, these:
+ #   gitexecdir
+ #   template_dir
+diff --git a/configure.ac b/configure.ac
+index 1821d89..c9b0265 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -806,7 +806,7 @@ AC_SUBST(HAVE_PATHS_H)
+ #
+ # Define NO_GETTEXT if you don't have libintl.h
+ AC_CHECK_HEADER([libintl.h],
+-[NO_GETTEXT=],
++[NO_GETTEXT=HaveItButYesPlease],
+ [NO_GETTEXT=YesPlease])
+ AC_SUBST(NO_GETTEXT)
+ #
+-- 
+1.7.2.2.535.g1333f.dirty
+
