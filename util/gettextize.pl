@@ -16,7 +16,7 @@ $cont =~ s[
     \( (?<cont>.*?) \);
 ][
 munge($+{func}, $+{w}, $+{cont});
-]exg;
+]exgs;
 
 sub munge {
     my ($func, $w, $cont) = @_;
