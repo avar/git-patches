@@ -21,7 +21,11 @@ munge($+{func}, $+{w}, $+{cont});
 sub munge {
     my ($func, $w, $cont) = @_;
 
-    $cont =~ s["(.*)"][_("$1")];
+    $cont =~ s[(?<!_\()"(.*)"][
+        $1 ~~ [ "%s\\n" ]
+        ? qq["$1"]
+        : qq[_("$1")]
+    ]e;
 
     return "$func$w($cont);";
 }
