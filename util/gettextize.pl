@@ -25,7 +25,7 @@ sub munge {
         $1 ~~ [ "%s\\n" ]
         ? qq["$1"]
         : qq[_("$1")]
-    ]e;
+    ]es;
 
     return "$func$w($cont);";
 }
