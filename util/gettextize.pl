@@ -11,7 +11,7 @@ my $cont = join '', <$in>;
 
 $cont =~ s[
     \b
-    (?<func>(?:die|die_errno|warning|fprintf|printf))
+    (?<func>(?:die|die_errno|warning|fprintf|printf|refresh_index))
     (?<w>\ *)
     \( (?<cont>.*?) \);
 ][
