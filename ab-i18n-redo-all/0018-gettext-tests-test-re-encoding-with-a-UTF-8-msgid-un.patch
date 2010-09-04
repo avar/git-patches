@@ -1,0 +1,88 @@
+From 96fd17115eeda2f913a713abcd28a4813179ed2e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Mon, 30 Aug 2010 16:59:13 +0000
+Subject: [PATCH 18/63] gettext tests: test re-encoding with a UTF-8 msgid under Shell
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A test that tests that calling gettext on a UTF-8 msgid works, and
+that recoding the resulting string works too.
+
+This test uses the --from-code=UTF-8 xgettext(1) argument introduced
+in an earlier patch.
+
+This patch only tests the shellscript portion of our gettext
+interface. I can't get any of these tests to fail on any of the
+gettext implementations I have around, even without the previous patch
+to gettext.c. But having exhaustive tests in this area is good
+regardless.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ po/is.po                           |    5 +++++
+ t/t0200/test.c                     |    3 +++
+ t/t0204-gettext-reencode-sanity.sh |   21 +++++++++++++++++++++
+ 3 files changed, 29 insertions(+), 0 deletions(-)
+
+diff --git a/po/is.po b/po/is.po
+index 4381ad9..95adde9 100644
+--- a/po/is.po
++++ b/po/is.po
+@@ -32,6 +32,11 @@ msgid "TEST: Old English Runes"
+ msgstr "TILRAUN: ᚻᛖ ᚳᚹᚫᚦ ᚦᚫᛏ ᚻᛖ ᛒᚢᛞᛖ ᚩᚾ ᚦᚫᛗ ᛚᚪᚾᛞᛖ ᚾᚩᚱᚦᚹᛖᚪᚱᛞᚢᛗ ᚹᛁᚦ ᚦᚪ ᚹᛖᛥᚫ"
+ 
+ #. TRANSLATORS: This is a test. You don't need to translate it.
++#, c-format
++msgid "TEST: ‘single’ and “double” quotes"
++msgstr "TILRAUN: ‚einfaldar‘ og „tvöfaldar“ gæsalappir"
++
++#. TRANSLATORS: This is a test. You don't need to translate it.
+ msgid "TEST: A Shell test string"
+ msgstr "TILRAUN: Skeljartilraunastrengur"
+ 
+diff --git a/t/t0200/test.c b/t/t0200/test.c
+index 82682dc..ff15c2f 100644
+--- a/t/t0200/test.c
++++ b/t/t0200/test.c
+@@ -16,4 +16,7 @@ int main(void)
+ 
+ 	/* TRANSLATORS: This is a test. You don't need to translate it. */
+ 	printf(_("TEST: Old English Runes"));
++
++	/* TRANSLATORS: This is a test. You don't need to translate it. */
++	printf(_("TEST: ‘single’ and “double” quotes"));
+ }
+diff --git a/t/t0204-gettext-reencode-sanity.sh b/t/t0204-gettext-reencode-sanity.sh
+index 3222e37..1a7ea37 100755
+--- a/t/t0204-gettext-reencode-sanity.sh
++++ b/t/t0204-gettext-reencode-sanity.sh
+@@ -40,4 +40,25 @@ test_expect_success GETTEXT_ISO_LOCALE 'gettext: Emitting ISO-8859-1 from our UT
+ 	fi
+ '
+ 
++test_expect_success GETTEXT_LOCALE 'gettext: Fetching a UTF-8 msgid -> UTF-8' '
++    printf "TILRAUN: ‚einfaldar‘ og „tvöfaldar“ gæsalappir" >expect &&
++    LANGUAGE=is LC_ALL="$is_IS_locale" gettext "TEST: ‘single’ and “double” quotes" >actual &&
++    test_cmp expect actual
++'
++
++# How these quotes get transliterated depends on the gettext implementation:
++#
++#   Debian:  ,einfaldar' og ,,tvöfaldar" [GNU libintl]
++#   FreeBSD: `einfaldar` og "tvöfaldar"  [GNU libintl]
++#   Solaris: ?einfaldar? og ?tvöfaldar?  [Solaris libintl]
++#
++# Just make sure the contents are transliterated, and don't use grep -q
++# so that these differences are emitted under --verbose for curious
++# eyes.
++test_expect_success GETTEXT_ISO_LOCALE 'gettext: Fetching a UTF-8 msgid -> ISO-8859-1' '
++    LANGUAGE=is LC_ALL="$is_IS_iso_locale" gettext "TEST: ‘single’ and “double” quotes" >actual &&
++    grep "einfaldar" actual &&
++    grep "$(echo tvöfaldar | iconv -f UTF-8 -t ISO8859-1)" actual
++'
++
+ test_done
+-- 
+1.7.2.3.313.gcd15
+
