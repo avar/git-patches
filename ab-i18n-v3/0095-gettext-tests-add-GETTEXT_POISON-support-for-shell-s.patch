@@ -1,0 +1,182 @@
+From 920d0cbca7bf4312454c3bf3ecf2ea84bb061e6d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Tue, 7 Sep 2010 15:25:05 +0000
+Subject: [PATCH 095/159] gettext tests: add GETTEXT_POISON support for shell scripts
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Expand the existing GETTEXT_POISON=YesPlease support to support shell
+scripts. Analogous the existing C support this is needed to test that
+changes to the output of the shell scripts don't break the plumbing
+output.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-sh-i18n.sh               |   73 ++++++++++++++++++++++++++----------------
+ t/t0201-gettext-fallbacks.sh |   12 +++---
+ t/test-lib.sh                |    8 ++++-
+ 3 files changed, 58 insertions(+), 35 deletions(-)
+
+diff --git a/git-sh-i18n.sh b/git-sh-i18n.sh
+index 698a000..b8b645a 100644
+--- a/git-sh-i18n.sh
++++ b/git-sh-i18n.sh
+@@ -28,44 +28,61 @@ else
+ fi
+ export TEXTDOMAINDIR
+ 
+-if test -z "$GIT_INTERNAL_GETTEXT_TEST_FALLBACKS" && type gettext.sh >/dev/null 2>&1
++if test -z "$GIT_INTERNAL_GETTEXT_GETTEXT_POISON"
+ then
+-	# This is GNU libintl's gettext.sh, we don't need to do anything
+-	# else than setting up the environment and loading gettext.sh
+-	GIT_INTERNAL_GETTEXT_SH_SCHEME=gnu
+-	export GIT_INTERNAL_GETTEXT_SH_SCHEME
++	if test -z "$GIT_INTERNAL_GETTEXT_TEST_FALLBACKS" && type gettext.sh >/dev/null 2>&1
++	then
++		# This is GNU libintl's gettext.sh, we don't need to do anything
++		# else than setting up the environment and loading gettext.sh
++		GIT_INTERNAL_GETTEXT_SH_SCHEME=gnu
++		export GIT_INTERNAL_GETTEXT_SH_SCHEME
+ 
+-	# Try to use libintl's gettext.sh, or fall back to English if we
+-	# can't.
+-	. gettext.sh
+-elif test -z "$GIT_INTERNAL_GETTEXT_TEST_FALLBACKS" && test "$(gettext -h 2>&1)" = "-h"
+-then
+-	# We don't have gettext.sh, but there's a gettext binary in our
+-	# path. This is probably Solaris or something like it which has a
+-	# gettext implementation that isn't GNU libintl.
+-	GIT_INTERNAL_GETTEXT_SH_SCHEME=solaris
+-	export GIT_INTERNAL_GETTEXT_SH_SCHEME
++		# Try to use libintl's gettext.sh, or fall back to English if we
++		# can't.
++		. gettext.sh
++	elif test -z "$GIT_INTERNAL_GETTEXT_TEST_FALLBACKS" && test "$(gettext -h 2>&1)" = "-h"
++	then
++		# We don't have gettext.sh, but there's a gettext binary in our
++		# path. This is probably Solaris or something like it which has a
++		# gettext implementation that isn't GNU libintl.
++		GIT_INTERNAL_GETTEXT_SH_SCHEME=solaris
++		export GIT_INTERNAL_GETTEXT_SH_SCHEME
+ 
+-	# Solaris has a gettext(1) but no eval_gettext(1)
+-	eval_gettext () {
+-		gettext_out=$(gettext "$1")
+-		gettext_eval="printf '%s' \"$gettext_out\""
+-		printf "%s" "`eval \"$gettext_eval\"`"
+-	}
++		# Solaris has a gettext(1) but no eval_gettext(1)
++		eval_gettext () {
++			gettext_out=$(gettext "$1")
++			gettext_eval="printf '%s' \"$gettext_out\""
++			printf "%s" "`eval \"$gettext_eval\"`"
++		}
++	else
++		# Since gettext.sh isn't available we'll have to define our own
++		# dummy pass-through functions.
++
++		# Tell our tests that we don't have the real gettext.sh
++		GIT_INTERNAL_GETTEXT_SH_SCHEME=fallthrough
++		export GIT_INTERNAL_GETTEXT_SH_SCHEME
++
++		gettext () {
++			printf "%s" "$1"
++		}
++
++		eval_gettext () {
++			gettext_eval="printf '%s' \"$1\""
++			printf "%s" "`eval \"$gettext_eval\"`"
++		}
++	fi
+ else
+-	# Since gettext.sh isn't available we'll have to define our own
+-	# dummy pass-through functions.
++	# Emit garbage under GETTEXT_POISON=YesPlease. Unlike the C tests
++	# this relies on an environment variable
+ 
+-	# Tell our tests that we don't have the real gettext.sh
+-	GIT_INTERNAL_GETTEXT_SH_SCHEME=fallthrough
++	GIT_INTERNAL_GETTEXT_SH_SCHEME=poison
+ 	export GIT_INTERNAL_GETTEXT_SH_SCHEME
+ 
+ 	gettext () {
+-		printf "%s" "$1"
++		printf "%s" "# GETTEXT POISON #"
+ 	}
+ 
+ 	eval_gettext () {
+-		gettext_eval="printf '%s' \"$1\""
+-		printf "%s" "`eval \"$gettext_eval\"`"
++		printf "%s" "# GETTEXT POISON #"
+ 	}
+ fi
+diff --git a/t/t0201-gettext-fallbacks.sh b/t/t0201-gettext-fallbacks.sh
+index 47ce4f6..7a85d9b 100755
+--- a/t/t0201-gettext-fallbacks.sh
++++ b/t/t0201-gettext-fallbacks.sh
+@@ -10,19 +10,19 @@ export GIT_INTERNAL_GETTEXT_TEST_FALLBACKS
+ 
+ . ./lib-gettext.sh
+ 
+-test_expect_success "sanity: \$GIT_INTERNAL_GETTEXT_SH_SCHEME is set (to $GIT_INTERNAL_GETTEXT_SH_SCHEME)" '
++test_expect_success NO_GETTEXT_POISON "sanity: \$GIT_INTERNAL_GETTEXT_SH_SCHEME is set (to $GIT_INTERNAL_GETTEXT_SH_SCHEME)" '
+     test -n "$GIT_INTERNAL_GETTEXT_SH_SCHEME"
+ '
+ 
+-test_expect_success 'sanity: $GIT_INTERNAL_GETTEXT_TEST_FALLBACKS is set' '
++test_expect_success NO_GETTEXT_POISON 'sanity: $GIT_INTERNAL_GETTEXT_TEST_FALLBACKS is set' '
+     test -n "$GIT_INTERNAL_GETTEXT_TEST_FALLBACKS"
+ '
+ 
+-test_expect_success 'sanity: $GIT_INTERNAL_GETTEXT_SH_SCHEME" is fallthrough' '
++test_expect_success NO_GETTEXT_POISON 'sanity: $GIT_INTERNAL_GETTEXT_SH_SCHEME" is fallthrough' '
+     test "$GIT_INTERNAL_GETTEXT_SH_SCHEME" = "fallthrough"
+ '
+ 
+-test_expect_success 'gettext: our gettext() fallback has pass-through semantics' '
++test_expect_success NO_GETTEXT_POISON 'gettext: our gettext() fallback has pass-through semantics' '
+     printf "test" >expect &&
+     gettext "test" >actual &&
+     test_cmp expect actual &&
+@@ -31,7 +31,7 @@ test_expect_success 'gettext: our gettext() fallback has pass-through semantics'
+     test_cmp expect actual
+ '
+ 
+-test_expect_success 'eval_gettext: our eval_gettext() fallback has pass-through semantics' '
++test_expect_success NO_GETTEXT_POISON 'eval_gettext: our eval_gettext() fallback has pass-through semantics' '
+     printf "test" >expect &&
+     eval_gettext "test" >actual &&
+     test_cmp expect actual &&
+@@ -40,7 +40,7 @@ test_expect_success 'eval_gettext: our eval_gettext() fallback has pass-through
+     test_cmp expect actual
+ '
+ 
+-test_expect_success 'eval_gettext: our eval_gettext() fallback can interpolate variables' '
++test_expect_success NO_GETTEXT_POISON 'eval_gettext: our eval_gettext() fallback can interpolate variables' '
+     printf "test YesPlease" >expect &&
+     eval_gettext "test \$GIT_INTERNAL_GETTEXT_TEST_FALLBACKS" >actual &&
+     test_cmp expect actual
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index db539fb..e969c8f 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -982,7 +982,13 @@ esac
+ test -z "$NO_PERL" && test_set_prereq PERL
+ test -z "$NO_PYTHON" && test_set_prereq PYTHON
+ test -z "$NO_GETTEXT" && test_set_prereq GETTEXT
+-test -z "$GETTEXT_POISON" && test_set_prereq NO_GETTEXT_POISON
++if test -z "$GETTEXT_POISON"
++then
++	test_set_prereq NO_GETTEXT_POISON
++else
++	GIT_INTERNAL_GETTEXT_GETTEXT_POISON=YesPlease
++	export GIT_INTERNAL_GETTEXT_GETTEXT_POISON
++fi
+ 
+ # test whether the filesystem supports symbolic links
+ ln -s x y 2>/dev/null && test -h y 2>/dev/null && test_set_prereq SYMLINKS
+-- 
+1.7.3.159.g610493
+
