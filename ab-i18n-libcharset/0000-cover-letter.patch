@@ -1,0 +1,167 @@
+From bcbb20f081847c7b3e31af03d8dc1b113e60181c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Tue, 28 Sep 2010 18:27:40 +0000
+Subject: [PATCH/RFC 0/2] use libcharset.h with gettext if available
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On Tue, Sep 28, 2010 at 17:42, Erik Faye-Lund <kusmabite@gmail.com> wrote:
+> On Tue, Sep 28, 2010 at 7:07 PM, Ævar Arnfjörð Bjarmason
+> <avarab@gmail.com> wrote:
+>> On Tue, Sep 28, 2010 at 16:05, Erik Faye-Lund <kusmabite@gmail.com> wrote:
+>>> libcharset provides an even more portable way of quering the charset
+>>> of the current locale.
+>>>
+>>> Use that instead of nl_langinfo unless NO_LIBCHARSET is set.
+>>>
+>>> Signed-off-by: Erik Faye-Lund <kusmabite@gmail.com>
+>>> ---
+>>>
+>>> Windows doesn't have langinfo.h and nl_langinfo(), but libcharset was
+>>> invented for this very purpose. With this patch on top, ab/i18n
+>>> compiles without errors in msysGit.
+>>>
+>>> There's still a bunch of lower-level issues on Windows, like gettext
+>>> ending up overloading our winansi-wrappings for printf and friends,
+>>> but let's take thinks one step at the time :)
+>>>
+>>>  configure.ac |    6 ++++++
+>>>  gettext.c    |   10 +++++++++-
+>>>  2 files changed, 15 insertions(+), 1 deletions(-)
+>>>
+>>> diff --git a/configure.ac b/configure.ac
+>>> index 1821d89..d3139cd 100644
+>>> --- a/configure.ac
+>>> +++ b/configure.ac
+>>> @@ -810,6 +810,12 @@ AC_CHECK_HEADER([libintl.h],
+>>>  [NO_GETTEXT=YesPlease])
+>>>  AC_SUBST(NO_GETTEXT)
+>>>  #
+>>> +# Define NO_LIBCHARSET if you don't have libcharset.h
+>>> +AC_CHECK_HEADER([libcharset.h],
+>>> +[NO_LIBCHARSET=],
+>>> +[NO_LIBCHARSET=YesPlease])
+>>> +AC_SUBST(NO_LIBCHARSET)
+>>> +#
+>>>  # Define NO_STRCASESTR if you don't have strcasestr.
+>>>  GIT_CHECK_FUNC(strcasestr,
+>>>  [NO_STRCASESTR=],
+>>> diff --git a/gettext.c b/gettext.c
+>>> index 8644098..902268c 100644
+>>> --- a/gettext.c
+>>> +++ b/gettext.c
+>>> @@ -1,13 +1,17 @@
+>>>  #include "exec_cmd.h"
+>>>  #include <locale.h>
+>>>  #include <libintl.h>
+>>> +#ifndef NO_LIBCHARSET
+>>> +#include <libcharset.h>
+>>> +#else
+>>>  #include <langinfo.h>
+>>> +#endif
+>>>  #include <stdlib.h>
+>>>
+>>>  extern void git_setup_gettext(void) {
+>>>        char *podir;
+>>>        char *envdir = getenv("GIT_TEXTDOMAINDIR");
+>>> -       char *charset;
+>>> +       const char *charset;
+>>>
+>>>        if (envdir) {
+>>>                (void)bindtextdomain("git", envdir);
+>>> @@ -20,7 +24,11 @@ extern void git_setup_gettext(void) {
+>>>
+>>>        (void)setlocale(LC_MESSAGES, "");
+>>>        (void)setlocale(LC_CTYPE, "");
+>>> +#ifndef NO_LIBCHARSET
+>>> +       charset = locale_charset();
+>>> +#else
+>>>        charset = nl_langinfo(CODESET);
+>>> +#endif
+>>>        (void)bind_textdomain_codeset("git", charset);
+>>>        (void)setlocale(LC_CTYPE, "C");
+>>>        (void)textdomain("git");
+>>
+>> Thanks for porting it to Windows. Some points:
+>>
+>>  * Nit: Should be NEEDS_LIBCHARSET instead of NO_LIBCHARSET, all the
+>>   variables that set library inclusions in the Makefile use the
+>>   NEED_* names.
+>>
+>
+> That's not true, at least NO_OPENSSL, NO_PTHREADS, NO_ICONV,
+> NO_LIBGEN_H, NO_MMAP and NO_SYS_SELECT_H use the NO_-prefix to include
+> libraries (as opposed to the NEEDS_-prefix). And to be honest, I think
+> the NEEDS_-prefix would be a lie in this case; we don't NEED it, we
+> take advantage of it if it's there.
+>
+> To be honest, I just mimicked what was done for detection of gettext.
+> Perhaps HAVE_LIBCHARSET_H would be the appropriate define? It's what
+> we use for paths.h (HAVE_PATHS_H)...
+
+You're right, a NO_* makes more sense here.
+
+>>  * Their patch compiles a program that includes libcharset.h and
+>>   compiles "const char* charset = locale_charset();". I don't know if
+>>   this is needed, or whether just checking the header name like
+>>   you've done will do.
+>>
+>
+> I don't think there's any point to it - libcharset.h is pretty much
+> just about that one function. And if it turns out I'm wrong, we can
+> add a check like that in the future.
+>
+>>  * They also have a HAVE_LANGINFO_H define and fall back on just
+>>   returning "", which works on GNU iconv. Maybe we should do this
+>>   too?
+>>
+>
+> Perhaps, but can't that wait until we encounter a system that needs it?
+
+To both of the above: It's completely reasonable as-is, I just wanted
+to mention it in case a list member knew of a reason to do it like GHC
+did it. But just checking for the header will do fine until we
+encounter issues with that.
+
+> What's interesting there is what you say about GNU iconv handling "".
+> This means that the minimal fix for Windows could be even smaller -
+> we're using GNU iconv :)
+
+Yeah, but probably better to do it by using libcharset.h instead.
+
+>> I'm not sure about any of this, since I've just been testing on
+>> Solaris, Linux and FreeBSD.
+>
+> I think Solaris, Linux, FreeBSD and Windows is a pretty wide selection
+> of platforms, so I hope it should be pretty painless once this hits
+> 'next'. Sure, there might be some platforms that needs a fix-up, but
+> there always is with new code. And besides, there's even time to test
+> more platforms before merging to 'next', no? :)
+
+Yeah, I'm hoping it'll get into next soon so we can get more
+reports/fixes like these. Anyway, I amended your patches a bit, here
+are the changes:
+
+ * Split up the s/char*/const char*/ change into its own patch, or is
+   there a reason for why this needs to be there along with the
+   libcharset.h change?
+
+ * Added docs about the define to the Makefile
+
+ * Added defaults for NO_LIBCHARSET to the default, I only changed the
+   defaults for the MINGW entry, maybe it should be changed on Cygwin
+   and Windows too? And probably on OpenBSD and NetBSD too.
+
+Erik Faye-Lund (2):
+  gettext: use const char* instead of char*
+  gettext: use libcharset when available
+
+ Makefile     |   17 +++++++++++++++++
+ configure.ac |    6 ++++++
+ gettext.c    |   10 +++++++++-
+ 3 files changed, 32 insertions(+), 1 deletions(-)
+
+-- 
+1.7.3.159.g610493
+
