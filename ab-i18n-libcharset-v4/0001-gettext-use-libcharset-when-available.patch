@@ -1,0 +1,161 @@
+From f8147d788864e58f9c9f66065e0c0389d3a38014 Mon Sep 17 00:00:00 2001
+From: Erik Faye-Lund <kusmabite@gmail.com>
+Date: Tue, 28 Sep 2010 18:05:26 +0200
+Subject: [PATCH v3] gettext: use libcharset when available
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the git_setup_gettext function to use libcharset to query the
+character set of the current locale if it's available. I.e. use it
+instead of nl_langinfo if HAVE_LIBCHARSET_H is set.
+
+The GNU gettext manual recommends using langinfo.h's
+nl_langinfo(CODESET) to acquire the current character set, but on
+systems that have libcharset.h's locale_charset() using the latter is
+either saner, or the only option on those systems.
+
+GNU and Solaris have a nl_langinfo(CODESET), FreeBSD can use either,
+but MinGW and some others need to use libcharset.h's locale_charset()
+instead.
+
+Since locale_charset returns a const char* instead of char* as
+nl_langinfo does the type of the variable we're using to store the
+charset in git_setup_gettext has been changed.
+
+Signed-off-by: Erik Faye-Lund <kusmabite@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+On Wed, Sep 29, 2010 at 13:40, Ævar Arnfjörð Bjarmason <avarab@gmail.com> wrote:
+> From: Erik Faye-Lund <kusmabite@gmail.com>
+> On Wed, Sep 29, 2010 at 13:34, Erik Faye-Lund <kusmabite@gmail.com> wrote:
+>> Very minor nit: It's officially spelled MinGW, with an upper-case G.
+>
+> Did s/MingW/MinGW/ in the content & message in this v2.
+
+Discard that one, I accidentally changed some unrelated mention of
+MingW to MinGW.
+
+ Makefile      |   17 +++++++++++++++++
+ config.mak.in |    1 +
+ configure.ac  |    6 ++++++
+ gettext.c     |   10 +++++++++-
+ 4 files changed, 33 insertions(+), 1 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 680e578..49a3386 100644
+--- a/Makefile
++++ b/Makefile
+@@ -43,6 +43,12 @@ all::
+ # on platforms where we don't expect glibc (Linux, Hurd,
+ # GNU/kFreeBSD), which includes libintl.
+ #
++# Define HAVE_LIBCHARSET_H if you haven't set NO_GETTEXT and you can't
++# trust the langinfo.h's nl_langinfo(CODESET) function to return the
++# current character set. GNU and Solaris have a nl_langinfo(CODESET),
++# FreeBSD can use either, but MinGW and some others need to use
++# libcharset.h's locale_charset() instead.
++#
+ # Define GNU_GETTEXT if you're using the GNU implementation of
+ # libintl. We define this everywhere except on Solaris, which has its
+ # own gettext implementation. If GNU_GETTEXT is set we'll use GNU
+@@ -792,6 +798,10 @@ ifndef NO_GETTEXT
+ 	# Systems that don't use GNU gettext are the exception. Only
+ 	# Solaris has a mature non-GNU gettext implementation.
+ 	GNU_GETTEXT = YesPlease
++
++	# Since we assume a GNU gettext by default we also assume a
++	# GNU-like langinfo.h by default
++	HAVE_LIBCHARSET_H =
+ endif
+ 
+ # We choose to avoid "if .. else if .. else .. endif endif"
+@@ -1180,6 +1190,9 @@ ifneq (,$(wildcard ../THIS_IS_MSYSGIT))
+ 	EXTLIBS += /mingw/lib/libz.a
+ 	NO_R_TO_GCC_LINKER = YesPlease
+ 	INTERNAL_QSORT = YesPlease
++ifndef NO_GETTEXT
++	HAVE_LIBCHARSET_H = YesPlease
++endif
+ else
+ 	NO_CURL = YesPlease
+ endif
+@@ -1964,6 +1977,10 @@ config.s config.o: EXTRA_CPPFLAGS = -DETC_GITCONFIG='"$(ETC_GITCONFIG_SQ)"'
+ 
+ http.s http.o: EXTRA_CPPFLAGS = -DGIT_HTTP_USER_AGENT='"git/$(GIT_VERSION)"'
+ 
++ifdef HAVE_LIBCHARSET_H
++gettext.s gettext.o: EXTRA_CPPFLAGS = -DHAVE_LIBCHARSET_H
++endif
++
+ ifdef NO_EXPAT
+ http-walker.s http-walker.o: EXTRA_CPPFLAGS = -DNO_EXPAT
+ endif
+diff --git a/config.mak.in b/config.mak.in
+index 9f47aa5..969cbaa 100644
+--- a/config.mak.in
++++ b/config.mak.in
+@@ -34,6 +34,7 @@ NO_CURL=@NO_CURL@
+ NO_EXPAT=@NO_EXPAT@
+ NO_LIBGEN_H=@NO_LIBGEN_H@
+ HAVE_PATHS_H=@HAVE_PATHS_H@
++HAVE_LIBCHARSET_H=@HAVE_LIBCHARSET_H@
+ NO_GETTEXT=@NO_GETTEXT@
+ NEEDS_LIBICONV=@NEEDS_LIBICONV@
+ NEEDS_SOCKET=@NEEDS_SOCKET@
+diff --git a/configure.ac b/configure.ac
+index 1821d89..b06bad1 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -810,6 +810,12 @@ AC_CHECK_HEADER([libintl.h],
+ [NO_GETTEXT=YesPlease])
+ AC_SUBST(NO_GETTEXT)
+ #
++# Define HAVE_LIBCHARSET_H if have libcharset.h
++AC_CHECK_HEADER([libcharset.h],
++[HAVE_LIBCHARSET_H=YesPlease],
++[HAVE_LIBCHARSET_H=])
++AC_SUBST(HAVE_LIBCHARSET_H)
++#
+ # Define NO_STRCASESTR if you don't have strcasestr.
+ GIT_CHECK_FUNC(strcasestr,
+ [NO_STRCASESTR=],
+diff --git a/gettext.c b/gettext.c
+index 8644098..9bdac56 100644
+--- a/gettext.c
++++ b/gettext.c
+@@ -1,13 +1,17 @@
+ #include "exec_cmd.h"
+ #include <locale.h>
+ #include <libintl.h>
++#ifdef HAVE_LIBCHARSET_H
++#include <libcharset.h>
++#else
+ #include <langinfo.h>
++#endif
+ #include <stdlib.h>
+ 
+ extern void git_setup_gettext(void) {
+ 	char *podir;
+ 	char *envdir = getenv("GIT_TEXTDOMAINDIR");
+-	char *charset;
++	const char *charset;
+ 
+ 	if (envdir) {
+ 		(void)bindtextdomain("git", envdir);
+@@ -20,7 +24,11 @@ extern void git_setup_gettext(void) {
+ 
+ 	(void)setlocale(LC_MESSAGES, "");
+ 	(void)setlocale(LC_CTYPE, "");
++#ifdef HAVE_LIBCHARSET_H
++	charset = locale_charset();
++#else
+ 	charset = nl_langinfo(CODESET);
++#endif
+ 	(void)bind_textdomain_codeset("git", charset);
+ 	(void)setlocale(LC_CTYPE, "C");
+ 	(void)textdomain("git");
+-- 
+1.7.3.159.g610493
+
