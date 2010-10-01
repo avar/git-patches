@@ -1,0 +1,243 @@
+From ef1e2f79b327cfae82c8c30402d4210a81ba819f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Fri, 1 Oct 2010 17:00:12 +0000
+Subject: [PATCH v2] test-lib: make test_expect_code a test command
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change test_expect_code to be a normal test command instead of a
+top-level command.
+
+As a top-level command it would fail in cases like:
+
+    test_expect_code 1 'phoney' '
+        foo && bar && (exit 1)
+    '
+
+Here the test might incorrectly succeed if "foo" or "bar" happened to
+fail with exit status 1. Instead we now do:
+
+    test_expect_success 'phoney' '
+        foo && bar && test_expect_code 1 "(exit 1)"
+    '
+
+Which will only succeed if "foo" and "bar" return status 0, and "(exit
+1)" returns status 1.
+
+Some test code in t0000-basic.sh relied on the old semantics of
+test_expect_code to test the test_when_finished command. I've
+converted that code to use an external test similar to the TODO test I
+added in v1.7.3-rc0~2^2~3.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+Fixed s/no the/to the/ typo in the commit message spotted by Sverre
+Rabbelier.
+
+ t/README                |   16 +++++++------
+ t/t0000-basic.sh        |   55 ++++++++++++++++++++++++++++++++++++++--------
+ t/t1504-ceiling-dirs.sh |    5 ++-
+ t/t6020-merge-df.sh     |    4 ++-
+ t/test-lib.sh           |   40 ++++++++++++++++++---------------
+ 5 files changed, 82 insertions(+), 38 deletions(-)
+
+diff --git a/t/README b/t/README
+index a1eb7c8..c216e8c 100644
+--- a/t/README
++++ b/t/README
+@@ -395,13 +395,6 @@ library for your script to use.
+    Like test_expect_success this function can optionally use a three
+    argument invocation with a prerequisite as the first argument.
+ 
+- - test_expect_code [<prereq>] <code> <message> <script>
+-
+-   Analogous to test_expect_success, but pass the test if it exits
+-   with a given exit <code>
+-
+- test_expect_code 1 'Merge with d/f conflicts' 'git merge "merge msg" B master'
+-
+  - test_debug <script>
+ 
+    This takes a single argument, <script>, and evaluates it only
+@@ -482,6 +475,15 @@ library for your script to use.
+ 	    'Perl API' \
+ 	    "$PERL_PATH" "$TEST_DIRECTORY"/t9700/test.pl
+ 
++ - test_expect_code <exit-code> <git-command>
++
++   Run a git command and ensure that it exits with the given exit
++   code. For example:
++
++	test_expect_success 'Merge with d/f conflicts' '
++		test_expect_code 1 git merge "merge msg" B master
++	'
++
+  - test_must_fail <git-command>
+ 
+    Run a git command and ensure it fails in a controlled way.  Use
+diff --git a/t/t0000-basic.sh b/t/t0000-basic.sh
+index f688bd3..c2f5f8d 100755
+--- a/t/t0000-basic.sh
++++ b/t/t0000-basic.sh
+@@ -130,22 +130,57 @@ test_expect_success 'tests clean up after themselves' '
+     test_when_finished clean=yes
+ '
+ 
+-cleaner=no
+-test_expect_code 1 'tests clean up even after a failure' '
+-    test_when_finished cleaner=yes &&
+-    (exit 1)
+-'
+-
+-if test $clean$cleaner != yesyes
++if test $clean != yes
+ then
+-	say "bug in test framework: cleanup commands do not work reliably"
++	say "bug in test framework: basic cleanup command does not work reliably"
+ 	exit 1
+ fi
+ 
+-test_expect_code 2 'failure to clean up causes the test to fail' '
+-    test_when_finished "(exit 2)"
++test_expect_success 'tests clean up even on failures' "
++    mkdir failing-cleanup &&
++    (cd failing-cleanup &&
++    cat >failing-cleanup.sh <<EOF &&
++#!$SHELL_PATH
++
++test_description='Failing tests with cleanup commands'
++
++# Point to the t/test-lib.sh, which isn't in ../ as usual
++TEST_DIRECTORY=\"$TEST_DIRECTORY\"
++. \"\$TEST_DIRECTORY\"/test-lib.sh
++
++test_expect_success 'tests clean up even after a failure' '
++    touch clean-after-failure &&
++    test_when_finished rm clean-after-failure &&
++    (exit 1)
+ '
+ 
++test_expect_success 'failure to clean up causes the test to fail' '
++    test_when_finished \"(exit 2)\"
++'
++
++test_done
++EOF
++    chmod +x failing-cleanup.sh &&
++    test_must_fail ./failing-cleanup.sh >out 2>err &&
++    ! test -s err &&
++    ! test -f \"trash directory.failing-cleanup/clean-after-failure\" &&
++cat >expect <<EOF &&
++not ok - 1 tests clean up even after a failure
++#	
++#	    touch clean-after-failure &&
++#	    test_when_finished rm clean-after-failure &&
++#	    (exit 1)
++#	
++not ok - 2 failure to clean up causes the test to fail
++#	
++#	    test_when_finished \"(exit 2)\"
++#	
++# failed 2 among 2 test(s)
++1..2
++EOF
++    test_cmp expect out)
++"
++
+ ################################################################
+ # Basics of the basics
+ 
+diff --git a/t/t1504-ceiling-dirs.sh b/t/t1504-ceiling-dirs.sh
+index df5ad8c..cce87a5 100755
+--- a/t/t1504-ceiling-dirs.sh
++++ b/t/t1504-ceiling-dirs.sh
+@@ -9,8 +9,9 @@ test_prefix() {
+ }
+ 
+ test_fail() {
+-	test_expect_code 128 "$1: prefix" \
+-	"git rev-parse --show-prefix"
++	test_expect_success "$1: prefix" '
++		test_expect_code 128 git rev-parse --show-prefix
++	'
+ }
+ 
+ TRASH_ROOT="$PWD"
+diff --git a/t/t6020-merge-df.sh b/t/t6020-merge-df.sh
+index 490d397..5d91d05 100755
+--- a/t/t6020-merge-df.sh
++++ b/t/t6020-merge-df.sh
+@@ -20,7 +20,9 @@ echo "file dir" > dir &&
+ git add dir &&
+ git commit -m "File: dir"'
+ 
+-test_expect_code 1 'Merge with d/f conflicts' 'git merge "merge msg" B master'
++test_expect_success 'Merge with d/f conflicts' '
++	test_expect_code 1 git merge "merge msg" B master
++'
+ 
+ test_expect_success 'F/D conflict' '
+ 	git reset --hard &&
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 830e5e7..d86edcd 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -473,24 +473,6 @@ test_expect_success () {
+ 	echo >&3 ""
+ }
+ 
+-test_expect_code () {
+-	test "$#" = 4 && { prereq=$1; shift; } || prereq=
+-	test "$#" = 3 ||
+-	error "bug in the test script: not 3 or 4 parameters to test-expect-code"
+-	if ! test_skip "$@"
+-	then
+-		say >&3 "expecting exit code $1: $3"
+-		test_run_ "$3"
+-		if [ "$?" = 0 -a "$eval_ret" = "$1" ]
+-		then
+-			test_ok_ "$2"
+-		else
+-			test_failure_ "$@"
+-		fi
+-	fi
+-	echo >&3 ""
+-}
+-
+ # test_external runs external test scripts that provide continuous
+ # test output about their progress, and succeeds/fails on
+ # zero/non-zero exit code.  It outputs the test output on stdout even
+@@ -658,6 +640,28 @@ test_might_fail () {
+ 	return 0
+ }
+ 
++# Similar to test_must_fail and test_might_fail, but check that a
++# given command exited with a given exit code. Meant to be used as:
++#
++#	test_expect_success 'Merge with d/f conflicts' '
++#		test_expect_code 1 git merge "merge msg" B master
++#	'
++
++test_expect_code () {
++	want_code=$1
++	shift
++	"$@"
++	exit_code=$?
++	if test $exit_code = $want_code
++	then
++		echo >&2 "test_expect_code: command exited with $exit_code: $*"
++		return 0
++	else
++		echo >&2 "test_expect_code: command exited with $exit_code, we wanted $want_code $*"
++		return 1
++	fi
++}
++
+ # test_cmp is a helper function to compare actual and expected output.
+ # You can use it like:
+ #
+-- 
+1.7.3.159.g610493
+
