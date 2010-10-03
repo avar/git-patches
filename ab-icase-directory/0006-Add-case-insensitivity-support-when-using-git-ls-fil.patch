@@ -1,0 +1,83 @@
+From 3224050e6c02dff5b9cb987dc9085a1f70504312 Mon Sep 17 00:00:00 2001
+From: Joshua Jensen <jjensen@workspacewhiz.com>
+Date: Mon, 16 Aug 2010 21:38:12 +0200
+Subject: [PATCH/RFC v3 6/8] Add case insensitivity support when using git ls-files
+
+When mydir/filea.txt is added, mydir/ is renamed to MyDir/, and
+MyDir/fileb.txt is added, running git ls-files mydir only shows
+mydir/filea.txt. Running git ls-files MyDir shows MyDir/fileb.txt.
+Running git ls-files mYdIR shows nothing.
+
+With this patch running git ls-files for mydir, MyDir, and mYdIR shows
+mydir/filea.txt and MyDir/fileb.txt.
+
+Wildcards are not handled case insensitively in this patch. Example:
+MyDir/aBc/file.txt is added. git ls-files MyDir/a* works fine, but git
+ls-files mydir/a* does not.
+
+Signed-off-by: Joshua Jensen <jjensen@workspacewhiz.com>
+Signed-off-by: Johannes Sixt <j6t@kdbg.org>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ dir.c |   38 ++++++++++++++++++++++++++------------
+ 1 files changed, 26 insertions(+), 12 deletions(-)
+
+diff --git a/dir.c b/dir.c
+index cf8f65c..53aa4f3 100644
+--- a/dir.c
++++ b/dir.c
+@@ -107,16 +107,30 @@ static int match_one(const char *match, const char *name, int namelen)
+ 	if (!*match)
+ 		return MATCHED_RECURSIVELY;
+ 
+-	for (;;) {
+-		unsigned char c1 = *match;
+-		unsigned char c2 = *name;
+-		if (c1 == '\0' || is_glob_special(c1))
+-			break;
+-		if (c1 != c2)
+-			return 0;
+-		match++;
+-		name++;
+-		namelen--;
++	if (ignore_case) {
++		for (;;) {
++			unsigned char c1 = tolower(*match);
++			unsigned char c2 = tolower(*name);
++			if (c1 == '\0' || is_glob_special(c1))
++				break;
++			if (c1 != c2)
++				return 0;
++			match++;
++			name++;
++			namelen--;
++		}
++	} else {
++		for (;;) {
++			unsigned char c1 = *match;
++			unsigned char c2 = *name;
++			if (c1 == '\0' || is_glob_special(c1))
++				break;
++			if (c1 != c2)
++				return 0;
++			match++;
++			name++;
++			namelen--;
++		}
+ 	}
+ 
+ 
+@@ -125,8 +139,8 @@ static int match_one(const char *match, const char *name, int namelen)
+ 	 * we need to match by fnmatch
+ 	 */
+ 	matchlen = strlen(match);
+-	if (strncmp(match, name, matchlen))
+-		return !fnmatch(match, name, 0) ? MATCHED_FNMATCH : 0;
++	if (strncmp_icase(match, name, matchlen))
++		return !fnmatch_icase(match, name, 0) ? MATCHED_FNMATCH : 0;
+ 
+ 	if (namelen == matchlen)
+ 		return MATCHED_EXACTLY;
+-- 
+1.7.3.159.g610493
+

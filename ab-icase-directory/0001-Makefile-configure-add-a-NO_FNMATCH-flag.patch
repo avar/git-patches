@@ -1,0 +1,121 @@
+From 2f4c6f495857f96931533d45c76f4ca7090e9d4d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Sun, 3 Oct 2010 08:56:12 +0000
+Subject: [PATCH/RFC v3 1/8] Makefile & configure: add a NO_FNMATCH flag
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Windows and MinGW both lack fnmatch() in their C library and needed
+compat/fnmatch, but they had duplicate code for adding the compat
+function, and there was no Makefile flag or configure check for
+fnmatch.
+
+Change the Makefile it so that it's now possible to compile the compat
+function with a NO_FNMATCH=YesPlease flag, and add a configure probe
+for it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile      |   18 +++++++++++++-----
+ config.mak.in |    1 +
+ configure.ac  |    6 ++++++
+ 3 files changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 8a56b9a..f7c4383 100644
+--- a/Makefile
++++ b/Makefile
+@@ -70,6 +70,8 @@ all::
+ #
+ # Define NO_STRTOK_R if you don't have strtok_r in the C library.
+ #
++# Define NO_FNMATCH if you don't have fnmatch in the C library.
++#
+ # Define NO_LIBGEN_H if you don't have libgen.h.
+ #
+ # Define NEEDS_LIBGEN if your libgen needs -lgen when linking
+@@ -1052,6 +1054,7 @@ ifeq ($(uname_S),Windows)
+ 	NO_STRCASESTR = YesPlease
+ 	NO_STRLCPY = YesPlease
+ 	NO_STRTOK_R = YesPlease
++	NO_FNMATCH = YesPlease
+ 	NO_MEMMEM = YesPlease
+ 	# NEEDS_LIBICONV = YesPlease
+ 	NO_ICONV = YesPlease
+@@ -1081,8 +1084,8 @@ ifeq ($(uname_S),Windows)
+ 	AR = compat/vcbuild/scripts/lib.pl
+ 	CFLAGS =
+ 	BASIC_CFLAGS = -nologo -I. -I../zlib -Icompat/vcbuild -Icompat/vcbuild/include -DWIN32 -D_CONSOLE -DHAVE_STRING_H -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_DEPRECATE
+-	COMPAT_OBJS = compat/msvc.o compat/fnmatch/fnmatch.o compat/winansi.o compat/win32/pthread.o
+-	COMPAT_CFLAGS = -D__USE_MINGW_ACCESS -DNOGDI -DHAVE_STRING_H -DHAVE_ALLOCA_H -Icompat -Icompat/fnmatch -Icompat/regex -Icompat/fnmatch -Icompat/win32 -DSTRIP_EXTENSION=\".exe\"
++	COMPAT_OBJS = compat/msvc.o compat/winansi.o compat/win32/pthread.o
++	COMPAT_CFLAGS = -D__USE_MINGW_ACCESS -DNOGDI -DHAVE_STRING_H -DHAVE_ALLOCA_H -Icompat -Icompat/regex -Icompat/win32 -DSTRIP_EXTENSION=\".exe\"
+ 	BASIC_LDFLAGS = -IGNORE:4217 -IGNORE:4049 -NOLOGO -SUBSYSTEM:CONSOLE -NODEFAULTLIB:MSVCRT.lib
+ 	EXTLIBS = advapi32.lib shell32.lib wininet.lib ws2_32.lib
+ 	PTHREAD_LIBS =
+@@ -1107,6 +1110,7 @@ ifneq (,$(findstring MINGW,$(uname_S)))
+ 	NO_STRCASESTR = YesPlease
+ 	NO_STRLCPY = YesPlease
+ 	NO_STRTOK_R = YesPlease
++	NO_FNMATCH = YesPlease
+ 	NO_MEMMEM = YesPlease
+ 	NEEDS_LIBICONV = YesPlease
+ 	OLD_ICONV = YesPlease
+@@ -1128,10 +1132,9 @@ ifneq (,$(findstring MINGW,$(uname_S)))
+ 	NO_PYTHON = YesPlease
+ 	BLK_SHA1 = YesPlease
+ 	ETAGS_TARGET = ETAGS
+-	COMPAT_CFLAGS += -D__USE_MINGW_ACCESS -DNOGDI -Icompat -Icompat/fnmatch -Icompat/win32
++	COMPAT_CFLAGS += -D__USE_MINGW_ACCESS -DNOGDI -Icompat -Icompat/win32
+ 	COMPAT_CFLAGS += -DSTRIP_EXTENSION=\".exe\"
+-	COMPAT_OBJS += compat/mingw.o compat/fnmatch/fnmatch.o compat/winansi.o \
+-		compat/win32/pthread.o
++	COMPAT_OBJS += compat/mingw.o compat/winansi.o compat/win32/pthread.o
+ 	EXTLIBS += -lws2_32
+ 	PTHREAD_LIBS =
+ 	X = .exe
+@@ -1342,6 +1345,11 @@ ifdef NO_STRTOK_R
+ 	COMPAT_CFLAGS += -DNO_STRTOK_R
+ 	COMPAT_OBJS += compat/strtok_r.o
+ endif
++ifdef NO_FNMATCH
++	COMPAT_CFLAGS += -Icompat/fnmatch
++	COMPAT_CFLAGS += -DNO_FNMATCH
++	COMPAT_OBJS += compat/fnmatch/fnmatch.o
++endif
+ ifdef NO_SETENV
+ 	COMPAT_CFLAGS += -DNO_SETENV
+ 	COMPAT_OBJS += compat/setenv.o
+diff --git a/config.mak.in b/config.mak.in
+index a0c34ee..aaa70a8 100644
+--- a/config.mak.in
++++ b/config.mak.in
+@@ -47,6 +47,7 @@ NO_C99_FORMAT=@NO_C99_FORMAT@
+ NO_HSTRERROR=@NO_HSTRERROR@
+ NO_STRCASESTR=@NO_STRCASESTR@
+ NO_STRTOK_R=@NO_STRTOK_R@
++NO_FNMATCH=@NO_FNMATCH@
+ NO_MEMMEM=@NO_MEMMEM@
+ NO_STRLCPY=@NO_STRLCPY@
+ NO_UINTMAX_T=@NO_UINTMAX_T@
+diff --git a/configure.ac b/configure.ac
+index cc55b6d..7715f6c 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -818,6 +818,12 @@ GIT_CHECK_FUNC(strtok_r,
+ [NO_STRTOK_R=YesPlease])
+ AC_SUBST(NO_STRTOK_R)
+ #
++# Define NO_FNMATCH if you don't have fnmatch
++GIT_CHECK_FUNC(fnmatch,
++[NO_FNMATCH=],
++[NO_FNMATCH=YesPlease])
++AC_SUBST(NO_FNMATCH)
++#
+ # Define NO_MEMMEM if you don't have memmem.
+ GIT_CHECK_FUNC(memmem,
+ [NO_MEMMEM=],
+-- 
+1.7.3.159.g610493
+

@@ -1,0 +1,188 @@
+From f543f710af99e9bc1587283fcc4a783c813a382a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Sun, 3 Oct 2010 09:44:38 +0000
+Subject: [PATCH/RFC v3 0/8] ab/icase-directory: jj/icase-directory with Makefile + configure checks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On Sun, Oct 3, 2010 at 09:07, Joshua Jensen <jjensen@workspacewhiz.com> wrote:
+>  ----- Original Message -----
+> From: Ævar Arnfjörð Bjarmason
+> Date: 10/3/2010 2:30 AM
+>>
+>> On Sun, Oct 3, 2010 at 04:32, Joshua Jensen<jjensen@workspacewhiz.com>
+>>  wrote
+>>>
+>>> +int fnmatch_casefold(const char *pattern, const char *string, int flags)
+>>> +{
+>>> +       char lowerPatternBuf[MAX_PATH];
+>>> +       char lowerStringBuf[MAX_PATH];
+>>> +       char* lowerPattern;
+>>> +       char* lowerString;
+>>> +       size_t patternLen;
+>>> +       size_t stringLen;
+>>> +       char* out;
+>>> +       int ret;
+>>> +
+>>> +       /*
+>>> +        * Use the provided stack buffer, if possible.  If the string is
+>>> too
+>>> +        * large, allocate buffer space.
+>>> +        */
+>>> +       patternLen = strlen(pattern);
+>>> +       if (patternLen + 1>  sizeof(lowerPatternBuf))
+>>> +               lowerPattern = xmalloc(patternLen + 1);
+>>> +       else
+>>> +               lowerPattern = lowerPatternBuf;
+>>> +
+>>> +       stringLen = strlen(string);
+>>> +       if (stringLen + 1>  sizeof(lowerStringBuf))
+>>> +               lowerString = xmalloc(stringLen + 1);
+>>> +       else
+>>> +               lowerString = lowerStringBuf;
+>>> +
+>>> +       /* Make the pattern and string lowercase to pass to fnmatch. */
+>>> +       for (out = lowerPattern; *pattern; ++out, ++pattern)
+>>> +               *out = tolower(*pattern);
+>>> +       *out = 0;
+>>> +
+>>> +       for (out = lowerString; *string; ++out, ++string)
+>>> +               *out = tolower(*string);
+>>> +       *out = 0;
+>>> +
+>>> +       ret = fnmatch(lowerPattern, lowerString, flags);
+>>> +
+>>> +       /* Free the pattern or string if it was allocated. */
+>>> +       if (lowerPattern != lowerPatternBuf)
+>>> +               free(lowerPattern);
+>>> +       if (lowerString != lowerStringBuf)
+>>> +               free(lowerString);
+>>> +       return ret;
+>>> +}
+>>> +
+>>> +int fnmatch_icase(const char *pattern, const char *string, int flags)
+>>> +{
+>>> +       return ignore_case ? fnmatch_casefold(pattern, string, flags) :
+>>> fnmatch(pattern, string, flags);
+>>> +}
+>>
+>> I liked v1 of this patch better, although it obviously had portability
+>> issues. But I think it would be better to handle this with:
+>>
+>>     #ifndef FNM_CASEFOLD
+>>     int fnmatch_casefold(const char *pattern, const char *string, int
+>> flags)
+>>     {
+>>         ...
+>>     }
+>>     #endf
+>>
+>>     int fnmatch_icase(const char *pattern, const char *string, int flags)
+>>     {
+>>     #ifndef FNM_CASEFOLD
+>>            return ignore_case ? fnmatch_casefold(pattern, string,
+>> flags) : fnmatch(pattern, string, flags);
+>>     #else
+>>             return fnmatch(pattern, string, flags | (ignore_case ?
+>> FNM_CASEFOLD : 0));
+>>     #endif
+>>     }
+>>
+>> Or simply use fnmatch(..., FNM_CASEFOLD) everywhere and include
+>> compat/fnmatch/* on platforms like Solaris that don't have the GNU
+>> extension.
+
+I offered before to help with making this portable, so I've gone ahead
+and done it. This series is like your v1, but it has two of my patches
+at the front to add Makefile & configure checks & fallbacks for
+fnmatch if the function either doesn't exist, or it doesn't support
+the FNM_CASEFOLD flag.
+
+> The real problem with compat/fnmatch is determining which random platforms
+> need that support and updating the makefile accordingly.
+
+We already do this for a bunch of NO_WHATEVER= flags. Adding one more
+isn't going to be too hard to maintain.
+
+> Further, the compat/fnmatch/* code would need to be rejigged
+> somewhat, so there is no possible conflict (now or in the future)
+> with the provided symbols.  We discussed this as a potential problem
+> developers would need to be aware of if the system fnmatch.h (or
+> whatever it is called) gets #included.
+
+Since we do -Icompat/fnmatch it's going to be our fnmatch.h that's
+picked up, so we aren't going to get a symbol conflict I should think.
+
+> Anyway, what you describe above creates two code paths.  I would imagine
+> that would be harder to debug; that is, on some platforms, it uses
+> fnmatch_casefold and on others, it hands it off to fnmatch(...,
+> FNM_CASEFOLD).
+
+My ad-hoc example pseudocode created two codepaths, but this version
+doesn't.
+
+> In any case, I'd like to find a solution to get this series working for
+> everyone.  I've been out of commission for a month (deploying Git to 80+
+> programmers at an organization, by the way), but I'm back now and can work
+> this until it is complete.
+
+This is all from your v1:
+
+Joshua Jensen (6):
+  Add string comparison functions that respect the ignore_case
+    variable.
+  Case insensitivity support for .gitignore via core.ignorecase
+  Add case insensitivity support for directories when using git status
+  Add case insensitivity support when using git ls-files
+  Support case folding for git add when core.ignorecase=true
+  Support case folding in git fast-import when core.ignorecase=true
+
+These two are new:
+
+Ævar Arnfjörð Bjarmason (2):
+  Makefile & configure: add a NO_FNMATCH flag
+
+This one is a good idea in general. We shouldn't be duplicating setup
+code in both the Windows and MinGW portions of the Makefile, and if we
+ever get another odd system that doesn't have fnmatch() this will make
+things just work there.
+
+Needs testing from someone with Windows.
+
+  Makefile & configure: add a NO_FNMATCH_CASEFOLD flag
+
+The code needed to make Joshua's code portable. On Solaris this
+returns with the configure script:
+
+    $ make configure && ./configure | grep -i -e fnmatch && grep -i -e fnmatch config.mak.autogen
+        GEN configure
+    checking for fnmatch... yes
+    checking for library containing fnmatch... none required
+    checking whether the fnmatch function supports the FNMATCH_CASEFOLD GNU extension... no
+    NO_FNMATCH=
+    NO_FNMATCH_CASEFOLD=YesPlease
+
+And on Linux:
+
+    $ make configure && ./configure | grep -i -e fnmatch && grep -i -e fnmatch config.mak.autogen
+        GEN configure
+    checking for fnmatch... yes
+    checking for library containing fnmatch... none required
+    checking whether the fnmatch function supports the FNMATCH_CASEFOLD GNU extension... yes
+    NO_FNMATCH=
+    NO_FNMATCH_CASEFOLD=
+
+ Makefile      |   27 ++++++++++++---
+ config.mak.in |    2 +
+ configure.ac  |   28 +++++++++++++++
+ dir.c         |  106 ++++++++++++++++++++++++++++++++++++++++++++++----------
+ dir.h         |    4 ++
+ fast-import.c |    7 ++--
+ name-hash.c   |   72 ++++++++++++++++++++++++++++++++++++++-
+ read-cache.c  |   23 ++++++++++++
+ 8 files changed, 241 insertions(+), 28 deletions(-)
+
+-- 
+1.7.3.159.g610493
+

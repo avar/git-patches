@@ -1,0 +1,69 @@
+From 7e7ead9ac7cea0926a2818edd22fe44ee08cef5f Mon Sep 17 00:00:00 2001
+From: Joshua Jensen <jjensen@workspacewhiz.com>
+Date: Mon, 16 Aug 2010 21:38:09 +0200
+Subject: [PATCH/RFC v3 3/8] Add string comparison functions that respect the ignore_case variable.
+
+Multiple locations within this patch series alter a case sensitive
+string comparison call such as strcmp() to be a call to a string
+comparison call that selects case comparison based on the global
+ignore_case variable. Behaviorally, when core.ignorecase=false, the
+*_icase() versions are functionally equivalent to their C runtime
+counterparts.  When core.ignorecase=true, the *_icase() versions perform
+a case insensitive comparison.
+
+Like Linus' earlier ignorecase patch, these may ignore filename
+conventions on certain file systems. By isolating filename comparisons
+to certain functions, support for those filename conventions may be more
+easily met.
+
+Signed-off-by: Joshua Jensen <jjensen@workspacewhiz.com>
+Signed-off-by: Johannes Sixt <j6t@kdbg.org>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ dir.c |   16 ++++++++++++++++
+ dir.h |    4 ++++
+ 2 files changed, 20 insertions(+), 0 deletions(-)
+
+diff --git a/dir.c b/dir.c
+index d1e5e5e..3432d58 100644
+--- a/dir.c
++++ b/dir.c
+@@ -18,6 +18,22 @@ static int read_directory_recursive(struct dir_struct *dir, const char *path, in
+ 	int check_only, const struct path_simplify *simplify);
+ static int get_dtype(struct dirent *de, const char *path, int len);
+ 
++/* helper string functions with support for the ignore_case flag */
++int strcmp_icase(const char *a, const char *b)
++{
++	return ignore_case ? strcasecmp(a, b) : strcmp(a, b);
++}
++
++int strncmp_icase(const char *a, const char *b, size_t count)
++{
++	return ignore_case ? strncasecmp(a, b, count) : strncmp(a, b, count);
++}
++
++int fnmatch_icase(const char *pattern, const char *string, int flags)
++{
++	return fnmatch(pattern, string, flags | (ignore_case ? FNM_CASEFOLD : 0));
++}
++
+ static int common_prefix(const char **pathspec)
+ {
+ 	const char *path, *slash, *next;
+diff --git a/dir.h b/dir.h
+index 278d84c..b3e2104 100644
+--- a/dir.h
++++ b/dir.h
+@@ -101,4 +101,8 @@ extern int remove_dir_recursively(struct strbuf *path, int flag);
+ /* tries to remove the path with empty directories along it, ignores ENOENT */
+ extern int remove_path(const char *path);
+ 
++extern int strcmp_icase(const char *a, const char *b);
++extern int strncmp_icase(const char *a, const char *b, size_t count);
++extern int fnmatch_icase(const char *pattern, const char *string, int flags);
++
+ #endif
+-- 
+1.7.3.159.g610493
+
