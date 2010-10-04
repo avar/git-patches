@@ -1,0 +1,68 @@
+From 43099442d2c2035324fbb15e1d5373dbd644f765 Mon Sep 17 00:00:00 2001
+From: Joshua Jensen <jjensen@workspacewhiz.com>
+Date: Mon, 16 Aug 2010 21:38:13 +0200
+Subject: [PATCH/RFC v4 7/8] Support case folding for git add when core.ignorecase=true
+
+When MyDir/ABC/filea.txt is added to Git, the disk directory MyDir/ABC/
+is renamed to mydir/aBc/, and then mydir/aBc/fileb.txt is added, the
+index will contain MyDir/ABC/filea.txt and mydir/aBc/fileb.txt. Although
+the earlier portions of this patch series account for those differences
+in case, this patch makes the pathing consistent by folding the case of
+newly added files against the first file added with that path.
+
+In read-cache.c's add_to_index(), the index_name_exists() support used
+for git status's case insensitive directory lookups is used to find the
+proper directory case according to what the user already checked in.
+That is, MyDir/ABC/'s case is used to alter the stored path for
+fileb.txt to MyDir/ABC/fileb.txt (instead of mydir/aBc/fileb.txt).
+
+This is especially important when cloning a repository to a case
+sensitive file system. MyDir/ABC/ and mydir/aBc/ exist in the same
+directory on a Windows machine, but on Linux, the files exist in two
+separate directories. The update to add_to_index(), in effect, treats a
+Windows file system as case sensitive by making path case consistent.
+
+Signed-off-by: Joshua Jensen <jjensen@workspacewhiz.com>
+Signed-off-by: Johannes Sixt <j6t@kdbg.org>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ read-cache.c |   23 +++++++++++++++++++++++
+ 1 files changed, 23 insertions(+), 0 deletions(-)
+
+diff --git a/read-cache.c b/read-cache.c
+index 1f42473..379862c 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -608,6 +608,29 @@ int add_to_index(struct index_state *istate, const char *path, struct stat *st,
+ 		ce->ce_mode = ce_mode_from_stat(ent, st_mode);
+ 	}
+ 
++	/* When core.ignorecase=true, determine if a directory of the same name but differing
++	 * case already exists within the Git repository.  If it does, ensure the directory
++	 * case of the file being added to the repository matches (is folded into) the existing
++	 * entry's directory case.
++	 */
++	if (ignore_case) {
++		const char *startPtr = ce->name;
++		const char *ptr = startPtr;
++		while (*ptr) {
++			while (*ptr && *ptr != '/')
++				++ptr;
++			if (*ptr == '/') {
++				struct cache_entry *foundce;
++				++ptr;
++				foundce = index_name_exists(&the_index, ce->name, ptr - ce->name, ignore_case);
++				if (foundce) {
++					memcpy((void*)startPtr, foundce->name + (startPtr - ce->name), ptr - startPtr);
++					startPtr = ptr;
++				}
++			}
++		}
++	}
++
+ 	alias = index_name_exists(istate, ce->name, ce_namelen(ce), ignore_case);
+ 	if (alias && !ce_stage(alias) && !ie_match_stat(istate, alias, st, ce_option)) {
+ 		/* Nothing changed, really */
+-- 
+1.7.3.159.g610493
+

@@ -1,0 +1,71 @@
+From ae91100431baa3cbc91ed8b8344378516c398a3e Mon Sep 17 00:00:00 2001
+From: Joshua Jensen <jjensen@workspacewhiz.com>
+Date: Mon, 16 Aug 2010 21:38:10 +0200
+Subject: [PATCH/RFC v4 4/8] Case insensitivity support for .gitignore via core.ignorecase
+
+This is especially beneficial when using Windows and Perforce and the
+git-p4 bridge. Internally, Perforce preserves a given file's full path
+including its case at the time it was added to the Perforce repository.
+When syncing a file down via Perforce, missing directories are created,
+if necessary, using the case as stored with the filename. Unfortunately,
+two files in the same directory can have differing cases for their
+respective paths, such as /diRa/file1.c and /DirA/file2.c. Depending on
+sync order, DirA/ may get created instead of diRa/.
+
+It is possible to handle directory names in a case insensitive manner
+without this patch, but it is highly inconvenient, requiring each
+character to be specified like so: [Bb][Uu][Ii][Ll][Dd]. With this patch, the
+gitignore exclusions honor the core.ignorecase=true configuration
+setting and make the process less error prone. The above is specified
+like so: Build
+
+Signed-off-by: Joshua Jensen <jjensen@workspacewhiz.com>
+Signed-off-by: Johannes Sixt <j6t@kdbg.org>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ dir.c |   12 ++++++------
+ 1 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/dir.c b/dir.c
+index 3432d58..02c2a82 100644
+--- a/dir.c
++++ b/dir.c
+@@ -390,14 +390,14 @@ int excluded_from_list(const char *pathname,
+ 			if (x->flags & EXC_FLAG_NODIR) {
+ 				/* match basename */
+ 				if (x->flags & EXC_FLAG_NOWILDCARD) {
+-					if (!strcmp(exclude, basename))
++					if (!strcmp_icase(exclude, basename))
+ 						return to_exclude;
+ 				} else if (x->flags & EXC_FLAG_ENDSWITH) {
+ 					if (x->patternlen - 1 <= pathlen &&
+-					    !strcmp(exclude + 1, pathname + pathlen - x->patternlen + 1))
++					    !strcmp_icase(exclude + 1, pathname + pathlen - x->patternlen + 1))
+ 						return to_exclude;
+ 				} else {
+-					if (fnmatch(exclude, basename, 0) == 0)
++					if (fnmatch_icase(exclude, basename, 0) == 0)
+ 						return to_exclude;
+ 				}
+ 			}
+@@ -412,14 +412,14 @@ int excluded_from_list(const char *pathname,
+ 
+ 				if (pathlen < baselen ||
+ 				    (baselen && pathname[baselen-1] != '/') ||
+-				    strncmp(pathname, x->base, baselen))
++				    strncmp_icase(pathname, x->base, baselen))
+ 				    continue;
+ 
+ 				if (x->flags & EXC_FLAG_NOWILDCARD) {
+-					if (!strcmp(exclude, pathname + baselen))
++					if (!strcmp_icase(exclude, pathname + baselen))
+ 						return to_exclude;
+ 				} else {
+-					if (fnmatch(exclude, pathname+baselen,
++					if (fnmatch_icase(exclude, pathname+baselen,
+ 						    FNM_PATHNAME) == 0)
+ 					    return to_exclude;
+ 				}
+-- 
+1.7.3.159.g610493
+
