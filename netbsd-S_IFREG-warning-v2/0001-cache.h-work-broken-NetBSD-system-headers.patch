@@ -1,0 +1,71 @@
+From 05ade7048942050d58d44f22da41e82cc697175d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Mon, 4 Oct 2010 09:55:46 +0100
+Subject: [PATCH v2] cache.h: work around broken NetBSD system headers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Wrap the `mode' argument to the `canon_mode' macro in extra
+parentheses to avoid a bug with the S_* macros in sys/stat.h on
+NetBSD.
+
+This issue was originally spotted in NetBSD Problem Report #42168 and
+worked around by der Mouse, but later filed as a bug with NetBSD
+itself in NetBSD Problem Report #43937 by me.
+
+The issue is that NetBSD doesn't take care to wrap its macro arguments
+in parentheses, so on Linux and other sane systems we have S_ISREG(m)
+defined as something like:
+
+    (((m) & S_IFMT) == S_IFREG)
+
+But on NetBSD:
+
+    ((m & _S_IFMT) == _S_IFREG)
+
+Since a caller in builtin/diff.c called our macro as `S_IFREG | 0644'
+this bug introduced a logic error on NetBSD, since the precedence of
+bit-wise & is higher than | in C.
+
+NetBSD-PR: http://gnats.netbsd.org/cgi-bin/query-pr-single.pl?number=43937
+Originally-reported-by: der Mouse <mouse@Rodents-Montreal.ORG>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+On Mon, Oct 4, 2010 at 17:54, Junio C Hamano <gitster@pobox.com> wrote:
+> instead of contaminating the calling sites.  Otherwise new calling sites
+> we will add in the future need to be aware of the same bug for no good
+> reason.
+
+Agreed. Here's a v2 that does that. With an updated commit message to
+mention the bug I filed with NetBSD.
+
+ cache.h |   10 ++++++++--
+ 1 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/cache.h b/cache.h
+index 2ef2fa3..891d5d0 100644
+--- a/cache.h
++++ b/cache.h
+@@ -277,9 +277,15 @@ static inline int ce_to_dtype(const struct cache_entry *ce)
+ 	else
+ 		return DT_UNKNOWN;
+ }
++
++/*
++ * We use extra parentheses around mode to work around a NetBSD issue
++ * described in NetBSD Problem Report #43937. See
++ * http://www.netbsd.org/cgi-bin/query-pr-single.pl?number=43937
++ */
+ #define canon_mode(mode) \
+-	(S_ISREG(mode) ? (S_IFREG | ce_permissions(mode)) : \
+-	S_ISLNK(mode) ? S_IFLNK : S_ISDIR(mode) ? S_IFDIR : S_IFGITLINK)
++	(S_ISREG((mode)) ? (S_IFREG | ce_permissions(mode)) : \
++	S_ISLNK((mode)) ? S_IFLNK : S_ISDIR((mode)) ? S_IFDIR : S_IFGITLINK)
+ 
+ #define flexible_size(STRUCT,len) ((offsetof(struct STRUCT,name) + (len) + 8) & ~7)
+ #define cache_entry_size(len) flexible_size(cache_entry,len)
+-- 
+1.7.3.159.g610493
+
