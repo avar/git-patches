@@ -1,0 +1,112 @@
+From f96cf019ae6c1cf24b6a8cbecdf796913a629a68 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Sun, 29 Aug 2010 17:23:38 +0000
+Subject: [PATCH 013/160] gettext.c: work around us not using setlocale(LC_CTYPE, "")
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the gettext setup code to arrange for messages to be emitted in
+the user's requested encoding, but avoid setting LC_CTYPE from the
+environment for the whole program.
+
+In 107880a I removed our use of setlocale(LC_CTYPE, "") because of a
+bug in vsnprintf in the GNU C Library [1].
+
+Even if it wasn't for that bug we wouldn't want to use LC_CTYPE at
+this point, because it'd require auditing all the code that uses C
+functions whose semantics are modified by LC_CTYPE.
+
+But only setting LC_MESSAGES as we do creates a problem, since we
+declare the encoding of our PO files[2] the gettext implementation
+will try to recode it to the user's locale, but without LC_CTYPE it'll
+emit something like this on 'git init'
+
+    Bj? til t?ma Git lind ? /hl/agh/.git/
+
+Gettext knows about the encoding of our PO file, but we haven't told
+it about the user's encoding, so all the non-US-ASCII characters get
+encoded to question marks.
+
+But we're in luck! We can set LC_CTYPE from the environment only while
+we call nl_langinfo and bind_textdomain_codeset. That suffices to tell
+gettext what encoding it should emit in, so it'll now say:
+
+    Bjó til tóma Git lind í /hl/agh/.git/
+
+And the equivalent ISO-8859-1 string will be emitted under a
+ISO-8859-1 locale.
+
+With this change way we get the advantages of setting LC_CTYPE (talk
+to the user in his language/encoding), without the major drawbacks
+(changed semantics for C functions we rely on).
+
+However foreign functions using other message catalogs that aren't
+using our neat trick will still have a problem, e.g. if we have to
+call perror(3):
+
+    #include <stdio.h>
+    #include <locale.h>
+    #include <errno.h>
+
+    int main(void)
+    {
+        setlocale(LC_MESSAGES, "");
+        setlocale(LC_CTYPE, "C");
+        errno = ENODEV;
+        perror("test");
+        return 0;
+    }
+
+Running that will give you a message with question marks:
+
+    $ LANGUAGE= LANG=de_DE.utf8 ./test
+    test: Kein passendes Ger?t gefunden
+
+In the long term we should probably see about getting that vsnprintf
+bug in glibc fixed, and audit our code so it won't fall apart under a
+non-C locale.
+
+Then we could simply set LC_CTYPE from the environment, which would
+make things like the external perror(3) messages work.
+
+1. http://sourceware.org/bugzilla/show_bug.cgi?id=6530
+2. E.g. "Content-Type: text/plain; charset=UTF-8\n" in po/is.po
+
+Suggested-by: Jonathan Nieder <jrnieder@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ gettext.c |    6 ++++++
+ 1 files changed, 6 insertions(+), 0 deletions(-)
+
+diff --git a/gettext.c b/gettext.c
+index db99742..8644098 100644
+--- a/gettext.c
++++ b/gettext.c
+@@ -1,11 +1,13 @@
+ #include "exec_cmd.h"
+ #include <locale.h>
+ #include <libintl.h>
++#include <langinfo.h>
+ #include <stdlib.h>
+ 
+ extern void git_setup_gettext(void) {
+ 	char *podir;
+ 	char *envdir = getenv("GIT_TEXTDOMAINDIR");
++	char *charset;
+ 
+ 	if (envdir) {
+ 		(void)bindtextdomain("git", envdir);
+@@ -17,5 +19,9 @@ extern void git_setup_gettext(void) {
+ 	}
+ 
+ 	(void)setlocale(LC_MESSAGES, "");
++	(void)setlocale(LC_CTYPE, "");
++	charset = nl_langinfo(CODESET);
++	(void)bind_textdomain_codeset("git", charset);
++	(void)setlocale(LC_CTYPE, "C");
+ 	(void)textdomain("git");
+ }
+-- 
+1.7.3.1.50.g1e633
+
