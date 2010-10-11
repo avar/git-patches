@@ -1,0 +1,95 @@
+From 540052f9aa377e1a683a07221b017d8fb63fdb6d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Mon, 11 Oct 2010 12:33:22 +0000
+Subject: [RFC PATCH] Makefile: point out "make" if "make configure" fails
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Someone trying to build Git may think the need autoconf when "make
+configure && ./configure && make" fails. But actually they can
+probably just run "make" directly.
+
+Change the "make configure" output so that when it fails the user is
+informed of this:
+
+    make configure && ./configure && make
+        GEN configure
+    ERROR: We couldn't run autoconf for you. But you're in luck!
+    ERROR: Git doesn't actually need autoconf to build. Just try
+    ERROR: running "make" directly at the top-level. The Makefile
+    ERROR: will guess your configuration based on your OS. If that
+    ERROR: doesn't work try installing autoconf and running
+    ERROR: "make configure && ./configure && make" again.
+    make: *** [configure] Error 1
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+
+On Mon, Oct 11, 2010 at 12:10, Michael J Gruber <git@drmicha.warpmail.net> wrote:
+> Ævar Arnfjörð Bjarmason venit, vidit, dixit 11.10.2010 11:40:
+>> On Mon, Oct 11, 2010 at 08:39, Jakub Narebski <jnareb@gmail.com> wrote:
+>>
+>>> But thanks to having ./configure optional step, we can build git also
+>>> on platforms that doesn't have autoconf installed (though the same could
+>>> be achieved by bundling ./configure script with release tarballs).
+>>
+>> It already is built as part of the tarballs, at least for
+>> http://kernel.org/pub/software/scm/git/git-1.7.3.1.tar.bz2
+>
+> Well, the point of my semi-serious RFC is that every so often, we have a
+> variation on the following theme on the list:
+>
+> - "Newbee" uses make configure && ./configure && make and can't build.
+> - Helpful "oldbees" respond like "Duh! Use the Makefile".
+>
+> configure is a second class citizen in git.git (we even explicitly
+> .gitignore it - if you allow that lame joke), and given my complete lack
+> of auto-conf-foo, I can't change that. But there's no need to make
+> someone feel stupid (I'm exaggerating a bit) for trying a standard build
+> tool that we do ship.
+>
+> But, really, the typical responses to build problems with configure
+> indicate that most long timers don't use configure either, and probably
+> don't feel too comfortable with it. So, I think we should either make
+> the status quo clearer (Makefile as primary method) or change the status
+> quo. I can only do the former ;)
+
+The main problem with your patch is that existing invocations of "make
+configure" have to be altered. I haven't scoured the mailing list for
+these newbie reports you mention but aren't they mostly failing
+because users don't have autoconf installed, and not because the
+configure script itself fails?
+
+If that's case something like this patch would probably be better, and
+maybe we also need to change something in the INSTALL file or other
+documentation.
+
+ Makefile |   11 ++++++++++-
+ 1 files changed, 10 insertions(+), 1 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 1f1ce04..6d2928d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1747,7 +1747,16 @@ configure: configure.ac
+ 	$(QUIET_GEN)$(RM) $@ $<+ && \
+ 	sed -e 's/@@GIT_VERSION@@/$(GIT_VERSION)/g' \
+ 	    $< > $<+ && \
+-	autoconf -o $@ $<+ && \
++	if ! autoconf -o $@ $<+; \
++	then \
++		echo "ERROR: We couldn't run autoconf for you. But you're in luck!"; \
++		echo "ERROR: Git doesn't actually need autoconf to build. Just try"; \
++		echo "ERROR: running \"make\" directly at the top-level. The Makefile"; \
++		echo "ERROR: will guess your configuration based on your OS. If that"; \
++		echo "ERROR: doesn't work try installing autoconf and running"; \
++		echo "ERROR: \"make configure && ./configure && make\" again."; \
++		false; \
++	fi && \
+ 	$(RM) $<+
+ 
+ # These can record GIT_VERSION
+-- 
+1.7.3.1.50.g1e633
+
