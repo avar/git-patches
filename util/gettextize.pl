@@ -64,6 +64,7 @@ sub munge {
         or $cont =~ /\Q"%6d\t%s\n"/
         or $cont =~ /\Q"%s (%d):\n"/
         or $cont =~ /\Q"      %s\n"/
+        or $cont =~ /\Q"\nConflicts:\n"/
     ) {
         #warn "Skipping pure format <$cont>";
         goto end;
