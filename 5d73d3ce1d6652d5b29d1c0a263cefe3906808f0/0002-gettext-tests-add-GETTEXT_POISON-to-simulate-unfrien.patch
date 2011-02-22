@@ -1,0 +1,116 @@
+From 2eee4ee2cd43d3d131b5c471e93100b4af85236b Mon Sep 17 00:00:00 2001
+In-Reply-To: <7vhbbwdjnm.fsf@alter.siamese.dyndns.org>
+References: <7vhbbwdjnm.fsf@alter.siamese.dyndns.org>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Mon, 21 Feb 2011 04:13:52 -0600
+Subject: [PATCH v4 02/73] gettext tests: add GETTEXT_POISON to simulate unfriendly translator
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a new GETTEXT_POISON compile-time parameter to make _(msg) always
+return gibberish. So now you can run
+
+	make GETTEXT_POISON=YesPlease
+
+to get a copy of git that functions correctly (one hopes) but produces
+output that is in nobody's native language at all.
+
+This is a debugging aid for people who are working on the i18n part of
+the system, to make sure that they are not marking plumbing messages
+that should never be translated with _().
+
+As new strings get marked for translation, naturally a number of tests
+will be broken in this mode. Tests that depend on output from
+Porcelain will need to be marked with the new C_LOCALE_OUTPUT test
+prerequisite. Newly failing tests that do not depend on output from
+Porcelain would be bugs due to messages that should not have been
+marked for translation.
+
+Note that the string we're using ("# GETTEXT POISON #") intentionally
+starts the pound sign. Some of Git's tests such as
+t3404-rebase-interactive.sh rely on interactive editing with a fake
+editor, and will needlessly break if the message doesn't start with
+something the interactive editor considers a comment.
+
+A future patch will fix fix the underlying cause of that issue by
+adding "#" characters to the commit advice automatically.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Jonathan Nieder <jrnieder@gmail.com>
+---
+ Makefile      |    7 +++++++
+ gettext.h     |    8 +++++++-
+ t/test-lib.sh |    3 +++
+ 3 files changed, 17 insertions(+), 1 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index c153f45..c348bb7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -216,6 +216,9 @@ all::
+ #
+ # Define NO_REGEX if you have no or inferior regex support in your C library.
+ #
++# Define GETTEXT_POISON if you are debugging the choice of strings marked
++# for translation.  This will turn all strings that use gettext into gibberish.
++#
+ # Define JSMIN to point to JavaScript minifier that functions as
+ # a filter to have gitweb.js minified.
+ #
+@@ -1370,6 +1373,9 @@ endif
+ ifdef NO_SYMLINK_HEAD
+ 	BASIC_CFLAGS += -DNO_SYMLINK_HEAD
+ endif
++ifdef GETTEXT_POISON
++	BASIC_CFLAGS += -DGETTEXT_POISON
++endif
+ ifdef NO_STRCASESTR
+ 	COMPAT_CFLAGS += -DNO_STRCASESTR
+ 	COMPAT_OBJS += compat/strcasestr.o
+@@ -2089,6 +2095,7 @@ endif
+ ifdef GIT_TEST_CMP_USE_COPIED_CONTEXT
+ 	@echo GIT_TEST_CMP_USE_COPIED_CONTEXT=YesPlease >>$@
+ endif
++	@echo GETTEXT_POISON=\''$(subst ','\'',$(subst ','\'',$(GETTEXT_POISON)))'\' >>$@
+ 
+ ### Detect Tck/Tk interpreter path changes
+ ifndef NO_TCLTK
+diff --git a/gettext.h b/gettext.h
+index 6949d73..3d7cf44 100644
+--- a/gettext.h
++++ b/gettext.h
+@@ -15,9 +15,15 @@
+ 
+ #define FORMAT_PRESERVING(n) __attribute__((format_arg(n)))
+ 
++#ifdef GETTEXT_POISON
++#define use_poison() 1
++#else
++#define use_poison() 0
++#endif
++
+ static inline FORMAT_PRESERVING(1) const char *_(const char *msgid)
+ {
+-	return msgid;
++	return use_poison() ? "# GETTEXT POISON #" : msgid;
+ }
+ 
+ /* Mark msgid for translation but do not translate it. */
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 0fdc541..0840e4a 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1079,6 +1079,9 @@ esac
+ test -z "$NO_PERL" && test_set_prereq PERL
+ test -z "$NO_PYTHON" && test_set_prereq PYTHON
+ 
++# Can we rely on git's output in the C locale?
++test -z "$GETTEXT_POISON" && test_set_prereq C_LOCALE_OUTPUT
++
+ # test whether the filesystem supports symbolic links
+ ln -s x y 2>/dev/null && test -h y 2>/dev/null && test_set_prereq SYMLINKS
+ rm -f y
+-- 
+1.7.2.3
+
