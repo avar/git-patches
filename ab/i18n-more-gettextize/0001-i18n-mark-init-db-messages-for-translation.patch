@@ -1,0 +1,155 @@
+From a33475694f4159d6f19776fdf4414b054d30e687 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Sun, 10 Apr 2011 18:30:19 +0000
+Subject: [PATCH/RFC 1/7] i18n: mark init-db messages for translation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Mark the init-db messages that were added in v1.7.5-rc1~16^2 (init,
+clone: support --separate-git-dir for .git file) by Nguyễn Thái Ngọc
+Duy for translation.
+
+This requires splitting up the tests that the patch added so that
+certain parts of them can be skipped unless the C_LOCALE_OUTPUT
+prerequisite is satisfied.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/init-db.c |   12 ++++++------
+ t/t0001-init.sh   |   28 ++++++++++++++++++++--------
+ t/t5601-clone.sh  |    7 +++++--
+ 3 files changed, 31 insertions(+), 16 deletions(-)
+
+diff --git a/builtin/init-db.c b/builtin/init-db.c
+index b7370d9..6d0a856 100644
+--- a/builtin/init-db.c
++++ b/builtin/init-db.c
+@@ -319,10 +319,10 @@ int set_git_dir_init(const char *git_dir, const char *real_git_dir,
+ 		struct stat st;
+ 
+ 		if (!exist_ok && !stat(git_dir, &st))
+-			die("%s already exists", git_dir);
++			die(_("%s already exists"), git_dir);
+ 
+ 		if (!exist_ok && !stat(real_git_dir, &st))
+-			die("%s already exists", real_git_dir);
++			die(_("%s already exists"), real_git_dir);
+ 
+ 		/*
+ 		 * make sure symlinks are resolved because we'll be
+@@ -351,16 +351,16 @@ static void separate_git_dir(const char *git_dir)
+ 		else if (S_ISDIR(st.st_mode))
+ 			src = git_link;
+ 		else
+-			die("unable to handle file type %d", st.st_mode);
++			die(_("unable to handle file type %d"), st.st_mode);
+ 
+ 		if (rename(src, git_dir))
+-			die_errno("unable to move %s to %s", src, git_dir);
++			die_errno(_("unable to move %s to %s"), src, git_dir);
+ 	}
+ 
+ 	fp = fopen(git_link, "w");
+ 	if (!fp)
+-		die("Could not create git link %s", git_link);
+-	fprintf(fp, "gitdir: %s\n", git_dir);
++		die(_("Could not create git link %s"), git_link);
++	fprintf(fp, _("gitdir: %s\n"), git_dir);
+ 	fclose(fp);
+ }
+ 
+diff --git a/t/t0001-init.sh b/t/t0001-init.sh
+index a5816d0..fa31cbd 100755
+--- a/t/t0001-init.sh
++++ b/t/t0001-init.sh
+@@ -374,22 +374,28 @@ test_expect_success 'init prefers command line to GIT_DIR' '
+ test_expect_success 'init with separate gitdir' '
+ 	rm -rf newdir &&
+ 	git init --separate-git-dir realgitdir newdir &&
+-	echo "gitdir: `pwd`/realgitdir" >expected &&
+-	test_cmp expected newdir/.git &&
+ 	test -d realgitdir/refs
+ '
+ 
++test_expect_success C_LOCALE_OUTPUT 'init with separate gitdir: output' '
++	echo "gitdir: `pwd`/realgitdir" >expected &&
++	test_cmp expected newdir/.git
++'
++
+ test_expect_success 're-init to update git link' '
+ 	(
+ 	cd newdir &&
+ 	git init --separate-git-dir ../surrealgitdir
+ 	) &&
+-	echo "gitdir: `pwd`/surrealgitdir" >expected &&
+-	test_cmp expected newdir/.git &&
+ 	test -d surrealgitdir/refs &&
+ 	! test -d realgitdir/refs
+ '
+ 
++test_expect_success C_LOCALE_OUTPUT 're-init to update git link: output' '
++	echo "gitdir: `pwd`/surrealgitdir" >expected &&
++	test_cmp expected newdir/.git
++'
++
+ test_expect_success 're-init to move gitdir' '
+ 	rm -rf newdir realgitdir surrealgitdir &&
+ 	git init newdir &&
+@@ -397,11 +403,14 @@ test_expect_success 're-init to move gitdir' '
+ 	cd newdir &&
+ 	git init --separate-git-dir ../realgitdir
+ 	) &&
+-	echo "gitdir: `pwd`/realgitdir" >expected &&
+-	test_cmp expected newdir/.git &&
+ 	test -d realgitdir/refs
+ '
+ 
++test_expect_success C_LOCALE_OUTPUT 're-init to move gitdir: output' '
++	echo "gitdir: `pwd`/realgitdir" >expected &&
++	test_cmp expected newdir/.git
++'
++
+ test_expect_success 're-init to move gitdir symlink' '
+ 	rm -rf newdir realgitdir &&
+ 	git init newdir &&
+@@ -411,10 +420,13 @@ test_expect_success 're-init to move gitdir symlink' '
+ 	ln -s here .git &&
+ 	git init -L ../realgitdir
+ 	) &&
+-	echo "gitdir: `pwd`/realgitdir" >expected &&
+-	test_cmp expected newdir/.git &&
+ 	test -d realgitdir/refs &&
+ 	! test -d newdir/here
+ '
+ 
++test_expect_success C_LOCALE_OUTPUT 're-init to move gitdir symlink: output' '
++	echo "gitdir: `pwd`/realgitdir" >expected &&
++	test_cmp expected newdir/.git
++'
++
+ test_done
+diff --git a/t/t5601-clone.sh b/t/t5601-clone.sh
+index 5a068b2..a50e36e 100755
+--- a/t/t5601-clone.sh
++++ b/t/t5601-clone.sh
+@@ -194,11 +194,14 @@ test_expect_success 'do not respect url-encoding of non-url path' '
+ test_expect_success 'clone separate gitdir' '
+ 	rm -rf dst &&
+ 	git clone --separate-git-dir realgitdir src dst &&
+-	echo "gitdir: `pwd`/realgitdir" >expected &&
+-	test_cmp expected dst/.git &&
+ 	test -d realgitdir/refs
+ '
+ 
++test_expect_success C_LOCALE_OUTPUT 'clone separate gitdir: output' '
++	echo "gitdir: `pwd`/realgitdir" >expected &&
++	test_cmp expected dst/.git
++'
++
+ test_expect_success 'clone separate gitdir where target already exists' '
+ 	rm -rf dst &&
+ 	test_must_fail git clone --separate-git-dir realgitdir src dst
+-- 
+1.7.4.1
+
