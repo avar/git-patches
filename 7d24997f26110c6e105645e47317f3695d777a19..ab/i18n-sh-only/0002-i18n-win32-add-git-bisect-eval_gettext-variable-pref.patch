@@ -1,0 +1,136 @@
+From 3e0019ddeec9443e18f3dbf9ff5423e987a09230 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?= <avarab@gmail.com>
+Date: Wed, 25 May 2011 22:12:03 +0000
+Subject: [PATCH 2/6] i18n win32: add git-bisect eval_gettext variable prefix
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the eval_gettext() invocations to use the GIT_I18N_VARIABLE_
+prefix for variables used in eval_gettext. On Windows environment
+variables are case insensitive, so e.g. $PATH clashes with $path. By
+using a sufficiently unique prefix we work around that issue.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-bisect.sh |   39 ++++++++++++++++++++++++++-------------
+ 1 files changed, 26 insertions(+), 13 deletions(-)
+
+diff --git a/git-bisect.sh b/git-bisect.sh
+index 375b187..6a6ea43 100755
+--- a/git-bisect.sh
++++ b/git-bisect.sh
+@@ -116,8 +116,11 @@ bisect_start() {
+ 		;;
+ 	    *)
+ 		rev=$(git rev-parse -q --verify "$arg^{commit}") || {
+-		    test $has_double_dash -eq 1 &&
+-		        die "$(eval_gettext "'\$arg' does not appear to be a valid revision")"
++		    if test $has_double_dash -eq 1
++		    then
++		        $GIT_I18N_VARIABLE_arg=$arg
++		        die "$(eval_gettext "'\$GIT_I18N_VARIABLE_arg' does not appear to be a valid revision")"
++		    fi
+ 		    break
+ 		}
+ 		case $bad_seen in
+@@ -162,7 +165,8 @@ bisect_write() {
+ 	case "$state" in
+ 		bad)		tag="$state" ;;
+ 		good|skip)	tag="$state"-"$rev" ;;
+-		*)		die "$(eval_gettext "Bad bisect_write argument: \$state")" ;;
++		*)		GIT_I18N_VARIABLE_state=$state
++				die "$(eval_gettext "Bad bisect_write argument: \$GIT_I18N_VARIABLE_state")" ;;
+ 	esac
+ 	git update-ref "refs/bisect/$tag" "$rev" || exit
+ 	echo "# $state: $(git show-branch $rev)" >>"$GIT_DIR/BISECT_LOG"
+@@ -190,7 +194,8 @@ bisect_skip() {
+ 	do
+ 	    case "$arg" in
+             *..*)
+-                revs=$(git rev-list "$arg") || die "$(eval_gettext "Bad rev input: \$arg")" ;;
++				GIT_I18N_VARIABLE_arg=$arg
++                revs=$(git rev-list "$arg") || die "$(eval_gettext "Bad rev input: \$GIT_I18N_VARIABLE_arg")" ;;
+             *)
+                 revs=$(git rev-parse --sq-quote "$arg") ;;
+ 	    esac
+@@ -215,8 +220,9 @@ bisect_state() {
+ 		eval=''
+ 		for rev in "$@"
+ 		do
++			GIT_I18N_VARIABLE_rev=$rev
+ 			sha=$(git rev-parse --verify "$rev^{commit}") ||
+-				die "$(eval_gettext "Bad rev input: \$rev")"
++				die "$(eval_gettext "Bad rev input: \$GIT_I18N_VARIABLE_rev")"
+ 			eval="$eval bisect_write '$state' '$sha'; "
+ 		done
+ 		eval "$eval"
+@@ -333,8 +339,8 @@ bisect_reset() {
+ 	case "$#" in
+ 	0) branch=$(cat "$GIT_DIR/BISECT_START") ;;
+ 	1) git rev-parse --quiet --verify "$1^{commit}" > /dev/null || {
+-	       invalid="$1"
+-	       die "$(eval_gettext "'\$invalid' is not a valid commit")"
++	       GIT_I18N_VARIABLE_invalid="$1"
++	       die "$(eval_gettext "'\$GIT_I18N_VARIABLE_invalid' is not a valid commit")"
+ 	   }
+ 	   branch="$1" ;;
+ 	*)
+@@ -343,7 +349,8 @@ bisect_reset() {
+ 	if git checkout "$branch" -- ; then
+ 		bisect_clean_state
+ 	else
+-		die "$(eval_gettext "Could not check out original HEAD '\$branch'.
++		GIT_I18N_VARIABLE_branch=$branch
++		die "$(eval_gettext "Could not check out original HEAD '\$GIT_I18N_VARIABLE_branch'.
+ Try 'git bisect reset <commit>'.")"
+ 	fi
+ }
+@@ -369,7 +376,10 @@ bisect_clean_state() {
+ bisect_replay () {
+ 	file="$1"
+ 	test "$#" -eq 1 || die "$(gettext "No logfile given")"
+-	test -r "$file" || die "$(eval_gettext "cannot read \$file for replaying")"
++	test -r "$file" || {
++		GIT_I18N_VARIABLE_file=$file
++		die "$(eval_gettext "cannot read \$GIT_I18N_VARIABLE_file for replaying")"
++	}
+ 	bisect_reset
+ 	while read git bisect command rev
+ 	do
+@@ -396,16 +406,17 @@ bisect_run () {
+ 
+     while true
+     do
+-      command="$@"
+-      eval_gettext "running \$command"; echo
++      GIT_I18N_VARIABLE_command="$@"
++      eval_gettext "running \$GIT_I18N_VARIABLE_command"; echo
+       "$@"
+       res=$?
+ 
+       # Check for really bad run error.
+       if [ $res -lt 0 -o $res -ge 128 ]; then
+ 	  (
++	    GIT_I18N_VARIABLE_res=$res
+ 	    eval_gettext "bisect run failed:
+-exit code \$res from '\$command' is < 0 or >= 128" &&
++exit code \$GIT_I18N_VARIABLE_res from '\$GIT_I18N_VARIABLE_command' is < 0 or >= 128" &&
+ 	    echo
+ 	  ) >&2
+ 	  exit $res
+@@ -438,8 +449,10 @@ exit code \$res from '\$command' is < 0 or >= 128" &&
+ 
+       if [ $res -ne 0 ]; then
+ 	  (
++	      GIT_I18N_VARIABLE_state=$state
++	      GIT_I18N_VARIABLE_res=$res
+ 	      eval_gettext "bisect run failed:
+-'bisect_state \$state' exited with error code \$res" &&
++'bisect_state \$GIT_I18N_VARIABLE_state' exited with error code \$GIT_I18N_VARIABLE_res" &&
+ 	      echo
+ 	  ) >&2
+ 	  exit $res
+-- 
+1.7.5.1
+
