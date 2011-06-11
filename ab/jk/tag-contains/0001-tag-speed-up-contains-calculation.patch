@@ -1,0 +1,121 @@
+From cf0e08af0fe46410b3a01cf42a13d2f128d3e81c Mon Sep 17 00:00:00 2001
+From: Jeff King <peff@peff.net>
+Date: Mon, 5 Jul 2010 08:33:36 -0400
+Subject: [PATCH 1/4] tag: speed up --contains calculation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When we want to know if commit A contains commit B (or any
+one of a set of commits, B through Z), we generally
+calculate the merge bases and see if B is a merge base of A
+(or for a set, if any of the commits B through Z have that
+property).
+
+When we are going to check a series of commits A1 through An
+to see whether each contains B (e.g., because we are
+deciding which tags to show with "git tag --contains"), we
+do a series of merge base calculations. This can be very
+expensive, as we repeat a lot of traversal work.
+
+Instead, let's leverage the fact that we are going to use
+the same --contains list for each tag, and mark areas of the
+commit graph is definitely containing those commits, or
+definitely not containing those commits. Later tags can then
+stop traversing as soon as they see a previously calculated
+answer.
+
+This sped up "git tag --contains HEAD~200" in the linux-2.6
+repository from:
+
+  real    0m15.417s
+  user    0m15.197s
+  sys     0m0.220s
+
+to:
+
+  real    0m5.329s
+  user    0m5.144s
+  sys     0m0.184s
+
+Signed-off-by: Jeff King <peff@peff.net>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/tag.c |   46 +++++++++++++++++++++++++++++++++++++++++++++-
+ 1 files changed, 45 insertions(+), 1 deletions(-)
+
+diff --git a/builtin/tag.c b/builtin/tag.c
+index ec926fc..575a03c 100644
+--- a/builtin/tag.c
++++ b/builtin/tag.c
+@@ -12,6 +12,8 @@
+ #include "tag.h"
+ #include "run-command.h"
+ #include "parse-options.h"
++#include "diff.h"
++#include "revision.h"
+ 
+ static const char * const git_tag_usage[] = {
+ 	"git tag [-a|-s|-u <key-id>] [-f] [-m <msg>|-F <file>] <tagname> [<head>]",
+@@ -29,6 +31,48 @@ struct tag_filter {
+ 	struct commit_list *with_commit;
+ };
+ 
++static int in_commit_list(const struct commit_list *want, struct commit *c)
++{
++	for (; want; want = want->next)
++		if (!hashcmp(want->item->object.sha1, c->object.sha1))
++			return 1;
++	return 0;
++}
++
++static int contains_recurse(struct commit *candidate,
++			    const struct commit_list *want)
++{
++	struct commit_list *p;
++
++	/* was it previously marked as containing a want commit? */
++	if (candidate->object.flags & TMP_MARK)
++		return 1;
++	/* or marked as not possibly containing a want commit? */
++	if (candidate->object.flags & UNINTERESTING)
++		return 0;
++	/* or are we it? */
++	if (in_commit_list(want, candidate))
++		return 1;
++
++	if (parse_commit(candidate) < 0)
++		return 0;
++
++	/* Otherwise recurse and mark ourselves for future traversals. */
++	for (p = candidate->parents; p; p = p->next) {
++		if (contains_recurse(p->item, want)) {
++			candidate->object.flags |= TMP_MARK;
++			return 1;
++		}
++	}
++	candidate->object.flags |= UNINTERESTING;
++	return 0;
++}
++
++int contains(struct commit *candidate, const struct commit_list *want)
++{
++	return contains_recurse(candidate, want);
++}
++
+ static int show_reference(const char *refname, const unsigned char *sha1,
+ 			  int flag, void *cb_data)
+ {
+@@ -47,7 +91,7 @@ static int show_reference(const char *refname, const unsigned char *sha1,
+ 			commit = lookup_commit_reference_gently(sha1, 1);
+ 			if (!commit)
+ 				return 0;
+-			if (!is_descendant_of(commit, filter->with_commit))
++			if (!contains(commit, filter->with_commit))
+ 				return 0;
+ 		}
+ 
+-- 
+1.7.5.3
+
