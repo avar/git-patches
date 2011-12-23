@@ -1,0 +1,192 @@
+From 82c940445bf153b3162fb7c303e2d0d13d43be03 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 23 Dec 2011 16:50:52 +0000
+Subject: [PATCH] Remove Git's support for smoke testing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+I'm no longer running the Git smoke testing service at
+smoke.git.nix.is due to Smolder being a fragile piece of software not
+having time to follow through on making it easy for third parties to
+run and submit their own smoke tests.
+
+So remove the support in Git for sending smoke tests to
+smoke.git.nix.is, it's still easy to modify the test suite to submit
+smokes somewhere else.
+
+This reverts the following commits:
+
+    Revert "t/README: Add SMOKE_{COMMENT,TAGS}= to smoke_report target" -- e38efac87d
+    Revert "t/README: Document the Smoke testing" -- d15e9ebc5c
+    Revert "t/Makefile: Create test-results dir for smoke target" -- 617344d77b
+    Revert "tests: Infrastructure for Git smoke testing" -- b6b84d1b74
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/Makefile |   40 +--------------------------------
+ t/README   |   73 ------------------------------------------------------------
+ t/harness  |   21 -----------------
+ 3 files changed, 1 insertions(+), 133 deletions(-)
+ delete mode 100755 t/harness
+
+diff --git a/t/Makefile b/t/Makefile
+index 9046ec9..52a23ff 100644
+--- a/t/Makefile
++++ b/t/Makefile
+@@ -73,42 +73,4 @@ gitweb-test:
+ valgrind:
+ 	$(MAKE) GIT_TEST_OPTS="$(GIT_TEST_OPTS) --valgrind"
+ 
+-# Smoke testing targets
+--include ../GIT-VERSION-FILE
+-uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo unknown')
+-uname_M := $(shell sh -c 'uname -m 2>/dev/null || echo unknown')
+-
+-test-results:
+-	mkdir -p test-results
+-
+-test-results/git-smoke.tar.gz: test-results
+-	$(PERL_PATH) ./harness \
+-		--archive="test-results/git-smoke.tar.gz" \
+-		$(T)
+-
+-smoke: test-results/git-smoke.tar.gz
+-
+-SMOKE_UPLOAD_FLAGS =
+-ifdef SMOKE_USERNAME
+-	SMOKE_UPLOAD_FLAGS += -F username="$(SMOKE_USERNAME)" -F password="$(SMOKE_PASSWORD)"
+-endif
+-ifdef SMOKE_COMMENT
+-	SMOKE_UPLOAD_FLAGS += -F comments="$(SMOKE_COMMENT)"
+-endif
+-ifdef SMOKE_TAGS
+-	SMOKE_UPLOAD_FLAGS += -F tags="$(SMOKE_TAGS)"
+-endif
+-
+-smoke_report: smoke
+-	curl \
+-		-H "Expect: " \
+-		-F project=Git \
+-		-F architecture="$(uname_M)" \
+-		-F platform="$(uname_S)" \
+-		-F revision="$(GIT_VERSION)" \
+-		-F report_file=@test-results/git-smoke.tar.gz \
+-		$(SMOKE_UPLOAD_FLAGS) \
+-		http://smoke.git.nix.is/app/projects/process_add_report/1 \
+-	| grep -v ^Redirecting
+-
+-.PHONY: pre-clean $(T) aggregate-results clean valgrind smoke smoke_report
++.PHONY: pre-clean $(T) aggregate-results clean valgrind
+diff --git a/t/README b/t/README
+index c85abaf..681e8b4 100644
+--- a/t/README
++++ b/t/README
+@@ -658,76 +658,3 @@ Then, at the top-level:
+ That'll generate a detailed cover report in the "cover_db_html"
+ directory, which you can then copy to a webserver, or inspect locally
+ in a browser.
+-
+-Smoke testing
+--------------
+-
+-The Git test suite has support for smoke testing. Smoke testing is
+-when you submit the results of a test run to a central server for
+-analysis and aggregation.
+-
+-Running a smoke tester is an easy and valuable way of contributing to
+-Git development, particularly if you have access to an uncommon OS on
+-obscure hardware.
+-
+-After building Git you can generate a smoke report like this in the
+-"t" directory:
+-
+-    make clean smoke
+-
+-You can also pass arguments via the environment. This should make it
+-faster:
+-
+-    GIT_TEST_OPTS='--root=/dev/shm' TEST_JOBS=10 make clean smoke
+-
+-The "smoke" target will run the Git test suite with Perl's
+-"TAP::Harness" module, and package up the results in a .tar.gz archive
+-with "TAP::Harness::Archive". The former is included with Perl v5.10.1
+-or later, but you'll need to install the latter from the CPAN. See the
+-"Test coverage" section above for how you might do that.
+-
+-Once the "smoke" target finishes you'll see a message like this:
+-
+-    TAP Archive created at <path to git>/t/test-results/git-smoke.tar.gz
+-
+-To upload the smoke report you need to have curl(1) installed, then
+-do:
+-
+-    make smoke_report
+-
+-To upload the report anonymously. Hopefully that'll return something
+-like "Reported #7 added.".
+-
+-If you're going to be uploading reports frequently please request a
+-user account by E-Mailing gitsmoke@v.nix.is. Once you have a username
+-and password you'll be able to do:
+-
+-    SMOKE_USERNAME=<username> SMOKE_PASSWORD=<password> make smoke_report
+-
+-You can also add an additional comment to attach to the report, and/or
+-a comma separated list of tags:
+-
+-    SMOKE_USERNAME=<username> SMOKE_PASSWORD=<password> \
+-        SMOKE_COMMENT=<comment> SMOKE_TAGS=<tags> \
+-        make smoke_report
+-
+-Once the report is uploaded it'll be made available at
+-http://smoke.git.nix.is, here's an overview of Recent Smoke Reports
+-for Git:
+-
+-    http://smoke.git.nix.is/app/projects/smoke_reports/1
+-
+-The reports will also be mirrored to GitHub every few hours:
+-
+-    http://github.com/gitsmoke/smoke-reports
+-
+-The Smolder SQLite database is also mirrored and made available for
+-download:
+-
+-    http://github.com/gitsmoke/smoke-database
+-
+-Note that the database includes hashed (with crypt()) user passwords
+-and E-Mail addresses. Don't use a valuable password for the smoke
+-service if you have an account, or an E-Mail address you don't want to
+-be publicly known. The user accounts are just meant to be convenient
+-labels, they're not meant to be secure.
+diff --git a/t/harness b/t/harness
+deleted file mode 100755
+index f5c02f4..0000000
+--- a/t/harness
++++ /dev/null
+@@ -1,21 +0,0 @@
+-#!/usr/bin/perl
+-use strict;
+-use warnings;
+-use Getopt::Long ();
+-use TAP::Harness::Archive;
+-
+-Getopt::Long::Parser->new(
+-	config => [ qw/ pass_through / ],
+-)->getoptions(
+-	'jobs:1'    => \(my $jobs = $ENV{TEST_JOBS}),
+-	'archive=s' => \my $archive,
+-) or die "$0: Couldn't getoptions()";
+-
+-TAP::Harness::Archive->new({
+-	jobs             => $jobs,
+-	archive          => $archive,
+-	($ENV{GIT_TEST_OPTS}
+-	 ? (test_args    => [ split /\s+/, $ENV{GIT_TEST_OPTS} ])
+-	 : ()),
+-	extra_properties => {},
+-})->runtests(@ARGV);
+-- 
+1.7.7.3
+
