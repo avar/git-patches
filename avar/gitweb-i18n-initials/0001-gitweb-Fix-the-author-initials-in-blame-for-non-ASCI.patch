@@ -1,0 +1,79 @@
+From 7f9edf2ea17e3ccd4961d1f72a8fa4143afebfa6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 30 Aug 2013 08:30:27 +0000
+Subject: [PATCH] gitweb: Fix the author initials in blame for non-ASCII names
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the @author_initials feature Jakub added in
+v1.6.4-rc2-14-ga36817b to match non-ASCII author initials as intended.
+
+The regexp Jakub added was intended to match
+non-ASCII (/\b([[:upper:]])\B/g). But in Perl this doesn't actually
+match non-ASCII upper-case characters unless the string being matched
+against has the UTF8 flag.
+
+So when we open a pipe to "git blame" we need to mark the file
+descriptor we're opening as utf8 explicitly.
+
+So as a result it abbreviates me to "AB" not "ÆAB", entirely because "Æ"
+isn't /[[:upper:]]/ unless the string being matched against has the UTF8
+flag.
+
+Here's something that demonstrates the issue:
+
+    #!/usr/bin/env perl
+    use strict;
+    use warnings;
+
+    binmode STDOUT, ':utf8' if $ENV{UTF8};
+    open my $fd, "-|", "git", "blame", "--incremental", "--", "Makefile" or die "Can't open: $!";
+    binmode $fd, ":utf8" if $ENV{UTF8};
+    while (my $line = <$fd>) {
+    	next unless my ($author) = $line =~ /^author (.*)/;
+    	my @author_initials = ($author =~ /\b([[:upper:]])\B/g);
+    	printf "%s (%s)\n",  join("", @author_initials), $author;
+    }
+
+When that's run with and without UTF8 being true in the environment it
+gives, on git.git:
+
+    $ UTF8=0 perl author-initials.pl | sort | uniq -c |
+    sort -nr | head -n 5
+         99 JH (Junio C Hamano)
+         35 JN (Jonathan Nieder)
+         35 JK (Jeff King)
+         20 JS (Johannes Schindelin)
+         16 AB (Ævar Arnfjörð Bjarmason)
+    $ UTF8=1 perl author-initials.pl | sort | uniq -c |
+    sort -nr | head -n 5
+         99 JH (Junio C Hamano)
+         35 JN (Jonathan Nieder)
+         35 JK (Jeff King)
+         20 JS (Johannes Schindelin)
+         16 ÆAB (Ævar Arnfjörð Bjarmason)
+
+Acked-by: Jakub Narębski <jnareb@gmail.com>
+Tested-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Tested-by: Simon Ruderich <simon@ruderich.org>
+---
+ gitweb/gitweb.perl | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/gitweb/gitweb.perl b/gitweb/gitweb.perl
+index f429f75..ad48a5a 100755
+--- a/gitweb/gitweb.perl
++++ b/gitweb/gitweb.perl
+@@ -6631,6 +6631,7 @@ sub git_blame_common {
+ 			$hash_base, '--', $file_name
+ 			or die_error(500, "Open git-blame --porcelain failed");
+ 	}
++	binmode $fh, ':utf8';
+ 
+ 	# incremental blame data returns early
+ 	if ($format eq 'data') {
+-- 
+1.8.4.rc2
+
