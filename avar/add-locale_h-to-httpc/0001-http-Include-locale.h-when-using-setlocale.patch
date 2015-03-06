@@ -1,0 +1,52 @@
+From 8bbe6b00c99006607b387c015c237e2ef2783a6b Mon Sep 17 00:00:00 2001
+In-Reply-To: <1405792730-13539-1-git-send-email-eungjun.yi@navercorp.com>
+References: <1405792730-13539-1-git-send-email-eungjun.yi@navercorp.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 6 Mar 2015 16:04:57 +0000
+Subject: [PATCH] http: Include locale.h when using setlocale()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since v2.3.0-rc1-37-gf18604b we've been using setlocale() here without
+importing locale.h. Oddly enough this only causes issues for me under
+-O0 on GCC & Clang. I.e. if I do:
+
+    $ git clean -dxf; make -j 1 V=1 CFLAGS="-g -O0 -Wall" http.o
+
+I'll get this on clang 3.5.0-6 & GCC 4.9.1-19 on Debian:
+
+    http.c: In function ‘get_preferred_languages’:
+    http.c:1021:2: warning: implicit declaration of function ‘setlocale’ [-Wimplicit-function-declaration]
+      retval = setlocale(LC_MESSAGES, NULL);
+      ^
+    http.c:1021:21: error: ‘LC_MESSAGES’ undeclared (first use in this function)
+      retval = setlocale(LC_MESSAGES, NULL);
+
+But changing -O0 to -O1 or another optimization level makes the issue go
+away. Odd, but in any case we should be including this header if we're
+going to use the function, so just do that.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ http.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/http.c b/http.c
+index 0153fb0..0606e6c 100644
+--- a/http.c
++++ b/http.c
+@@ -8,6 +8,9 @@
+ #include "credential.h"
+ #include "version.h"
+ #include "pkt-line.h"
++#ifndef NO_GETTEXT
++#	include <locale.h>
++#endif
+ 
+ int active_requests;
+ int http_is_verbose;
+-- 
+2.1.3
+
