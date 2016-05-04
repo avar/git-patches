@@ -2,12 +2,31 @@ From f24f697ccc570f6aeb79c19e3a4adc27d57c0d89 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Wed, 4 May 2016 20:10:21 +0000
-Subject: [PATCH v5 0/4] *** SUBJECT HERE ***
+Subject: [PATCH v5 0/4] githooks.txt improvements + core.hooksDirectory
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This is hopefully the last version of this series. I've hopefully
+addressed the comments that came up and fixed a couple of other minor
+things.
+
+Changes since v4:
+
+ * Changed wording to config.txt's core.hooksPath documentation as
+   suggested.
+
+ * Ditto for githooks.txt, and I tried to make the whole "how we
+   chdir()" bit less confusing.
+
+ * Use more obvious test idioms, e.g. indent when using <<-\EOF, use a
+   multi-line test_cmp file, and use "expect" and "actual" like other
+   test files instead of needlessly verbose alternatives.
+
+ * Fixed a grammar error in a commit message.
+
+For convenience & ease of review a diff between the bits of v4 and v5
+that I changed follows below.
 
 Ævar Arnfjörð Bjarmason (4):
   githooks.txt: Improve the intro section
@@ -25,6 +44,107 @@ Content-Transfer-Encoding: 8bit
  t/t1350-config-hooks-path.sh | 37 ++++++++++++++++++++++
  8 files changed, 114 insertions(+), 32 deletions(-)
  create mode 100755 t/t1350-config-hooks-path.sh
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index c007b12..9a74acd 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -625,16 +625,15 @@ core.hooksPath::
+ 	that directory, e.g. '/etc/git/hooks/pre-receive' instead of
+ 	in '$GIT_DIR/hooks/pre-receive'.
+ +
+-The path can either be absolute or relative. When specifying a
+-relative path see the discussion in the "DESCRIPTION" section of
+-linkgit:githooks[5] for what the relative relative path will be
+-relative to.
+-+
+-This configuration is useful in cases where you'd like to
+-e.g. centrally configure your Git hooks instead of configuring them on
+-a per-repository basis, or as a more flexible and centralized
+-alterantive to having an `init.templateDir` where you've changed the
+-'hooks' directory.
++The path can be either absolute or relative. A relative path is
++taken as relative to the directory where the hooks are run (see
++the "DESCRIPTION" section of linkgit:githooks[5]).
+++
++This configuration variable is useful in cases where you'd like to
++centrally configure your Git hooks instead of configuring them on a
++per-repository basis, or as a more flexible and centralized
++alterantive to having an `init.templateDir` where you've changed
++default hooks.
+ 
+ core.editor::
+ 	Commands such as `commit` and `tag` that lets you edit
+diff --git a/Documentation/githooks.txt b/Documentation/githooks.txt
+index 97ae78d..6f562cd 100644
+--- a/Documentation/githooks.txt
++++ b/Documentation/githooks.txt
+@@ -21,20 +21,21 @@ By default the hooks directory is `$GIT_DIR/hooks`, but that can be
+ changed via the `core.hooksPath` configuration variable (see
+ linkgit:git-config[1]).
+ 
+-When a hook is invoked, it is run at the root of the working tree in a
+-non-bare repository, or in the $GIT_DIR in a bare
+-repository. I.e. hooks don't need to worry about the user's current
+-working directory.
++Hooks don't need to worry about the user's current working
++directory. Before Git invokes a hook it changes its working
++directory. The working directory will be the root of the working tree
++in a non-bare repository, or in the $GIT_DIR directory in a bare
++repository.
+ 
+ Hooks can get their arguments via the environment, command-line
+ arguments, and stdin. See the documentation for each hook below for
+ details.
+ 
+-When 'git init' is run it may, depending on its configuration, copy
+-hooks to the new repository, see the the "TEMPLATE DIRECTORY" section
+-in linkgit:git-init[1] for details. When the rest of this document
+-refers to "default hooks" it's talking about the default template
+-shipped with Git.
++'git init' may copy hooks to the new repository, depending on its
++configuration. See the "TEMPLATE DIRECTORY" section in
++linkgit:git-init[1] for details. When the rest of this document refers
++to "default hooks" it's talking about the default template shipped
++with Git.
+ 
+ The currently supported hooks are described below.
+ 
+diff --git a/t/t1350-config-hooks-path.sh b/t/t1350-config-hooks-path.sh
+index f2f0aa9..6e4586a 100755
+--- a/t/t1350-config-hooks-path.sh
++++ b/t/t1350-config-hooks-path.sh
+@@ -7,10 +7,10 @@ test_description='Test the core.hooksPath configuration variable'
+ test_expect_success 'set up a pre-commit hook in core.hooksPath' '
+ 	mkdir -p .git/custom-hooks .git/hooks &&
+ 	write_script .git/custom-hooks/pre-commit <<-\EOF &&
+-printf "%s" "CUST" >>.git/PRE-COMMIT-HOOK-WAS-CALLED
++	echo CUSTOM >>actual
+ EOF
+ 	write_script .git/hooks/pre-commit <<-\EOF
+-printf "%s" "NORM" >>.git/PRE-COMMIT-HOOK-WAS-CALLED
++	echo NORMAL >>actual
+ EOF
+ '
+ 
+@@ -24,8 +24,14 @@ test_expect_success 'Check that various forms of specifying core.hooksPath work'
+ 	test_commit have_custom_hook_abs_path &&
+ 	git config core.hooksPath "$PWD/.git/custom-hooks/" &&
+ 	test_commit have_custom_hook_abs_path_trailing_slash &&
+-	printf "%s" "NORMCUSTCUSTCUSTCUST" >.git/PRE-COMMIT-HOOK-WAS-CALLED.expect &&
+-	test_cmp .git/PRE-COMMIT-HOOK-WAS-CALLED.expect .git/PRE-COMMIT-HOOK-WAS-CALLED
++	cat >expect <<-\EOF &&
++	NORMAL
++	CUSTOM
++	CUSTOM
++	CUSTOM
++	CUSTOM
++EOF
++	test_cmp expect actual
+ '
+ 
+ test_done
+
 
 -- 
 2.1.3
