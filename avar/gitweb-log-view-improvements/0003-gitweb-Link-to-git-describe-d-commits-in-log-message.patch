@@ -1,0 +1,67 @@
+From 58c49a0fcb62b65d16fb7c8412ca57bb1f04ef90 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 21 Sep 2016 13:18:16 +0200
+Subject: [PATCH 3/3] gitweb: Link to "git describe"'d commits in log messages
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the log formatting function to know about "git describe" output
+like v2.8.0-4-g867ad08 in addition to just plain 867ad08.
+
+This also fixes a micro-regression in my change of the minimum SHA1
+length from 8 to 7, which is that dated tags like
+hadoop-20160921-113441-20-g094fb7d would start thinking the "20160921"
+part was a commit.
+
+There are still many valid refnames that we don't link to
+e.g. v2.10.0-rc1~2^2~1 is also a valid way to refer to
+v2.8.0-4-g867ad08, but I'm not supporting that with this commit,
+similarly it's trivially possible to create some refnames like
+"æ/var-gf6727b0" or whatever which won't be picked up by this regex.
+
+There's surely room for improvement here, but I just wanted to address
+the very common case of sticking "git describe" output into commit
+messages without trying to link to all possible refnames, that's going
+to be a rather futile exercise given that this is free text, and it
+would be prohibitively expensive to look up whether the references in
+question exist in our repository.
+---
+ gitweb/gitweb.perl | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/gitweb/gitweb.perl b/gitweb/gitweb.perl
+index 101dbc0..3a52bc7 100755
+--- a/gitweb/gitweb.perl
++++ b/gitweb/gitweb.perl
+@@ -2036,10 +2036,24 @@ sub format_log_line_html {
+ 	my $line = shift;
+ 
+ 	$line = esc_html($line, -nbsp=>1);
+-	$line =~ s{\b([0-9a-fA-F]{7,40})\b}{
++	$line =~ s{
++        \b
++        (
++            # The output of "git describe", e.g. v2.10.0-297-gf6727b0
++            # or hadoop-20160921-113441-20-g094fb7d
++            (?<!-) # see strbuf_check_tag_ref(). Tags can't start with -
++            [A-Za-z0-9.-]+
++            (?!\.) # refs can't end with ".", see check_refname_format()
++            -g[0-9a-fA-F]{7,40}
++            |
++            # Just a normal looking Git SHA1
++            [0-9a-fA-F]{7,40}
++        )
++        \b
++    }{
+ 		$cgi->a({-href => href(action=>"object", hash=>$1),
+ 					-class => "text"}, $1);
+-	}eg;
++	}egx;
+ 
+ 	return $line;
+ }
+-- 
+2.1.3
+
