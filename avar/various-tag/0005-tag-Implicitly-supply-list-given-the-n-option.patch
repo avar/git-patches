@@ -1,0 +1,116 @@
+From e48c291a9d112c0826d428fa26ad8e9f02fb4ea6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 18 Mar 2017 09:35:03 +0000
+Subject: [PATCH 5/8] tag: Implicitly supply --list given the -n option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "tag" command to treat the "-n" invocation as a list-like
+option in addition to --contains, --points-at etc.
+
+Most of the work for this was done in my preceding "tag: Implicitly
+supply --list given another list-like option", but I've split off this
+patch since it's more contentious. Now invocations these invocations
+will be synonymous:
+
+    git tag -n 100
+    git tag -n --list 100
+
+Whereas before the former would die. This doesn't technically
+introduce any more ambiguity than change to the other list-like
+options, but it does introduce the possibility for more confusion
+since instead of the latter of these dying:
+
+    git tag -n100
+    git tag -n 100
+
+It now works entirely differently, i.e. invokes list mode with a
+filter for "100".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-tag.txt |  9 +++++----
+ builtin/tag.c             |  2 +-
+ t/t7004-tag.sh            | 17 ++++++++++++++++-
+ 3 files changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/Documentation/git-tag.txt b/Documentation/git-tag.txt
+index 2acd3b6beb..e7793afad1 100644
+--- a/Documentation/git-tag.txt
++++ b/Documentation/git-tag.txt
+@@ -82,10 +82,11 @@ OPTIONS
+ 
+ -n<num>::
+ 	<num> specifies how many lines from the annotation, if any,
+-	are printed when using -l.
+-	The default is not to print any annotation lines.
+-	If no number is given to `-n`, only the first line is printed.
+-	If the tag is not annotated, the commit message is displayed instead.
++	are printed when using -l. Implies `--list`.
+++
++The default is not to print any annotation lines.
++If no number is given to `-n`, only the first line is printed.
++If the tag is not annotated, the commit message is displayed instead.
+ 
+ -l::
+ --list::
+diff --git a/builtin/tag.c b/builtin/tag.c
+index 3483636e59..2da28a5ce6 100644
+--- a/builtin/tag.c
++++ b/builtin/tag.c
+@@ -457,7 +457,7 @@ int cmd_tag(int argc, const char **argv, const char *prefix)
+ 	if (!cmdmode && !create_tag_object) {
+ 		if (argc == 0)
+ 			cmdmode = 'l';
+-		else if (filter.with_commit || filter.points_at.nr || filter.merge_commit)
++		else if (filter.with_commit || filter.points_at.nr || filter.merge_commit || filter.lines != -1)
+ 			cmdmode = 'l';
+ 	}
+ 
+diff --git a/t/t7004-tag.sh b/t/t7004-tag.sh
+index 5c94932f0f..ba1ab1f21c 100755
+--- a/t/t7004-tag.sh
++++ b/t/t7004-tag.sh
+@@ -639,6 +639,11 @@ test_expect_success \
+ 	git tag -n0 -l tag-one-line >actual &&
+ 	test_cmp expect actual &&
+ 
++	git tag -n0 | grep "^tag-one-line" >actual &&
++	test_cmp expect actual &&
++	git tag -n0 tag-one-line >actual &&
++	test_cmp expect actual &&
++
+ 	echo "tag-one-line    A msg" >expect &&
+ 	git tag -n1 -l | grep "^tag-one-line" >actual &&
+ 	test_cmp expect actual &&
+@@ -652,6 +657,17 @@ test_expect_success \
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'The -n 100 invocation means -n --list 100, not -n100' '
++	>expect &&
++	git tag -n 100 >actual &&
++	test_cmp expect actual &&
++
++	git tag -m "A msg" 100 &&
++	echo "100             A msg" >expect &&
++	git tag -n 100 >actual &&
++	test_cmp expect actual
++'
++
+ test_expect_success \
+ 	'listing the zero-lines message of a non-signed tag should succeed' '
+ 	git tag -m "" tag-zero-lines &&
+@@ -1495,7 +1511,6 @@ test_expect_success 'mixing incompatibles modes and options is forbidden' '
+ 	test_must_fail git tag -a -s -m -F &&
+ 	test_must_fail git tag -a -s -m -F -l &&
+ 	test_must_fail git tag -l -v &&
+-	test_must_fail git tag -n 100 &&
+ 	test_must_fail git tag -n 100 -v &&
+ 	test_must_fail git tag -l -m msg &&
+ 	test_must_fail git tag -l -F some file &&
+-- 
+2.11.0
+

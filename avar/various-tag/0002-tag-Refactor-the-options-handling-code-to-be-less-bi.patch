@@ -1,0 +1,80 @@
+From 5198ebb0fe237331ea08f97653dfd1a8785930f2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 17 Mar 2017 23:12:32 +0000
+Subject: [PATCH 2/8] tag: Refactor the options handling code to be less
+ bizarro
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the options handling code so that "cmdmode = 'l'" isn't set
+on the likes of "tag -a". This change introduces no functional
+changes, but makes subsequent patches easier to reason about, as both
+"annotate = 1" "cmdmode = 'l'" won't be unexpectedly set if "tag" is
+merely invoked as "tag -a", "tag -s" etc.
+
+Before this the cmdmode variable would be set to 'l' indicating that
+"tag" was operating in list mode, this was then used a couple of lines
+later by e.g. the codepath for "tag -a" where the command would only
+bail out with usage_with_options() if the likes of "-a" were
+set, *and* some cmdmode (i.e. 'l' in this case) had been set.
+
+This behavior was an emergent property of other earlier changes,
+starting with commit 6fa8342b12 (tag: Check that options are only
+allowed in the appropriate mode, 2008-11-05), to its present form in
+commit e6b722db09 ("tag: use OPT_CMDMODE", 2013-07-30).
+
+Change the test suite to more exhaustively assert that already
+existing behavior related to this option parsing is kept.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/tag.c  |  4 ++--
+ t/t7004-tag.sh | 13 +++++++++++++
+ 2 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/tag.c b/builtin/tag.c
+index ad29be6923..0bba3fd070 100644
+--- a/builtin/tag.c
++++ b/builtin/tag.c
+@@ -454,10 +454,10 @@ int cmd_tag(int argc, const char **argv, const char *prefix)
+ 	}
+ 	create_tag_object = (opt.sign || annotate || msg.given || msgfile);
+ 
+-	if (argc == 0 && !cmdmode)
++	if (argc == 0 && !cmdmode && !create_tag_object)
+ 		cmdmode = 'l';
+ 
+-	if ((create_tag_object || force) && (cmdmode != 0))
++	if ((create_tag_object || force) && (cmdmode || (!cmdmode && !argc)))
+ 		usage_with_options(git_tag_usage, options);
+ 
+ 	finalize_colopts(&colopts, -1);
+diff --git a/t/t7004-tag.sh b/t/t7004-tag.sh
+index 876ccfc830..74fc82a3c0 100755
+--- a/t/t7004-tag.sh
++++ b/t/t7004-tag.sh
+@@ -1455,6 +1455,19 @@ test_expect_success 'checking that initial commit is in all tags' "
+ 
+ test_expect_success 'mixing incompatibles modes and options is forbidden' '
+ 	test_must_fail git tag -a &&
++	test_must_fail git tag -a -l &&
++	test_must_fail git tag -s &&
++	test_must_fail git tag -s -l &&
++	test_must_fail git tag -m &&
++	test_must_fail git tag -m -l &&
++	test_must_fail git tag -m "hlagh" &&
++	test_must_fail git tag -m "hlagh" -l &&
++	test_must_fail git tag -F &&
++	test_must_fail git tag -F -l &&
++	test_must_fail git tag -f &&
++	test_must_fail git tag -f -l &&
++	test_must_fail git tag -a -s -m -F &&
++	test_must_fail git tag -a -s -m -F -l &&
+ 	test_must_fail git tag -l -v &&
+ 	test_must_fail git tag -n 100 &&
+ 	test_must_fail git tag -l -m msg &&
+-- 
+2.11.0
+
