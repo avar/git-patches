@@ -7,6 +7,129 @@ Date: Tue, 28 Mar 2017 12:55:35 +0000
 Subject: [PATCH/RFC v2] WIP configurable options facility
 
 ---
+
+FWIW here's the current state of this WIP hack which I worked a bit on
+yesterday. I converted it to use a hashmap and got rid of the need to
+s/const // the options struct.
+
+I've either converted options that read the config to this already, or
+left TODO comments on those that are candidates for migration.
+
+All tests pass with this, but as the various TODO comments note
+there's some problems. It's leaking memory currently, and as the
+comment in parse_options_step() notes due to how this options code is
+called I've had to sprinkle some boilerplate in several parse_*_opt()
+functions.
+
+This is getting rid of less code than I'd hoped at first, although
+it'll be made up if we make more stuff configurable.
+
+On Tue, Mar 28, 2017 at 7:17 AM, Jeff King <peff@peff.net> wrote:
+> On Sat, Mar 25, 2017 at 11:32:02PM +0100, Ævar Arnfjörð Bjarmason wrote:
+>
+>> > So hopefully it's clear that the two are functionally equivalent, and
+>> > differ only in syntax (in this case we manually decided which options
+>> > are safe to pull from the config, but we'd have to parse the options.log
+>> > string, too, and we could make the same decision there).
+>>
+>> I like the simplicity of this approach a lot. I.e. (to paraphrase it
+>> just to make sure we're on the same page): Skip all the complexity of
+>> reaching into the getopt guts, and just munge argc/argv given a config
+>> we can stick ahead of the getopt (struct options) spec, inject some
+>> options at the beginning if they're in the config, and off we go
+>> without any further changes to the getopt guts.
+>
+> Yep, I think that's an accurate description.
+>
+>> There's two practical issues with this that are easy to solve with my
+>> current approach, but I can't find an easy solution to using this
+>> method.
+>>
+>> The first is that we're replacing the semantics of:
+>>
+>> "If you're specifying it on the command-line, we take it from there,
+>> otherwise we use your config, if set, regardless of how the option
+>> works"
+>>
+>> with:
+>>
+>> "We read your config, inject options implicitly at the start of the
+>> command line, and then append whatever command-line you give us"
+>>
+>> These two are not the same. Consider e.g. the commit.verbose config.
+>> With my current patch if have commit.verbose=1 in your config and do
+>> "commit --verbose" you just end up with a result equivalent to not
+>> having it in your config, but since the --verbose option can be
+>> supplied multiple times to increase verbosity with the injection
+>> method you'd end up with the equivalent of commit.verbose=2.
+>
+> Right, for anything where multiple options are meaningful, they'd have
+> to give "--no-verbose" to reset the option. In a sense that's less
+> friendly, because it's more manual. But it's also less magical, because
+> the semantics are clear: the config option behaves exactly as if you
+> gave the option on the command line. So for an OPT_STRING_LIST(), you
+> could append to the list, or reset it to empty, etc, as you see fit.
+>
+> But I do agree that it's more manual, and probably would cause some
+> confusion.
+
+And some slight breakage of backwards compatibiilty for things that
+supply the option on the CLI now, although it wouldn't be a huge deal.
+
+>> I can't think of a good way around that with your proposed approach
+>> that doesn't essentially get us back to something very similar to my
+>> patch, i.e. we'd need to parse the command-line using the options spec
+>> before applying our implicit config.
+>
+> Yes, the semantics you gave require parsing the options first. I think
+> it would be sufficient to just give each "struct option" a "seen" flag
+> (rather than having it understand the config mechanism), having
+> parse_options() set the flag, and then feeding the result to a separate
+> config/cmdline mapping mechanism. That keeps the complexity out of the
+> options code.
+
+Right, would require s/const // on the struct though like in my v1, or
+keeping this info in some datastructure on the side.
+
+> It does tie us back in to requiring parse-options, which not all the
+> options use.
+
+I think if we do keep something like this patch it's fair enough to
+say it won't work for everything. It's just there to make it easier
+for us to add configuration for options in the common case, but
+there's going to be various special cases (e.g. currently the options
+synonyms, and I think I'll leave that) that we won't be able to
+handle.
+
+> In a lot of cases that "seen" flag is effectively a sentinel value in
+> whatever variable the option value is stored in. But some of the options
+> don't have reasonable sentinel values (as you noticed with the "revert
+> -m" handling recently).
+>
+>> The second issue is related, i.e. I was going to add some flag an
+>> option could supply to say "if I'm provided none of these other
+>> maybe-from-config options get to read their config". This is needed
+>> for hybrid plumbing/porcelain like "git status --porcelain".
+>
+> Yeah, I agree you can't make that decision until you've seen the
+> command-line options. I think we currently do some hairy stuff where we
+> speculatively read config into a variable, and then apply the
+> config-based defaults only when we know we're in non-porcelain mode (see
+> status_deferred_config in builtin/commit.c).
+>
+> That came about because we didn't want to parse the config a second
+> time. These days the deferred config should probably just be read from
+> the cached configset, after we've read the other options.
+>
+> But I think this can be done after the full option-parsing is finished
+> by applying the mapping then.  I.e., something like:
+>
+>     parse_options(argc, argv, options, ...);
+>     if (status_format != STATUS_FORMAT_PORCELAIN)
+>         apply_config_mapping(status_mapping, options);
+>
+> -Peff
+
  builtin/add.c      |   1 +
  builtin/am.c       |  16 +++----
  builtin/blame.c    |  16 +++----
