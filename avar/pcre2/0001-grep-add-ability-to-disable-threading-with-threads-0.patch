@@ -1,0 +1,131 @@
+From 6add9355a47be716df5d3c40db5899970026596b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 7 Apr 2017 18:19:21 +0000
+Subject: [PATCH 01/12] grep: add ability to disable threading with --threads=0
+ or grep.threads=0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add the ability to entirely disable threading by having grep.threads=0
+in the config or --threads=0 on the command-line.
+
+This was made configurable in commit 89f09dd34e ("grep: add
+--threads=<num> option and grep.threads configuration",
+2015-12-15). Before that change there was no way to disable threaded
+grep other than to recompile Git.
+
+It's very useful for testing & debugging to be able to entirely
+disable threading without recompiling with NO_PTHREADS=YesPlease, so
+support setting the value to 0 to disable threading.
+
+There was no reason this wasn't the case already other than an
+implementation detail in how OPT_INTEGER() works. When it's used
+there's no way to tell the difference between an unset value & the
+default value. Use OPT_CALLBACK() instead using the same pattern as in
+commit b16a991c1b ("cherry-pick: detect bogus arguments to
+--mainline", 2017-03-15).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-grep.txt |  4 ++--
+ builtin/grep.c             | 26 ++++++++++++++++++++++----
+ t/t7810-grep.sh            | 10 ++++++++++
+ 3 files changed, 34 insertions(+), 6 deletions(-)
+
+diff --git a/Documentation/git-grep.txt b/Documentation/git-grep.txt
+index 71f32f3508..7b52e3fbc4 100644
+--- a/Documentation/git-grep.txt
++++ b/Documentation/git-grep.txt
+@@ -56,8 +56,8 @@ grep.extendedRegexp::
+ 	other than 'default'.
+ 
+ grep.threads::
+-	Number of grep worker threads to use.  If unset (or set to 0),
+-	8 threads are used by default (for now).
++	Number of grep worker threads to use.  If unset, 8 threads are
++	used by default (for now). Set to 0 to disable threading.
+ 
+ grep.fullName::
+ 	If set to true, enable `--full-name` option by default.
+diff --git a/builtin/grep.c b/builtin/grep.c
+index 65070c52fc..9478ab5dff 100644
+--- a/builtin/grep.c
++++ b/builtin/grep.c
+@@ -35,7 +35,7 @@ static int grep_submodule_launch(struct grep_opt *opt,
+ 				 const struct grep_source *gs);
+ 
+ #define GREP_NUM_THREADS_DEFAULT 8
+-static int num_threads;
++static int num_threads = -1;
+ 
+ #ifndef NO_PTHREADS
+ static pthread_t *threads;
+@@ -897,6 +897,24 @@ static int context_callback(const struct option *opt, const char *arg,
+ 	return 0;
+ }
+ 
++static int thread_callback(const struct option *opt,
++			   const char *arg, int unset)
++{
++	int *threads = (int*)opt->value;
++	char *end;
++
++	if (unset) {
++		*threads = GREP_NUM_THREADS_DEFAULT;
++		return 0;
++	}
++
++	*threads = strtol(arg, &end, 10);
++	if (*end || *threads < 0)
++		return opterror(opt, "invalid number of threads specified", 0);
++
++	return 0;
++}
++
+ static int file_callback(const struct option *opt, const char *arg, int unset)
+ {
+ 	struct grep_opt *grep_opt = opt->value;
+@@ -1049,8 +1067,8 @@ int cmd_grep(int argc, const char **argv, const char *prefix)
+ 			N_("show <n> context lines before matches")),
+ 		OPT_INTEGER('A', "after-context", &opt.post_context,
+ 			N_("show <n> context lines after matches")),
+-		OPT_INTEGER(0, "threads", &num_threads,
+-			N_("use <n> worker threads")),
++		OPT_CALLBACK(0, "threads", &num_threads, N_("n"),
++			N_("use <n> worker threads"), thread_callback),
+ 		OPT_NUMBER_CALLBACK(&opt, N_("shortcut for -C NUM"),
+ 			context_callback),
+ 		OPT_BOOL('p', "show-function", &opt.funcname,
+@@ -1222,7 +1240,7 @@ int cmd_grep(int argc, const char **argv, const char *prefix)
+ #ifndef NO_PTHREADS
+ 	if (list.nr || cached || show_in_pager)
+ 		num_threads = 0;
+-	else if (num_threads == 0)
++	else if (num_threads == -1)
+ 		num_threads = GREP_NUM_THREADS_DEFAULT;
+ 	else if (num_threads < 0)
+ 		die(_("invalid number of threads specified (%d)"), num_threads);
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index cee42097b0..53c2ca05c4 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -1505,4 +1505,14 @@ test_expect_success 'grep does not report i-t-a and assume unchanged with -L' '
+ 	test_cmp expected actual
+ '
+ 
++test_expect_success 'grep with thread options' '
++	git -c grep.threads=4 grep st.*dio &&
++	git grep --threads=4 st.*dio &&
++	git -c grep.threads=4 grep --threads=6 st.*dio &&
++	test_must_fail git -c grep.threads=-1 grep st.*dio &&
++	test_must_fail git -c grep.threads=-1 grep --threads=-1 st.*dio &&
++	test_must_fail git -c grep.threads=-1 grep --threads=1 st.*dio &&
++	test_must_fail git -c grep.threads=1 grep --threads=-1 st.*dio
++'
++
+ test_done
+-- 
+2.11.0
+
