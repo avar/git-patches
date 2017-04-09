@@ -1,0 +1,79 @@
+From 471bed1ff4ad02988b0168b4cb59d1bde24a350d Mon Sep 17 00:00:00 2001
+In-Reply-To: <20170407172306.172673-1-bmwill@google.com>
+References: <20170407172306.172673-1-bmwill@google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 9 Apr 2017 12:21:52 +0000
+Subject: [PATCH 2/2] test-lib: exhaustively insert non-alnum ASCII into the
+ TRASH_DIRECTORY name
+
+Change the test library to insert non-alphanumeric ASCII characters
+into the TRASH_DIRECTORY name, that's the directory the test library
+creates, chdirs to and runs each individual test from.
+
+Unless test_fails_on_unusual_directory_names=1 is declared before
+importing test-lib.sh (and if perl isn't available on the system), the
+trash directory will contain every non-alphanumeric character in
+ASCII, in order.
+
+This includes all the control characters, !, [], {} etc. the "."
+character isn't included because it's already in the directory name,
+and nor is "/" for obvious reasons, although that would actually work,
+we'd just create a subdirectory, which would make the tests harder to
+inspect when they fail.i
+
+This change is inspired by the "submodule: prevent backslash expantion
+in submodule names" patch[1]. If we'd had backslashes in the
+TRASH_DIRECTORY all along that bug would have been fixed a long time
+ago. This will flag such issues by marking tests that currently fail
+with "test_fails_on_unusual_directory_names=1", ensure that new tests
+aren't added unless a discussion is had about why the code can't
+handle unusual pathnames, and prevent future regressions.
+
+1. <20170407172306.172673-1-bmwill@google.com>
+---
+ t/README      | 12 ++++++++++++
+ t/test-lib.sh |  4 ++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/t/README b/t/README
+index ab386c3681..314dd40221 100644
+--- a/t/README
++++ b/t/README
+@@ -345,6 +345,18 @@ assignment to variable 'test_description', like this:
+ 	This test registers the following structure in the cache
+ 	and tries to run git-ls-files with option --frotz.'
+ 
++By default the tests will be run from a directory with a highly
++unusual filename that includes control characters, a newline, various
++punctuation etc., this is done to smoke out any bugs related to path
++handling. If for whatever reason the tests can't deal with such
++unusual path names, set:
++
++    test_fails_on_unusual_directory_names=1
++
++Before sourcing 'test-lib.sh' as described below. This option is
++mainly intended to grandfather in existing broken tests & code, and
++should usually not be used in new code, instead your tests or code
++probably need fixing.
+ 
+ Source 'test-lib.sh'
+ --------------------
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 13b5696822..089ff5ac7d 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -914,6 +914,10 @@ fi
+ 
+ # Test repository
+ TRASH_DIRECTORY="trash directory.$(basename "$0" .sh)"
++if test -z "$test_fails_on_unusual_directory_names" -a "$(perl -e 'print 1+1' 2>/dev/null)" = "2"
++then
++   TRASH_DIRECTORY="$TRASH_DIRECTORY.$(perl -e 'print join q[], grep { /[^[:alnum:]]/ and !m<[./]> } map chr, 0x01..0x7f')"
++fi
+ test -n "$root" && TRASH_DIRECTORY="$root/$TRASH_DIRECTORY"
+ case "$TRASH_DIRECTORY" in
+ /*) ;; # absolute path is good
+-- 
+2.11.0
+
