@@ -1,0 +1,51 @@
+From 7471c6012696bc0feca24f255ca1fdca2841aef9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 9 Apr 2017 19:53:50 +0000
+Subject: [PATCH] grep: plug a trivial memory leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the cleanup phase for the grep command to free the pathspec
+struct that's allocated earlier in the same block, and used just a few
+lines earlier.
+
+With "grep hi README.md" valgrind reports a loss of 239 bytes now,
+down from 351.
+
+The relevant --num-callers=40 --leak-check=full --show-leak-kinds=all
+backtrace is:
+
+    [...] 187 (112 direct, 75 indirect) bytes in 1 blocks are definitely lost in loss record 70 of 110
+    [...]    at 0x4C2BBAF: malloc (in /usr/lib/valgrind/vgpreload_memcheck-amd64-linux.so)
+    [...]    by 0x60B339: do_xmalloc (wrapper.c:59)
+    [...]    by 0x60B2F6: xmalloc (wrapper.c:86)
+    [...]    by 0x576B37: parse_pathspec (pathspec.c:652)
+    [...]    by 0x4519F0: cmd_grep (grep.c:1215)
+    [...]    by 0x4062EF: run_builtin (git.c:371)
+    [...]    by 0x40544D: handle_builtin (git.c:572)
+    [...]    by 0x4060A2: run_argv (git.c:624)
+    [...]    by 0x4051C6: cmd_main (git.c:701)
+    [...]    by 0x4C5901: main (common-main.c:43)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/grep.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/builtin/grep.c b/builtin/grep.c
+index 65070c52fc..3ffb5b4e81 100644
+--- a/builtin/grep.c
++++ b/builtin/grep.c
+@@ -1299,6 +1299,7 @@ int cmd_grep(int argc, const char **argv, const char *prefix)
+ 		hit |= wait_all();
+ 	if (hit && show_in_pager)
+ 		run_pager(&opt, prefix);
++	clear_pathspec(&pathspec);
+ 	free_grep_patterns(&opt);
+ 	return !hit;
+ }
+-- 
+2.11.0
+
