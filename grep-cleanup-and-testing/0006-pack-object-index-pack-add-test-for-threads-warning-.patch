@@ -1,0 +1,76 @@
+From 50b080812157471eff93f4c895edfcbbfc8795fe Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 16 Apr 2017 21:35:01 +0000
+Subject: [PATCH 6/8] pack-object & index-pack: add test for --threads warning
+ under NO_PTHREADS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test for the warning that's emitted when --threads or
+pack.threads is provided under NO_PTHREADS. This uses the new PTHREADS
+prerequisite.
+
+The assertion for !GETTEXT_POISON in the latter test is currently
+redundant, since unlike index-pack the pack-objects warnings aren't
+i18n'd. However they might be changed to be i18n'd in the future, and
+there's no harm in future-proofing the test.
+
+There's an existing bug in the implementation of pack-objects which
+this test currently tests for as-is. Details about the bug & the fix
+are included in a follow-up change.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5300-pack-object.sh | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/t/t5300-pack-object.sh b/t/t5300-pack-object.sh
+index 43a672c345..6bb6a8981b 100755
+--- a/t/t5300-pack-object.sh
++++ b/t/t5300-pack-object.sh
+@@ -421,6 +421,40 @@ test_expect_success 'index-pack <pack> works in non-repo' '
+ 	test_path_is_file foo.idx
+ '
+ 
++test_expect_success !PTHREADS,!GETTEXT_POISON 'index-pack --threads=N or pack.threads=N warns when no pthreads' '
++	test_must_fail git index-pack --threads=2 2>err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 1 warnings &&
++	grep "no threads support, ignoring --threads=2" err &&
++	test_must_fail git -c pack.threads=2 index-pack 2>err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 1 warnings &&
++	grep "no threads support, ignoring pack\.threads" err &&
++	test_must_fail git -c pack.threads=2 index-pack --threads=4 2>err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 2 warnings &&
++	grep "no threads support, ignoring --threads=4" err &&
++	grep "no threads support, ignoring pack\.threads" err
++'
++
++test_expect_success !PTHREADS,!GETTEXT_POISON 'pack-objects --threads=N or pack.threads=N warns when no pthreads' '
++	git pack-objects --threads=2 --stdout --all </dev/null >/dev/null 2>err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 1 warnings &&
++	grep "no threads support, ignoring --threads" err &&
++	git -c pack.threads=2 pack-objects --stdout --all </dev/null >/dev/null 2>err &&
++	cat err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 2 warnings &&
++	grep "no threads support, ignoring --threads" err &&
++	grep "no threads support, ignoring pack\.threads" err &&
++	git -c pack.threads=2 pack-objects --threads=4 --stdout --all </dev/null >/dev/null 2>err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 2 warnings &&
++	grep "no threads support, ignoring --threads" err &&
++	grep "no threads support, ignoring pack\.threads" err
++'
++
+ #
+ # WARNING!
+ #
+-- 
+2.11.0
+

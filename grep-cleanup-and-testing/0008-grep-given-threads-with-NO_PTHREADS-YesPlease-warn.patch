@@ -1,0 +1,82 @@
+From 7cc681793e448438441b9a7a4fa6078c056f9e74 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 16 Apr 2017 21:47:32 +0000
+Subject: [PATCH 8/8] grep: given --threads with NO_PTHREADS=YesPlease, warn
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a warning about missing thread support when grep.threads or
+--threads is set to a non 0 (default) or 1 (no parallelism) value
+under NO_PTHREADS=YesPlease.
+
+This is for consistency with the index-pack & pack-objects commands,
+which also take a --threads option & are configurable via
+pack.threads, and have long warned about the same under
+NO_PTHREADS=YesPlease.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/grep.c  |  8 ++++++++
+ t/t7810-grep.sh | 18 ++++++++++++++++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/builtin/grep.c b/builtin/grep.c
+index cb3323060e..c746cdd33c 100644
+--- a/builtin/grep.c
++++ b/builtin/grep.c
+@@ -290,6 +290,12 @@ static int grep_cmd_config(const char *var, const char *value, void *cb)
+ 		if (num_threads < 0)
+ 			die(_("invalid number of threads specified (%d) for %s"),
+ 			    num_threads, var);
++#ifdef NO_PTHREADS
++		else if (num_threads && num_threads != 1) {
++			warning(_("no threads support, ignoring %s"), var);
++			num_threads = 0;
++		}
++#endif
+ 	}
+ 
+ 	return st;
+@@ -1228,6 +1234,8 @@ int cmd_grep(int argc, const char **argv, const char *prefix)
+ 	if (num_threads == 1)
+ 		num_threads = 0;
+ #else
++	if (num_threads)
++		warning(_("no threads support, ignoring --threads"));
+ 	num_threads = 0;
+ #endif
+ 
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index 4523ca926b..f4c225b410 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -787,6 +787,24 @@ do
+ 	"
+ done
+ 
++test_expect_success !PTHREADS,!GETTEXT_POISON 'grep --threads=N or pack.threads=N warns when no pthreads' '
++	git grep --threads=2 Hello hello_world 2>err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 1 warnings &&
++	grep "no threads support, ignoring --threads" err &&
++	git -c grep.threads=2 grep Hello hello_world 2>err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 1 warnings &&
++	grep "no threads support, ignoring grep\.threads" err &&
++	git -c grep.threads=2 grep --threads=4 Hello hello_world 2>err &&
++	grep ^warning: err >warnings &&
++	test_line_count = 2 warnings &&
++	grep "no threads support, ignoring --threads" err &&
++	grep "no threads support, ignoring grep\.threads" err &&
++	git -c grep.threads=0 grep --threads=0 Hello hello_world 2>err &&
++	test_line_count = 0 err
++'
++
+ test_expect_success 'grep from a subdirectory to search wider area (1)' '
+ 	mkdir -p s &&
+ 	(
+-- 
+2.11.0
+
