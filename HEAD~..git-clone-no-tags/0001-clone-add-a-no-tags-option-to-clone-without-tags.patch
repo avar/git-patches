@@ -1,0 +1,267 @@
+From 588aa417b78362fda12185d1433054d285a7ffc0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 18 Apr 2017 18:40:21 +0000
+Subject: [PATCH] clone: add a --no-tags option to clone without tags
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a --no-tags option to "git clone" to clone without tags. Currently
+there's no easy way to clone a repository and end up with just a
+"master" branch via --single-branch, or track all branches and no
+tags. Now --no-tags can be added to "git clone" with or without
+--single-branch to clone a repository without tags.
+
+Before this the only way of doing this was either by manually tweaking
+the config in a fresh repository:
+
+    git init git &&
+    cat >git/.git/config <<EOF &&
+    [remote "origin"]
+        url = git@github.com:git/git.git
+        tagOpt = --no-tags
+        fetch = +refs/heads/master:refs/remotes/origin/master
+    [branch "master"]
+        remote = origin
+        merge = refs/heads/master
+    EOF
+    cd git &&
+    git pull
+
+Which requires hardcoding the "master" name, which may not be the same
+branch, or alternatively by setting tagOpt=--no-tags right after
+cloning & deleting any existing tags:
+
+    git clone --single-branch git@github.com:git/git.git &&
+    cd git &&
+    git config remote.origin.tagOpt --no-tags &&
+    git tag -l | xargs git tag -d
+
+Which of course was also subtly buggy if --branch was pointed at a
+tag, leaving the user in a detached head:
+
+    git clone --single-branch --branch v2.12.0 git@github.com:git/git.git &&
+    cd git &&
+    git config remote.origin.tagOpt --no-tags &&
+    git tag -l | xargs git tag -d
+
+Now all this complexity becomes the much simpler:
+
+    git clone --single-branch --no-tags git@github.com:git/git.git
+
+Or in the case of cloning a single tag "branch":
+
+    git clone --single-branch --branch v2.12.0 --no-tags git@github.com:git/git.git
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-clone.txt | 12 +++++++-
+ builtin/clone.c             | 13 ++++++--
+ t/t5612-clone-refspec.sh    | 73 +++++++++++++++++++++++++++++++++++++++++++--
+ 3 files changed, 93 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/git-clone.txt b/Documentation/git-clone.txt
+index 30052cce49..ef78e6dcc6 100644
+--- a/Documentation/git-clone.txt
++++ b/Documentation/git-clone.txt
+@@ -13,7 +13,7 @@ SYNOPSIS
+ 	  [-l] [-s] [--no-hardlinks] [-q] [-n] [--bare] [--mirror]
+ 	  [-o <name>] [-b <name>] [-u <upload-pack>] [--reference <repository>]
+ 	  [--dissociate] [--separate-git-dir <git dir>]
+-	  [--depth <depth>] [--[no-]single-branch]
++	  [--depth <depth>] [--[no-]single-branch] [--no-tags]
+ 	  [--recurse-submodules] [--[no-]shallow-submodules]
+ 	  [--jobs <n>] [--] <repository> [<directory>]
+ 
+@@ -215,6 +215,16 @@ objects from the source repository into a pack in the cloned repository.
+ 	branch when `--single-branch` clone was made, no remote-tracking
+ 	branch is created.
+ 
++--no-tags::
++	Don't clone any tags, and set `remote.origin.tagOpt=--no-tags`
++	in the config, ensuring that future `git pull` and `git fetch`
++	operations won't fetch any tags.
+++
++Can be used in conjunction with `--single-branch` to clone & maintain
++a branch with no references other than a single cloned branch. This is
++useful e.g. to maintain minimal clones of the default branch of some
++repository for search indexing.
++
+ --recurse-submodules[=<pathspec]::
+ 	After the clone is created, initialize and clone submodules
+ 	within based on the provided pathspec.  If no pathspec is
+diff --git a/builtin/clone.c b/builtin/clone.c
+index 32c5843563..96908a4cd7 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -40,6 +40,7 @@ static const char * const builtin_clone_usage[] = {
+ 
+ static int option_no_checkout, option_bare, option_mirror, option_single_branch = -1;
+ static int option_local = -1, option_no_hardlinks, option_shared;
++static int option_no_tags;
+ static int option_shallow_submodules;
+ static int deepen;
+ static char *option_template, *option_depth, *option_since;
+@@ -120,6 +121,8 @@ static struct option builtin_clone_options[] = {
+ 			N_("deepen history of shallow clone, excluding rev")),
+ 	OPT_BOOL(0, "single-branch", &option_single_branch,
+ 		    N_("clone only one branch, HEAD or --branch")),
++	OPT_BOOL_NONEG(0, "no-tags", &option_no_tags,
++		       N_("don't clone any tags, and set remote.<name>.tagOpt=--no-tags")),
+ 	OPT_BOOL(0, "shallow-submodules", &option_shallow_submodules,
+ 		    N_("any cloned submodules will be shallow")),
+ 	OPT_STRING(0, "separate-git-dir", &real_git_dir, N_("gitdir"),
+@@ -563,7 +566,7 @@ static struct ref *wanted_peer_refs(const struct ref *refs,
+ 	} else
+ 		get_fetch_map(refs, refspec, &tail, 0);
+ 
+-	if (!option_mirror && !option_single_branch)
++	if (!option_mirror && !option_single_branch && !option_no_tags)
+ 		get_fetch_map(refs, tag_refspec, &tail, 0);
+ 
+ 	return local_refs;
+@@ -652,7 +655,7 @@ static void update_remote_refs(const struct ref *refs,
+ 
+ 	if (refs) {
+ 		write_remote_refs(mapped_refs);
+-		if (option_single_branch)
++		if (option_single_branch && !option_no_tags)
+ 			write_followtags(refs, msg);
+ 	}
+ 
+@@ -1035,6 +1038,12 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 	git_config_set(key.buf, repo);
+ 	strbuf_reset(&key);
+ 
++	if (option_no_tags) {
++		strbuf_addf(&key, "remote.%s.tagOpt", option_origin);
++		git_config_set(key.buf, "--no-tags");
++		strbuf_reset(&key);
++	}
++
+ 	if (option_required_reference.nr || option_optional_reference.nr)
+ 		setup_reference();
+ 
+diff --git a/t/t5612-clone-refspec.sh b/t/t5612-clone-refspec.sh
+index 7ace2535c8..83317805a8 100755
+--- a/t/t5612-clone-refspec.sh
++++ b/t/t5612-clone-refspec.sh
+@@ -17,13 +17,20 @@ test_expect_success 'setup' '
+ 	echo four >file &&
+ 	git commit -a -m four &&
+ 	git checkout master &&
++	git tag five &&
+ 
+ 	# default clone
+ 	git clone . dir_all &&
+ 
++	# default clone --no-tags
++	git clone --no-tags . dir_all_no_tags &&
++
+ 	# default --single that follows HEAD=master
+ 	git clone --single-branch . dir_master &&
+ 
++	# default --single that follows HEAD=master with no tags
++	git clone --single-branch --no-tags . dir_master_no_tags &&
++
+ 	# default --single that follows HEAD=side
+ 	git checkout side &&
+ 	git clone --single-branch . dir_side &&
+@@ -45,6 +52,9 @@ test_expect_success 'setup' '
+ 	# explicit --single with tag
+ 	git clone --single-branch --branch two . dir_tag &&
+ 
++	# explicit --single with tag and --no-tags
++	git clone --single-branch --no-tags --branch two . dir_tag_no_tags &&
++
+ 	# advance both "master" and "side" branches
+ 	git checkout side &&
+ 	echo five >file &&
+@@ -75,7 +85,17 @@ test_expect_success 'by default no tags will be kept updated' '
+ 		git for-each-ref refs/tags >../actual
+ 	) &&
+ 	git for-each-ref refs/tags >expect &&
+-	test_must_fail test_cmp expect actual
++	test_must_fail test_cmp expect actual &&
++	test_line_count = 2 actual
++'
++
++test_expect_success 'clone with --no-tags' '
++	(
++		cd dir_all_no_tags && git fetch &&
++		git for-each-ref refs/tags >../actual
++	) &&
++	>expect &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success '--single-branch while HEAD pointing at master' '
+@@ -87,7 +107,46 @@ test_expect_success '--single-branch while HEAD pointing at master' '
+ 	) &&
+ 	# only follow master
+ 	git for-each-ref refs/heads/master >expect &&
+-	test_cmp expect actual
++	# get & check latest tags
++	test_cmp expect actual &&
++	(
++		cd dir_master &&
++		git fetch --tags &&
++		git for-each-ref refs/tags >../actual
++	) &&
++	git for-each-ref refs/tags >expect &&
++	test_cmp expect actual &&
++	test_line_count = 2 actual
++'
++
++test_expect_success '--single-branch while HEAD pointing at master and --no-tags' '
++	(
++		cd dir_master_no_tags && git fetch &&
++		git for-each-ref refs/remotes/origin |
++		sed -e "/HEAD$/d" \
++		    -e "s|/remotes/origin/|/heads/|" >../actual
++	) &&
++	# only follow master
++	git for-each-ref refs/heads/master >expect &&
++	test_cmp expect actual &&
++	# get tags (noop)
++	(
++		cd dir_master_no_tags &&
++		git fetch &&
++		git for-each-ref refs/tags >../actual
++	) &&
++	>expect &&
++	test_cmp expect actual &&
++	test_line_count = 0 actual &&
++	# get tags with --tags overrides tagOpt
++	(
++		cd dir_master_no_tags &&
++		git fetch --tags &&
++		git for-each-ref refs/tags >../actual
++	) &&
++	git for-each-ref refs/tags >expect &&
++	test_cmp expect actual &&
++	test_line_count = 2 actual
+ '
+ 
+ test_expect_success '--single-branch while HEAD pointing at side' '
+@@ -123,6 +182,16 @@ test_expect_success '--single-branch with explicit --branch with tag fetches upd
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success '--single-branch with explicit --branch with tag fetches updated tag despite --no-tags' '
++	(
++		cd dir_tag_no_tags && git fetch &&
++		git for-each-ref refs/tags >../actual
++	) &&
++	git for-each-ref refs/tags/two >expect &&
++	test_cmp expect actual &&
++	test_line_count = 1 actual
++'
++
+ test_expect_success '--single-branch with --mirror' '
+ 	(
+ 		cd dir_mirror && git fetch &&
+-- 
+2.11.0
+
