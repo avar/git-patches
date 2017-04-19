@@ -1,0 +1,127 @@
+From e8b1bd9c67d19ee06e6749f972e4641c74ac0c7b Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqinm3k7qa.fsf@gitster.mtv.corp.google.com>
+References: <xmqqinm3k7qa.fsf@gitster.mtv.corp.google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 8 Apr 2017 11:31:16 +0000
+Subject: [PATCH v2] push: document & test --force-with-lease with multiple
+ remotes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Document & test for cases where there are two remotes pointing to the
+same URL, and a background fetch & subsequent `git push
+--force-with-lease` shouldn't clobber un-updated references we haven't
+fetched.
+
+Some editors like Microsoft's VSC have a feature to auto-fetch in the
+background, this bypasses the protections offered by
+--force-with-lease & --force-with-lease=<refname>, as noted in the
+documentation being added here.
+
+See the 'Tools that do an automatic fetch defeat "git push
+--force-with-lease"' (<1491617750.2149.10.camel@mattmccutchen.net>)
+git mailing list thread for more details. Jakub Narębski suggested
+this method of adding another remote to bypass this edge case,
+document that & add a test for it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-push.txt | 41 +++++++++++++++++++++++++++++++++++++++++
+ t/t5533-push-cas.sh        | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 70 insertions(+)
+
+diff --git a/Documentation/git-push.txt b/Documentation/git-push.txt
+index 1624a35888..0a639664fd 100644
+--- a/Documentation/git-push.txt
++++ b/Documentation/git-push.txt
+@@ -217,6 +217,47 @@ with this feature.
+ +
+ "--no-force-with-lease" will cancel all the previous --force-with-lease on the
+ command line.
+++
++A general note on safety: supplying this option without an expected
++value, i.e. as `--force-with-lease` or `--force-with-lease=<refname>`
++interacts very badly with anything that implicitly runs `git fetch` on
++the remote to be pushed to in the background, e.g. `git fetch origin`
++on your repository in a cronjob.
+++
++The protection it offers over `--force` is ensuring that subsequent
++changes your work wasn't based on aren't clobbered, but this is
++trivially defeated if some background process is updating refs in the
++background. We don't have anything except the remote tracking info to
++go by as a heuristic for refs you're expected to have seen & are
++willing to clobber.
+++
++If your editor or some other system is running `git fetch` in the
++background for you a way to mitigate this is to simply set up another
++remote:
+++
++	git remote add origin-push $(git config remote.origin.url)
++	git fetch origin-push
+++
++Now when the background process runs `git fetch origin` the references
++on `origin-push` won't be updated, and thus commands like:
+++
++	git push --force-with-lease origin-push
+++
++Will fail unless you manually run `git fetch origin-push`. This method
++is of course entirely defeated by something that runs `git fetch
++--all`, in that case you'd need to either disable it or do something
++more tedious like:
+++
++	git fetch              # update 'master' from remote
++	git tag base master    # mark our base point
++	git rebase -i master   # rewrite some commits
++	git push --force-with-lease=master:base master:master
+++
++I.e. create a `base` tag for versions of the upstream code that you've
++seen and are willing to overwrite, then rewrite history, and finally
++force push changes to `master` if the remote version is still at
++`base`, regardless of what your local `remotes/origin/master` has been
++updated to in the background.
+ 
+ -f::
+ --force::
+diff --git a/t/t5533-push-cas.sh b/t/t5533-push-cas.sh
+index a2c9e7439f..d38ecee217 100755
+--- a/t/t5533-push-cas.sh
++++ b/t/t5533-push-cas.sh
+@@ -229,4 +229,33 @@ test_expect_success 'new branch already exists' '
+ 	)
+ '
+ 
++test_expect_success 'background updates of REMOTE can be mitigated with a non-updated REMOTE-push' '
++	rm -rf src dst &&
++	git init --bare src.bare &&
++	test_when_finished "rm -rf src.bare" &&
++	git clone --no-local src.bare dst &&
++	test_when_finished "rm -rf dst" &&
++	(
++		cd dst &&
++		test_commit G &&
++		git remote add origin-push ../src.bare &&
++		git push origin-push master:master
++	) &&
++	git clone --no-local src.bare dst2 &&
++	test_when_finished "rm -rf dst2" &&
++	(
++		cd dst2 &&
++		test_commit H &&
++		git push
++	) &&
++	(
++		cd dst &&
++		test_commit I &&
++		git fetch origin &&
++		test_must_fail git push --force-with-lease origin-push &&
++		git fetch origin-push &&
++		git push --force-with-lease origin-push
++	)
++'
++
+ test_done
+-- 
+2.11.0
+
