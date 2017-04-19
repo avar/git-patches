@@ -28,6 +28,120 @@ document that & add a test for it.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+On Mon, Apr 17, 2017 at 5:56 AM, Junio C Hamano <gitster@pobox.com> wrote:
+> Ævar Arnfjörð Bjarmason  <avarab@gmail.com> writes:
+>
+>> Document & test for cases where there are two remotes pointing to the
+>> same URL, and a background fetch & subsequent `git push
+>> --force-with-lease` shouldn't clobber un-updated references we haven't
+>> fetched.
+>>
+>> Some editors like Microsoft's VSC have a feature to auto-fetch in the
+>> background, this bypasses the protections offered by
+>> --force-with-lease as noted in the documentation being added here.
+>
+> That sounds like an unfortunate mix of two "feature"s that are
+> mutually incompatible.  Perhaps those who thought auto-fetch was a
+> good idea didn't think through the implications, 
+
+Well, to be fair to those people there's been no negative interaction
+with the everyday commands people use by aggressively fetching in the
+background until this feature came along, at least not that I can
+think of.
+
+There's a lot of advice online and in our own docs to the effect of
+"pull is fetch + merge|rebase, if you just want to inspect the remote
+just safely fetch".
+
+Now advice to that effect needs needs to be amended to say "...unless
+you were thinking of using the shorthand of --force-with-lease, then
+it'll subtly do the wrong thing".
+
+To argue against the point I was making in
+<CACBZZX48RanjHsv1UsnxkbxRtqKRGgMcgmtVqQmR84H5j8awqQ@mail.gmail.com>
+saying basically "at least it sucks less than --force", I'm not so
+sure anymore. I think that this feature's bit too obscure to break the
+general "fetch is safe" advice in such a way, and we should probably
+change how it works by default to make that true again.
+
+> and also it is understandable that those who never thought
+> auto-fetch was a good idea would want --force-with-lease to default
+> to the remote-tracking branch.
+>
+>> diff --git a/Documentation/git-push.txt b/Documentation/git-push.txt
+>> index 1624a35888..2f2e9c078b 100644
+>> --- a/Documentation/git-push.txt
+>> +++ b/Documentation/git-push.txt
+>> @@ -210,6 +210,43 @@ or we do not even have to have such a remote-tracking branch when
+>>  this form is used).  If `<expect>` is the empty string, then the named ref
+>>  must not already exist.
+>>  +
+>> +This option interacts very badly with anything that implicitly runs
+>> +`git fetch` on the remote to be pushed to in the background. The
+>
+> This description is not accurate.  Only those who do not to specify
+> what is expected and instead use the remote-tracking branch are
+> affected (but these random "git fetch" clobbering the
+> remote-tracking branch is sort of known and expected).
+>
+> I do not think I would mind if these two new lines were added one
+> paragraph above, i.e. where "--force-with-lease=<refname>" form is
+> described.  It clearly says "... as the remote-tracking branch we
+> have for them." and that is the best place to say "This option
+> interacts badly".
+
+I think this addresses your concerns in a better way. I didn't want to
+add this huge multi-paragraph digression in the middle of where we're
+briefly explaining the various forms of --force-with-lease above, but
+I've reworded this so that it's clear that we're only talking about
+the shorthard forms now, not --force-with-lease=<ref>:<expect>.
+
+A word-diff with version 1:
+    
+    diff --git a/Documentation/git-push.txt b/Documentation/git-push.txt
+    index 2f2e9c078b..0a639664fd 100644
+    --- a/Documentation/git-push.txt
+    +++ b/Documentation/git-push.txt
+    @@ -212,5 +212,17 @@ must not already exist.
+    +
+    [-This-]{+Note that all forms other than `--force-with-lease=<refname>:<expect>`+}
+    {+that specifies the expected current value of the ref explicitly are+}
+    {+still experimental and their semantics may change as we gain experience+}
+    {+with this feature.+}
+    {+++}
+    {+"--no-force-with-lease" will cancel all the previous --force-with-lease on the+}
+    {+command line.+}
+    {+++}
+    {+A general note on safety: supplying this+} option {+without an expected+}
+    {+value, i.e. as `--force-with-lease` or `--force-with-lease=<refname>`+}
+    interacts very badly with anything that implicitly runs `git fetch` on
+    the remote to be pushed to in the [-background.-]{+background, e.g. `git fetch origin`+}
+    {+on your repository in a cronjob.+}
+    {+++}
+    The protection it offers over `--force` is ensuring that subsequent
+    changes your work wasn't based on aren't clobbered, but this is
+    @@ -231,3 +243,3 @@ on `origin-push` won't be updated, and thus commands like:
+    +
+    	git push --force-with-lease [-origin-]{+origin-push+}
+    +
+    @@ -238,5 +250,5 @@ more tedious like:
+    +
+    	git fetch              [-;#-]{+#+} update 'master' from remote
+    	git tag base master    [-;#-]{+#+} mark our base point
+    	git rebase -i master   [-;#-]{+#+} rewrite some commits
+    	git push --force-with-lease=master:base master:master
+    @@ -248,10 +260,2 @@ force push changes to `master` if the remote version is still at
+    updated to in the background.
+    [-+-]
+    [-Note that all forms other than `--force-with-lease=<refname>:<expect>`-]
+    [-that specifies the expected current value of the ref explicitly are-]
+    [-still experimental and their semantics may change as we gain experience-]
+    [-with this feature.-]
+    [-+-]
+    [-"--no-force-with-lease" will cancel all the previous --force-with-lease on the-]
+    [-command line.-]
+
  Documentation/git-push.txt | 41 +++++++++++++++++++++++++++++++++++++++++
  t/t5533-push-cas.sh        | 29 +++++++++++++++++++++++++++++
  2 files changed, 70 insertions(+)
