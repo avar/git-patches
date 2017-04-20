@@ -1,0 +1,125 @@
+From ce1333334af1cdf673f06700b10af0a8bc9dcce4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 7 Apr 2017 09:47:48 +0000
+Subject: [PATCH v3 12/18] grep: change the internal PCRE macro names to be
+ PCRE1
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the internal USE_LIBPCRE define, & build options flag to use a
+naming convention ending in PCRE1, without changing the long-standing
+USE_LIBPCRE Makefile flag which enables this code.
+
+This is for preparation for libpcre2 support where having things like
+USE_LIBPCRE and USE_LIBPCRE2 in any more places than we absolutely
+need to for backwards compatibility with old Makefile arguments would
+be confusing.
+
+In some ways it would be better to change everything that now uses
+USE_LIBPCRE to use USE_LIBPCRE1, and to make specifying
+USE_LIBPCRE (or --with-pcre) an error. This would impose a one-time
+burden on packagers of git to s/USE_LIBPCRE/USE_LIBPCRE1/ in their
+build scripts.
+
+However I'd like to leave the door open to making
+USE_LIBPCRE=YesPlease eventually mean USE_LIBPCRE2=YesPlease,
+i.e. once PCRE v2 is ubiquitous enough that it makes sense to make it
+the default.
+
+This code and the USE_LIBPCRE Makefile argument was added in commit
+63e7e9d8b6 ("git-grep: Learn PCRE", 2011-05-09). At the time there was
+no indication that the PCRE project would release an entirely new &
+incompatible API around 3 years later.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile      | 4 ++--
+ grep.c        | 6 +++---
+ grep.h        | 2 +-
+ t/test-lib.sh | 2 +-
+ 4 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 2e63b1cfcc..aecdfdcfe6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1086,7 +1086,7 @@ ifdef NO_LIBGEN_H
+ endif
+ 
+ ifdef USE_LIBPCRE
+-	BASIC_CFLAGS += -DUSE_LIBPCRE
++	BASIC_CFLAGS += -DUSE_LIBPCRE1
+ 	ifdef LIBPCREDIR
+ 		BASIC_CFLAGS += -I$(LIBPCREDIR)/include
+ 		EXTLIBS += -L$(LIBPCREDIR)/$(lib) $(CC_LD_DYNPATH)$(LIBPCREDIR)/$(lib)
+@@ -2238,7 +2238,7 @@ GIT-BUILD-OPTIONS: FORCE
+ 	@echo TAR=\''$(subst ','\'',$(subst ','\'',$(TAR)))'\' >>$@+
+ 	@echo NO_CURL=\''$(subst ','\'',$(subst ','\'',$(NO_CURL)))'\' >>$@+
+ 	@echo NO_EXPAT=\''$(subst ','\'',$(subst ','\'',$(NO_EXPAT)))'\' >>$@+
+-	@echo USE_LIBPCRE=\''$(subst ','\'',$(subst ','\'',$(USE_LIBPCRE)))'\' >>$@+
++	@echo USE_LIBPCRE1=\''$(subst ','\'',$(subst ','\'',$(USE_LIBPCRE)))'\' >>$@+
+ 	@echo NO_PERL=\''$(subst ','\'',$(subst ','\'',$(NO_PERL)))'\' >>$@+
+ 	@echo NO_PYTHON=\''$(subst ','\'',$(subst ','\'',$(NO_PYTHON)))'\' >>$@+
+ 	@echo NO_UNIX_SOCKETS=\''$(subst ','\'',$(subst ','\'',$(NO_UNIX_SOCKETS)))'\' >>$@+
+diff --git a/grep.c b/grep.c
+index 506545c0ee..2535abd214 100644
+--- a/grep.c
++++ b/grep.c
+@@ -325,7 +325,7 @@ static NORETURN void compile_regexp_failed(const struct grep_pat *p,
+ 	die("%s'%s': %s", where, p->pattern, error);
+ }
+ 
+-#ifdef USE_LIBPCRE
++#ifdef USE_LIBPCRE1
+ static void compile_pcre_regexp(struct grep_pat *p, const struct grep_opt *opt)
+ {
+ 	const char *error;
+@@ -377,7 +377,7 @@ static void free_pcre_regexp(struct grep_pat *p)
+ 	pcre_free(p->pcre_extra_info);
+ 	pcre_free((void *)p->pcre_tables);
+ }
+-#else /* !USE_LIBPCRE */
++#else /* !USE_LIBPCRE1 */
+ static void compile_pcre_regexp(struct grep_pat *p, const struct grep_opt *opt)
+ {
+ 	die("cannot use Perl-compatible regexes when not compiled with USE_LIBPCRE");
+@@ -392,7 +392,7 @@ static int pcrematch(struct grep_pat *p, const char *line, const char *eol,
+ static void free_pcre_regexp(struct grep_pat *p)
+ {
+ }
+-#endif /* !USE_LIBPCRE */
++#endif /* !USE_LIBPCRE1 */
+ 
+ static int is_fixed(const char *s, size_t len)
+ {
+diff --git a/grep.h b/grep.h
+index 267534ca24..073b0e4c92 100644
+--- a/grep.h
++++ b/grep.h
+@@ -1,7 +1,7 @@
+ #ifndef GREP_H
+ #define GREP_H
+ #include "color.h"
+-#ifdef USE_LIBPCRE
++#ifdef USE_LIBPCRE1
+ #include <pcre.h>
+ #else
+ typedef int pcre;
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 6abf1d1918..e5cfbcc36b 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1010,7 +1010,7 @@ esac
+ ( COLUMNS=1 && test $COLUMNS = 1 ) && test_set_prereq COLUMNS_CAN_BE_1
+ test -z "$NO_PERL" && test_set_prereq PERL
+ test -z "$NO_PYTHON" && test_set_prereq PYTHON
+-test -n "$USE_LIBPCRE" && test_set_prereq PCRE
++test -n "$USE_LIBPCRE1" && test_set_prereq PCRE
+ test -z "$NO_GETTEXT" && test_set_prereq GETTEXT
+ 
+ # Can we rely on git's output in the C locale?
+-- 
+2.11.0
+

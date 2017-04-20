@@ -1,0 +1,77 @@
+From d4f00faae6450a79de292dbc03aef1da90d3ae75 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 19 Apr 2017 18:40:32 +0000
+Subject: [PATCH v3 14/18] perf: add a performance comparison test of grep -E
+ and -P
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a very basic performance comparison test comparing the POSIX
+extended & pcre1 engines.
+
+I'm skipping the "basic" POSIX engine because supporting its alternate
+regex syntax is hard, although it would be interesting to test it, at
+least under glibc it seems to be an entirely different engine, since
+it can have very different performance even for patterns that mean the
+same thing under extended and non-extended POSIX regular expression
+syntax.
+
+Running this on an i7 3.4GHz Linux 3.16.0-4 Debian testing against a
+checkout of linux.git & latest upstream PCRE, both PCRE and git
+compiled with -O3:
+
+    $ GIT_PERF_LARGE_REPO=~/g/linux ./run p7820-grep-engines.sh
+    [...]
+    Test                                                       this tree
+    -----------------------------------------------------------------------------
+    7820.1: extended with how.to                               0.28(1.23+0.44)
+    7820.2: extended with ^how to                              0.26(1.15+0.38)
+    7820.3: extended with \w+our\w*                            6.06(38.44+0.35)
+    7820.4: extended with -?-?-?-?-?-?-?-?-?-?-?-----------$   0.37(1.57+0.38)
+    7820.5: pcre1 with how.to                                  0.26(1.15+0.37)
+    7820.6: pcre1 with ^how to                                 0.46(2.66+0.31)
+    7820.7: pcre1 with \w+our\w*                               16.42(99.42+0.48)
+    7820.8: pcre1 with -?-?-?-?-?-?-?-?-?-?-?-----------$      81.52(275.37+0.41)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/p7820-grep-engines.sh | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+ create mode 100755 t/perf/p7820-grep-engines.sh
+
+diff --git a/t/perf/p7820-grep-engines.sh b/t/perf/p7820-grep-engines.sh
+new file mode 100755
+index 0000000000..5ae42ceccc
+--- /dev/null
++++ b/t/perf/p7820-grep-engines.sh
+@@ -0,0 +1,25 @@
++#!/bin/sh
++
++test_description="Comparison of git-grep's regex engines"
++
++. ./perf-lib.sh
++
++test_perf_large_repo
++test_checkout_worktree
++
++for engine in extended pcre1
++do
++	# Patterns stolen from http://sljit.sourceforge.net/pcre.html
++	for pattern in \
++		'how.to' \
++		'^how to' \
++		'\w+our\w*' \
++		'-?-?-?-?-?-?-?-?-?-?-?-----------$'
++	do
++		test_perf "$engine with $pattern" "
++			git -c grep.patternType=$engine grep -- '$pattern' || :
++		"
++	done
++done
++
++test_done
+-- 
+2.11.0
+
