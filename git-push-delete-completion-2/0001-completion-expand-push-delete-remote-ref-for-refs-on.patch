@@ -1,0 +1,97 @@
+From 5958d7382a9478a10fc6bb51732647cffc520745 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20170421122832.24617-1-szeder.dev@gmail.com>
+References: <20170421122832.24617-1-szeder.dev@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 18 Apr 2017 13:21:12 +0000
+Subject: [PATCH v2] completion: expand "push --delete <remote> <ref>" for refs
+ on that <remote>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the completion of "push --delete <remote> <ref>" to complete
+refs on that <remote>, not all refs.
+
+Before this cloning git.git and doing "git push --delete origin
+p<TAB>" will complete nothing, since a fresh clone of git.git will
+have no "pu" branch, whereas origin/p<TAB> will uselessly complete
+origin/pu, but fully qualified references aren't accepted by
+"--delete".
+
+Now p<TAB> will complete as "pu". The completion of giving --delete
+later, e.g. "git push origin --delete p<TAB>" remains unchanged, this
+is a bug, but is a general existing limitation of the bash completion,
+and not how git-push is documented, so I'm not fixing that case, but
+adding a failing TODO test for it.
+
+The testing code was supplied by SZEDER Gábor in
+<20170421122832.24617-1-szeder.dev@gmail.com> with minor setup
+modifications on my part.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Reviewed-by: SZEDER Gábor <szeder.dev@gmail.com>
+Test-code-by: SZEDER Gábor <szeder.dev@gmail.com>
+---
+ contrib/completion/git-completion.bash |  1 +
+ t/t9902-completion.sh                  | 34 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 35 insertions(+)
+
+diff --git a/contrib/completion/git-completion.bash b/contrib/completion/git-completion.bash
+index 1150164d5c..dc152b5d9c 100644
+--- a/contrib/completion/git-completion.bash
++++ b/contrib/completion/git-completion.bash
+@@ -709,6 +709,7 @@ __git_complete_remote_or_refspec ()
+ 		i="${words[c]}"
+ 		case "$i" in
+ 		--mirror) [ "$cmd" = "push" ] && no_complete_refspec=1 ;;
++		-d|--delete) lhs=0 ;;
+ 		--all)
+ 			case "$cmd" in
+ 			push) no_complete_refspec=1 ;;
+diff --git a/t/t9902-completion.sh b/t/t9902-completion.sh
+index 5ed28135be..2cb999ecfa 100755
+--- a/t/t9902-completion.sh
++++ b/t/t9902-completion.sh
+@@ -1457,4 +1457,38 @@ test_expect_failure 'complete with tilde expansion' '
+ 	test_completion "git add ~/tmp/" "~/tmp/file"
+ '
+ 
++test_expect_success 'setup other remote for remote reference completion' '
++	git remote add other otherrepo &&
++	git fetch other
++'
++
++for flag in -d --delete
++do
++	test_expect_success "__git_complete_remote_or_refspec - push $flag other" '
++		sed -e "s/Z$//" >expected <<-EOF &&
++		master-in-other Z
++		EOF
++		(
++			words=(git push '$flag' other ma) &&
++			cword=${#words[@]} cur=${words[cword-1]} &&
++			__git_complete_remote_or_refspec &&
++			print_comp
++		) &&
++		test_cmp expected out
++	'
++
++	test_expect_failure "__git_complete_remote_or_refspec - push other $flag" '
++		sed -e "s/Z$//" >expected <<-EOF &&
++		master-in-other Z
++		EOF
++		(
++			words=(git push other '$flag' ma) &&
++			cword=${#words[@]} cur=${words[cword-1]} &&
++			__git_complete_remote_or_refspec &&
++			print_comp
++		) &&
++		test_cmp expected out
++	'
++done
++
+ test_done
+-- 
+2.11.0
+
