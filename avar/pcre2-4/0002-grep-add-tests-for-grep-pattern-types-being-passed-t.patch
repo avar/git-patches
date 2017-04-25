@@ -1,0 +1,82 @@
+From 41efe58899dfbf6657d37ac4de3e0b61b916e6ed Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 20 Apr 2017 12:45:24 +0000
+Subject: [PATCH v4 02/19] grep: add tests for grep pattern types being passed
+ to submodules
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add testing for grep pattern types being correctly passed to
+submodules. The pattern "(.|.)[\d]" matches differently under
+fixed (not at all), and then matches different lines under
+basic/extended & perl regular expressions, so this change asserts that
+the pattern type is passed along correctly.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7814-grep-recurse-submodules.sh | 49 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+
+diff --git a/t/t7814-grep-recurse-submodules.sh b/t/t7814-grep-recurse-submodules.sh
+index 3c580b38ba..e1822feaf1 100755
+--- a/t/t7814-grep-recurse-submodules.sh
++++ b/t/t7814-grep-recurse-submodules.sh
+@@ -313,4 +313,53 @@ test_incompatible_with_recurse_submodules ()
+ test_incompatible_with_recurse_submodules --untracked
+ test_incompatible_with_recurse_submodules --no-index
+ 
++test_expect_success 'grep --recurse-submodules should pass the pattern type along' '
++	# Fixed
++	test_must_fail git grep -F --recurse-submodules -e "(.|.)[\d]" &&
++	test_must_fail git -c grep.patternType=fixed grep --recurse-submodules -e "(.|.)[\d]" &&
++
++	# Basic
++	git grep -G --recurse-submodules -e "(.|.)[\d]" >actual &&
++	cat >expect <<-\EOF &&
++	a:(1|2)d(3|4)
++	submodule/a:(1|2)d(3|4)
++	submodule/sub/a:(1|2)d(3|4)
++	EOF
++	test_cmp expect actual &&
++	git -c grep.patternType=basic grep --recurse-submodules -e "(.|.)[\d]" >actual &&
++	test_cmp expect actual &&
++
++	# Extended
++	git grep -E --recurse-submodules -e "(.|.)[\d]" >actual &&
++	cat >expect <<-\EOF &&
++	.gitmodules:[submodule "submodule"]
++	.gitmodules:	path = submodule
++	.gitmodules:	url = ./submodule
++	a:(1|2)d(3|4)
++	submodule/.gitmodules:[submodule "sub"]
++	submodule/a:(1|2)d(3|4)
++	submodule/sub/a:(1|2)d(3|4)
++	EOF
++	test_cmp expect actual &&
++	git -c grep.patternType=extended grep --recurse-submodules -e "(.|.)[\d]" >actual &&
++	test_cmp expect actual &&
++	git -c grep.extendedRegexp=true grep --recurse-submodules -e "(.|.)[\d]" >actual &&
++	test_cmp expect actual &&
++
++	# Perl
++	if test_have_prereq LIBPCRE
++	then
++		git grep -P --recurse-submodules -e "(.|.)[\d]" >actual &&
++		cat >expect <<-\EOF &&
++		a:(1|2)d(3|4)
++		b/b:(3|4)
++		submodule/a:(1|2)d(3|4)
++		submodule/sub/a:(1|2)d(3|4)
++		EOF
++		test_cmp expect actual &&
++		git -c grep.patternType=perl grep --recurse-submodules -e "(.|.)[\d]" >actual &&
++		test_cmp expect actual
++	fi
++'
++
+ test_done
+-- 
+2.11.0
+
