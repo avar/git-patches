@@ -1,0 +1,140 @@
+From 83ddb9c4a478506f40b45767779c8de72a6b86c8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 11 Apr 2017 18:08:27 +0000
+Subject: [PATCH v5 16/19] grep: add support for the PCRE v1 JIT API
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the grep PCRE v1 code to use JIT when available. When PCRE
+support was initially added in commit 63e7e9d8b6 ("git-grep: Learn
+PCRE", 2011-05-09) PCRE had no JIT support, it was integrated into
+8.20 released on 2011-10-21.
+
+When JIT support is enabled the PCRE performance usually improves by
+more than 50%. The pattern compilation times are relatively slower,
+but those relative numbers are tiny, and are easily made back in all
+but the most trivial cases of grep. Detailed benchhmarks are available
+at: http://sljit.sourceforge.net/pcre.html
+
+With this change the difference in a t/perf/p7820-grep-engines.sh run
+is, shown with git --word-diff:
+
+    7820.1: extended with how.to                               [-0.28(1.23+0.44)-]{+0.28(1.18+0.39)+}
+    7820.2: extended with ^how to                              [-0.26(1.15+0.38)-]{+0.27(1.13+0.40)+}
+    7820.3: extended with \w+our\w*                            [-6.06(38.44+0.35)-]{+6.11(38.66+0.32)+}
+    7820.4: extended with -?-?-?-?-?-?-?-?-?-?-?-----------$   [-0.37(1.57+0.38)-]{+0.37(1.56+0.42)+}
+    7820.5: pcre1 with how.to                                  [-0.26(1.15+0.37)-]{+0.19(0.39+0.55)+}
+    7820.6: pcre1 with ^how to                                 [-0.46(2.66+0.31)-]{+0.22(0.67+0.44)+}
+    7820.7: pcre1 with \w+our\w*                               [-16.42(99.42+0.48)-]{+0.51(3.05+0.24)+}
+    7820.8: pcre1 with -?-?-?-?-?-?-?-?-?-?-?-----------$      [-81.52(275.37+0.41)-]{+5.16(19.31+0.33)+}
+
+The conditional support for JIT is implemented as suggested in the
+pcrejit(3) man page. E.g. defining PCRE_STUDY_JIT_COMPILE to 0 if it's
+not present.
+
+There's no graceful fallback if pcre_jit_stack_alloc() fails under
+PCRE_CONFIG_JIT, instead the program will abort. I don't think this is
+worth handling, it'll only fail in cases where malloc() doesn't work,
+in which case we're screwed anyway.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 27 ++++++++++++++++++++++++++-
+ grep.h |  5 +++++
+ 2 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/grep.c b/grep.c
+index 1b8daa339c..69ddfd638d 100644
+--- a/grep.c
++++ b/grep.c
+@@ -329,6 +329,9 @@ static void compile_pcre1_regexp(struct grep_pat *p, const struct grep_opt *opt)
+ 	const char *error;
+ 	int erroffset;
+ 	int options = PCRE_MULTILINE;
++#ifdef PCRE_CONFIG_JIT
++	int canjit;
++#endif
+ 
+ 	if (opt->ignore_case) {
+ 		if (has_non_ascii(p->pattern))
+@@ -343,9 +346,19 @@ static void compile_pcre1_regexp(struct grep_pat *p, const struct grep_opt *opt)
+ 	if (!p->pcre1_regexp)
+ 		compile_regexp_failed(p, error);
+ 
+-	p->pcre1_extra_info = pcre_study(p->pcre1_regexp, 0, &error);
++	p->pcre1_extra_info = pcre_study(p->pcre1_regexp, PCRE_STUDY_JIT_COMPILE, &error);
+ 	if (!p->pcre1_extra_info && error)
+ 		die("%s", error);
++
++#ifdef PCRE_CONFIG_JIT
++	pcre_config(PCRE_CONFIG_JIT, &canjit);
++	if (canjit == 1) {
++		p->pcre1_jit_stack = pcre_jit_stack_alloc(1, 1024 * 1024);
++		if (!p->pcre1_jit_stack)
++			die("BUG: Couldn't allocate PCRE JIT stack");
++		pcre_assign_jit_stack(p->pcre1_extra_info, NULL, p->pcre1_jit_stack);
++	}
++#endif
+ }
+ 
+ static int pcre1match(struct grep_pat *p, const char *line, const char *eol,
+@@ -356,8 +369,15 @@ static int pcre1match(struct grep_pat *p, const char *line, const char *eol,
+ 	if (eflags & REG_NOTBOL)
+ 		flags |= PCRE_NOTBOL;
+ 
++#ifdef PCRE_CONFIG_JIT
++	ret = pcre_jit_exec(p->pcre1_regexp, p->pcre1_extra_info, line, eol - line,
++			    0, flags, ovector, ARRAY_SIZE(ovector),
++			    p->pcre1_jit_stack);
++#else
+ 	ret = pcre_exec(p->pcre1_regexp, p->pcre1_extra_info, line, eol - line,
+ 			0, flags, ovector, ARRAY_SIZE(ovector));
++#endif
++
+ 	if (ret < 0 && ret != PCRE_ERROR_NOMATCH)
+ 		die("pcre_exec failed with error code %d", ret);
+ 	if (ret > 0) {
+@@ -372,7 +392,12 @@ static int pcre1match(struct grep_pat *p, const char *line, const char *eol,
+ static void free_pcre1_regexp(struct grep_pat *p)
+ {
+ 	pcre_free(p->pcre1_regexp);
++#ifdef PCRE_CONFIG_JIT
++	pcre_free_study(p->pcre1_extra_info);
++	pcre_jit_stack_free(p->pcre1_jit_stack);
++#else
+ 	pcre_free(p->pcre1_extra_info);
++#endif
+ 	pcre_free((void *)p->pcre1_tables);
+ }
+ #else /* !USE_LIBPCRE1 */
+diff --git a/grep.h b/grep.h
+index fa2ab9485f..29e20bf837 100644
+--- a/grep.h
++++ b/grep.h
+@@ -3,9 +3,13 @@
+ #include "color.h"
+ #ifdef USE_LIBPCRE1
+ #include <pcre.h>
++#ifndef PCRE_STUDY_JIT_COMPILE
++#define PCRE_STUDY_JIT_COMPILE 0
++#endif
+ #else
+ typedef int pcre;
+ typedef int pcre_extra;
++typedef int pcre_jit_stack;
+ #endif
+ #include "kwset.h"
+ #include "thread-utils.h"
+@@ -48,6 +52,7 @@ struct grep_pat {
+ 	regex_t regexp;
+ 	pcre *pcre1_regexp;
+ 	pcre_extra *pcre1_extra_info;
++	pcre_jit_stack *pcre1_jit_stack;
+ 	const unsigned char *pcre1_tables;
+ 	kwset_t kws;
+ 	unsigned fixed:1;
+-- 
+2.11.0
+

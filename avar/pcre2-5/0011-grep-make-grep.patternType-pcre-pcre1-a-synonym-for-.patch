@@ -1,0 +1,105 @@
+From 320637578a0723521037ae48ffb892dafafb8bf9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 7 Apr 2017 08:33:02 +0000
+Subject: [PATCH v5 11/19] grep: make grep.patternType=[pcre|pcre1] a synonym
+ for "perl"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the pattern types "pcre" & "pcre1" synonyms for the long-standing
+"perl" grep.patternType.
+
+This change is part of a longer patch series to add pcre2 support to
+Git. It's nice to be able to performance test PCRE v1 v.s. v2 without
+having to recompile git, and doing that via grep.patternType makes
+sense.
+
+However, just adding "pcre2" when we only have "perl" would be
+confusing, so start by adding a "pcre" & "pcre1" synonym.
+
+In the future "perl" and "pcre" might be changed to default to "pcre2"
+instead of "pcre1", and depending on how Git is compiled the more
+specific "pcre1" or "pcre2" pattern types might produce an error.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt           |  9 +++++++++
+ grep.c                             |  4 +++-
+ t/t7810-grep.sh                    | 10 ++++++++++
+ t/t7814-grep-recurse-submodules.sh |  4 ++++
+ 4 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 475e874d51..5ef12d0694 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1624,6 +1624,15 @@ grep.patternType::
+ 	'fixed', or 'perl' will enable the `--basic-regexp`, `--extended-regexp`,
+ 	`--fixed-strings`, or `--perl-regexp` option accordingly, while the
+ 	value 'default' will return to the default matching behavior.
+++
++The 'pcre' and 'pcre1' values are synonyms for 'perl'. The other
++values starting with 'pcre' are reserved for future use, e.g. if we'd
++like to use 'pcre2' for the PCRE v2 library.
+++
++In the future 'perl' and 'pcre' might become synonyms for some other
++implementation or PCRE version, such as 'pcre2', while the more
++specific 'pcre1' & 'pcre2' might throw errors depending on whether git
++is compiled to include those libraries.
+ 
+ grep.extendedRegexp::
+ 	If set to true, enable `--extended-regexp` option by default. This
+diff --git a/grep.c b/grep.c
+index bf6c2494fd..0b2c6cd582 100644
+--- a/grep.c
++++ b/grep.c
+@@ -60,7 +60,9 @@ static int parse_pattern_type_arg(const char *opt, const char *arg)
+ 		return GREP_PATTERN_TYPE_ERE;
+ 	else if (!strcmp(arg, "fixed"))
+ 		return GREP_PATTERN_TYPE_FIXED;
+-	else if (!strcmp(arg, "perl"))
++	else if (!strcmp(arg, "perl") ||
++		 !strcmp(arg, "pcre") ||
++		 !strcmp(arg, "pcre1"))
+ 		return GREP_PATTERN_TYPE_PCRE;
+ 	die("bad %s argument: %s", opt, arg);
+ }
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index ec8fe585a7..7199356d35 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -1512,4 +1512,14 @@ test_expect_success 'grep does not report i-t-a and assume unchanged with -L' '
+ 	test_cmp expected actual
+ '
+ 
++test_expect_success LIBPCRE "grep with grep.patternType synonyms perl/pcre/pcre1" '
++	echo "#include <stdio.h>" >expected &&
++	git -c grep.patternType=perl  grep -h --no-line-number "st(?=dio)" >actual &&
++	test_cmp expected actual &&
++	git -c grep.patternType=pcre  grep -h --no-line-number "st(?=dio)" >actual &&
++	test_cmp expected actual &&
++	git -c grep.patternType=pcre1 grep -h --no-line-number "st(?=dio)" >actual &&
++	test_cmp expected actual
++'
++
+ test_done
+diff --git a/t/t7814-grep-recurse-submodules.sh b/t/t7814-grep-recurse-submodules.sh
+index e1822feaf1..325fde53ef 100755
+--- a/t/t7814-grep-recurse-submodules.sh
++++ b/t/t7814-grep-recurse-submodules.sh
+@@ -358,6 +358,10 @@ test_expect_success 'grep --recurse-submodules should pass the pattern type alon
+ 		EOF
+ 		test_cmp expect actual &&
+ 		git -c grep.patternType=perl grep --recurse-submodules -e "(.|.)[\d]" >actual &&
++		test_cmp expect actual &&
++		git -c grep.patternType=pcre grep --recurse-submodules -e "(.|.)[\d]" >actual &&
++		test_cmp expect actual &&
++		git -c grep.patternType=pcre1 grep --recurse-submodules -e "(.|.)[\d]" >actual &&
+ 		test_cmp expect actual
+ 	fi
+ '
+-- 
+2.11.0
+
