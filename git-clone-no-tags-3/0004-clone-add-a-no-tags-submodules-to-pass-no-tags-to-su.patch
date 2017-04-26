@@ -1,0 +1,263 @@
+From e63877e26d99770b6fe8a50ae4ba17b3edfb38f7 Mon Sep 17 00:00:00 2001
+From: Brandon Williams <bmwill@google.com>
+Date: Thu, 20 Apr 2017 09:50:02 -0700
+Subject: [PATCH v3 4/5] clone: add a --no-tags-submodules to pass --no-tags to
+ submodules
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a --no-tags-submodules which does for --no-tags what the existing
+--shallow-submodules does for --depth, i.e. doing:
+
+    git clone --recurse-submodules --no-tags --no-tags-submodules <url>
+
+Will clone the superproject and all submodules with --no-tags
+semantics.
+
+This change does not implement a submodule.*.tags config .gitmodules
+configuration option corresponding to the existing submodule.*.shallow
+facility, which would make --no-tags have full feature parity with
+--shallow-submodules.
+
+Signed-off-by: Brandon Williams <bmwill@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Code-by: Brandon Williams <bmwill@google.com>
+Git-Completion-Code-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Commit-message-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Tests-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/clone.c                        |  6 +++
+ builtin/submodule--helper.c            | 16 ++++++--
+ contrib/completion/git-completion.bash |  1 +
+ git-submodule.sh                       |  4 ++
+ t/t5616-clone-submodules-tags.sh       | 72 ++++++++++++++++++++++++++++++++++
+ 5 files changed, 96 insertions(+), 3 deletions(-)
+ create mode 100755 t/t5616-clone-submodules-tags.sh
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index 05f52d6f2b..5a945777a8 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -42,6 +42,7 @@ static int option_no_checkout, option_bare, option_mirror, option_single_branch
+ static int option_local = -1, option_no_hardlinks, option_shared;
+ static int option_no_tags;
+ static int option_shallow_submodules;
++static int option_no_tags_submodules;
+ static int deepen;
+ static char *option_template, *option_depth, *option_since;
+ static char *option_origin = NULL;
+@@ -125,6 +126,8 @@ static struct option builtin_clone_options[] = {
+ 		 N_("don't clone any tags, and make later fetches not to follow them")),
+ 	OPT_BOOL(0, "shallow-submodules", &option_shallow_submodules,
+ 		    N_("any cloned submodules will be shallow")),
++	OPT_BOOL(0, "no-tags-submodules", &option_no_tags_submodules,
++		     N_("any cloned submodules will have no tags")),
+ 	OPT_STRING(0, "separate-git-dir", &real_git_dir, N_("gitdir"),
+ 		   N_("separate git dir from working tree")),
+ 	OPT_STRING_LIST('c', "config", &option_config, N_("key=value"),
+@@ -761,6 +764,9 @@ static int checkout(int submodule_progress)
+ 		if (option_shallow_submodules == 1)
+ 			argv_array_push(&args, "--depth=1");
+ 
++		if (option_no_tags_submodules)
++			argv_array_push(&args, "--no-tags");
++
+ 		if (max_jobs != -1)
+ 			argv_array_pushf(&args, "--jobs=%d", max_jobs);
+ 
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 36e4231821..caa4d252ee 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -489,7 +489,7 @@ static int module_name(int argc, const char **argv, const char *prefix)
+ 
+ static int clone_submodule(const char *path, const char *gitdir, const char *url,
+ 			   const char *depth, struct string_list *reference,
+-			   int quiet, int progress)
++			   int quiet, int progress, int no_tags)
+ {
+ 	struct child_process cp = CHILD_PROCESS_INIT;
+ 
+@@ -499,6 +499,8 @@ static int clone_submodule(const char *path, const char *gitdir, const char *url
+ 		argv_array_push(&cp.args, "--quiet");
+ 	if (progress)
+ 		argv_array_push(&cp.args, "--progress");
++	if (no_tags)
++		argv_array_push(&cp.args, "--no-tags");
+ 	if (depth && *depth)
+ 		argv_array_pushl(&cp.args, "--depth", depth, NULL);
+ 	if (reference->nr) {
+@@ -623,6 +625,7 @@ static int module_clone(int argc, const char **argv, const char *prefix)
+ 	struct strbuf sb = STRBUF_INIT;
+ 	struct string_list reference = STRING_LIST_INIT_NODUP;
+ 	char *sm_alternate = NULL, *error_strategy = NULL;
++	int no_tags = 0;
+ 
+ 	struct option module_clone_options[] = {
+ 		OPT_STRING(0, "prefix", &prefix,
+@@ -643,6 +646,8 @@ static int module_clone(int argc, const char **argv, const char *prefix)
+ 		OPT_STRING(0, "depth", &depth,
+ 			   N_("string"),
+ 			   N_("depth for shallow clones")),
++		OPT_BOOL(0, "no-tags", &no_tags,
++			 N_("don't clone any tags, and make later fetches not to follow them")),
+ 		OPT__QUIET(&quiet, "Suppress output for cloning a submodule"),
+ 		OPT_BOOL(0, "progress", &progress,
+ 			   N_("force cloning progress")),
+@@ -680,7 +685,7 @@ static int module_clone(int argc, const char **argv, const char *prefix)
+ 		prepare_possible_alternates(name, &reference);
+ 
+ 		if (clone_submodule(path, sm_gitdir, url, depth, &reference,
+-				    quiet, progress))
++				    quiet, progress, no_tags))
+ 			die(_("clone of '%s' into submodule path '%s' failed"),
+ 			    url, path);
+ 	} else {
+@@ -745,11 +750,12 @@ struct submodule_update_clone {
+ 	/* failed clones to be retried again */
+ 	const struct cache_entry **failed_clones;
+ 	int failed_clones_nr, failed_clones_alloc;
++	int no_tags;
+ };
+ #define SUBMODULE_UPDATE_CLONE_INIT {0, MODULE_LIST_INIT, 0, \
+ 	SUBMODULE_UPDATE_STRATEGY_INIT, 0, 0, -1, STRING_LIST_INIT_DUP, \
+ 	NULL, NULL, NULL, \
+-	STRING_LIST_INIT_DUP, 0, NULL, 0, 0}
++	STRING_LIST_INIT_DUP, 0, NULL, 0, 0, 0}
+ 
+ 
+ static void next_submodule_warn_missing(struct submodule_update_clone *suc,
+@@ -849,6 +855,8 @@ static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
+ 		argv_array_pushl(&child->args, "--prefix", suc->prefix, NULL);
+ 	if (suc->recommend_shallow && sub->recommend_shallow == 1)
+ 		argv_array_push(&child->args, "--depth=1");
++	if (suc->no_tags)
++		argv_array_push(&child->args, "--no-tags");
+ 	argv_array_pushl(&child->args, "--path", sub->path, NULL);
+ 	argv_array_pushl(&child->args, "--name", sub->name, NULL);
+ 	argv_array_pushl(&child->args, "--url", sub->url, NULL);
+@@ -988,6 +996,8 @@ static int update_clone(int argc, const char **argv, const char *prefix)
+ 			    N_("parallel jobs")),
+ 		OPT_BOOL(0, "recommend-shallow", &suc.recommend_shallow,
+ 			    N_("whether the initial clone should follow the shallow recommendation")),
++		OPT_BOOL(0, "no-tags", &suc.no_tags,
++			 N_("don't clone any tags, and make later fetches not to follow them")),
+ 		OPT__QUIET(&suc.quiet, N_("don't print cloning progress")),
+ 		OPT_BOOL(0, "progress", &suc.progress,
+ 			    N_("force cloning progress")),
+diff --git a/contrib/completion/git-completion.bash b/contrib/completion/git-completion.bash
+index 6da997cf42..08fb1319c3 100644
+--- a/contrib/completion/git-completion.bash
++++ b/contrib/completion/git-completion.bash
+@@ -1314,6 +1314,7 @@ _git_clone ()
+ 			--recurse-submodules
+ 			--no-single-branch
+ 			--shallow-submodules
++			--no-tags-submodules
+ 			"
+ 		return
+ 		;;
+diff --git a/git-submodule.sh b/git-submodule.sh
+index c0d0e9a4c6..3371775b0b 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -565,6 +565,9 @@ cmd_update()
+ 		--depth=*)
+ 			depth=$1
+ 			;;
++		--no-tags)
++			no_tags=1
++			;;
+ 		-j|--jobs)
+ 			case "$2" in '') usage ;; esac
+ 			jobs="--jobs=$2"
+@@ -601,6 +604,7 @@ cmd_update()
+ 		${reference:+"$reference"} \
+ 		${depth:+--depth "$depth"} \
+ 		${recommend_shallow:+"$recommend_shallow"} \
++		${no_tags:+--no-tags} \
+ 		${jobs:+$jobs} \
+ 		"$@" || echo "#unmatched" $?
+ 	} | {
+diff --git a/t/t5616-clone-submodules-tags.sh b/t/t5616-clone-submodules-tags.sh
+new file mode 100755
+index 0000000000..3c88265352
+--- /dev/null
++++ b/t/t5616-clone-submodules-tags.sh
+@@ -0,0 +1,72 @@
++#!/bin/sh
++
++test_description='Test cloning of repos with submodules & the --[no-]tags option'
++
++. ./test-lib.sh
++
++pwd=$(pwd)
++
++test_expect_success 'setup' '
++	git checkout -b master &&
++	test_commit commit1 &&
++	test_commit commit2 &&
++	mkdir sub &&
++	(
++		cd sub &&
++		git init &&
++		test_commit subcommit1 &&
++		test_commit subcommit2 &&
++		test_commit subcommit3
++	) &&
++	git submodule add "file://$pwd/sub" sub &&
++	git commit -m "add submodule" &&
++	git tag addsubcommit1
++'
++
++test_expect_success 'tags clone implies tags submodule' '
++	test_when_finished "rm -rf super_clone" &&
++	git clone --recurse-submodules "file://$pwd/." super_clone &&
++	git -C super_clone for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 3 tags &&
++	git -C super_clone/sub for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 3 tags
++'
++
++test_expect_success 'no-tags clone with no-tags submodule' '
++	test_when_finished "rm -rf super_clone" &&
++	git clone --recurse-submodules --no-tags --no-tags-submodules "file://$pwd/." super_clone &&
++	git -C super_clone for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 0 tags &&
++	git -C super_clone/sub for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 0 tags
++
++'
++
++test_expect_success 'no-tags clone does not imply no-tags submodule' '
++	test_when_finished "rm -rf super_clone" &&
++	git clone --recurse-submodules --no-tags "file://$pwd/." super_clone &&
++	git -C super_clone for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 0 tags &&
++	git -C super_clone/sub for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 3 tags
++'
++
++test_expect_success 'no-tags clone with tags submodule' '
++	test_when_finished "rm -rf super_clone" &&
++	git clone --recurse-submodules --no-tags --tags-submodules "file://$pwd/." super_clone &&
++	git -C super_clone for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 0 tags &&
++	git -C super_clone/sub for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 3 tags
++'
++
++test_expect_success 'tags clone with no-tags submodule' '
++	test_when_finished "rm -rf super_clone" &&
++	git clone --recurse-submodules --tags --no-tags-submodules "file://$pwd/." super_clone &&
++	git -C super_clone for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 3 tags &&
++	git -C super_clone/sub for-each-ref --format="%(refname:strip=2)" refs/tags/ >tags &&
++	test_line_count = 0 tags
++'
++
++test_done
+-- 
+2.11.0
+
