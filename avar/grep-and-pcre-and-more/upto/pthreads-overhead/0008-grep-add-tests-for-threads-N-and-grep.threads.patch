@@ -1,0 +1,64 @@
+From a03ec41cf6624ffe6bff5d88dc8b8ee1b5da3e1f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 16 Apr 2017 20:05:26 +0000
+Subject: [PATCH 08/29] grep: add tests for --threads=N and grep.threads
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests for --threads=N being supplied on the command-line, or when
+grep.threads=N being supplied in the configuration.
+
+When the threading support was made run-time configurable in commit
+89f09dd34e ("grep: add --threads=<num> option and grep.threads
+configuration", 2015-12-15) no tests were added for it.
+
+In developing a change to the grep code I was able to make
+'--threads=1 <pat>` segfault, while the test suite still passed. This
+change fixes that blind spot in the tests.
+
+In addition to asserting that asking for N threads shouldn't segfault,
+test that the grep output given any N is the same.
+
+The choice to test only 1..10 as opposed to 1..8 or 1..16 or whatever
+is arbitrary. Testing 1..1024 works locally for me (but gets
+noticeably slower as more threads are spawned). Given the structure of
+the code there's no reason to test an arbitrary number of threads,
+only 0, 1 and >=2 are special modes of operation.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7810-grep.sh | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index daa906b9b0..561709ef6a 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -775,6 +775,22 @@ test_expect_success 'grep -W with userdiff' '
+ 	test_cmp expected actual
+ '
+ 
++for threads in $(test_seq 0 10)
++do
++	test_expect_success "grep --threads=$threads & -c grep.threads=$threads" "
++		git grep --threads=$threads . >actual.$threads &&
++		if test $threads -ge 1
++		then
++			test_cmp actual.\$(($threads - 1)) actual.$threads
++		fi &&
++		git -c grep.threads=$threads grep . >actual.$threads &&
++		if test $threads -ge 1
++		then
++			test_cmp actual.\$(($threads - 1)) actual.$threads
++		fi
++	"
++done
++
+ test_expect_success 'grep from a subdirectory to search wider area (1)' '
+ 	mkdir -p s &&
+ 	(
+-- 
+2.11.0
+

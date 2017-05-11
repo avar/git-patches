@@ -1,0 +1,49 @@
+From 991e8fd2d2cb23430469e61ee75d868a4951a06d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 20 Apr 2017 11:38:36 +0000
+Subject: [PATCH 18/29] grep: catch a missing enum in switch statement
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a die(...) to a default case for the switch statement selecting
+between grep pattern types under --recurse-submodules.
+
+Normally this would be caught by -Wswitch, but the grep_pattern_type
+type is converted to int by going through parse_options(). Changing
+the argument type passed to compile_submodule_options() won't work,
+the value will just get coerced.
+
+Thus catching this at runtime is the least worst option. This won't
+ever trigger in practice, but if a new pattern type were to be added
+this catches an otherwise silent bug during development.
+
+See commit 0281e487fd ("grep: optionally recurse into submodules",
+2016-12-16) for the initial addition of this code.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/grep.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/builtin/grep.c b/builtin/grep.c
+index 3ffb5b4e81..1c0adb30f3 100644
+--- a/builtin/grep.c
++++ b/builtin/grep.c
+@@ -495,6 +495,12 @@ static void compile_submodule_options(const struct grep_opt *opt,
+ 		break;
+ 	case GREP_PATTERN_TYPE_UNSPECIFIED:
+ 		break;
++	default:
++		/*
++		 * -Wswitch doesn't catch this due to casting &
++		 * -Wswitch-default is too noisy.
++		 */
++		die("BUG: Added a new grep pattern type without updating switch statement");
+ 	}
+ 
+ 	for (pattern = opt->pattern_list; pattern != NULL;
+-- 
+2.11.0
+

@@ -1,0 +1,92 @@
+From 8c850e0dd7153c6d0091cd1dcf9470440f9a3a92 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 19 Apr 2017 18:40:32 +0000
+Subject: [PATCH 16/29] perf: add a performance comparison test of grep -G, -E
+ and -P
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a very basic performance comparison test comparing the POSIX
+basic, extended and perl engines.
+
+In theory the "basic" and "extended" engines should be implemented
+using the same underlying code with a slightly different pattern
+parser, but some implementations may not do this. Jump through some
+slight hoops to test both, which is worthwhile since "basic" is the
+default.
+
+Running this on an i7 3.4GHz Linux 4.9.0-2 Debian testing against a
+checkout of linux.git & latest upstream PCRE, both PCRE and git
+compiled with -O3 using gcc 7.1.1:
+
+    $ GIT_PERF_REPEAT_COUNT=10 GIT_PERF_LARGE_REPO=~/g/linux ./run p7820-grep-engines.sh
+    [...]
+    -------------------------------------------------------------
+    7820.1: basic grep how.to                      0.97(0.80+0.16)
+    7820.2: extended grep how.to                   1.03(0.81+0.19)
+    7820.3: perl grep how.to                       0.94(0.68+0.24)
+    7820.5: basic grep ^how to                     0.97(0.73+0.21)
+    7820.6: extended grep ^how to                  0.97(0.74+0.20)
+    7820.7: perl grep ^how to                      1.85(1.58+0.23)
+    7820.9: basic grep [how] to                    1.72(1.49+0.20)
+    7820.10: extended grep [how] to                1.67(1.42+0.23)
+    7820.11: perl grep [how] to                    1.81(1.56+0.22)
+    7820.13: basic grep \(e.t[^ ]*\|v.ry\) rare    2.38(2.16+0.20)
+    7820.14: extended grep (e.t[^ ]*|v.ry) rare    2.42(2.16+0.22)
+    7820.15: perl grep (e.t[^ ]*|v.ry) rare        3.58(3.40+0.17)
+    7820.17: basic grep m\(ú\|u\)ult.b\(æ\|y\)te   1.04(0.77+0.24)
+    7820.18: extended grep m(ú|u)ult.b(æ|y)te      1.03(0.81+0.20)
+    7820.19: perl grep m(ú|u)ult.b(æ|y)te          1.23(0.98+0.24)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/p7820-grep-engines.sh | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+ create mode 100755 t/perf/p7820-grep-engines.sh
+
+diff --git a/t/perf/p7820-grep-engines.sh b/t/perf/p7820-grep-engines.sh
+new file mode 100755
+index 0000000000..c99979990e
+--- /dev/null
++++ b/t/perf/p7820-grep-engines.sh
+@@ -0,0 +1,35 @@
++#!/bin/sh
++
++test_description="Comparison of git-grep's regex engines"
++
++. ./perf-lib.sh
++
++test_perf_large_repo
++test_checkout_worktree
++
++for pattern in \
++	'how.to' \
++	'^how to' \
++	'[how] to' \
++	'\(e.t[^ ]*\|v.ry\) rare' \
++	'm\(ú\|u\)ult.b\(æ\|y\)te'
++do
++	for engine in basic extended perl
++	do
++		if test $engine != "basic"
++		then
++			# Poor man's basic -> extended converter.
++			pattern=$(echo $pattern | sed 's/\\//g')
++		fi
++		test_perf "$engine grep $pattern" "
++			git -c grep.patternType=$engine grep -- '$pattern' >'out.$engine' || :
++		"
++	done
++
++	test_expect_success "assert that all engines found the same for $pattern" "
++		test_cmp 'out.basic' 'out.extended' &&
++		test_cmp 'out.basic' 'out.perl'
++	"
++done
++
++test_done
+-- 
+2.11.0
+
