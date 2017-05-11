@@ -1,0 +1,86 @@
+From 434a418a8d175dfeacb749c3291962ffbe04296d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 16 Apr 2017 19:22:20 +0000
+Subject: [PATCH 1/7] grep: don't redundantly compile throwaway patterns under
+ threading
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the pattern compilation logic under threading so that grep
+doesn't compile a pattern it never ends up using on the non-threaded
+code path, only to compile it again N times for N threads which will
+each use their own copy, ignoring the initially compiled pattern.
+
+This redundant compilation dates back to the initial introduction of
+the threaded grep in commit 5b594f457a ("Threaded grep",
+2010-01-25).
+
+There was never any reason for doing this redundant work other than an
+oversight in the initial commit. Jeff King suggested on-list in
+<20170414212325.fefrl3qdjigwyitd@sigill.intra.peff.net> that this
+might be needed to check the pattern for sanity before threaded
+execution commences.
+
+That's not the case. The pattern is compiled under threading in
+start_threads() before any concurrent execution has started by calling
+pthread_create(), so if the pattern contains an error we still do the
+right thing. I.e. die with one error before any threaded execution has
+commenced, instead of e.g. spewing out an error for each N threads,
+which could be a regression a change like this might inadvertently
+introduce.
+
+The undocumented --debug mode added in commit 17bf35a3c7 ("grep: teach
+--debug option to dump the parse tree", 2012-09-13) still works
+properly with this change. It only emits debugging info during pattern
+compilation, which is now dumped by the pattern compiled just before
+the first thread is started.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/grep.c | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/grep.c b/builtin/grep.c
+index 50e4bd2cd2..7baa4778b7 100644
+--- a/builtin/grep.c
++++ b/builtin/grep.c
+@@ -224,7 +224,8 @@ static void start_threads(struct grep_opt *opt)
+ 		int err;
+ 		struct grep_opt *o = grep_opt_dup(opt);
+ 		o->output = strbuf_out;
+-		o->debug = 0;
++		if (i)
++			o->debug = 0;
+ 		compile_grep_patterns(o);
+ 		err = pthread_create(&threads[i], NULL, run, o);
+ 
+@@ -1169,8 +1170,6 @@ int cmd_grep(int argc, const char **argv, const char *prefix)
+ 	if (!opt.fixed && opt.ignore_case)
+ 		opt.regflags |= REG_ICASE;
+ 
+-	compile_grep_patterns(&opt);
+-
+ 	/*
+ 	 * We have to find "--" in a separate pass, because its presence
+ 	 * influences how we will parse arguments that come before it.
+@@ -1247,6 +1246,15 @@ int cmd_grep(int argc, const char **argv, const char *prefix)
+ 	num_threads = 0;
+ #endif
+ 
++	if (!num_threads)
++		/*
++		 * The compiled patterns on the main path are only
++		 * used when not using threading. Otherwise
++		 * start_threads() below calls compile_grep_patterns()
++		 * for each thread.
++		 */
++		compile_grep_patterns(&opt);
++
+ #ifndef NO_PTHREADS
+ 	if (num_threads) {
+ 		if (!(opt.name_only || opt.unmatch_name_only || opt.count)
+-- 
+2.11.0
+
