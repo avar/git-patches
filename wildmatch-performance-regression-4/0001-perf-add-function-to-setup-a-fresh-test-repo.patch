@@ -1,0 +1,82 @@
+From 327f961d04a999003a52f818356da7dd33954238 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20170511074354.11336-1-avarab@gmail.com>
+References: <20170511074354.11336-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 24 Apr 2017 19:35:02 +0000
+Subject: [PATCH v4 1/2] perf: add function to setup a fresh test repo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a function to setup a fresh test repo via 'git init' to compliment
+the existing functions to copy over a normal & large repo.
+
+Some performance tests don't need any existing repository data at all
+to be significant, e.g. tests which stress glob matches against single
+pathological revisions or files, which I'm about to add in a
+subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/README      |  1 +
+ t/perf/perf-lib.sh | 19 +++++++++++++++----
+ 2 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/t/perf/README b/t/perf/README
+index 49ea4349be..de2fe15696 100644
+--- a/t/perf/README
++++ b/t/perf/README
+@@ -106,6 +106,7 @@ sources perf-lib.sh:
+ 
+ After that you will want to use some of the following:
+ 
++	test_perf_fresh_repo    # sets up an empty repository
+ 	test_perf_default_repo  # sets up a "normal" repository
+ 	test_perf_large_repo    # sets up a "large" repository
+ 
+diff --git a/t/perf/perf-lib.sh b/t/perf/perf-lib.sh
+index ab4b8b06ae..b6fc880395 100644
+--- a/t/perf/perf-lib.sh
++++ b/t/perf/perf-lib.sh
+@@ -78,6 +78,10 @@ if test -z "$GIT_PERF_LARGE_REPO"; then
+ 	GIT_PERF_LARGE_REPO=$TEST_DIRECTORY/..
+ fi
+ 
++test_perf_do_repo_symlink_config_ () {
++	test_have_prereq SYMLINKS || git config core.symlinks false
++}
++
+ test_perf_create_repo_from () {
+ 	test "$#" = 2 ||
+ 	error "bug in the test script: not 2 parameters to test-create-repo"
+@@ -102,15 +106,22 @@ test_perf_create_repo_from () {
+ 	) &&
+ 	(
+ 		cd "$repo" &&
+-		"$MODERN_GIT" init -q && {
+-			test_have_prereq SYMLINKS ||
+-			git config core.symlinks false
+-		} &&
++		"$MODERN_GIT" init -q &&
++		test_perf_do_repo_symlink_config_ &&
+ 		mv .git/hooks .git/hooks-disabled 2>/dev/null
+ 	) || error "failed to copy repository '$source' to '$repo'"
+ }
+ 
+ # call at least one of these to establish an appropriately-sized repository
++test_perf_fresh_repo () {
++	repo="${1:-$TRASH_DIRECTORY}"
++	"$MODERN_GIT" init -q "$repo" &&
++	(
++		cd "$repo" &&
++		test_perf_do_repo_symlink_config_
++	)
++}
++
+ test_perf_default_repo () {
+ 	test_perf_create_repo_from "${1:-$TRASH_DIRECTORY}" "$GIT_PERF_REPO"
+ }
+-- 
+2.11.0
+
