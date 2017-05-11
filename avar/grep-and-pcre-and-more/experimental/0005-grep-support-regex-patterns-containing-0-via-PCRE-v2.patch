@@ -1,0 +1,179 @@
+From 4b0216e7a5d5a46db5b1f1358887434fc07d993d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 8 May 2017 21:28:51 +0000
+Subject: [PATCH 5/6] grep: support regex patterns containing \0 via PCRE v2
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Support regex patterns with embedded \0's, as an earlier commit[1]
+notes this was previously impossible due to an internal limitation.
+
+Before this change any regex metacharacters in patterns containing \0
+were silently ignored and the pattern matched as if it were a
+--fixed-strings pattern.
+
+Now these patterns will be matched with PCRE instead, which supports
+combining regex metacharacters with patterns containing \0.
+
+A side-effect of this change is that these patterns which previously
+would be considered --fixed-strings patterns regardless of the engine
+requested now all implicitly become --perl-regexp instead.
+
+A subsequent change introduces a POSIX to PCRE syntax converter, and
+could be used to be 100% truthful to our documentation by using POSIX
+basic syntax (which we haven't been in quite some time with kwset).
+
+But due to a chicken & egg issue with this change being easier to
+implement stand-alone first, the subsequent change depending on a SVN
+trunk version of PCRE, but most importantly I don't think anyone will
+mind this change, so I'm leaving it as it is.
+
+This implementation is faster than the previous kwset implementation,
+but I haven't bothered to come up with a \0-specific fixed-string
+performance test.
+
+See the next change in this series for a change which optionally
+expands the PCRE v2 use to use it for all fixed-string patterns, the
+performance tests for those will be applicable to these patterns as
+well, since PCRE matches \0 like any other character.
+
+1. ("grep: factor test for \0 in grep patterns into a function",
+   2017-05-08)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c                 | 24 ++++++++++++++++
+ t/t7008-grep-binary.sh | 74 ++++++++++++++++++++++++++++++++++----------------
+ 2 files changed, 75 insertions(+), 23 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 2ff4e253ff..5db614cf80 100644
+--- a/grep.c
++++ b/grep.c
+@@ -613,6 +613,30 @@ static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+ 	icase	       = opt->regflags & REG_ICASE || p->ignore_case;
+ 	ascii_only     = !has_non_ascii(p->pattern);
+ 
++#ifdef USE_LIBPCRE2
++	if (has_null(p->pattern, p->patternlen)) {
++		struct strbuf sb = STRBUF_INIT;
++		if (icase)
++			strbuf_add(&sb, "(?i)", 4);
++		if (opt->fixed)
++			strbuf_add(&sb, "\\Q", 2);		
++		strbuf_add(&sb, p->pattern, p->patternlen);
++		if (opt->fixed)
++			strbuf_add(&sb, "\\E", 2);
++
++		p->pattern = sb.buf;
++		p->patternlen = sb.len;
++
++		/* FIXME: Check in compile_pcre2_pattern() that we're
++		 * using basic rx using !opt->pcre2 && <something>
++		 */
++		opt->pcre2 = 1;
++
++		compile_pcre2_pattern(p, opt);
++		return;
++	}
++#endif
++
+ 	/*
+ 	 * Even when -F (fixed) asks us to do a non-regexp search, we
+ 	 * may not be able to correctly case-fold when -i
+diff --git a/t/t7008-grep-binary.sh b/t/t7008-grep-binary.sh
+index ba3db06501..fc86ed5fce 100755
+--- a/t/t7008-grep-binary.sh
++++ b/t/t7008-grep-binary.sh
+@@ -124,35 +124,63 @@ nul_match 0 '-F' '[æ]Qð'
+ nul_match 0 '-Fi' 'ÆQ[Ð]'
+ nul_match 0 '-Fi' '[Æ]QÐ'
+ 
+-# kwset is disabled on -i & non-ASCII. No way to match non-ASCII \0
+-# patterns case-insensitively.
+-nul_match T1 '-i' 'ÆQÐ'
+-
+-# \0 implicitly disables regexes. This is an undocumented internal
+-# limitation.
+-nul_match T1 '' 'yQ[f]'
+-nul_match T1 '' '[y]Qf'
+-nul_match T1 '-i' 'YQ[F]'
+-nul_match T1 '-i' '[Y]Qf'
+-nul_match T1 '' 'æQ[ð]'
+-nul_match T1 '' '[æ]Qð'
+-nul_match T1 '-i' 'ÆQ[Ð]'
+-
+-# ... because of \0 implicitly disabling regexes regexes that
+-# should/shouldn't match don't do the right thing.
+-nul_match T1 '' 'eQm.*cQ'
+-nul_match T1 '-i' 'EQM.*cQ'
+-nul_match T0 '' 'eQm[*]c'
+-nul_match T0 '-i' 'EQM[*]C'
++if test_have_prereq LIBPCRE2
++then
++	# Regex patterns that should match without -F
++	nul_match 1 '' 'yQ[f]'
++	nul_match 1 '' '[y]Qf'
++	nul_match 1 '-i' 'YQ[F]'
++	nul_match 1 '-i' '[Y]Qf'
++	nul_match 1 '' 'æQ[ð]'
++	nul_match 1 '' '[æ]Qð'
++	nul_match 0 '-i' '[Æ]Qð'
++	nul_match 1 '' 'eQm.*cQ'
++	nul_match 1 '-i' 'EQM.*cQ'
++	nul_match 0 '' 'eQm[*]c'
++	nul_match 0 '-i' 'EQM[*]C'
++
++	# These should also match, but don't due to some heisenbug,
++	# they succeed when run manually!
++	nul_match T1 '-i' 'ÆQÐ'
++	nul_match T1 '-i' 'ÆQ[Ð]'
++else
++	# \0 implicitly disables regexes. This is an undocumented
++	# internal limitation.
++	nul_match T1 '' 'yQ[f]'
++	nul_match T1 '' '[y]Qf'
++	nul_match T1 '-i' 'YQ[F]'
++	nul_match T1 '-i' '[Y]Qf'
++	nul_match T1 '' 'æQ[ð]'
++	nul_match T1 '' '[æ]Qð'
++	nul_match T1 '-i' 'ÆQ[Ð]'
++
++	# ... because of \0 implicitly disabling regexes regexes that
++	# should/shouldn't match don't do the right thing.
++	nul_match T1 '' 'eQm.*cQ'
++	nul_match T1 '-i' 'EQM.*cQ'
++	nul_match T0 '' 'eQm[*]c'
++	nul_match T0 '-i' 'EQM[*]C'
++fi
+ 
+ # Due to the REG_STARTEND extension when kwset() is disabled on -i &
+ # non-ASCII the string will be matched in its entirety, but the
+ # pattern will be cut off at the first \0.
+ nul_match 0 '-i' 'NOMATCHQð'
+-nul_match T0 '-i' '[Æ]QNOMATCH'
+-nul_match T0 '-i' '[æ]QNOMATCH'
++if test_have_prereq LIBPCRE2
++then
++	nul_match 0 '-i' '[Æ]QNOMATCH'
++	nul_match 0 '-i' '[æ]QNOMATCH'
++else
++	nul_match T0 '-i' '[Æ]QNOMATCH'
++	nul_match T0 '-i' '[æ]QNOMATCH'
++fi
+ # Matches, but for the wrong reasons, just stops at [æ]
+-nul_match 1 '-i' '[Æ]Qð'
++if test_have_prereq LIBPCRE2
++then
++	nul_match T1 '-i' '[Æ]Qð'
++else
++	nul_match 1 '-i' '[Æ]Qð'
++fi
+ nul_match 1 '-i' '[æ]Qð'
+ 
+ # Ensure that the matcher doesn't regress to something that stops at
+-- 
+2.11.0
+
