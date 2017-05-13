@@ -1,0 +1,104 @@
+From 89573e1160405480e0a23b1ae58b218480277e5e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 10 May 2017 19:07:15 +0000
+Subject: [PATCH v2 5/7] grep: un-break building with PCRE < 8.32
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend my change earlier in this series ("grep: add support for the
+PCRE v1 JIT API", 2017-04-11) to un-break the build on PCRE v1
+versions earlier than 8.32.
+
+The JIT support was added in version 8.20 released on 2011-10-21, but
+it wasn't until 8.32 released on 2012-11-30 that the fast code path to
+use the JIT via pcre_jit_exec() was added[1] (see also [2]).
+
+This means that versions 8.20 through 8.31 could still use the JIT,
+but supporting it on those versions would add to the already verbose
+macro soup around JIT support it, and I don't expect that the use-case
+of compiling a brand new git against a 5 year old PCRE is particularly
+common, and if someone does that they can just get the existing
+pre-JIT slow codepath.
+
+So just take the easy way out and disable the JIT on any version older
+than 8.32.
+
+The reason this change isn't part of the initial change PCRE JIT
+support is because possibly slightly annoying someone who's bisecting
+with an ancient PCRE is worth it to have a cleaner history showing
+which parts of the implementation are only used for ancient PCRE
+versions. This also makes it easier to revert this change if we ever
+decide to stop supporting those old versions.
+
+1. http://www.pcre.org/original/changelog.txt ("28. Introducing a
+   native interface for JIT. Through this interface, the
+   compiled[...]")
+2. https://bugs.exim.org/show_bug.cgi?id=2121
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 8 ++++----
+ grep.h | 5 +++++
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index accf1c45e6..81337638ca 100644
+--- a/grep.c
++++ b/grep.c
+@@ -351,7 +351,7 @@ static void compile_pcre1_regexp(struct grep_pat *p, const struct grep_opt *opt)
+ 	const char *error;
+ 	int erroffset;
+ 	int options = PCRE_MULTILINE;
+-#ifdef PCRE_CONFIG_JIT
++#ifdef GIT_PCRE1_CAN_DO_MODERN_JIT
+ 	int canjit;
+ #endif
+ 
+@@ -372,7 +372,7 @@ static void compile_pcre1_regexp(struct grep_pat *p, const struct grep_opt *opt)
+ 	if (!p->pcre1_extra_info && error)
+ 		die("%s", error);
+ 
+-#ifdef PCRE_CONFIG_JIT
++#ifdef GIT_PCRE1_CAN_DO_MODERN_JIT
+ 	pcre_config(PCRE_CONFIG_JIT, &canjit);
+ 	if (canjit == 1) {
+ 		p->pcre1_jit_stack = pcre_jit_stack_alloc(1, 1024 * 1024);
+@@ -392,7 +392,7 @@ static int pcre1match(struct grep_pat *p, const char *line, const char *eol,
+ 	if (eflags & REG_NOTBOL)
+ 		flags |= PCRE_NOTBOL;
+ 
+-#ifdef PCRE_CONFIG_JIT
++#ifdef GIT_PCRE1_CAN_DO_MODERN_JIT
+ 	if (p->pcre1_jit_on)
+ 		ret = pcre_jit_exec(p->pcre1_regexp, p->pcre1_extra_info, line,
+ 				    eol - line, 0, flags, ovector,
+@@ -420,7 +420,7 @@ static int pcre1match(struct grep_pat *p, const char *line, const char *eol,
+ static void free_pcre1_regexp(struct grep_pat *p)
+ {
+ 	pcre_free(p->pcre1_regexp);
+-#ifdef PCRE_CONFIG_JIT
++#ifdef GIT_PCRE1_CAN_DO_MODERN_JIT
+ 	if (p->pcre1_jit_on) {
+ 		pcre_free_study(p->pcre1_extra_info);
+ 		pcre_jit_stack_free(p->pcre1_jit_stack);
+diff --git a/grep.h b/grep.h
+index 14f47189f9..73ef0ef8ec 100644
+--- a/grep.h
++++ b/grep.h
+@@ -3,6 +3,11 @@
+ #include "color.h"
+ #ifdef USE_LIBPCRE1
+ #include <pcre.h>
++#ifdef PCRE_CONFIG_JIT
++#if PCRE_MAJOR >= 8 && PCRE_MINOR >= 32
++#define GIT_PCRE1_CAN_DO_MODERN_JIT
++#endif
++#endif
+ #ifndef PCRE_STUDY_JIT_COMPILE
+ #define PCRE_STUDY_JIT_COMPILE 0
+ #endif
+-- 
+2.11.0
+
