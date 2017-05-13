@@ -1,0 +1,58 @@
+From bfb1f1e770123602e3951a80a14899f658da6fb7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 16 Apr 2017 21:43:00 +0000
+Subject: [PATCH v2 27/29] pack-objects: fix buggy warning about threads
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a buggy warning about threads under NO_PTHREADS=YesPlease. Due to
+re-using the delta_search_threads variable for both the state of the
+"pack.threads" config & the --threads option, setting "pack.threads"
+but not supplying --threads would trigger the warning for both
+"pack.threads" & --threads.
+
+Solve this bug by resetting the delta_search_threads variable in
+git_pack_config(), it might then be set by --threads again and be
+subsequently warned about, as the test I'm changing here asserts.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/pack-objects.c | 4 +++-
+ t/t5300-pack-object.sh | 3 +--
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index 0fe35d1b5a..f1baf05dfe 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -2472,8 +2472,10 @@ static int git_pack_config(const char *k, const char *v, void *cb)
+ 			die("invalid number of threads specified (%d)",
+ 			    delta_search_threads);
+ #ifdef NO_PTHREADS
+-		if (delta_search_threads != 1)
++		if (delta_search_threads != 1) {
+ 			warning("no threads support, ignoring %s", k);
++			delta_search_threads = 0;
++		}
+ #endif
+ 		return 0;
+ 	}
+diff --git a/t/t5300-pack-object.sh b/t/t5300-pack-object.sh
+index 1629fa80b0..0ec25c4966 100755
+--- a/t/t5300-pack-object.sh
++++ b/t/t5300-pack-object.sh
+@@ -445,8 +445,7 @@ test_expect_success !PTHREADS,C_LOCALE_OUTPUT 'pack-objects --threads=N or pack.
+ 	git -c pack.threads=2 pack-objects --stdout --all </dev/null >/dev/null 2>err &&
+ 	cat err &&
+ 	grep ^warning: err >warnings &&
+-	test_line_count = 2 warnings &&
+-	grep -F "no threads support, ignoring --threads" err &&
++	test_line_count = 1 warnings &&
+ 	grep -F "no threads support, ignoring pack.threads" err &&
+ 	git -c pack.threads=2 pack-objects --threads=4 --stdout --all </dev/null >/dev/null 2>err &&
+ 	grep ^warning: err >warnings &&
+-- 
+2.11.0
+
