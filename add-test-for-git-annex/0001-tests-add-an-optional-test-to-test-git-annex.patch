@@ -1,0 +1,111 @@
+From 50036b8e8361d4f6fd1ea83472445c0775e4db5b Mon Sep 17 00:00:00 2001
+In-Reply-To: <20170516175906.hdwn4x5md7dj7fo3@kitenet.net>
+References: <20170516175906.hdwn4x5md7dj7fo3@kitenet.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 16 May 2017 19:47:08 +0000
+Subject: [PATCH] tests: add an optional test to test git-annex
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add an optional test to test git-annex. It's guarded by a new
+EXTERNAL_TESTS environment variable. Running this test takes me 10
+minutes.
+
+As reported by Joey Hess in "reversion in GIT_COMMON_DIR refs path"[1]
+commit f57f37e2e1 ("files-backend: remove the use of git_path()",
+2017-03-26) first released as part of the 2.13.0 broke git-annex's
+test suite.
+
+This could have been spotted by us before the release by optionally
+running the git-annex test suite as part of git itself. This optional
+test does that. It currently fails due to the reported regression,
+but, passes on the 2.12.0 release.
+
+The git-annex revision to test can be specified with the
+GIT_TEST_GIT_ANNEX_REVISION environment variable. Joey has expressed
+interest in testing development versions of git against git-annex[2],
+and can now test the latest revision with:
+
+    EXTERNAL_TESTS=1 GIT_TEST_GIT_ANNEX_REVISION='@{u}' ./t9950-git-annex.sh
+
+By default the test finds the latest git-annex release tag and tests
+that, since the primary purpose is to test regressions in git which
+cause git-annex to fail, not regressions in git-annex itself.
+
+The t9* test namespace is currently full as documented in t/README. In
+lie of an empty t9X for "external tools" this change claims t995* for
+that purpose.
+
+1. <20170516171028.5eagqr2sw5a2i77d@kitenet.net>
+   (https://public-inbox.org/git/20170516175906.hdwn4x5md7dj7fo3@kitenet.net/T/)
+2. http://git-annex.branchable.com/devblog/day_459__git_bug/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t9950-git-annex.sh | 52 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+ create mode 100755 t/t9950-git-annex.sh
+
+diff --git a/t/t9950-git-annex.sh b/t/t9950-git-annex.sh
+new file mode 100755
+index 0000000000..2cbc1f4be3
+--- /dev/null
++++ b/t/t9950-git-annex.sh
+@@ -0,0 +1,52 @@
++#!/bin/sh
++
++test_description='the git-annex test suite'
++. ./test-lib.sh
++
++if test -z "$EXTERNAL_TESTS"
++then
++	skip_all='skipping tests of external tools. EXTERNAL_TESTS not defined'
++	test_done
++fi
++
++if test -n "$NO_CURL"
++then
++	skip_all='skipping test, git built without http support'
++	test_done
++fi
++
++test_expect_success 'clone git-annex' '
++	git clone https://git.joeyh.name/git/git-annex.git
++'
++
++if test -n "$GIT_TEST_GIT_ANNEX_REVISION"
++then
++	test_expect_success "plan to test git-annex $GIT_TEST_GIT_ANNEX_REVISION" "
++		echo '$GIT_TEST_GIT_ANNEX_REVISION' >revision-to-test
++	"
++else
++	test_expect_success "plan to test git-annex's latest release tag" '
++		git -C git-annex tag --sort=version:refname -l "[0-9]*.[0-9]*" |
++			tail -n 1 >revision-to-test
++	'
++fi
++
++test_expect_success 'checkout $(cat revision-to-test) for testing' '
++	git -C git-annex checkout $(cat revision-to-test)
++'
++
++test_expect_success 'build git-annex (if this fails, you are likely missing its Haskell dependencies' '
++	(
++		cd git-annex &&
++		make
++	)
++'
++
++test_expect_success 'test git-annex' '
++	(
++		cd git-annex &&
++		make test
++	)
++'
++
++test_done
+-- 
+2.13.0.303.g4ebf302169
+
