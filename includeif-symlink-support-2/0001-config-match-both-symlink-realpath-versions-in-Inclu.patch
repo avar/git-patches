@@ -1,0 +1,138 @@
+From 3a0b3164e87b9813c8e5f02fafbe6e2195712dd1 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqlgpx4n5v.fsf@gitster.mtv.corp.google.com>
+References: <xmqqlgpx4n5v.fsf@gitster.mtv.corp.google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 15 May 2017 19:06:30 +0000
+Subject: [PATCH v2] config: match both symlink & realpath versions in
+ IncludeIf.gitdir:*
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the conditional inclusion mechanism to support
+e.g. gitdir:~/git_tree/repo where ~/git_tree is a symlink to
+/mnt/stuff/repo.
+
+This worked in the initial version of this facility[1], but regressed
+later in the series while solving a related bug[2].
+
+Now gitdir: will match against the symlinked
+path (e.g. gitdir:~/git_tree/repo) in addition to the current
+/mnt/stuff/repo path.
+
+Since this is already in a release version note in the documentation
+that this behavior changed, so users who expect their configuration to
+work on both v2.13.0 and some future version of git with this fix
+aren't utterly confused.
+
+1. commit 3efd0bedc6 ("config: add conditional include", 2017-03-01)
+2. commit 86f9515708 ("config: resolve symlinks in conditional
+   include's patterns", 2017-04-05)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt  | 10 ++++++++++
+ config.c                  | 16 ++++++++++++++++
+ t/t1305-config-include.sh | 23 +++++++++++++++++++++++
+ 3 files changed, 49 insertions(+)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 475e874d51..302b8af192 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -140,6 +140,16 @@ A few more notes on matching via `gitdir` and `gitdir/i`:
+ 
+  * Symlinks in `$GIT_DIR` are not resolved before matching.
+ 
++ * Both the symlink & realpath versions of paths will be matched
++   outside of `$GIT_DIR`. E.g. if ~/git is a symlink to
++   /mnt/storage/git, both `gitdir:~/git` and `gitdir:/mnt/storage/git`
++   will match.
+++
++This was not the case in the initial release of this feature in
++v2.13.0, which only matched the realpath version. Configuration that
++wants to be compatible with the initial release of this feature needs
++to either specify only the realpath version, or both versions.
++
+  * Note that "../" is not special and will match literally, which is
+    unlikely what you want.
+ 
+diff --git a/config.c b/config.c
+index b4a3205da3..f978428695 100644
+--- a/config.c
++++ b/config.c
+@@ -214,6 +214,7 @@ static int include_by_gitdir(const struct config_options *opts,
+ 	struct strbuf pattern = STRBUF_INIT;
+ 	int ret = 0, prefix;
+ 	const char *git_dir;
++	int already_tried_absolute = 0;
+ 
+ 	if (opts->git_dir)
+ 		git_dir = opts->git_dir;
+@@ -226,6 +227,7 @@ static int include_by_gitdir(const struct config_options *opts,
+ 	strbuf_add(&pattern, cond, cond_len);
+ 	prefix = prepare_include_condition_pattern(&pattern);
+ 
++again:
+ 	if (prefix < 0)
+ 		goto done;
+ 
+@@ -245,6 +247,20 @@ static int include_by_gitdir(const struct config_options *opts,
+ 	ret = !wildmatch(pattern.buf + prefix, text.buf + prefix,
+ 			 icase ? WM_CASEFOLD : 0, NULL);
+ 
++	if (!ret && !already_tried_absolute) {
++		/*
++		 * We've tried e.g. matching gitdir:~/work, but if
++		 * ~/work is a symlink to /mnt/storage/work
++		 * strbuf_realpath() will expand it, so the rule won't
++		 * match. Let's match against a
++		 * strbuf_add_absolute_path() version of the path,
++		 * which'll do the right thing
++		 */
++		strbuf_reset(&text);
++		strbuf_add_absolute_path(&text, git_dir);
++		already_tried_absolute = 1;
++		goto again;
++	}
+ done:
+ 	strbuf_release(&pattern);
+ 	strbuf_release(&text);
+diff --git a/t/t1305-config-include.sh b/t/t1305-config-include.sh
+index 933915ec06..d9d2f545a4 100755
+--- a/t/t1305-config-include.sh
++++ b/t/t1305-config-include.sh
+@@ -273,6 +273,29 @@ test_expect_success SYMLINKS 'conditional include, relative path with symlinks'
+ 	)
+ '
+ 
++test_expect_success SYMLINKS 'conditional include, gitdir matching symlink' '
++	ln -s foo bar &&
++	(
++		cd bar &&
++		echo "[includeIf \"gitdir:bar/\"]path=bar7" >>.git/config &&
++		echo "[test]seven=7" >.git/bar7 &&
++		echo 7 >expect &&
++		git config test.seven >actual &&
++		test_cmp expect actual
++	)
++'
++
++test_expect_success SYMLINKS 'conditional include, gitdir matching symlink, icase' '
++	(
++		cd bar &&
++		echo "[includeIf \"gitdir/i:BAR/\"]path=bar8" >>.git/config &&
++		echo "[test]eight=8" >.git/bar8 &&
++		echo 8 >expect &&
++		git config test.eight >actual &&
++		test_cmp expect actual
++	)
++'
++
+ test_expect_success 'include cycles are detected' '
+ 	cat >.gitconfig <<-\EOF &&
+ 	[test]value = gitconfig
+-- 
+2.13.0.303.g4ebf302169
+
