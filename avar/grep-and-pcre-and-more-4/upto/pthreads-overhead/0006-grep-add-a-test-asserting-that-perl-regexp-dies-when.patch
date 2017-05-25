@@ -1,0 +1,82 @@
+From 97b67249f2be4b3e04c70498ca67a33e0b8dd319 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 10 May 2017 20:19:03 +0000
+Subject: [PATCH v4 06/31] grep: add a test asserting that --perl-regexp dies
+ when !PCRE
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test asserting that when --perl-regexp (and -P for grep) is
+given to git-grep & git-log that we die with an error.
+
+In developing the PCRE v2 series I introduced a regression where -P
+would (through control-flow fall-through) become synonymous with basic
+POSIX matching. I.e. 'git grep -P '[\d]' would match "d" instead of
+digits.
+
+The entire test suite would still pass with this serious regression,
+since everything that tested for --perl-regexp would be guarded by the
+PCRE prerequisite, fix that blind-spot by adding tests under !PCRE
+asserting that git must die when given --perl-regexp or -P.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4202-log.sh  |  4 +++-
+ t/t7810-grep.sh | 12 ++++++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/t/t4202-log.sh b/t/t4202-log.sh
+index c25eb9afd1..c44c4337f8 100755
+--- a/t/t4202-log.sh
++++ b/t/t4202-log.sh
+@@ -418,7 +418,9 @@ test_expect_success 'log with various grep.patternType configurations & command-
+ 			git log --pretty=tformat:%s --perl-regexp \
+ 				--grep="[\d]\|" >actual.perl.long-arg &&
+ 			test_cmp expect.perl actual.perl.long-arg
+-
++		else
++			test_must_fail git log --perl-regexp \
++				--grep="[\d]\|"
+ 		fi &&
+ 		test_cmp expect.fixed actual.fixed.long-arg &&
+ 		test_cmp expect.basic actual.basic.long-arg &&
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index c84c4d99f9..8d69113695 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -281,6 +281,10 @@ do
+ 		test_cmp expected actual
+ 	'
+ 
++	test_expect_success !PCRE "grep $L with grep.patterntype=perl errors without PCRE" '
++		test_must_fail git -c grep.patterntype=perl grep "foo.*bar"
++	'
++
+ 	test_expect_success "grep $L with grep.patternType=default and grep.extendedRegexp=true" '
+ 		echo "${HC}ab:abc" >expected &&
+ 		git \
+@@ -1058,11 +1062,19 @@ test_expect_success PCRE 'grep --perl-regexp pattern' '
+ 	test_cmp expected actual
+ '
+ 
++test_expect_success !PCRE 'grep --perl-regexp pattern errors without PCRE' '
++	test_must_fail git grep --perl-regexp "foo.*bar"
++'
++
+ test_expect_success PCRE 'grep -P pattern' '
+ 	git grep -P "\p{Ps}.*?\p{Pe}" hello.c >actual &&
+ 	test_cmp expected actual
+ '
+ 
++test_expect_success !PCRE 'grep -P pattern errors without PCRE' '
++	test_must_fail git grep -P "foo.*bar"
++'
++
+ test_expect_success 'grep pattern with grep.extendedRegexp=true' '
+ 	>empty &&
+ 	test_must_fail git -c grep.extendedregexp=true \
+-- 
+2.13.0.303.g4ebf302169
+

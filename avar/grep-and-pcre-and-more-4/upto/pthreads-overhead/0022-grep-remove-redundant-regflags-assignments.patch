@@ -1,0 +1,88 @@
+From 0b21caedee84d8184706bb19424a26b1b1bf4dbb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 7 Apr 2017 16:36:51 +0000
+Subject: [PATCH v4 22/31] grep: remove redundant regflags assignments
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove redundant assignments to the "regflags" variable. This variable
+is only used set under GREP_PATTERN_TYPE_ERE, so there's no need to
+un-set it under GREP_PATTERN_TYPE_{FIXED,BRE,PCRE}.
+
+Back in 5010cb5fcc[1], we did do "opt.regflags &= ~REG_EXTENDED" upon
+seeing "-G" on the command line and flipped the bit on upon seeing
+"-E", but I think that was perfectly sensible and it would have been a
+bug if we didn't.  They were part of the command line parsing that
+could have seen "-E" on the command line earlier.
+
+When cca2c172 ("git-grep: do not die upon -F/-P when
+grep.extendedRegexp is set.", 2011-05-09) switched the command line
+parsing to "read into a 'tentatively this is what we saw the last'
+variable and then finally commit just once", we didn't touch
+opt.regflags for PCRE and FIXED, but we still had to flip regflags
+between BRE and ERE, because parsing of grep.extendedregexp
+configuration variable directly touched opt.regflags back then, which
+was done by b22520a3 ("grep: allow -E and -n to be turned on by
+default via configuration", 2011-03-30).
+
+When 84befcd0 ("grep: add a grep.patternType configuration setting",
+2012-08-03) introduced extended_regexp_option field, we stopped
+flipping regflags while reading the configuration, and that was when
+we should have noticed and stopped dropping REG_EXTENDED bit in the
+"now we can commit what type to use" helper function.
+
+There is no reason to do this anymore, so stop doing it, more to
+reduce "wait this is used under fixed/BRE/PCRE how?" confusion when
+reading the code, than to to save ourselves trivial CPU cycles by
+removing one assignment.
+
+1. "built-in "git grep"", 2006-04-30.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 47cee45067..bf6c2494fd 100644
+--- a/grep.c
++++ b/grep.c
+@@ -179,7 +179,6 @@ static void grep_set_pattern_type_option(enum grep_pattern_type pattern_type, st
+ 	case GREP_PATTERN_TYPE_BRE:
+ 		opt->fixed = 0;
+ 		opt->pcre = 0;
+-		opt->regflags &= ~REG_EXTENDED;
+ 		break;
+ 
+ 	case GREP_PATTERN_TYPE_ERE:
+@@ -191,13 +190,11 @@ static void grep_set_pattern_type_option(enum grep_pattern_type pattern_type, st
+ 	case GREP_PATTERN_TYPE_FIXED:
+ 		opt->fixed = 1;
+ 		opt->pcre = 0;
+-		opt->regflags &= ~REG_EXTENDED;
+ 		break;
+ 
+ 	case GREP_PATTERN_TYPE_PCRE:
+ 		opt->fixed = 0;
+ 		opt->pcre = 1;
+-		opt->regflags &= ~REG_EXTENDED;
+ 		break;
+ 	}
+ }
+@@ -415,10 +412,9 @@ static void compile_fixed_regexp(struct grep_pat *p, struct grep_opt *opt)
+ {
+ 	struct strbuf sb = STRBUF_INIT;
+ 	int err;
+-	int regflags;
++	int regflags = opt->regflags;
+ 
+ 	basic_regex_quote_buf(&sb, p->pattern);
+-	regflags = opt->regflags & ~REG_EXTENDED;
+ 	if (opt->ignore_case)
+ 		regflags |= REG_ICASE;
+ 	err = regcomp(&p->regexp, sb.buf, regflags);
+-- 
+2.13.0.303.g4ebf302169
+

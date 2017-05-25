@@ -1,0 +1,133 @@
+From d29cfa99d1e262a0bf2daf25895d7efe9fa71319 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 May 2017 19:06:07 +0000
+Subject: [PATCH v4 19/31] perf: add a comparison test of log --grep regex
+ engines
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a very basic performance comparison test comparing the POSIX
+basic, extended and perl engines with patterns matching log messages
+via --grep=<pattern>.
+
+    $ GIT_PERF_REPEAT_COUNT=10 GIT_PERF_LARGE_REPO=~/g/linux ./run p4220-log-grep-engines.sh
+    [...]
+    Test                                                  this tree
+    ---------------------------------------------------------------------
+    4220.1: basic log --grep='how.to'                     6.22(6.00+0.21)
+    4220.2: extended log --grep='how.to'                  6.23(5.98+0.23)
+    4220.3: perl log --grep='how.to'                      6.07(5.79+0.25)
+    4220.5: basic log --grep='^how to'                    6.19(5.93+0.22)
+    4220.6: extended log --grep='^how to'                 6.19(5.93+0.23)
+    4220.7: perl log --grep='^how to'                     6.14(5.88+0.24)
+    4220.9: basic log --grep='[how] to'                   6.96(6.65+0.28)
+    4220.10: extended log --grep='[how] to'               6.96(6.69+0.24)
+    4220.11: perl log --grep='[how] to'                   6.95(6.58+0.33)
+    4220.13: basic log --grep='\(e.t[^ ]*\|v.ry\) rare'   7.10(6.80+0.27)
+    4220.14: extended log --grep='(e.t[^ ]*|v.ry) rare'   7.07(6.80+0.26)
+    4220.15: perl log --grep='(e.t[^ ]*|v.ry) rare'       7.70(7.46+0.22)
+    4220.17: basic log --grep='m\(ú\|u\)lt.b\(æ\|y\)te'   6.12(5.87+0.24)
+    4220.18: extended log --grep='m(ú|u)lt.b(æ|y)te'      6.14(5.84+0.26)
+    4220.19: perl log --grep='m(ú|u)lt.b(æ|y)te'          6.16(5.93+0.20)
+
+With -i:
+
+    $ GIT_PERF_REPEAT_COUNT=10 GIT_PERF_LARGE_REPO=~/g/linux GIT_PERF_4220_LOG_OPTS=' -i' ./run p4220-log-grep-engines.sh
+    [...]
+    Test                                                     this tree
+    ------------------------------------------------------------------------
+    4220.1: basic log -i --grep='how.to'                     6.74(6.41+0.32)
+    4220.2: extended log -i --grep='how.to'                  6.78(6.55+0.22)
+    4220.3: perl log -i --grep='how.to'                      6.06(5.77+0.28)
+    4220.5: basic log -i --grep='^how to'                    6.80(6.57+0.22)
+    4220.6: extended log -i --grep='^how to'                 6.83(6.52+0.29)
+    4220.7: perl log -i --grep='^how to'                     6.16(5.94+0.20)
+    4220.9: basic log -i --grep='[how] to'                   7.87(7.61+0.24)
+    4220.10: extended log -i --grep='[how] to'               7.85(7.57+0.27)
+    4220.11: perl log -i --grep='[how] to'                   7.03(6.75+0.25)
+    4220.13: basic log -i --grep='\(e.t[^ ]*\|v.ry\) rare'   8.68(8.41+0.25)
+    4220.14: extended log -i --grep='(e.t[^ ]*|v.ry) rare'   8.80(8.44+0.28)
+    4220.15: perl log -i --grep='(e.t[^ ]*|v.ry) rare'       7.85(7.56+0.26)
+    4220.17: basic log -i --grep='m\(ú\|u\)lt.b\(æ\|y\)te'   6.94(6.68+0.24)
+    4220.18: extended log -i --grep='m(ú|u)lt.b(æ|y)te'      7.04(6.76+0.24)
+    4220.19: perl log -i --grep='m(ú|u)lt.b(æ|y)te'          6.26(5.92+0.29)
+
+See commit ("perf: add a comparison test of grep regex engines",
+2017-04-19) for details on the machine the above test run was executed
+on.
+
+Before commit ("log: make --regexp-ignore-case work with
+--perl-regexp", 2017-05-20) this test will almost definitely
+fail (depending on the repo) if passed the -i option, since it wasn't
+properly supported under PCRE.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/p4220-log-grep-engines.sh | 53 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
+ create mode 100755 t/perf/p4220-log-grep-engines.sh
+
+diff --git a/t/perf/p4220-log-grep-engines.sh b/t/perf/p4220-log-grep-engines.sh
+new file mode 100755
+index 0000000000..2bc47ded4d
+--- /dev/null
++++ b/t/perf/p4220-log-grep-engines.sh
+@@ -0,0 +1,53 @@
++#!/bin/sh
++
++test_description="Comparison of git-log's --grep regex engines
++
++Set GIT_PERF_4220_LOG_OPTS in the environment to pass options to
++git-grep. Make sure to include a leading space,
++e.g. GIT_PERF_4220_LOG_OPTS=' -i'. Some options to try:
++
++	-i
++	--invert-grep
++	-i --invert-grep
++"
++
++. ./perf-lib.sh
++
++test_perf_large_repo
++test_checkout_worktree
++
++for pattern in \
++	'how.to' \
++	'^how to' \
++	'[how] to' \
++	'\(e.t[^ ]*\|v.ry\) rare' \
++	'm\(ú\|u\)lt.b\(æ\|y\)te'
++do
++	for engine in basic extended perl
++	do
++		if test $engine != "basic"
++		then
++			# Poor man's basic -> extended converter.
++			pattern=$(echo $pattern | sed 's/\\//g')
++		fi
++		if test $engine = "perl" && ! test_have_prereq PCRE
++		then
++			prereq="PCRE"
++		else
++			prereq=""
++		fi
++		test_perf $prereq "$engine log$GIT_PERF_4220_LOG_OPTS --grep='$pattern'" "
++			git -c grep.patternType=$engine log --pretty=format:%h$GIT_PERF_4220_LOG_OPTS --grep='$pattern' >'out.$engine' || :
++		"
++	done
++
++	test_expect_success "assert that all engines found the same for$GIT_PERF_4220_LOG_OPTS '$pattern'" '
++		test_cmp out.basic out.extended &&
++		if test_have_prereq PCRE
++		then
++			test_cmp out.basic out.perl
++		fi
++	'
++done
++
++test_done
+-- 
+2.13.0.303.g4ebf302169
+

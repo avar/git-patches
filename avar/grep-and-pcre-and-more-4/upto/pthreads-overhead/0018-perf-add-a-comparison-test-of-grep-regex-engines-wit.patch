@@ -1,0 +1,119 @@
+From 38b485b7bc58872dad344a6624b23cf8fc6464f0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 21 Apr 2017 15:31:11 +0000
+Subject: [PATCH v4 18/31] perf: add a comparison test of grep regex engines
+ with -F
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a performance comparison test of grep regex engines given fixed
+strings.
+
+The current logic in compile_regexp() ignores the engine parameter and
+uses kwset() to search for these, so this test shows no difference
+between engines right now:
+
+    $ GIT_PERF_REPEAT_COUNT=10 GIT_PERF_LARGE_REPO=~/g/linux ./run p7821-grep-engines-fixed.sh
+    [...]
+    Test                             this tree
+    ------------------------------------------------
+    7821.1: fixed grep int           0.56(1.67+0.68)
+    7821.2: basic grep int           0.57(1.70+0.57)
+    7821.3: extended grep int        0.59(1.76+0.51)
+    7821.4: perl grep int            1.08(1.71+0.55)
+    7821.6: fixed grep uncommon      0.23(0.55+0.50)
+    7821.7: basic grep uncommon      0.24(0.55+0.50)
+    7821.8: extended grep uncommon   0.26(0.55+0.52)
+    7821.9: perl grep uncommon       0.24(0.58+0.47)
+    7821.11: fixed grep æ            0.36(1.30+0.42)
+    7821.12: basic grep æ            0.36(1.32+0.40)
+    7821.13: extended grep æ         0.38(1.30+0.42)
+    7821.14: perl grep æ             0.35(1.24+0.48)
+
+Only when run with -i via GIT_PERF_7821_GREP_OPTS=' -i' do we avoid
+avoid going through the same kwset.[ch] codepath, see the "Even when
+-F..."  comment in grep.c. This only kicks for the non-ASCII case:
+
+    $ GIT_PERF_REPEAT_COUNT=10 GIT_PERF_LARGE_REPO=~/g/linux GIT_PERF_7821_GREP_OPTS=' -i' ./run p7821-grep-engines-fixed.sh
+    [...]
+    Test                                this tree
+    ---------------------------------------------------
+    7821.1: fixed grep -i int           0.62(2.10+0.57)
+    7821.2: basic grep -i int           0.68(1.90+0.61)
+    7821.3: extended grep -i int        0.78(1.94+0.57)
+    7821.4: perl grep -i int            0.98(1.78+0.74)
+    7821.6: fixed grep -i uncommon      0.24(0.44+0.64)
+    7821.7: basic grep -i uncommon      0.25(0.56+0.54)
+    7821.8: extended grep -i uncommon   0.27(0.62+0.45)
+    7821.9: perl grep -i uncommon       0.24(0.59+0.49)
+    7821.11: fixed grep -i æ            0.30(0.96+0.39)
+    7821.12: basic grep -i æ            0.27(0.92+0.44)
+    7821.13: extended grep -i æ         0.28(0.90+0.46)
+    7821.14: perl grep -i æ             0.28(0.74+0.49)
+
+I'm planning to change how fixed-string searching happens. This test
+gives a baseline for comparing performance before & after any such
+change.
+
+See commit ("perf: add a comparison test of grep regex engines",
+2017-04-19) for details on the machine the above test run was executed
+on.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/p7821-grep-engines-fixed.sh | 41 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+ create mode 100755 t/perf/p7821-grep-engines-fixed.sh
+
+diff --git a/t/perf/p7821-grep-engines-fixed.sh b/t/perf/p7821-grep-engines-fixed.sh
+new file mode 100755
+index 0000000000..c7ef1e198f
+--- /dev/null
++++ b/t/perf/p7821-grep-engines-fixed.sh
+@@ -0,0 +1,41 @@
++#!/bin/sh
++
++test_description="Comparison of git-grep's regex engines with -F
++
++Set GIT_PERF_7821_GREP_OPTS in the environment to pass options to
++git-grep. Make sure to include a leading space,
++e.g. GIT_PERF_7821_GREP_OPTS=' -w'. See p7820-grep-engines.sh for more
++options to try.
++"
++
++. ./perf-lib.sh
++
++test_perf_large_repo
++test_checkout_worktree
++
++for pattern in 'int' 'uncommon' 'æ'
++do
++	for engine in fixed basic extended perl
++	do
++		if test $engine = "perl" && ! test_have_prereq PCRE
++		then
++			prereq="PCRE"
++		else
++			prereq=""
++		fi
++		test_perf $prereq "$engine grep$GIT_PERF_7821_GREP_OPTS $pattern" "
++			git -c grep.patternType=$engine grep$GIT_PERF_7821_GREP_OPTS $pattern >'out.$engine' || :
++		"
++	done
++
++	test_expect_success "assert that all engines found the same for$GIT_PERF_7821_GREP_OPTS $pattern" '
++		test_cmp out.fixed out.basic &&
++		test_cmp out.fixed out.extended &&
++		if test_have_prereq PCRE
++		then
++			test_cmp out.fixed out.perl
++		fi
++	'
++done
++
++test_done
+-- 
+2.13.0.303.g4ebf302169
+

@@ -1,0 +1,140 @@
+From 6ecb07293ca7860f91d235f5f392efaf3adf61c0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 19 Apr 2017 18:40:32 +0000
+Subject: [PATCH v4 17/31] perf: add a comparison test of grep regex engines
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a very basic performance comparison test comparing the POSIX
+basic, extended and perl engines.
+
+In theory the "basic" and "extended" engines should be implemented
+using the same underlying code with a slightly different pattern
+parser, but some implementations may not do this. Jump through some
+slight hoops to test both, which is worthwhile since "basic" is the
+default.
+
+Running this on an i7 3.4GHz Linux 4.9.0-2 Debian testing against a
+checkout of linux.git & latest upstream PCRE, both PCRE and git
+compiled with -O3 using gcc 7.1.1:
+
+    $ GIT_PERF_REPEAT_COUNT=10 GIT_PERF_LARGE_REPO=~/g/linux ./run p7820-grep-engines.sh
+    [...]
+    Test                                            this tree
+    ---------------------------------------------------------------
+    7820.1: basic grep 'how.to'                     0.34(1.24+0.53)
+    7820.2: extended grep 'how.to'                  0.33(1.23+0.45)
+    7820.3: perl grep 'how.to'                      0.31(1.05+0.56)
+    7820.5: basic grep '^how to'                    0.32(1.24+0.42)
+    7820.6: extended grep '^how to'                 0.33(1.20+0.44)
+    7820.7: perl grep '^how to'                     0.57(2.67+0.42)
+    7820.9: basic grep '[how] to'                   0.51(2.16+0.45)
+    7820.10: extended grep '[how] to'               0.49(2.20+0.43)
+    7820.11: perl grep '[how] to'                   0.56(2.60+0.43)
+    7820.13: basic grep '\(e.t[^ ]*\|v.ry\) rare'   0.66(3.25+0.40)
+    7820.14: extended grep '(e.t[^ ]*|v.ry) rare'   0.65(3.19+0.46)
+    7820.15: perl grep '(e.t[^ ]*|v.ry) rare'       1.05(5.74+0.34)
+    7820.17: basic grep 'm\(ú\|u\)lt.b\(æ\|y\)te'   0.34(1.28+0.47)
+    7820.18: extended grep 'm(ú|u)lt.b(æ|y)te'      0.34(1.38+0.38)
+    7820.19: perl grep 'm(ú|u)lt.b(æ|y)te'          0.39(1.56+0.44)
+
+Options can also be passed to git-grep via the GIT_PERF_7820_GREP_OPTS
+environment variable. There are various modes such as "-v" that have
+very different performance profiles, but handling the combinatorial
+explosion of testing all those options would make this script much
+more complex and harder to maintain. Instead just add the ability to
+do one-shot runs with arbitrary options, e.g.:
+
+    $ GIT_PERF_REPEAT_COUNT=10 GIT_PERF_LARGE_REPO=~/g/linux GIT_PERF_7820_GREP_OPTS=" -i" ./run p7820-grep-engines.sh
+    [...]
+    Test                                               this tree
+    ------------------------------------------------------------------
+    7820.1: basic grep -i 'how.to'                     0.49(1.72+0.38)
+    7820.2: extended grep -i 'how.to'                  0.46(1.64+0.42)
+    7820.3: perl grep -i 'how.to'                      0.44(1.45+0.45)
+    7820.5: basic grep -i '^how to'                    0.47(1.76+0.38)
+    7820.6: extended grep -i '^how to'                 0.47(1.70+0.42)
+    7820.7: perl grep -i '^how to'                     0.65(2.72+0.37)
+    7820.9: basic grep -i '[how] to'                   0.86(3.64+0.42)
+    7820.10: extended grep -i '[how] to'               0.84(3.62+0.46)
+    7820.11: perl grep -i '[how] to'                   0.73(3.06+0.39)
+    7820.13: basic grep -i '\(e.t[^ ]*\|v.ry\) rare'   1.63(8.13+0.36)
+    7820.14: extended grep -i '(e.t[^ ]*|v.ry) rare'   1.64(8.01+0.44)
+    7820.15: perl grep -i '(e.t[^ ]*|v.ry) rare'       1.44(6.88+0.44)
+    7820.17: basic grep -i 'm\(ú\|u\)lt.b\(æ\|y\)te'   0.66(2.67+0.44)
+    7820.18: extended grep -i 'm(ú|u)lt.b(æ|y)te'      0.66(2.67+0.43)
+    7820.19: perl grep -i 'm(ú|u)lt.b(æ|y)te'          0.59(2.31+0.37)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/p7820-grep-engines.sh | 56 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+ create mode 100755 t/perf/p7820-grep-engines.sh
+
+diff --git a/t/perf/p7820-grep-engines.sh b/t/perf/p7820-grep-engines.sh
+new file mode 100755
+index 0000000000..62aba19e76
+--- /dev/null
++++ b/t/perf/p7820-grep-engines.sh
+@@ -0,0 +1,56 @@
++#!/bin/sh
++
++test_description="Comparison of git-grep's regex engines
++
++Set GIT_PERF_7820_GREP_OPTS in the environment to pass options to
++git-grep. Make sure to include a leading space,
++e.g. GIT_PERF_7820_GREP_OPTS=' -i'. Some options to try:
++
++	-i
++	-w
++	-v
++	-vi
++	-vw
++	-viw
++"
++
++. ./perf-lib.sh
++
++test_perf_large_repo
++test_checkout_worktree
++
++for pattern in \
++	'how.to' \
++	'^how to' \
++	'[how] to' \
++	'\(e.t[^ ]*\|v.ry\) rare' \
++	'm\(ú\|u\)lt.b\(æ\|y\)te'
++do
++	for engine in basic extended perl
++	do
++		if test $engine != "basic"
++		then
++			# Poor man's basic -> extended converter.
++			pattern=$(echo "$pattern" | sed 's/\\//g')
++		fi
++		if test $engine = "perl" && ! test_have_prereq PCRE
++		then
++			prereq="PCRE"
++		else
++			prereq=""
++		fi
++		test_perf $prereq "$engine grep$GIT_PERF_7820_GREP_OPTS '$pattern'" "
++			git -c grep.patternType=$engine grep$GIT_PERF_7820_GREP_OPTS -- '$pattern' >'out.$engine' || :
++		"
++	done
++
++	test_expect_success "assert that all engines found the same for$GIT_PERF_7820_GREP_OPTS '$pattern'" '
++		test_cmp out.basic out.extended &&
++		if test_have_prereq PCRE
++		then
++			test_cmp out.basic out.perl
++		fi
++	'
++done
++
++test_done
+-- 
+2.13.0.303.g4ebf302169
+

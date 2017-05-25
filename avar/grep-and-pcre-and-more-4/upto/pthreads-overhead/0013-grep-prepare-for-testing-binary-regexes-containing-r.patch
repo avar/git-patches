@@ -1,0 +1,77 @@
+From 1ef8cb1e0f681435a08047d4b3f81a23b74b85c3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 22 Apr 2017 10:48:35 +0000
+Subject: [PATCH v4 13/31] grep: prepare for testing binary regexes containing
+ rx metacharacters
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add setup code needed for testing regexes that contain both binary
+data and regex metacharacters.
+
+The POSIX regcomp() function inherently can't support that, because it
+takes a \0-delimited char *, but other regex engines APIs like PCRE v2
+take a pattern/length pair, and are thus able to handle \0s in
+patterns as well as any other character.
+
+When kwset was imported in commit 9eceddeec6 ("Use kwset in grep",
+2011-08-21) this limitation was fixed, but at the expense of
+introducing the undocumented limitation that any pattern containing \0
+implicitly becomes a fixed match (equivalent to -F having been
+provided).
+
+That's not something we'd like to keep in the future. The inability to
+match patterns containing \0 is a leaky implementation detail.
+
+So add tests as a first step towards changing that. In order to test
+that \0-patterns can properly match as regexes the test string needs
+to have some regex metacharacters in it.
+
+There were other blind spots in the tests. The code around kwset
+specially handles case-insensitive & non-ASCII data, but there were no
+tests for this.
+
+Fix all of that by amending the text being matched to contain both
+regex metacharacters & non-ASCII data.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7008-grep-binary.sh | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/t/t7008-grep-binary.sh b/t/t7008-grep-binary.sh
+index df93d8e44c..20370d6e0c 100755
+--- a/t/t7008-grep-binary.sh
++++ b/t/t7008-grep-binary.sh
+@@ -28,7 +28,7 @@ nul_match () {
+ }
+ 
+ test_expect_success 'setup' "
+-	echo 'binaryQfile' | q_to_nul >a &&
++	echo 'binaryQfileQm[*]cQ*æQð' | q_to_nul >a &&
+ 	git add a &&
+ 	git commit -m.
+ "
+@@ -162,7 +162,7 @@ test_expect_success 'grep does not honor textconv' '
+ '
+ 
+ test_expect_success 'grep --textconv honors textconv' '
+-	echo "a:binaryQfile" >expect &&
++	echo "a:binaryQfileQm[*]cQ*æQð" >expect &&
+ 	git grep --textconv Qfile >actual &&
+ 	test_cmp expect actual
+ '
+@@ -172,7 +172,7 @@ test_expect_success 'grep --no-textconv does not honor textconv' '
+ '
+ 
+ test_expect_success 'grep --textconv blob honors textconv' '
+-	echo "HEAD:a:binaryQfile" >expect &&
++	echo "HEAD:a:binaryQfileQm[*]cQ*æQð" >expect &&
+ 	git grep --textconv Qfile HEAD:a >actual &&
+ 	test_cmp expect actual
+ '
+-- 
+2.13.0.303.g4ebf302169
+

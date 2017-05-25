@@ -1,0 +1,103 @@
+From c56c01f9b5ff10164d8987b80ee9adde2c7fb984 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 8 May 2017 18:56:06 +0000
+Subject: [PATCH v4 15/31] perf: add a GIT_PERF_MAKE_COMMAND for when
+ *_MAKE_OPTS won't do
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a git GIT_PERF_MAKE_COMMAND variable to compliment the existing
+GIT_PERF_MAKE_OPTS facility. This allows specifying an arbitrary shell
+command to execute instead of 'make'.
+
+This is useful e.g. in cases where the name, semantics or defaults of
+a Makefile flag have changed over time. It can even be used to change
+the contents of the tree, useful for monkeypatching ancient versions
+of git to get them to build.
+
+This opens Pandora's box in some ways, it's now possible to
+"jailbreak" the perf environment and e.g. modify the source tree via
+this arbitrary instead of just issuing a custom "make" command, such a
+command has to be re-entrant in the sense that subsequent perf runs
+will re-use the possibly modified tree.
+
+It would be pointless to try to mitigate or work around that caveat in
+a tool purely aimed at Git developers, so this change makes no attempt
+to do so.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile      |  3 +++
+ t/perf/README | 17 ++++++++++++++++-
+ t/perf/run    | 11 +++++++++--
+ 3 files changed, 28 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index eedadb8056..d1587452f1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2272,6 +2272,9 @@ endif
+ ifdef GIT_PERF_MAKE_OPTS
+ 	@echo GIT_PERF_MAKE_OPTS=\''$(subst ','\'',$(subst ','\'',$(GIT_PERF_MAKE_OPTS)))'\' >>$@+
+ endif
++ifdef GIT_PERF_MAKE_COMMAND
++	@echo GIT_PERF_MAKE_COMMAND=\''$(subst ','\'',$(subst ','\'',$(GIT_PERF_MAKE_COMMAND)))'\' >>$@+
++endif
+ ifdef GIT_INTEROP_MAKE_OPTS
+ 	@echo GIT_INTEROP_MAKE_OPTS=\''$(subst ','\'',$(subst ','\'',$(GIT_INTEROP_MAKE_OPTS)))'\' >>$@+
+ endif
+diff --git a/t/perf/README b/t/perf/README
+index 49ea4349be..0b6a8d2906 100644
+--- a/t/perf/README
++++ b/t/perf/README
+@@ -60,7 +60,22 @@ You can set the following variables (also in your config.mak):
+ 
+     GIT_PERF_MAKE_OPTS
+ 	Options to use when automatically building a git tree for
+-	performance testing.  E.g., -j6 would be useful.
++	performance testing. E.g., -j6 would be useful. Passed
++	directly to make as "make $GIT_PERF_MAKE_OPTS".
++
++    GIT_PERF_MAKE_COMMAND
++	An arbitrary command that'll be run in place of the make
++	command, if set the GIT_PERF_MAKE_OPTS variable is
++	ignored. Useful in cases where source tree changes might
++	require issuing a different make command to different
++	revisions.
++
++	This can be (ab)used to monkeypatch or otherwise change the
++	tree about to be built. Note that the build directory can be
++	re-used for subsequent runs so the make command might get
++	executed multiple times on the same tree, but don't count on
++	any of that, that's an implementation detail that might change
++	in the future.
+ 
+     GIT_PERF_REPO
+     GIT_PERF_LARGE_REPO
+diff --git a/t/perf/run b/t/perf/run
+index c788d713ae..b61024a830 100755
+--- a/t/perf/run
++++ b/t/perf/run
+@@ -37,8 +37,15 @@ build_git_rev () {
+ 			cp "../../$config" "build/$rev/"
+ 		fi
+ 	done
+-	(cd build/$rev && make $GIT_PERF_MAKE_OPTS) ||
+-	die "failed to build revision '$mydir'"
++	(
++		cd build/$rev &&
++		if test -n "$GIT_PERF_MAKE_COMMAND"
++		then
++			sh -c "$GIT_PERF_MAKE_COMMAND"
++		else
++			make $GIT_PERF_MAKE_OPTS
++		fi
++	) || die "failed to build revision '$mydir'"
+ }
+ 
+ run_dirs_helper () {
+-- 
+2.13.0.303.g4ebf302169
+
