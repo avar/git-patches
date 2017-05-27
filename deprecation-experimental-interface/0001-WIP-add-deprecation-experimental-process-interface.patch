@@ -1,0 +1,180 @@
+From 6c5fe217e1041b25cde9167308845eb26203379d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 27 May 2017 10:34:28 +0000
+Subject: [RFC/PATCH] WIP: add deprecation & experimental process/interface
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This is the WIP start of a deprecation & experimental interface to
+git. The goal is to formalize the workflow around deprecating
+features, or around introducing new experimental features.
+
+This is much more idea than code at the moment, but included is an
+example showing how :/ might be deprecated[1] (let's not discuss /if/
+we should do that here, this is just an example).
+
+The plan, subject to RFC feedback is to:
+
+ * Add a new config variable `core.version`. E.g. `core.version =
+   2.14.0` With this the user can specify that they'd like
+   new/experimental features introduced in that version (and below),
+   as well as immediately getting new deprecations added in that
+   version as errors.
+
+   This is similar to perl's "use v<VERSION>".
+
+ * Add a deprecated() function to to mark deprecated features.
+
+   This will emit an arbitrary warning about the use of a feature once
+   per-process (via static variable). The call needs to declare in
+   what version the deprecation was added, and in what version it
+   should start warning/dying.
+
+   This sets up a well-defined path to deprecation, and allows users &
+   packagers to plan upgrades, and e.g. set `core.version` to N
+   versions in the future to see what would start warning/dying in
+   those releases.
+
+ * TODO: Add an experimental() function to mark experimental features.
+
+   Depending on parameters & config an experimental feature might be
+   off by default unless `core.use_experimental_<NAME> = true`, or it
+   might warn unless that config is set.
+
+ * TODO: Add new documentation (gitdeprecated.txt /
+   gitexperimental.txt) aiming to exhaustively list deprecated &
+   experimental features, and when it's planned that each of those
+   will be fully removed or start/stop warning when used.
+
+ * TODO: Subject to RFC feedback add a gitpolicy.txt similar to
+   "perlpolicy" (mainly
+   http://perldoc.perl.org/perlpolicy.html#BACKWARD-COMPATIBILITY-AND-DEPRECATION)
+   describing how this deprecation/experimental process works. See
+   also [2].
+
+1. https://public-inbox.org/git/CACBZZX6K7ppVB0qYah76_+pjTKjsco3rHT0xRyKtF2H1dS4k_w@mail.gmail.com/
+2. https://public-inbox.org/git/CACBZZX5oVKGZLKgS4aF0=XXtHO67ynS+zxSopDN9ErJGzV9n-A@mail.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ GIT-VERSION-GEN |  1 +
+ Makefile        |  5 +++++
+ deprecate.c     | 34 ++++++++++++++++++++++++++++++++++
+ deprecate.h     |  7 +++++++
+ sha1_name.c     |  3 +++
+ 5 files changed, 50 insertions(+)
+ create mode 100644 deprecate.c
+ create mode 100644 deprecate.h
+
+diff --git a/GIT-VERSION-GEN b/GIT-VERSION-GEN
+index 4f94fc7574..c76bbedf86 100755
+--- a/GIT-VERSION-GEN
++++ b/GIT-VERSION-GEN
+@@ -37,4 +37,5 @@ fi
+ test "$VN" = "$VC" || {
+ 	echo >&2 "GIT_VERSION = $VN"
+ 	echo "GIT_VERSION = $VN" >$GVF
++	echo "GIT_VERSION_INT = $(echo $VN | sed -e 's/^\([0-9]*\)\.\([0-9]*\)\..*/\1\2/')" >>$GVF
+ }
+diff --git a/Makefile b/Makefile
+index e35542e631..1614b2b067 100644
+--- a/Makefile
++++ b/Makefile
+@@ -739,6 +739,7 @@ LIB_OBJS += csum-file.o
+ LIB_OBJS += ctype.o
+ LIB_OBJS += date.o
+ LIB_OBJS += decorate.o
++LIB_OBJS += deprecate.o
+ LIB_OBJS += diffcore-break.o
+ LIB_OBJS += diffcore-delta.o
+ LIB_OBJS += diffcore-order.o
+@@ -1793,6 +1794,10 @@ version.sp version.s version.o: EXTRA_CPPFLAGS = \
+ 	'-DGIT_VERSION="$(GIT_VERSION)"' \
+ 	'-DGIT_USER_AGENT=$(GIT_USER_AGENT_CQ_SQ)'
+ 
++deprecate.sp deprecate.s deprecate.o: GIT-VERSION-FILE
++deprecate.sp deprecate.s deprecate.o: EXTRA_CPPFLAGS = \
++	'-DGIT_VERSION_INT="$(GIT_VERSION_INT)"'
++
+ $(BUILT_INS): git$X
+ 	$(QUIET_BUILT_IN)$(RM) $@ && \
+ 	ln $< $@ 2>/dev/null || \
+diff --git a/deprecate.c b/deprecate.c
+new file mode 100644
+index 0000000000..035a1adea1
+--- /dev/null
++++ b/deprecate.c
+@@ -0,0 +1,34 @@
++#include "cache.h"
++#include "deprecate.h"
++
++void deprecate(int *state, const char *message,
++		int dep_at, int warn_at, int die_at, int remove_at)
++{
++	/*
++	 * If we're going to warn let's do it once per-process, not
++	 * spew lots of warnings in a loop.
++	 */
++	if (*state == 1)
++		return;
++	else
++		*state = 1;
++
++	if (remove_at >= GIT_VERSION_INT) {
++		die("BUG: The '%s' deprecation should be removed in this release!");
++	} else if (die_at >= GIT_VERSION_INT) {
++		die(_("Deprecation error: %s"), message);
++	} else if (warn_at >= GIT_VERSION_INT) {
++		warning(_("Deprecation warning: %s"), message);
++	} else if (1) {
++		/*
++		 * TODO: Instead of `if 1` we should check a
++		 * core.version variable here.
++		 *
++		 * I.e. if set to core.version=2.13 the user is opting
++		 * in to get deprecations set at dep_at right away,
++		 * and also perhaps experimental features from a
++		 * sister experimental() interface.
++		 */
++		die(_("Early bird deprecation error: %s"), message);
++	}
++}
+diff --git a/deprecate.h b/deprecate.h
+new file mode 100644
+index 0000000000..7d565ef0ed
+--- /dev/null
++++ b/deprecate.h
+@@ -0,0 +1,7 @@
++#ifndef DEPRECATE_H
++#define DEPRECATE_H
++
++extern void deprecate(int *state, const char *message,
++		      int dep_at, int warn_at, int die_at, int remove_at);
++
++#endif
+diff --git a/sha1_name.c b/sha1_name.c
+index 35c1e2a9e3..b381c39bd4 100644
+--- a/sha1_name.c
++++ b/sha1_name.c
+@@ -1505,6 +1505,7 @@ static int get_sha1_with_context_1(const char *name,
+ 	int namelen = strlen(name);
+ 	const char *cp;
+ 	int only_to_die = flags & GET_SHA1_ONLY_TO_DIE;
++	static int dep_state = 0;
+ 
+ 	if (only_to_die)
+ 		flags |= GET_SHA1_QUIETLY;
+@@ -1527,6 +1528,8 @@ static int get_sha1_with_context_1(const char *name,
+ 		char *new_path = NULL;
+ 		int pos;
+ 		if (!only_to_die && namelen > 2 && name[1] == '/') {
++			deprecate(&dep_state, _(":/<text> is deprecated. Use ^{/<text>} instead!"),
++				  213, 214, 215, 216);
+ 			struct commit_list *list = NULL;
+ 
+ 			for_each_ref(handle_one_ref, &list);
+-- 
+2.13.0.303.g4ebf302169
+
