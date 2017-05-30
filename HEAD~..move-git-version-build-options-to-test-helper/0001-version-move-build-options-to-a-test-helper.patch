@@ -1,0 +1,114 @@
+From 1b70bf38a218e39eb34ad7d9b9fa8e6d47ae07b5 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20170530051742.3j3yn3ipfmyrrteu@sigill.intra.peff.net>
+References: <20170530051742.3j3yn3ipfmyrrteu@sigill.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 30 May 2017 20:38:40 +0000
+Subject: [PATCH] version: move --build-options to a test helper
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the undocumented --build-options argument to a test helper. It's
+purely used for testing git itself, so it belongs in a test helper
+instead of something that's part of the public plumbing.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile                      | 1 +
+ help.c                        | 7 -------
+ t/helper/.gitignore           | 1 +
+ t/helper/test-long-is-64bit.c | 6 ++++++
+ t/test-lib.sh                 | 9 +--------
+ 5 files changed, 9 insertions(+), 15 deletions(-)
+ create mode 100644 t/helper/test-long-is-64bit.c
+
+diff --git a/Makefile b/Makefile
+index 2ed6db728a..aa908ae75a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -623,6 +623,7 @@ TEST_PROGRAMS_NEED_X += test-hashmap
+ TEST_PROGRAMS_NEED_X += test-index-version
+ TEST_PROGRAMS_NEED_X += test-lazy-init-name-hash
+ TEST_PROGRAMS_NEED_X += test-line-buffer
++TEST_PROGRAMS_NEED_X += test-long-is-64bit
+ TEST_PROGRAMS_NEED_X += test-match-trees
+ TEST_PROGRAMS_NEED_X += test-mergesort
+ TEST_PROGRAMS_NEED_X += test-mktemp
+diff --git a/help.c b/help.c
+index f637fc8006..0a7628a922 100644
+--- a/help.c
++++ b/help.c
+@@ -384,14 +384,11 @@ const char *help_unknown_cmd(const char *cmd)
+ 
+ int cmd_version(int argc, const char **argv, const char *prefix)
+ {
+-	int build_options = 0;
+ 	const char * const usage[] = {
+ 		N_("git version [<options>]"),
+ 		NULL
+ 	};
+ 	struct option options[] = {
+-		OPT_BOOL(0, "build-options", &build_options,
+-			 "also print build options"),
+ 		OPT_END()
+ 	};
+ 
+@@ -405,10 +402,6 @@ int cmd_version(int argc, const char **argv, const char *prefix)
+ 	 */
+ 	printf("git version %s\n", git_version_string);
+ 
+-	if (build_options) {
+-		printf("sizeof-long: %d\n", (int)sizeof(long));
+-		/* NEEDSWORK: also save and output GIT-BUILD_OPTIONS? */
+-	}
+ 	return 0;
+ }
+ 
+diff --git a/t/helper/.gitignore b/t/helper/.gitignore
+index 721650256e..739c4c745c 100644
+--- a/t/helper/.gitignore
++++ b/t/helper/.gitignore
+@@ -13,6 +13,7 @@
+ /test-index-version
+ /test-lazy-init-name-hash
+ /test-line-buffer
++/test-long-is-64bit
+ /test-match-trees
+ /test-mergesort
+ /test-mktemp
+diff --git a/t/helper/test-long-is-64bit.c b/t/helper/test-long-is-64bit.c
+new file mode 100644
+index 0000000000..45fc120432
+--- /dev/null
++++ b/t/helper/test-long-is-64bit.c
+@@ -0,0 +1,6 @@
++#include "git-compat-util.h"
++
++int cmd_main(int argc, const char **argv)
++{
++	return (8 <= (int)sizeof(long)) ? 0 : 1;
++}
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index ec2571f018..bf649fbc03 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1165,14 +1165,7 @@ run_with_limited_cmdline () {
+ 
+ test_lazy_prereq CMDLINE_LIMIT 'run_with_limited_cmdline true'
+ 
+-build_option () {
+-	git version --build-options |
+-	sed -ne "s/^$1: //p"
+-}
+-
+-test_lazy_prereq LONG_IS_64BIT '
+-	test 8 -le "$(build_option sizeof-long)"
+-'
++test_lazy_prereq LONG_IS_64BIT 'test-long-is-64bit'
+ 
+ test_lazy_prereq TIME_IS_64BIT 'test-date is64bit'
+ test_lazy_prereq TIME_T_IS_64BIT 'test-date time_t-is64bit'
+-- 
+2.13.0.303.g4ebf302169
+
