@@ -1,0 +1,122 @@
+From 41ff0f24978070e9e2427c6c93d0b429f01715e6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 1 Jun 2017 14:43:58 +0000
+Subject: [PATCH v4 7/8] grep: un-break building with PCRE >= 8.32 without
+ --enable-jit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend my change earlier in this series ("grep: add support for the
+PCRE v1 JIT API", 2017-04-11) to un-break the build on PCRE v1
+versions later than 8.31 compiled without --enable-jit.
+
+As explained in that change and a later compatibility change in this
+series ("grep: un-break building with PCRE < 8.32", 2017-05-10) the
+pcre_jit_exec() function is a faster path to execute the JIT.
+
+Unfortunately there's no compatibility stub for that function compiled
+into the library if pcre_config(PCRE_CONFIG_JIT, &ret) would return 0,
+and no macro that can be used to check for it, so the only portable
+option to support builds without --enable-jit is via a new
+NO_LIBPCRE1_JIT=UnfortunatelyYes Makefile option[1].
+
+Another option would be to make the JIT opt-in via
+USE_LIBPCRE1_JIT=YesPlease, after all it's not a default option of
+PCRE v1.
+
+I think it makes more sense to make it opt-out since even though it's
+not a default option, most packagers of PCRE seem to turn it on by
+default, with the notable exception of the MinGW package.
+
+Make the MinGW platform work by default by changing the build defaults
+to turn on NO_LIBPCRE1_JIT=UnfortunatelyYes. It is the only platform
+that turns on USE_LIBPCRE=YesPlease by default, see commit
+df5218b4c3 ("config.mak.uname: support MSys2", 2016-01-13) for that
+change.
+
+1. "How do I support pcre1 JIT on all
+   versions?"  (https://lists.exim.org/lurker/thread/20170601.103148.10253788.en.html)
+
+2. https://github.com/Alexpux/MINGW-packages/blob/master/mingw-w64-pcre/PKGBUILD
+   (referenced from "Re: PCRE v2 compile error, was Re: What's cooking
+   in git.git (May 2017, #01; Mon, 1)";
+   <alpine.DEB.2.20.1705021756530.3480@virtualbox>)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile         | 13 +++++++++++++
+ config.mak.uname |  1 +
+ grep.h           |  2 ++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index 7bea912e5a..8f26301e95 100644
+--- a/Makefile
++++ b/Makefile
+@@ -29,6 +29,14 @@ all::
+ # Perl-compatible regular expressions instead of standard or extended
+ # POSIX regular expressions.
+ #
++# When using USE_LIBPCRE1, define NO_LIBPCRE1_JIT if the PCRE v1
++# library is compiled without --enable-jit. We will auto-detect
++# whether the version of the PCRE v1 library in use has JIT support at
++# all, but we unfortunately can't auto-detect whether JIT support
++# hasn't been compiled in in an otherwise JIT-supporting version. If
++# you have link-time errors about a missing `pcre_jit_exec` define
++# this, or recompile PCRE v1 with --enable-jit.
++#
+ # Define LIBPCREDIR=/foo/bar if your libpcre header and library files are in
+ # /foo/bar/include and /foo/bar/lib directories.
+ #
+@@ -1095,6 +1103,10 @@ ifdef USE_LIBPCRE
+ 		EXTLIBS += -L$(LIBPCREDIR)/$(lib) $(CC_LD_DYNPATH)$(LIBPCREDIR)/$(lib)
+ 	endif
+ 	EXTLIBS += -lpcre
++
++ifdef NO_LIBPCRE1_JIT
++	BASIC_CFLAGS += -DNO_LIBPCRE1_JIT
++endif
+ endif
+ 
+ ifdef HAVE_ALLOCA_H
+@@ -2242,6 +2254,7 @@ GIT-BUILD-OPTIONS: FORCE
+ 	@echo NO_CURL=\''$(subst ','\'',$(subst ','\'',$(NO_CURL)))'\' >>$@+
+ 	@echo NO_EXPAT=\''$(subst ','\'',$(subst ','\'',$(NO_EXPAT)))'\' >>$@+
+ 	@echo USE_LIBPCRE1=\''$(subst ','\'',$(subst ','\'',$(USE_LIBPCRE)))'\' >>$@+
++	@echo NO_LIBPCRE1_JIT=\''$(subst ','\'',$(subst ','\'',$(NO_LIBPCRE1_JIT)))'\' >>$@+
+ 	@echo NO_PERL=\''$(subst ','\'',$(subst ','\'',$(NO_PERL)))'\' >>$@+
+ 	@echo NO_PTHREADS=\''$(subst ','\'',$(subst ','\'',$(NO_PTHREADS)))'\' >>$@+
+ 	@echo NO_PYTHON=\''$(subst ','\'',$(subst ','\'',$(NO_PYTHON)))'\' >>$@+
+diff --git a/config.mak.uname b/config.mak.uname
+index 192629f143..8ee62478e2 100644
+--- a/config.mak.uname
++++ b/config.mak.uname
+@@ -551,6 +551,7 @@ else
+ 		NO_GETTEXT =
+ 		USE_GETTEXT_SCHEME = fallthrough
+ 		USE_LIBPCRE= YesPlease
++		NO_LIBPCRE1_JIT = UnfortunatelyYes
+ 		NO_CURL =
+ 		USE_NED_ALLOCATOR = YesPlease
+ 	else
+diff --git a/grep.h b/grep.h
+index ce90969736..3bff0870b2 100644
+--- a/grep.h
++++ b/grep.h
+@@ -5,9 +5,11 @@
+ #include <pcre.h>
+ #ifdef PCRE_CONFIG_JIT
+ #if PCRE_MAJOR >= 8 && PCRE_MINOR >= 32
++#ifndef NO_LIBPCRE1_JIT
+ #define GIT_PCRE1_USE_JIT
+ #endif
+ #endif
++#endif
+ #ifndef PCRE_STUDY_JIT_COMPILE
+ #define PCRE_STUDY_JIT_COMPILE 0
+ #endif
+-- 
+2.13.0.303.g4ebf302169
+
