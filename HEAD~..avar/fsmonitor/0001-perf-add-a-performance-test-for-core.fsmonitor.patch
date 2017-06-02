@@ -1,0 +1,139 @@
+From dd8405e3239784bf29c12c039d963819957d86a5 Mon Sep 17 00:00:00 2001
+In-Reply-To: <4c3fed40-774b-8ae6-fa1b-50efe6ef552f@gmail.com>
+References: <4c3fed40-774b-8ae6-fa1b-50efe6ef552f@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 2 Jun 2017 10:07:31 +0000
+Subject: [WIP/PATCH] perf: add a performance test for core.fsmonitor
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a performance test for the new core.fsmonitor facility using the
+sample query-fsmonitor hook.
+
+This is WIP code for the reasons explained in the setup comments,
+unfortunately the perf code doesn't easily allow you to run different
+setup code for different versions you're testing. This test will stop
+working if the fsmonitor is merged into the master branch.
+
+Output against linxu.git:
+
+    $ GIT_PERF_REPEAT_COUNT=10 GIT_PERF_LARGE_REPO=~/g/linux GIT_PERF_MAKE_OPTS='-j8' ./run origin/master avar/fsmonitor ./p7519-fsmonitor.sh
+    [...]
+    Test                          origin/master     avar/fsmonitor
+    -----------------------------------------------------------------------
+    7519.2: status (first)        0.08(0.04+0.09)   0.12(0.07+0.10) +50.0%
+    7519.3: status (subsequent)   0.08(0.04+0.09)   0.12(0.06+0.11) +50.0%
+    7519.4: status -uno           0.02(0.02+0.05)   0.06(0.05+0.06) +200.0%
+    7519.5: status -uall          0.08(0.06+0.07)   0.12(0.07+0.10) +50.0%
+
+And against a larger in-house monorepo I have here, with the same
+options (except the repo path):
+
+    Test                          origin/master     avar/fsmonitor
+    -----------------------------------------------------------------------
+    7519.2: status (first)        0.20(0.11+0.18)   0.27(0.15+0.21) +35.0%
+    7519.3: status (subsequent)   0.20(0.11+0.18)   0.27(0.15+0.21) +35.0%
+    7519.4: status -uno           0.04(0.03+0.10)   0.22(0.08+0.12) +450.0%
+    7519.5: status -uall          0.20(0.13+0.16)   0.27(0.18+0.19) +35.0%
+
+Against linux.git with a hack to flush the FS cache (on Linux) before
+running the first 'git status', only running one test so the result
+isn't discarded as the slowest of N:
+
+    $ GIT_PERF_REPEAT_COUNT=1 GIT_PERF_LARGE_REPO=~/g/linux GIT_PERF_MAKE_COMMAND='sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null && make -j8' ./run origin/master avar/fsmonitor ./p7519-fsmonitor.sh
+    [...]
+    Test                          origin/master     avar/fsmonitor
+    ------------------------------------------------------------------------
+    7519.2: status (first)        0.30(0.18+0.10)   8.26(0.22+0.10) +2653.3%
+    7519.3: status (subsequent)   0.08(0.04+0.08)   0.81(0.09+0.07) +912.5%
+    7519.4: status -uno           0.02(0.01+0.06)   0.08(0.04+0.07) +300.0%
+    7519.5: status -uall          0.08(0.06+0.07)   0.15(0.08+0.09) +87.5%
+
+Now obviously due to 1 run that has a lot of noise, but I would expect
+that first invocation to be blindingly fast since watchman has info on
+what files were modified since the cache was flushed.
+
+The same on the large monorepo noted above:
+
+    Test                          origin/master     avar/fsmonitor
+    -----------------------------------------------------------------------
+    7519.2: status (first)        0.59(0.28+0.24)   0.93(0.35+0.19) +57.6%
+    7519.3: status (subsequent)   0.20(0.10+0.19)   0.28(0.16+0.20) +40.0%
+    7519.4: status -uno           0.04(0.04+0.09)   0.11(0.08+0.12) +175.0%
+    7519.5: status -uall          0.29(0.11+0.18)   0.40(0.16+0.19) +37.9%
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/p7519-fsmonitor.sh | 58 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+ create mode 100755 t/perf/p7519-fsmonitor.sh
+
+diff --git a/t/perf/p7519-fsmonitor.sh b/t/perf/p7519-fsmonitor.sh
+new file mode 100755
+index 0000000000..b838a0ff14
+--- /dev/null
++++ b/t/perf/p7519-fsmonitor.sh
+@@ -0,0 +1,58 @@
++#!/bin/sh
++
++test_description="Test core.fsmonitor"
++
++. ./perf-lib.sh
++
++test_perf_large_repo
++test_checkout_worktree
++
++test_expect_success 'setup' '
++	# Maybe set untrackedCache & splitIndex depending on the
++	# environment, defaulting to false.
++	if test -n "$GIT_PERF_7519_UNTRACKED_CACHE"
++	then
++		git config core.untrackedCache true
++	else
++		git config core.untrackedCache false
++	fi &&
++	if test -n "$GIT_PERF_7519_SPLIT_INDEX"
++	then
++		git config core.splitIndex true
++	else
++		git config core.splitIndex false
++	fi &&
++
++	# Relies on core.fsmonitor not being merged into master. Needs
++	# better per-test ways to disable it if it gets merged.
++	git config core.fsmonitor true &&
++
++	# Hook scaffolding
++	mkdir .git/hooks &&
++	cp ../../../templates/hooks--query-fsmonitor.sample .git/hooks/query-fsmonitor &&
++
++	# Setup watchman & ensure it is actually watching
++	watchman watch-del "$PWD" >/dev/null 2>&1 &&
++	watchman watch "$PWD" >/dev/null 2>&1 &&
++	watchman watch-list | grep -q -F "$PWD"
++'
++
++# Setting:
++#
++#    GIT_PERF_REPEAT_COUNT=1 GIT_PERF_MAKE_COMMAND='sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches && make -j8'
++#
++# Can be used as a hack to performance test 'git status' on a cold fs
++# cache with an existing watchman watching the directory, which should
++# be blindingly fast, compared to amazingly slow without watchman.
++test_perf 'status (first)'       'git status'
++
++
++# The same git-status once the fs cache has been warmed, if using the
++# GIT_PERF_MAKE_COMMAND above. Otherwise the same as above.
++test_perf 'status (subsequent)'  'git status'
++
++# Let's see if -uno & -uall make any difference
++test_perf 'status -uno'          'git status -uno'
++test_perf 'status -uall'         'git status -uall'
++
++test_done
+-- 
+2.13.0.506.g27d5fe0cd
+
