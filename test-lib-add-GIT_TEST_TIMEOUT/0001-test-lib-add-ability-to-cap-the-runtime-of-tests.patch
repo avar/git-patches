@@ -1,0 +1,119 @@
+From 4d792c8cbd21bdef8a1ab73882f6664785260484 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 4 Jun 2017 00:07:14 +0200
+Subject: [PATCH] test-lib: add ability to cap the runtime of tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a GIT_TEST_TIMEOUT environment variable which optimistically sets
+an approximate upper limit on how long any one test is allowed to
+run.
+
+Once the timeout is exceeded all remaining tests are skipped, no
+attempt is made to stop a long running test in-progress, or deal with
+the edge case of the epoch changing the epoch from under us by
+e.g. ntpd.
+
+On my machine median runtime for a test is around 150ms, but 8 tests
+take more than 10 seconds to run, with t3404-rebase-interactive.sh
+taking 18 seconds.
+
+On a machine with a large number of cores these long-tail tests become
+the limiting factor in how long it takes to run the entire test suite,
+even if it's run with "prove --state=slow,save". This is because the
+first long-running tests started at the very beginning will still be
+running by the time the rest of the test suite finishes.
+
+Speeding up the test suite by simply cataloging and skipping tests
+that take longer than N seconds is a hassle to maintain, and entirely
+skips some tests which would be nice to at least partially run,
+e.g. instead of entirely skipping t3404-rebase-interactive.sh we can
+run it for N seconds and get at least some "git rebase -i" test
+coverage in a fast test run.
+
+On a 56 core Xeon E5-2690 v4 @ 2.60GHz the runtime for the test suite
+is cut in half with GIT_TEST_TIMEOUT=10 under prove -j56
+t[0-9]*.sh. Approximate time to run all the tests with various
+GIT_TEST_TIMEOUT settings[1]:
+
+    N/A     30s
+    20      20s
+    10      15s
+    5       12s
+    1       12s
+
+Setting a timeout lower than 5-10 seconds or so starts to reach
+diminishing returns, e.g. t7063-status-untracked-cache.sh always takes
+at least 6 seconds to run since it's blocking on a single
+"update-index --test-untracked-cache" command. So there's room for
+improvement, but this simple facility gives us most of the benefits.
+
+The number of tests on the aforementioned machine which are run with
+the various timeouts[2]:
+
+    N/A     16261
+    20      16037
+    10      14972
+    5       13952
+    1       8409
+
+While running with a timeout of 10 seconds cuts the runtime in half,
+over 92% of the tests are still run. The test coverage is higher than
+that number indicates, just taking into account the many similar tests
+t0027-auto-crlf.sh runs brings it up to 95%.
+
+1. for t in '' 20 10; do printf "%s\t" $t && (time GIT_TEST_TIMEOUT=$t prove -j$(parallel --number-of-cores) --state=slow,save t[0-9]*.sh) 2>&1 | grep ^real | grep -E -o '[0-9].*'; done
+2. for t in '' 20 10 5 1; do printf "%s\t" $t && (time GIT_TEST_TIMEOUT=$t prove -j$(parallel --number-of-cores) --state=slow,save -v t[0-9]*.sh) 2>&1 | grep -e ^real -e '^1\.\.' | sed 's/^1\.\.//' | awk '{s+=$1} END {print s}'; done
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 4936725c67..0353e73873 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -15,6 +15,13 @@
+ # You should have received a copy of the GNU General Public License
+ # along with this program.  If not, see http://www.gnu.org/licenses/ .
+ 
++# If we have a set max runtime record the startup time before anything
++# else is done.
++if test -n "$GIT_TEST_TIMEOUT"
++then
++	TEST_STARTUP_TIME=$(date +%s)
++fi
++
+ # Test the binaries we have just built.  The tests are kept in
+ # t/ subdirectory and are run in 'trash directory' subdirectory.
+ if test -z "$TEST_DIRECTORY"
+@@ -689,11 +696,22 @@ test_skip () {
+ 		to_skip=t
+ 		skipped_reason="--run"
+ 	fi
++	if test -n "$GIT_TEST_TIMEOUT" &&
++		test "$(($(date +%s) - $TEST_STARTUP_TIME))" -ge "$GIT_TEST_TIMEOUT"
++	then
++		to_skip=all
++		skipped_reason="Exceeded GIT_TEST_TIMEOUT in runtime"
++	fi
+ 
+ 	case "$to_skip" in
+-	t)
++	all|t)
+ 		say_color skip >&3 "skipping test: $@"
+ 		say_color skip "ok $test_count # skip $1 ($skipped_reason)"
++		if test "$to_skip" = all
++		then
++			skip_all="$skipped_reason"
++			test_done
++		fi
+ 		: true
+ 		;;
+ 	*)
+-- 
+2.13.0.506.g27d5fe0cd
+
