@@ -1,0 +1,252 @@
+From 54f358fbd008183f15a86ed2b8b3c1fd4bd74138 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqa858zzb3.fsf@gitster.mtv.corp.google.com>
+References: <xmqqa858zzb3.fsf@gitster.mtv.corp.google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 9 Jun 2017 08:43:17 +0000
+Subject: [PATCH v4 6/6] *.[ch] refactoring: make use of the FREE_AND_NULL()
+ macro
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replace occurrences of `free(ptr); ptr = NULL` which weren't caught by
+the coccinelle rule. These fall into two categories:
+
+ - free/NULL assignments one after the other which coccinelle all put
+   on one line, which is functionally equivalent code, but very ugly.
+
+ - manually spotted occurrences where the NULL assignment isn't right
+   after the free() call.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c       | 15 ++++-----------
+ builtin/worktree.c |  6 ++----
+ commit-slab.h      |  3 +--
+ credential.c       |  6 ++----
+ gpg-interface.c    | 15 +++++----------
+ grep.c             |  9 +++------
+ help.c             |  3 +--
+ line-log.c         |  3 +--
+ prio-queue.c       |  3 +--
+ refs/ref-cache.c   |  3 +--
+ rerere.c           |  3 +--
+ split-index.c      |  3 +--
+ 12 files changed, 23 insertions(+), 49 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 138fb98537..80368b6fe6 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -1072,17 +1072,10 @@ static void am_next(struct am_state *state)
+ {
+ 	struct object_id head;
+ 
+-	free(state->author_name);
+-	state->author_name = NULL;
+-
+-	free(state->author_email);
+-	state->author_email = NULL;
+-
+-	free(state->author_date);
+-	state->author_date = NULL;
+-
+-	free(state->msg);
+-	state->msg = NULL;
++	FREE_AND_NULL(state->author_name);
++	FREE_AND_NULL(state->author_email);
++	FREE_AND_NULL(state->author_date);
++	FREE_AND_NULL(state->msg);
+ 	state->msg_len = 0;
+ 
+ 	unlink(am_path(state, "author-script"));
+diff --git a/builtin/worktree.c b/builtin/worktree.c
+index 793306ea51..41d1c007a4 100644
+--- a/builtin/worktree.c
++++ b/builtin/worktree.c
+@@ -299,10 +299,8 @@ static int add_worktree(const char *path, const char *refname,
+ 	}
+ 
+ 	is_junk = 0;
+-	free(junk_work_tree);
+-	free(junk_git_dir);
+-	junk_work_tree = NULL;
+-	junk_git_dir = NULL;
++	FREE_AND_NULL(junk_work_tree);
++	FREE_AND_NULL(junk_git_dir);
+ 
+ done:
+ 	if (ret || !opts->keep_locked) {
+diff --git a/commit-slab.h b/commit-slab.h
+index 42d16dcded..333d81e370 100644
+--- a/commit-slab.h
++++ b/commit-slab.h
+@@ -82,8 +82,7 @@ static MAYBE_UNUSED void clear_ ##slabname(struct slabname *s)		\
+ 	for (i = 0; i < s->slab_count; i++)				\
+ 		free(s->slab[i]);					\
+ 	s->slab_count = 0;						\
+-	free(s->slab);							\
+-	s->slab = NULL;							\
++	FREE_AND_NULL(s->slab);						\
+ }									\
+ 									\
+ static MAYBE_UNUSED elemtype *slabname## _at_peek(struct slabname *s,	\
+diff --git a/credential.c b/credential.c
+index 0ab247ff40..924ab58538 100644
+--- a/credential.c
++++ b/credential.c
+@@ -313,10 +313,8 @@ void credential_reject(struct credential *c)
+ 	for (i = 0; i < c->helpers.nr; i++)
+ 		credential_do(c, c->helpers.items[i].string, "erase");
+ 
+-	free(c->username);
+-	c->username = NULL;
+-	free(c->password);
+-	c->password = NULL;
++	FREE_AND_NULL(c->username);
++	FREE_AND_NULL(c->password);
+ 	c->approved = 0;
+ }
+ 
+diff --git a/gpg-interface.c b/gpg-interface.c
+index e44cc27da1..3f377f89d0 100644
+--- a/gpg-interface.c
++++ b/gpg-interface.c
+@@ -13,16 +13,11 @@ static const char *gpg_program = "gpg";
+ 
+ void signature_check_clear(struct signature_check *sigc)
+ {
+-	free(sigc->payload);
+-	free(sigc->gpg_output);
+-	free(sigc->gpg_status);
+-	free(sigc->signer);
+-	free(sigc->key);
+-	sigc->payload = NULL;
+-	sigc->gpg_output = NULL;
+-	sigc->gpg_status = NULL;
+-	sigc->signer = NULL;
+-	sigc->key = NULL;
++	FREE_AND_NULL(sigc->payload);
++	FREE_AND_NULL(sigc->gpg_output);
++	FREE_AND_NULL(sigc->gpg_status);
++	FREE_AND_NULL(sigc->signer);
++	FREE_AND_NULL(sigc->key);
+ }
+ 
+ static struct {
+diff --git a/grep.c b/grep.c
+index 11513ec06d..909f35a984 100644
+--- a/grep.c
++++ b/grep.c
+@@ -1763,12 +1763,9 @@ void grep_source_init(struct grep_source *gs, enum grep_source_type type,
+ 
+ void grep_source_clear(struct grep_source *gs)
+ {
+-	free(gs->name);
+-	gs->name = NULL;
+-	free(gs->path);
+-	gs->path = NULL;
+-	free(gs->identifier);
+-	gs->identifier = NULL;
++	FREE_AND_NULL(gs->name);
++	FREE_AND_NULL(gs->path);
++	FREE_AND_NULL(gs->identifier);
+ 	grep_source_clear_data(gs);
+ }
+ 
+diff --git a/help.c b/help.c
+index db7f3d79a0..a2f48c0df3 100644
+--- a/help.c
++++ b/help.c
+@@ -267,9 +267,8 @@ static void add_cmd_list(struct cmdnames *cmds, struct cmdnames *old)
+ 
+ 	for (i = 0; i < old->cnt; i++)
+ 		cmds->names[cmds->cnt++] = old->names[i];
+-	free(old->names);
++	FREE_AND_NULL(old->names);
+ 	old->cnt = 0;
+-	old->names = NULL;
+ }
+ 
+ /* An empirically derived magic number */
+diff --git a/line-log.c b/line-log.c
+index 79eded7363..2d60c347ca 100644
+--- a/line-log.c
++++ b/line-log.c
+@@ -34,9 +34,8 @@ void range_set_init(struct range_set *rs, size_t prealloc)
+ 
+ void range_set_release(struct range_set *rs)
+ {
+-	free(rs->ranges);
++	FREE_AND_NULL(rs->ranges);
+ 	rs->alloc = rs->nr = 0;
+-	rs->ranges = NULL;
+ }
+ 
+ /* dst must be uninitialized! */
+diff --git a/prio-queue.c b/prio-queue.c
+index fc3860fdcb..126d096727 100644
+--- a/prio-queue.c
++++ b/prio-queue.c
+@@ -27,10 +27,9 @@ void prio_queue_reverse(struct prio_queue *queue)
+ 
+ void clear_prio_queue(struct prio_queue *queue)
+ {
+-	free(queue->array);
++	FREE_AND_NULL(queue->array);
+ 	queue->nr = 0;
+ 	queue->alloc = 0;
+-	queue->array = NULL;
+ 	queue->insertion_ctr = 0;
+ }
+ 
+diff --git a/refs/ref-cache.c b/refs/ref-cache.c
+index af2fcb2c12..76bb723c86 100644
+--- a/refs/ref-cache.c
++++ b/refs/ref-cache.c
+@@ -82,9 +82,8 @@ static void clear_ref_dir(struct ref_dir *dir)
+ 	int i;
+ 	for (i = 0; i < dir->nr; i++)
+ 		free_ref_entry(dir->entries[i]);
+-	free(dir->entries);
++	FREE_AND_NULL(dir->entries);
+ 	dir->sorted = dir->nr = dir->alloc = 0;
+-	dir->entries = NULL;
+ }
+ 
+ struct ref_entry *create_dir_entry(struct ref_cache *cache,
+diff --git a/rerere.c b/rerere.c
+index c26c29f87a..61f3804a1e 100644
+--- a/rerere.c
++++ b/rerere.c
+@@ -39,9 +39,8 @@ static void free_rerere_dirs(void)
+ 		free(rerere_dir[i]->status);
+ 		free(rerere_dir[i]);
+ 	}
+-	free(rerere_dir);
++	FREE_AND_NULL(rerere_dir);
+ 	rerere_dir_nr = rerere_dir_alloc = 0;
+-	rerere_dir = NULL;
+ }
+ 
+ static void free_rerere_id(struct string_list_item *item)
+diff --git a/split-index.c b/split-index.c
+index 49bd197f71..20477c6a48 100644
+--- a/split-index.c
++++ b/split-index.c
+@@ -174,10 +174,9 @@ void merge_base_index(struct index_state *istate)
+ 
+ 	ewah_free(si->delete_bitmap);
+ 	ewah_free(si->replace_bitmap);
+-	free(si->saved_cache);
++	FREE_AND_NULL(si->saved_cache);
+ 	si->delete_bitmap  = NULL;
+ 	si->replace_bitmap = NULL;
+-	si->saved_cache	   = NULL;
+ 	si->saved_cache_nr = 0;
+ }
+ 
+-- 
+2.13.1.508.gb3defc5cc
+
