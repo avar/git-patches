@@ -1,0 +1,46 @@
+From 01aeaae0b068ccfceec86b34502d84ee622c9a4a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 19 Jun 2017 20:59:07 +0000
+Subject: [PATCH] grep: fix erroneously copy/pasted variable in check/assert
+ pattern
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix an erroneously copy/pasted check for the pcre2_jit_stack variable
+to check pcre2_match_context instead. The former was already checked
+in the preceding "if" statement.
+
+This is a trivial and obvious error introduced in my commit
+94da9193a6 ("grep: add support for PCRE v2", 2017-06-01).
+
+In practice if pcre2_match_context_create() returned NULL we were
+likely in a situation where malloc() was returning NULL, and were thus
+screwed anyway, but if only the pcre2_match_context_create() call
+returned NULL (through some transitory bug) PCRE v2 would just
+allocate and supply its own context object when matching, and we'd run
+normally at the trivial expense of not getting a slight speedup by
+sharing the context object between successive matches.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/grep.c b/grep.c
+index d7ef21358e..06c4c24926 100644
+--- a/grep.c
++++ b/grep.c
+@@ -508,7 +508,7 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 		if (!p->pcre2_jit_stack)
+ 			die("Couldn't allocate PCRE2 JIT stack");
+ 		p->pcre2_match_context = pcre2_match_context_create(NULL);
+-		if (!p->pcre2_jit_stack)
++		if (!p->pcre2_match_context)
+ 			die("Couldn't allocate PCRE2 match context");
+ 		pcre2_jit_stack_assign(p->pcre2_match_context, NULL, p->pcre2_jit_stack);
+ 	} else if (p->pcre2_jit_on != 0) {
+-- 
+2.13.1.518.g3df882009
+
