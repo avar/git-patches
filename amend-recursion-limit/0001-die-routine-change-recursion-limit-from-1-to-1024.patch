@@ -1,0 +1,86 @@
+From 328c244a274deca45294dcbbc95ac286b66164c5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 19 Jun 2017 21:37:40 +0000
+Subject: [PATCH] die routine: change recursion limit from 1 to 1024
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the recursion limit for the default die routine from a *very*
+low 1 to 1024. This ensures that infinite recursions are broken, but
+doesn't lose error messages.
+
+The intent of the existing code, as explained in commit
+cd163d4b4e ("usage.c: detect recursion in die routines and bail out
+immediately", 2012-11-14), is to break infinite recursion in cases
+where the die routine itself dies.
+
+However, doing that very aggressively by immediately printing out
+"recursion detected in die handler" if we've already called die() once
+means that threaded invocations of git can go through the following
+flow:
+
+ 1. Start a bunch of threads
+
+ 2. The threads start invoking die(), pretty much at the same time.
+
+ 3. The first die() invocation will be in the middle of trying to
+    print out its message by the time another thread dies, that other
+    thread then runs into the recursion limit and dies with "recursion
+    detected in die handler".
+
+ 4. Due to a race condition the initial error may never get printed
+    before the "recursion detected" thread calls exit() and aborts the
+    program.
+
+An example of this is running a threaded grep against e.g. linux.git:
+
+    git grep -P --threads=4 '(*LIMIT_RECURSION=1)(*LIMIT_MATCH=1)-?-?-?---$'
+
+With the current version of git this will print some combination of
+multiple PCRE failures that caused the abort and multiple "recursion
+detected", some invocations will print out multiple "recursion
+detected" errors with no PCRE error at all!
+
+Now, git-grep could make use of the pluggable error facility added in
+commit c19a490e37 ("usage: allow pluggable die-recursion checks",
+2013-04-16).
+
+That should be done for git-grep in particular because before this
+change (and after) it'll potentially print out the exact same error
+from the N threads it starts, that should be de-duplicated.
+
+But let's start by improving the default behavior shared across all of
+git. Right now the common case is not an infinite recursion in the
+handler, but us losing error messages by default because we're overly
+paranoid about our recursion check.
+
+So let's just set the recursion limit to a number higher than the
+number of threads we're ever likely to spawn. Now we won't lose
+errors, and if we have a recursing die handler we'll still die within
+microseconds.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ usage.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/usage.c b/usage.c
+index 2f87ca69a8..1c198d4882 100644
+--- a/usage.c
++++ b/usage.c
+@@ -44,7 +44,9 @@ static void warn_builtin(const char *warn, va_list params)
+ static int die_is_recursing_builtin(void)
+ {
+ 	static int dying;
+-	return dying++;
++	static int recursion_limit = 1024;
++
++	return dying++ > recursion_limit;
+ }
+ 
+ /* If we are in a dlopen()ed .so write to a global variable would segfault
+-- 
+2.13.1.518.g3df882009
+
