@@ -1,0 +1,183 @@
+From d540372d02ede4b858e997aff7e411e71a33a926 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Jun 2017 21:26:48 +0000
+Subject: [PATCH 3/3] wildmatch: make use of the interface for precompiling
+ wildmatch() patterns
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make use of the batch wildmatch() interface. As noted in the comment
+here the main hot codepath is not being touched, but some other
+invocations where we repeatedly match the same glob against multiple
+strings have been migrated.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/name-rev.c |  6 +++++-
+ builtin/replace.c  |  7 ++++---
+ config.c           |  8 ++++++--
+ dir.c              | 12 ++++++++++++
+ refs.c             |  7 ++++---
+ 5 files changed, 31 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/name-rev.c b/builtin/name-rev.c
+index d21a5002a7..a8f8010e1e 100644
+--- a/builtin/name-rev.c
++++ b/builtin/name-rev.c
+@@ -127,14 +127,18 @@ static void name_rev(struct commit *commit,
+ static int subpath_matches(const char *path, const char *filter)
+ {
+ 	const char *subpath = path;
++	struct wildmatch_compiled *code = wildmatch_compile(filter, 0);
+ 
+ 	while (subpath) {
+-		if (!wildmatch(filter, subpath, 0))
++		if (!wildmatch_match(code, subpath)) {
++			wildmatch_free(code);
+ 			return subpath - path;
++		}
+ 		subpath = strchr(subpath, '/');
+ 		if (subpath)
+ 			subpath++;
+ 	}
++	wildmatch_free(code);
+ 	return -1;
+ }
+ 
+diff --git a/builtin/replace.c b/builtin/replace.c
+index 89262df5a1..70e7af72ce 100644
+--- a/builtin/replace.c
++++ b/builtin/replace.c
+@@ -31,7 +31,7 @@ enum replace_format {
+ };
+ 
+ struct show_data {
+-	const char *pattern;
++	struct wildmatch_compiled *code;
+ 	enum replace_format format;
+ };
+ 
+@@ -40,7 +40,7 @@ static int show_reference(const char *refname, const struct object_id *oid,
+ {
+ 	struct show_data *data = cb_data;
+ 
+-	if (!wildmatch(data->pattern, refname, 0)) {
++	if (!wildmatch_match(data->code, refname)) {
+ 		if (data->format == REPLACE_FORMAT_SHORT)
+ 			printf("%s\n", refname);
+ 		else if (data->format == REPLACE_FORMAT_MEDIUM)
+@@ -69,7 +69,7 @@ static int list_replace_refs(const char *pattern, const char *format)
+ 
+ 	if (pattern == NULL)
+ 		pattern = "*";
+-	data.pattern = pattern;
++	data.code = wildmatch_compile(pattern, 0);
+ 
+ 	if (format == NULL || *format == '\0' || !strcmp(format, "short"))
+ 		data.format = REPLACE_FORMAT_SHORT;
+@@ -83,6 +83,7 @@ static int list_replace_refs(const char *pattern, const char *format)
+ 		    format);
+ 
+ 	for_each_replace_ref(show_reference, (void *)&data);
++	wildmatch_free(data.code);
+ 
+ 	return 0;
+ }
+diff --git a/config.c b/config.c
+index 260caf27b8..2ec45e9790 100644
+--- a/config.c
++++ b/config.c
+@@ -215,6 +215,7 @@ static int include_by_gitdir(const struct config_options *opts,
+ 	int ret = 0, prefix;
+ 	const char *git_dir;
+ 	int already_tried_absolute = 0;
++	struct wildmatch_compiled *code = NULL;
+ 
+ 	if (opts->git_dir)
+ 		git_dir = opts->git_dir;
+@@ -244,8 +245,10 @@ static int include_by_gitdir(const struct config_options *opts,
+ 			goto done;
+ 	}
+ 
+-	ret = !wildmatch(pattern.buf + prefix, text.buf + prefix,
+-			 icase ? WM_CASEFOLD : 0);
++	if (!code)
++		code = wildmatch_compile(pattern.buf + prefix,
++					 icase ? WM_CASEFOLD : 0);
++	ret = !wildmatch_match(code, text.buf + prefix);
+ 
+ 	if (!ret && !already_tried_absolute) {
+ 		/*
+@@ -264,6 +267,7 @@ static int include_by_gitdir(const struct config_options *opts,
+ done:
+ 	strbuf_release(&pattern);
+ 	strbuf_release(&text);
++	wildmatch_free(code);
+ 	return ret;
+ }
+ 
+diff --git a/dir.c b/dir.c
+index 544056b37a..f4b5b93956 100644
+--- a/dir.c
++++ b/dir.c
+@@ -79,6 +79,18 @@ int git_fnmatch(const struct pathspec_item *item,
+ 			ps_strcmp(item, pattern,
+ 				  string + string_len - pattern_len);
+ 	}
++
++	/*
++	 * TODO: This is the main hot path, but untangling this whole
++	 * munging of the prefix is a PITA. We take e.g. the pattern
++	 * "t/**.sh" and then conclude that there's a directory "t",
++	 * and then match its entries (recursively) against "**.sh".
++	 *
++	 * We should try to just always match the full glob against
++	 * the full pattern. See my "BUG: wildmatches ... don't match
++	 * properly due to internal optimizations" on the mailing list
++	 * (<CACBZZX5u5fF4fJBJ3CwH0DmLBw4D32jN5o=Om-iqwQdPG93DFg@mail.gmail.com>).
++	 */
+ 	if (item->magic & PATHSPEC_GLOB)
+ 		return wildmatch(pattern, string,
+ 				 WM_PATHNAME |
+diff --git a/refs.c b/refs.c
+index 32626a4cd1..ce83b3fccf 100644
+--- a/refs.c
++++ b/refs.c
+@@ -194,7 +194,7 @@ char *resolve_refdup(const char *refname, int resolve_flags,
+ 
+ /* The argument to filter_refs */
+ struct ref_filter {
+-	const char *pattern;
++	struct wildmatch_compiled *code;
+ 	each_ref_fn *fn;
+ 	void *cb_data;
+ };
+@@ -229,7 +229,7 @@ static int filter_refs(const char *refname, const struct object_id *oid,
+ {
+ 	struct ref_filter *filter = (struct ref_filter *)data;
+ 
+-	if (wildmatch(filter->pattern, refname, 0))
++	if (wildmatch_match(filter->code, refname))
+ 		return 0;
+ 	return filter->fn(refname, oid, flags, filter->cb_data);
+ }
+@@ -390,12 +390,13 @@ int for_each_glob_ref_in(each_ref_fn fn, const char *pattern,
+ 		strbuf_addch(&real_pattern, '*');
+ 	}
+ 
+-	filter.pattern = real_pattern.buf;
++	filter.code = wildmatch_compile(real_pattern.buf, 0);
+ 	filter.fn = fn;
+ 	filter.cb_data = cb_data;
+ 	ret = for_each_ref(filter_refs, &filter);
+ 
+ 	strbuf_release(&real_pattern);
++	wildmatch_free(filter.code);
+ 	return ret;
+ }
+ 
+-- 
+2.13.1.611.g7e3b11ae1
+

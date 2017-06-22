@@ -1,0 +1,79 @@
+From 19b1a21f0c42a8685b477b6195c548aa1f4904b0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Jun 2017 21:02:10 +0000
+Subject: [PATCH 2/3] wildmatch: add interface for precompiling wildmatch()
+ patterns
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add the scaffolding necessary for precompiling wildmatch()
+patterns.
+
+There is currently no point in doing this with the wildmatch()
+function we have now, since it can't make any use of precompiling the
+pattern.
+
+But adding this interface and making use of it will make it easy to
+refactor the wildmatch() function to e.g. parse the pattern into
+opcode as the BSD glob() implementation does, or to drop an alternate
+wildmatch() backend in which trades parsing slowness for faster
+matching.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ wildmatch.c | 20 ++++++++++++++++++++
+ wildmatch.h |  9 +++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/wildmatch.c b/wildmatch.c
+index d074c1be10..ba6a92a393 100644
+--- a/wildmatch.c
++++ b/wildmatch.c
+@@ -276,3 +276,23 @@ int wildmatch(const char *pattern, const char *text, unsigned int flags)
+ {
+ 	return dowild((const uchar*)pattern, (const uchar*)text, flags);
+ }
++
++struct wildmatch_compiled *wildmatch_compile(const char *pattern, unsigned int flags)
++{
++	struct wildmatch_compiled *code = xmalloc(sizeof(struct wildmatch_compiled));
++	code->pattern = xstrdup(pattern);
++	code->flags = flags;
++
++	return code;
++}
++
++int wildmatch_match(struct wildmatch_compiled *code, const char *text)
++{
++	return wildmatch(code->pattern, text, code->flags);
++}
++
++void wildmatch_free(struct wildmatch_compiled *code)
++{
++	free((void *)code->pattern);
++	free(code);
++}
+diff --git a/wildmatch.h b/wildmatch.h
+index b8c826aa68..6156d46a33 100644
+--- a/wildmatch.h
++++ b/wildmatch.h
+@@ -10,5 +10,14 @@
+ #define WM_ABORT_ALL -1
+ #define WM_ABORT_TO_STARSTAR -2
+ 
++struct wildmatch_compiled {
++	const char *pattern;
++	unsigned int flags;
++};
++
+ int wildmatch(const char *pattern, const char *text, unsigned int flags);
++struct wildmatch_compiled *wildmatch_compile(const char *pattern, unsigned int flags);
++int wildmatch_match(struct wildmatch_compiled *code, const char *text);
++void wildmatch_free(struct wildmatch_compiled *code);
++
+ #endif
+-- 
+2.13.1.611.g7e3b11ae1
+
