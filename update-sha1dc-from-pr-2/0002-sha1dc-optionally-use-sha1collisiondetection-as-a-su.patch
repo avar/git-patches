@@ -1,0 +1,102 @@
+From 28750d3c24ccd26ec8d2be180da5ed537406b509 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20170627121718.12078-1-avarab@gmail.com>
+References: <20170627121718.12078-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 6 Jun 2017 15:12:30 +0000
+Subject: [PATCH v2 2/3] sha1dc: optionally use sha1collisiondetection as a
+ submodule
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add an option to use the sha1collisiondetection library from the
+submodule in sha1collisiondetection/ instead of in the copy in the
+sha1dc/ directory.
+
+This allows us to try out the submodule in sha1collisiondetection
+without breaking the build for anyone who's not expecting them as we
+work out any kinks.
+
+This uses my own fork which integrates PR #36. See the preceding
+commit ("sha1dc: update from my PR #36", 2017-06-27) for details.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ .gitmodules            |  4 ++++
+ Makefile               | 12 ++++++++++++
+ hash.h                 |  4 ++++
+ sha1collisiondetection |  1 +
+ 4 files changed, 21 insertions(+)
+ create mode 100644 .gitmodules
+ create mode 160000 sha1collisiondetection
+
+diff --git a/.gitmodules b/.gitmodules
+new file mode 100644
+index 0000000000..2fea9996e9
+--- /dev/null
++++ b/.gitmodules
+@@ -0,0 +1,4 @@
++[submodule "sha1collisiondetection"]
++	path = sha1collisiondetection
++	url = https://github.com/avar/sha1collisiondetection.git
++	branch = bigend-detect-solaris-again
+diff --git a/Makefile b/Makefile
+index b94cd5633c..f0cac1f246 100644
+--- a/Makefile
++++ b/Makefile
+@@ -162,6 +162,12 @@ all::
+ # algorithm. This is slower, but may detect attempted collision attacks.
+ # Takes priority over other *_SHA1 knobs.
+ #
++# Define DC_SHA1_SUBMODULE in addition to DC_SHA1 to use the
++# sha1collisiondetection shipped as a submodule instead of the
++# non-submodule copy in sha1dc/. This is an experimental option used
++# by the git project to migrate to using sha1collisiondetection as a
++# submodule.
++#
+ # Define OPENSSL_SHA1 environment variable when running make to link
+ # with the SHA1 routine from openssl library.
+ #
+@@ -1448,8 +1454,14 @@ ifdef APPLE_COMMON_CRYPTO
+ 	BASIC_CFLAGS += -DSHA1_APPLE
+ else
+ 	DC_SHA1 := YesPlease
++ifdef DC_SHA1_SUBMODULE
++	LIB_OBJS += sha1collisiondetection/lib/sha1.o
++	LIB_OBJS += sha1collisiondetection/lib/ubc_check.o
++	BASIC_CFLAGS += -DDC_SHA1_SUBMODULE
++else
+ 	LIB_OBJS += sha1dc/sha1.o
+ 	LIB_OBJS += sha1dc/ubc_check.o
++endif
+ 	BASIC_CFLAGS += \
+ 		-DSHA1_DC \
+ 		-DSHA1DC_NO_STANDARD_INCLUDES \
+diff --git a/hash.h b/hash.h
+index a11fc9233f..bef3e630a0 100644
+--- a/hash.h
++++ b/hash.h
+@@ -8,7 +8,11 @@
+ #elif defined(SHA1_OPENSSL)
+ #include <openssl/sha.h>
+ #elif defined(SHA1_DC)
++#ifdef DC_SHA1_SUBMODULE
++#include "sha1collisiondetection/lib/sha1.h"
++#else
+ #include "sha1dc/sha1.h"
++#endif
+ #else /* SHA1_BLK */
+ #include "block-sha1/sha1.h"
+ #endif
+diff --git a/sha1collisiondetection b/sha1collisiondetection
+new file mode 160000
+index 0000000000..9d3a0b3783
+--- /dev/null
++++ b/sha1collisiondetection
+@@ -0,0 +1 @@
++Subproject commit 9d3a0b3783afab335a1819543d039cf2980577bb
+-- 
+2.13.1.611.g7e3b11ae1
+
