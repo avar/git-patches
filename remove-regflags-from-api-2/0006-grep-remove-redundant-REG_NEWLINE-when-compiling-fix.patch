@@ -1,0 +1,65 @@
+From d094bd47bf949c3b24fcb73d79dc67226a6d9551 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20170628215809.23060-1-avarab@gmail.com>
+References: <20170628215809.23060-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 29 Jun 2017 22:04:01 +0000
+Subject: [PATCH v2 6/6] grep: remove redundant REG_NEWLINE when compiling
+ fixed rege
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the redundant REG_NEWLINE regcomp() flag from the code that
+compiles a fixed-string regular-expression.
+
+The REG_NEWLINE causes metacharacters such as "." to match a newline,
+since the basic_regex_quote_buf() function being called here escapes
+all metacharacters using REG_NEWLINE is confusing and redundant.
+
+The use of this flag was introduced as an unintended emergent property
+of 793dc676e0 ("grep/icase: avoid kwsset when -F is specified",
+2016-06-25).
+
+That change amended the existing regflags, which were initialized to
+REG_NEWLINE in init_grep_defaults() assuming a subsequent non-fixed
+regcomp().
+
+Manual testing reveals that this was always redundant, since no flags
+of any use were inherited from opt->regflags even back
+then. 793dc676e0 passes all tests with this on top:
+
+    diff --git a/grep.c b/grep.c
+    index 627ae3e3e8..89e84ed7fd 100644
+    --- a/grep.c
+    +++ b/grep.c
+    @@ -407,3 +407,3 @@ static void compile_fixed_regexp(struct grep_pat *p, struct grep_opt *opt)
+            basic_regex_quote_buf(&sb, p->pattern);
+    -       regflags = opt->regflags & ~REG_EXTENDED;
+    +       regflags = 0;
+            if (opt->ignore_case)
+
+Since this isn't used for anything and never was, remove it to reduce
+confusion when reading this code.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/grep.c b/grep.c
+index 11a86548d6..2efec0e182 100644
+--- a/grep.c
++++ b/grep.c
+@@ -593,7 +593,7 @@ static void compile_fixed_regexp(struct grep_pat *p, struct grep_opt *opt)
+ {
+ 	struct strbuf sb = STRBUF_INIT;
+ 	int err;
+-	int regflags = REG_NEWLINE;
++	int regflags = 0;
+ 
+ 	basic_regex_quote_buf(&sb, p->pattern);
+ 	if (opt->ignore_case)
+-- 
+2.13.1.611.g7e3b11ae1
+
