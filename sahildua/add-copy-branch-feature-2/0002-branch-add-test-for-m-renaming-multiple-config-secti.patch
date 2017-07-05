@@ -1,0 +1,85 @@
+From 882205ae978c0f22a3ab7669cbab36685f1e4f59 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqeftuh5q7.fsf@gitster.mtv.corp.google.com>
+References: <xmqqeftuh5q7.fsf@gitster.mtv.corp.google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 13 Jun 2017 12:52:14 +0200
+Subject: [PATCH v2 2/3] branch: add test for -m renaming multiple config
+ sections
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test for how 'git branch -m' handles the renaming of multiple
+config sections existing for one branch.
+
+The config format we use is hybrid machine/human editable, and we do
+our best to preserve the likes of comments and formatting when editing
+the file with git-config.
+
+This adds a test for the currently expected semantics in the face of
+some rather obscure edge cases which are unlikely to occur in
+practice.
+
+Helped-by: Sahil Dua <sahildua2305@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Sahil Dua <sahildua2305@gmail.com>
+---
+ t/t3200-branch.sh | 41 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/t/t3200-branch.sh b/t/t3200-branch.sh
+index 48d152b9a9..596fbc8483 100755
+--- a/t/t3200-branch.sh
++++ b/t/t3200-branch.sh
+@@ -358,6 +358,47 @@ test_expect_success 'config information was renamed, too' '
+ 	test_must_fail git config branch.s/s.dummy
+ '
+ 
++test_expect_success 'git branch -m correctly renames multiple config sections' '
++	test_when_finished "git checkout master" &&
++	git checkout -b source master &&
++
++	# Assert that a config file with multiple config sections has
++	# those sections preserved...
++	cat >expect <<-\EOF &&
++	branch.dest.key1=value1
++	some.gar.b=age
++	branch.dest.key2=value2
++	EOF
++	cat >config.branch <<\EOF &&
++;; Note the lack of -\EOF above & mixed indenting here. This is
++;; intentional, we are also testing that the formatting of copied
++;; sections is preserved.
++
++;; Comment for source. Tabs
++[branch "source"]
++	;; Comment for the source value
++	key1 = value1
++;; Comment for some.gar. Spaces
++[some "gar"]
++    ;; Comment for the some.gar value
++    b = age
++;; Comment for source, again. Mixed tabs/spaces.
++[branch "source"]
++    ;; Comment for the source value, again
++	key2 = value2
++EOF
++	cat config.branch >>.git/config &&
++	git branch -m source dest &&
++	git config -f .git/config -l | grep -F -e source -e dest -e some.gar >actual &&
++	test_cmp expect actual &&
++
++	# ...and that the comments for those sections are also
++	# preserved.
++	cat config.branch | sed "s/\"source\"/\"dest\"/" >expect &&
++	sed -n -e "/Note the lack/,\$p" .git/config >actual &&
++	test_cmp expect actual
++'
++
+ test_expect_success 'deleting a symref' '
+ 	git branch target &&
+ 	git symbolic-ref refs/heads/symref refs/heads/target &&
+-- 
+2.13.1.611.g7e3b11ae1
+
