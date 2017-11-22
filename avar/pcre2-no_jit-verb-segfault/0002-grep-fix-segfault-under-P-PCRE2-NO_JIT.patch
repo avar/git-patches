@@ -1,0 +1,96 @@
+From 6b2e46506a023f9e489c9b1fe86c1253c0b41efd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 22 Nov 2017 13:09:06 +0000
+Subject: [PATCH 2/2] grep: fix segfault under -P + PCRE2 + (*NO_JIT)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a bug in the compilation of PCRE2 patterns under JIT (the most
+common runtime configuration), any pattern with a (*NO_JIT) verb would
+segfault. This bug dates back to my 94da9193a6 ("grep: add support for
+PCRE v2", 2017-06-01):
+
+    $ git grep -P '(*NO_JIT)hi.*there'
+    Segmentation fault
+
+As explained ad more length in the comment being added here it isn't
+sufficient to just check pcre2_config() to see whether the JIT should
+be used, pcre2_pattern_info() also has to be asked.
+
+This is something I discovered myself when fiddling around with PCRE2
+verbs in patterns passed to git. I don't expect that any user of git
+has encountered this given the obscurity of passing PCRE2 verbs
+through to the library, along with the relative obscurity of (*NO_JIT)
+itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c          | 25 +++++++++++++++++++++++++
+ t/t7810-grep.sh |  6 ++++++
+ 2 files changed, 31 insertions(+)
+
+diff --git a/grep.c b/grep.c
+index d0b9b6cdfa..f3139e867c 100644
+--- a/grep.c
++++ b/grep.c
+@@ -477,6 +477,8 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 	int options = PCRE2_MULTILINE;
+ 	const uint8_t *character_tables = NULL;
+ 	int jitret;
++	int patinforet;
++	size_t jitsizearg;
+ 
+ 	assert(opt->pcre2);
+ 
+@@ -511,6 +513,29 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 		jitret = pcre2_jit_compile(p->pcre2_pattern, PCRE2_JIT_COMPLETE);
+ 		if (jitret)
+ 			die("Couldn't JIT the PCRE2 pattern '%s', got '%d'\n", p->pattern, jitret);
++
++		/*
++		 * The pcre2_config(PCRE2_CONFIG_JIT, ...) call just
++		 * tells us whether the library itself supports JIT,
++		 * but to see whether we're going to be actually using
++		 * JIT we need to extract PCRE2_INFO_JITSIZE from the
++		 * pattern *after* we do pcre2_jit_compile() above.
++		 *
++		 * This is because if the pattern contains the
++		 * (*NO_JIT) verb (see pcre2syntax(3))
++		 * pcre2_jit_compile() will exit early with 0. If we
++		 * then proceed to call pcre2_jit_match() further down
++		 * the line instead of pcre2_match() we'll segfault.
++		 */
++		patinforet = pcre2_pattern_info(p->pcre2_pattern, PCRE2_INFO_JITSIZE, &jitsizearg);
++		if (patinforet)
++			die("BUG: The patinforet variable should be 0 after the pcre2_pattern_info() call, not %d",
++			    patinforet);
++		if (jitsizearg == 0) {
++			p->pcre2_jit_on = 0;
++			return;
++		}
++
+ 		p->pcre2_jit_stack = pcre2_jit_stack_create(1, 1024 * 1024, NULL);
+ 		if (!p->pcre2_jit_stack)
+ 			die("Couldn't allocate PCRE2 JIT stack");
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index 2a6679c2f5..c8ff50cc30 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -1110,6 +1110,12 @@ test_expect_success PCRE 'grep -P pattern' '
+ 	test_cmp expected actual
+ '
+ 
++test_expect_success LIBPCRE2 "grep -P with (*NO_JIT) doesn't error out" '
++	git grep -P "(*NO_JIT)\p{Ps}.*?\p{Pe}" hello.c >actual &&
++	test_cmp expected actual
++
++'
++
+ test_expect_success !PCRE 'grep -P pattern errors without PCRE' '
+ 	test_must_fail git grep -P "foo.*bar"
+ '
+-- 
+2.15.0.403.gc27cc4dac6
+
