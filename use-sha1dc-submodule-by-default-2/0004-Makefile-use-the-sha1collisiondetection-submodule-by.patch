@@ -1,0 +1,135 @@
+From 95bf9c18a6f583d782dedfdf2e19aba1cf7ec3ed Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Dec 2017 21:25:29 +0000
+Subject: [PATCH v2 4/5] Makefile: use the sha1collisiondetection submodule by
+ default
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the build process so that instead of needing to supply
+DC_SHA1_SUBMODULE=YesPlease to use the sha1collisiondetection
+submodule instead of the copy of the same code shipped in the sha1dc
+directory, it uses the submodule by default unless
+NO_DC_SHA1_SUBMODULE=NoThanks is supplied.
+
+This reverses the logic added by me in 86cfd61e6b ("sha1dc: optionally
+use sha1collisiondetection as a submodule", 2017-07-01). Git has now
+shipped with the submodule in git.git for two major releases, if we're
+ever going to migrate to fully using it instead of perpetually
+maintaining both sha1collisiondetection and the sha1dc directory this
+is a logical first step.
+
+This change removes the "auto" logic Junio added in
+cac87dc01d ("sha1collisiondetection: automatically enable when
+submodule is populated", 2017-07-01), I feel that automatically
+falling back to using sha1dc would defeat the point, which is to smoke
+out any remaining users of git.git who have issues cloning the
+submodule for whatever reason.
+
+Instead the Makefile will emit an error if the contents of the
+submodule aren't checked out (line-wrapped. GNU make emits this all on
+one line):
+
+    Makefile:1031: *** The sha1collisiondetection submodule is not
+    checked out. Please make it available, either by cloning with
+    --recurse-submodules, or by running "git submodule update
+    --init". If you can't use it for whatever reason you can define
+    NO_DC_SHA1_SUBMODULE=NoThanks.  Stop.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile     | 34 ++++++++++++++++++++--------------
+ sha1dc_git.h |  2 +-
+ 2 files changed, 21 insertions(+), 15 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 3955b02b6a..aed9d3001d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -167,11 +167,12 @@ all::
+ # Without this option, i.e. the default behavior is to build git with its
+ # own built-in code (or submodule).
+ #
+-# Define DC_SHA1_SUBMODULE in addition to DC_SHA1 to use the
+-# sha1collisiondetection shipped as a submodule instead of the
+-# non-submodule copy in sha1dc/. This is an experimental option used
+-# by the git project to migrate to using sha1collisiondetection as a
+-# submodule.
++# Define NO_DC_SHA1_SUBMODULE in addition to DC_SHA1 to use the
++# sha1collisiondetection library shipped as a non-submodule copy in
++# sha1dc/, instead of using the sha1collisiondetection submodule. This
++# option might eventually go away in favor a hard dependency on
++# cloning git.git with "--recurse-submodules" or on running "git
++# submodule update --init" after cloning.
+ #
+ # Define OPENSSL_SHA1 environment variable when running make to link
+ # with the SHA1 routine from openssl library.
+@@ -1026,8 +1027,15 @@ EXTLIBS =
+ 
+ GIT_USER_AGENT = git/$(GIT_VERSION)
+ 
+-ifeq ($(wildcard sha1collisiondetection/lib/sha1.h),sha1collisiondetection/lib/sha1.h)
+-DC_SHA1_SUBMODULE = auto
++ifndef NO_DC_SHA1_SUBMODULE
++	ifndef DC_SHA1_EXTERNAL
++		ifneq ($(wildcard sha1collisiondetection/lib/sha1.h),sha1collisiondetection/lib/sha1.h)
++$(error The sha1collisiondetection submodule is not checked out. \
++Please make it available, either by cloning with --recurse-submodules, \
++or by running "git submodule update --init". If you can't use it for \
++whatever reason define NO_DC_SHA1_SUBMODULE=NoThanks)
++		endif
++	endif
+ endif
+ 
+ include config.mak.uname
+@@ -1497,19 +1505,17 @@ else
+ 	BASIC_CFLAGS += -DSHA1_DC
+ 	LIB_OBJS += sha1dc_git.o
+ ifdef DC_SHA1_EXTERNAL
+-	ifdef DC_SHA1_SUBMODULE
+-		ifneq ($(DC_SHA1_SUBMODULE),auto)
+-$(error Only set DC_SHA1_EXTERNAL or DC_SHA1_SUBMODULE, not both)
+-		endif
++	ifdef NO_DC_SHA1_SUBMODULE
++$(error Only set DC_SHA1_EXTERNAL or NO_DC_SHA1_SUBMODULE, not both)
+ 	endif
+ 	BASIC_CFLAGS += -DDC_SHA1_EXTERNAL
+ 	EXTLIBS += -lsha1detectcoll
+ else
+-ifdef DC_SHA1_SUBMODULE
++ifndef NO_DC_SHA1_SUBMODULE
+ 	LIB_OBJS += sha1collisiondetection/lib/sha1.o
+ 	LIB_OBJS += sha1collisiondetection/lib/ubc_check.o
+-	BASIC_CFLAGS += -DDC_SHA1_SUBMODULE
+ else
++	BASIC_CFLAGS += -DNO_DC_SHA1_SUBMODULE
+ 	LIB_OBJS += sha1dc/sha1.o
+ 	LIB_OBJS += sha1dc/ubc_check.o
+ endif
+@@ -2643,7 +2649,7 @@ dist: git-archive$(X) configure
+ 		$(GIT_TARNAME)/configure \
+ 		$(GIT_TARNAME)/version \
+ 		$(GIT_TARNAME)/git-gui/version
+-ifdef DC_SHA1_SUBMODULE
++ifndef NO_DC_SHA1_SUBMODULE
+ 	@mkdir -p $(GIT_TARNAME)/sha1collisiondetection/lib
+ 	@cp sha1collisiondetection/LICENSE.txt \
+ 		$(GIT_TARNAME)/sha1collisiondetection/
+diff --git a/sha1dc_git.h b/sha1dc_git.h
+index 41e1c3fd3f..1bcc4c473c 100644
+--- a/sha1dc_git.h
++++ b/sha1dc_git.h
+@@ -2,7 +2,7 @@
+ 
+ #ifdef DC_SHA1_EXTERNAL
+ #include <sha1dc/sha1.h>
+-#elif defined(DC_SHA1_SUBMODULE)
++#elif !defined(NO_DC_SHA1_SUBMODULE)
+ #include "sha1collisiondetection/lib/sha1.h"
+ #else
+ #include "sha1dc/sha1.h"
+-- 
+2.15.1.424.g9478a66081
+
