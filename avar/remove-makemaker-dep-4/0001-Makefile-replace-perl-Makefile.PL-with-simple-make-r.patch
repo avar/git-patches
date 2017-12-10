@@ -94,6 +94,75 @@ Functional changes:
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+This fixes the test failure we had on 32 bit Linux due to v2. That
+error had nothing to do with 32 bit per-se, it was just a logic error
+in the fallback logic if the system didn't have an Error.pm, and
+evidently the 32 bit environment doesn't have that installed.
+
+This also incorporates Junio's typo/grammar fixes of my commit
+message, tbdiff with v2:
+
+    @@ -27,7 +27,7 @@
+         So replace the whole thing with something that's pretty much a copy of
+         how we generate po/build/**.mo from po/*.po, just with a small sed(1)
+         command instead of msgfmt. As that's being done rename the files
+    -    from *.pm to *.pmc just to indicate that they're genreated (see
+    +    from *.pm to *.pmc just to indicate that they're generated (see
+         "perldoc -f require").
+         
+         While I'm at it, change the fallback for Error.pm from being something
+    @@ -50,9 +50,9 @@
+            it could be set in addition to INSTLIBDIR, but my reading of [7] is
+            that this is the desired behavior.
+         
+    -     * We don't man pages for all of the perl modules as we used t, only
+    -       Git(3pm). As discussed on-list[8] that we were building installed
+    -       manpages for purely internal APIs like Git::I18N or
+    +     * We don't build man pages for all of the perl modules as we used to,
+    +       only Git(3pm). As discussed on-list[8] that we were building
+    +       installed manpages for purely internal APIs like Git::I18N or
+            private-Error.pm was always a bug anyway, and all the Git::SVN::*
+            ones say they're internal APIs.
+         
+    @@ -354,8 +354,7 @@
+     +
+     +=head1 DESCRIPTION
+     +
+    -+Wraps the import function for the L<Error> module. The L<Git> module
+    -+must be imported first.
+    ++Wraps the import function for the L<Error> module.
+     +
+     +This module is only intended to be used for code shipping in the
+     +C<git.git> repository. Use it for anything else at your peril!
+    @@ -372,13 +371,13 @@
+     +    } or do {
+     +  my $error = $@ || "Zombie Error";
+     +
+    -+  my $Git_pm_path = $INC{"Git.pm"} || die "BUG: Should have loaded the Git module first!";
+    ++  my $Git_Error_pm_path = $INC{"Git/Error.pm"} || die "BUG: Should have our own path from %INC!";
+     +
+     +  require File::Basename;
+    -+  my $Git_pm_root = File::Basename::dirname($Git_pm_path) || die "BUG: Can't figure out dirname from '$Git_pm_path'!";
+    ++  my $Git_Error_pm_root = File::Basename::dirname($Git_Error_pm_path) || die "BUG: Can't figure out lib/Git dirname from '$Git_Error_pm_path'!";
+     +
+     +  require File::Spec;
+    -+  my $Git_pm_FromCPAN_root = File::Spec->catdir($Git_pm_root, qw(Git FromCPAN));
+    ++  my $Git_pm_FromCPAN_root = File::Spec->catdir($Git_Error_pm_root, 'FromCPAN');
+     +  die "BUG: '$Git_pm_FromCPAN_root' should be a directory!" unless -d $Git_pm_FromCPAN_root;
+     +
+     +  local @INC = ($Git_pm_FromCPAN_root, @INC);
+
+So the issue is that we had some things (like git-send-email) which
+would load Git::Error without first loading Git.pm.
+
+There's no actual reason for why we can't just find the path relative
+to Git::Error.pm instead of Git.pm.
+
+I don't know what I was thinking when I wrote this, but this logic
+should be fully robust, and I've confirmed that all tests pass
+with/without an Error.pm installed globally.
+
  INSTALL                                          | 17 ++++-
  Makefile                                         | 67 ++++++++++--------
  contrib/examples/git-difftool.perl               |  2 +-
