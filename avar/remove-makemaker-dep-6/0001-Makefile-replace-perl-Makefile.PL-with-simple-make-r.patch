@@ -92,6 +92,96 @@ Functional changes:
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+On Wed, Dec 20, 2017 at 7:15 AM, Todd Zullinger <tmz@pobox.com> wrote:
+
+[Sorry for not CC-ing you on the last version. Forgot to update the
+giant send-email line I'm juggling for this series].
+
+> FWIW, I applied this version to next and tested it with
+> CentOS 6 and 7.  The tests pass on both (though there are
+> some unrelated failures on CentOS 6 in t5700-protocol-v1,
+> which I haven't looked into further yet).
+>
+> I also applied this patch to 2.15.1 and ran the tests in the
+> Fedora build system for all fedora and epel releases, which
+> also passed (though with some spurious git-svn failures on
+> x86_64 in fedora 28, AKA rawhide).
+
+Great, thanks a lot.
+
+> The .pmc extensions seem to cause rpm to fail to parse the
+> files for rpm 'provides' as it normally would.  This causes
+> scripts like git-send-email which generates a 'requires' on
+> Git::Error to fail to find anything which provides it.
+>
+> I'm not familiar with the .pmc extenstion.  Searching the
+> fedora repositories, there is only one other package - and
+> one file within it - which has a .pmc extension.
+>
+> (The package is perl-test, the file is
+> /usr/libexec/perl5-tests/perl-tests/t/run/flib/t2.pmc.)
+>
+> Perhaps it's a bug in rpm's perl dependency generator, but
+> I'd like to think that git wouldn't be the first package to
+> find it.
+>
+> Is the .pmc extension important to ensure these files are
+> loaded in the right order?  Since they're all in the Git
+> namespace, I don't imagine there should be anything else in
+> @INC which would be provided by the system or another
+> package.
+>
+> Pardon my ignorance if I've missed the obvious (I haven't
+> fully read "perldoc -f require" which you referenced in the
+> commit message).
+
+This *.pmc thing is just me being overly clever. Here's a v5 that gets
+rid of it. Diff with v4:
+
+    1: f85565f93b ! 1: 59cda7589f Makefile: replace perl/Makefile.PL with simple make rules
+        @@ -26,9 +26,7 @@
+
+             So replace the whole thing with something that's pretty much a copy of
+             how we generate po/build/**.mo from po/*.po, just with a small sed(1)
+        -    command instead of msgfmt. As that's being done rename the files
+        -    from *.pm to *.pmc just to indicate that they're generated (see
+        -    "perldoc -f require").
+        +    command instead of msgfmt.
+
+             While I'm at it, change the fallback for Error.pm from being something
+             where we'll ship our own Error.pm if one doesn't exist at build time
+        @@ -226,14 +224,14 @@
+          po/build/locale/%/LC_MESSAGES/git.mo: po/%.po
+            $(QUIET_MSGFMT)mkdir -p $(dir $@) && $(MSGFMT) -o $@ $<
+
+        -+PMFILES := $(wildcard perl/*.pm perl/*/*.pm perl/*/*/*.pm perl/*/*/*/*.pm)
+        -+PMCFILES := $(patsubst perl/%.pm,perl/build/lib/%.pmc,$(PMFILES))
+        ++LIB_PERL := $(wildcard perl/*.pm perl/*/*.pm perl/*/*/*.pm perl/*/*/*/*.pm)
+        ++LIB_PERL_GEN := $(patsubst perl/%.pm,perl/build/lib/%.pm,$(LIB_PERL))
+         +
+         +ifndef NO_PERL
+        -+all:: $(PMCFILES)
+        ++all:: $(LIB_PERL_GEN)
+         +endif
+         +
+        -+perl/build/lib/%.pmc: perl/%.pm
+        ++perl/build/lib/%.pm: perl/%.pm
+         +  $(QUIET_GEN)mkdir -p $(dir $@) && \
+         +  sed -e 's|@@LOCALEDIR@@|$(localedir_SQ)|g' < $< > $@
+         +
+
+Aside from the tooling issues you mentioned:
+
+ * It's obscure enough that lots of editors won't know *.pmc is perl
+   for syntax highlighting etc.
+
+ * Even though this use case works, perl really expects you to have a
+   *.pm file alongside the *.pmc, so e.g if there's an error it
+   *reports the *.pm path, even though no such file exists. I.e. it's
+   *for compiler-generated files where the compiled version could have
+   *changed line numbers etc.
+
  INSTALL                                          | 17 ++++-
  Makefile                                         | 67 ++++++++++--------
  contrib/examples/git-difftool.perl               |  2 +-
