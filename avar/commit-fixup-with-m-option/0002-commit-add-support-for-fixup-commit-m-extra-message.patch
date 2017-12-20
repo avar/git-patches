@@ -1,0 +1,127 @@
+From bd78a211edd789efe2c5696ca244a0209f9e1e27 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 20 Dec 2017 19:02:38 +0000
+Subject: [PATCH 2/2] commit: add support for --fixup <commit> -m"<extra
+ message>"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add support for supplying the -m option with --fixup. Doing so has
+errored out ever since --fixup was introduced. Before this, the only
+way to amend the fixup message while committing was to use --edit and
+amend it in the editor.
+
+The use-case for this feature is one of:
+
+ * Leaving a quick note to self when creating a --fixup commit when
+   it's not self-evident why the commit should be squashed without a
+   note into another one.
+
+ * (Ab)using the --fixup feature to "fix up" commits that have already
+   been pushed to a branch that doesn't allow non-fast-forwards,
+   i.e. just noting "this should have been part of that other commit",
+   and if the history ever got rewritten in the future the two should
+   be combined.
+
+   In such a case you might want to leave a small message,
+   e.g. "forgot this part, which broke XYZ".
+
+When the --fixup option was initially added the "Option -m cannot be
+combined" error was expanded from -c, -C and -F to also include
+--fixup[1]
+
+Those options could also support combining with -m, but given what
+they do I can't think of a good use-case for doing that, so I have not
+made the more invasive change of splitting up the logic in commit.c to
+first act on those, and then on -m options.
+
+1. d71b8ba7c9 ("commit: --fixup option for use with rebase
+   --autosquash", 2010-11-02)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-commit.txt | 4 ++--
+ builtin/commit.c             | 8 +++++---
+ t/t7500-commit.sh            | 9 ++++++++-
+ 3 files changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/Documentation/git-commit.txt b/Documentation/git-commit.txt
+index df83176314..4489677fd1 100644
+--- a/Documentation/git-commit.txt
++++ b/Documentation/git-commit.txt
+@@ -145,8 +145,8 @@ OPTIONS
+ 	If multiple `-m` options are given, their values are
+ 	concatenated as separate paragraphs.
+ +
+-Combining the `-m` option and any of `-c`, `-C`, `-F` or `--fixup`
+-will result in an error.
++Combining the `-m` option and any of `-c`, `-C` or `-F` will result in
++an error.
+ 
+ -t <file>::
+ --template=<file>::
+diff --git a/builtin/commit.c b/builtin/commit.c
+index 8a87701414..4e68394391 100644
+--- a/builtin/commit.c
++++ b/builtin/commit.c
+@@ -701,7 +701,7 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
+ 		}
+ 	}
+ 
+-	if (have_option_m) {
++	if (have_option_m && !fixup_message) {
+ 		strbuf_addbuf(&sb, &message);
+ 		hook_arg1 = "message";
+ 	} else if (logfile && !strcmp(logfile, "-")) {
+@@ -731,6 +731,8 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
+ 		ctx.output_encoding = get_commit_output_encoding();
+ 		format_commit_message(commit, "fixup! %s\n\n",
+ 				      &sb, &ctx);
++		if (have_option_m)
++			strbuf_addbuf(&sb, &message);
+ 		hook_arg1 = "message";
+ 	} else if (!stat(git_path_merge_msg(), &statbuf)) {
+ 		/*
+@@ -1197,8 +1199,8 @@ static int parse_and_validate_options(int argc, const char *argv[],
+ 		f++;
+ 	if (f > 1)
+ 		die(_("Only one of -c/-C/-F/--fixup can be used."));
+-	if (have_option_m && f > 0)
+-		die((_("Option -m cannot be combined with -c/-C/-F/--fixup.")));
++	if (have_option_m && (edit_message || use_message || logfile))
++		die((_("Option -m cannot be combined with -c/-C/-F.")));
+ 	if (f || have_option_m)
+ 		template_file = NULL;
+ 	if (edit_message)
+diff --git a/t/t7500-commit.sh b/t/t7500-commit.sh
+index 5739d3ed23..2d95778b74 100755
+--- a/t/t7500-commit.sh
++++ b/t/t7500-commit.sh
+@@ -272,6 +272,14 @@ test_expect_success 'commit --fixup provides correct one-line commit message' '
+ 	commit_msg_is "fixup! target message subject line"
+ '
+ 
++test_expect_success 'commit --fixup -m"something" -m"extra"' '
++	commit_for_rebase_autosquash_setup &&
++	git commit --fixup HEAD~1 -m"something" -m"extra" &&
++	commit_msg_is "fixup! target message subject linesomething
++
++extra"
++'
++
+ test_expect_success 'commit --squash works with -F' '
+ 	commit_for_rebase_autosquash_setup &&
+ 	echo "log message from file" >msgfile &&
+@@ -325,7 +333,6 @@ test_expect_success 'invalid message options when using --fixup' '
+ 	test_must_fail git commit --fixup HEAD~1 --squash HEAD~2 &&
+ 	test_must_fail git commit --fixup HEAD~1 -C HEAD~2 &&
+ 	test_must_fail git commit --fixup HEAD~1 -c HEAD~2 &&
+-	test_must_fail git commit --fixup HEAD~1 -m "cmdline message" &&
+ 	test_must_fail git commit --fixup HEAD~1 -F log
+ '
+ 
+-- 
+2.15.1.424.g9478a66081
+
