@@ -1,0 +1,46 @@
+From 9f7e5cb0345bc6b61c0f2f3efc70c8fcf408a0d1 Mon Sep 17 00:00:00 2001
+In-Reply-To: <CAN0heSrZ4dEFqNX69PgtGCERJKabokz88v-vnNZkUBXfK118mg@mail.gmail.com>
+References: <CAN0heSrZ4dEFqNX69PgtGCERJKabokz88v-vnNZkUBXfK118mg@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Jan 2018 18:41:46 +0000
+Subject: [PATCH] bisect: fix a regression causing a segfault
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In 7c117184d7 ("bisect: fix off-by-one error in
+`best_bisection_sorted()`", 2017-11-05) the more careful logic dealing
+with freeing p->next in 50e62a8e70 ("rev-list: implement
+--bisect-all", 2007-10-22) was removed.
+
+Restore the more careful check to avoid segfaulting. Ideally this
+would come with a test case, but we don't have steps to reproduce
+this, only a backtrace from gdb pointing to this being the issue.
+
+Reported-by: Yasushi SHOJI <yasushi.shoji@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ bisect.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/bisect.c b/bisect.c
+index 0fca17c02b..2f3008b078 100644
+--- a/bisect.c
++++ b/bisect.c
+@@ -229,8 +229,10 @@ static struct commit_list *best_bisection_sorted(struct commit_list *list, int n
+ 		if (i < cnt - 1)
+ 			p = p->next;
+ 	}
+-	free_commit_list(p->next);
+-	p->next = NULL;
++	if (p) {
++		free_commit_list(p->next);
++		p->next = NULL;
++	}
+ 	strbuf_release(&buf);
+ 	free(array);
+ 	return list;
+-- 
+2.15.1.424.g9478a66081
+
