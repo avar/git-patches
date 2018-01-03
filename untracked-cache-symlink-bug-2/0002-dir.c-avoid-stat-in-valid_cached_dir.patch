@@ -1,0 +1,46 @@
+From dc5192e667c4918ecbd0afb7b69f8492c693835a Mon Sep 17 00:00:00 2001
+In-Reply-To: <CACsJy8BnxOz9brnkyZ58guTsUhgKKN_XQvbYaZJz17888pgHoQ@mail.gmail.com>
+References: <CACsJy8BnxOz9brnkyZ58guTsUhgKKN_XQvbYaZJz17888pgHoQ@mail.gmail.com>
+From: =?UTF-8?q?Nguy=E1=BB=85n=20Th=C3=A1i=20Ng=E1=BB=8Dc=20Duy?=
+ <pclouds@gmail.com>
+Date: Thu, 28 Dec 2017 07:28:07 +0700
+Subject: [PATCH v2 2/5] dir.c: avoid stat() in valid_cached_dir()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+stat() may follow a symlink and return stat data of the link's target
+instead of the link itself. We are concerned about the link itself.
+
+It's kind of hard to demonstrate the bug. I think when path->buf is a
+symlink, we most likely find that its target's stat data does not
+match our cached one, which means we ignore the cache and fall back to
+slow path.
+
+This is performance issue, not correctness (though we could still
+catch it by verifying test-dump-untracked-cache. The less unlikely
+case is, link target stat data matches the cached version and we
+incorrectly go fast path, ignoring real data on disk. A test for this
+may involve manipulating stat data, which may be not portable.
+
+Signed-off-by: Nguyễn Thái Ngọc Duy <pclouds@gmail.com>
+---
+ dir.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dir.c b/dir.c
+index 7c4b45e30e..edcb7bb462 100644
+--- a/dir.c
++++ b/dir.c
+@@ -1809,7 +1809,7 @@ static int valid_cached_dir(struct dir_struct *dir,
+ 	 */
+ 	refresh_fsmonitor(istate);
+ 	if (!(dir->untracked->use_fsmonitor && untracked->valid)) {
+-		if (stat(path->len ? path->buf : ".", &st)) {
++		if (lstat(path->len ? path->buf : ".", &st)) {
+ 			invalidate_directory(dir->untracked, untracked);
+ 			memset(&untracked->stat_data, 0, sizeof(untracked->stat_data));
+ 			return 0;
+-- 
+2.15.1.424.g9478a66081
+
