@@ -1,0 +1,148 @@
+From dd8dea13cbdf93421e6af5125cf637e9d261e733 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Jan 2018 10:08:03 +0000
+Subject: [RFC/PATCH] connect: add GIT_SSH_{SEND,RECEIVE}{,_COMMAND} env
+ variables
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend the long-standing logic for overriding the ssh command with
+GIT_SSH or GIT_SSH_COMMAND to also support
+e.g. GIT_SSH_SEND_COMMAND. The new specific send/receive variables
+take priority over the old ones, and fall back to the older ones if
+they exist.
+
+This is useful for talking to systems such as Github or Gitlab that
+identify user accounts (or deploy keys) by ssh keys. Normally, ssh
+could do this itself by supplying multiple keys via -i, but that trick
+doesn't work on these systems as the connection will have already been
+accepted when the "wrong" key gets rejected.
+
+This new feature is redundant to and less general than setting the
+GIT_SSH_COMMAND to the path of a script that's going to dispatch to
+ssh depending on what the second argument to the script is, e.g.:
+
+    $ cat ./git-ssh-command
+    #!/usr/bin/perl
+    if ($ARGV[1] =~ /^git-upload-pack /) {
+       system qw(ssh -i /some/ro/key) => @ARGV;
+    } elsif ($ARGV[1] =~ /^git-receive-pack /) {
+       system qw(ssh -i /some/rw/key) => @ARGV;
+    } else { ... }
+    $ GIT_TRACE=1 GIT_SSH_COMMAND="./git-ssh-command" git fetch
+    10:22:39.415684 git.c:344               trace: built-in: git 'fetch'
+    10:22:39.432192 run-command.c:627       trace: run_command: './git-ssh-command' '-G' 'git@github.com'
+    10:22:39.434156 run-command.c:627       trace: run_command: './git-ssh-command' 'git@github.com' 'git-upload-pack '\''git/git.git'\'''
+    Warning: Identity file /some/ro/key not accessible: No such file or directory.
+
+However, I feel that this is a common enough case to be worth
+supporting explicitly, and such a script will also need to deal with
+arbitrary arguments fed via git-fetch's --upload-pack="...", and
+git-push's corresponding --receive-pack argument.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/fetch-pack.c |  2 +-
+ builtin/send-pack.c  |  3 ++-
+ connect.c            | 21 ++++++++++++++++++---
+ connect.h            |  2 ++
+ 4 files changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/fetch-pack.c b/builtin/fetch-pack.c
+index 366b9d13f9..dae10f8419 100644
+--- a/builtin/fetch-pack.c
++++ b/builtin/fetch-pack.c
+@@ -189,7 +189,7 @@ int cmd_fetch_pack(int argc, const char **argv, const char *prefix)
+ 		if (args.diag_url)
+ 			flags |= CONNECT_DIAG_URL;
+ 		conn = git_connect(fd, dest, args.uploadpack,
+-				   flags);
++				   flags | CONNECT_RECEIVE);
+ 		if (!conn)
+ 			return args.diag_url ? 0 : 1;
+ 	}
+diff --git a/builtin/send-pack.c b/builtin/send-pack.c
+index fc4f0bb5fb..2374d2b29c 100644
+--- a/builtin/send-pack.c
++++ b/builtin/send-pack.c
+@@ -252,8 +252,9 @@ int cmd_send_pack(int argc, const char **argv, const char *prefix)
+ 		fd[0] = 0;
+ 		fd[1] = 1;
+ 	} else {
++		int flags = args.verbose ? CONNECT_VERBOSE : 0;
+ 		conn = git_connect(fd, dest, receivepack,
+-			args.verbose ? CONNECT_VERBOSE : 0);
++			flags | CONNECT_SEND);
+ 	}
+ 
+ 	get_remote_heads(fd[0], NULL, 0, &remote_refs, REF_NORMAL,
+diff --git a/connect.c b/connect.c
+index c3a014c5ba..2a35924292 100644
+--- a/connect.c
++++ b/connect.c
+@@ -774,13 +774,23 @@ static enum protocol parse_connect_url(const char *url_orig, char **ret_host,
+ 	return protocol;
+ }
+ 
+-static const char *get_ssh_command(void)
++static const char *get_ssh_command(int flags)
+ {
+ 	const char *ssh;
+ 
++	if (flags & CONNECT_SEND && (ssh = getenv("GIT_SSH_SEND_COMMAND")))
++		return ssh;
++	else if (flags & CONNECT_RECEIVE && (ssh = getenv("GIT_SSH_RECEIVE_COMMAND")))
++		return ssh;
+ 	if ((ssh = getenv("GIT_SSH_COMMAND")))
+ 		return ssh;
+ 
++	if (flags & CONNECT_SEND &&
++	    !git_config_get_string_const("core.sshsendcommand", &ssh))
++		return ssh;
++	else if (flags & CONNECT_RECEIVE &&
++	    !git_config_get_string_const("core.sshreceivecommand", &ssh))
++		return ssh;
+ 	if (!git_config_get_string_const("core.sshcommand", &ssh))
+ 		return ssh;
+ 
+@@ -997,7 +1007,7 @@ static void fill_ssh_args(struct child_process *conn, const char *ssh_host,
+ 	if (looks_like_command_line_option(ssh_host))
+ 		die("strange hostname '%s' blocked", ssh_host);
+ 
+-	ssh = get_ssh_command();
++	ssh = get_ssh_command(flags);
+ 	if (ssh) {
+ 		variant = determine_ssh_variant(ssh, 1);
+ 	} else {
+@@ -1008,7 +1018,12 @@ static void fill_ssh_args(struct child_process *conn, const char *ssh_host,
+ 		 */
+ 		conn->use_shell = 0;
+ 
+-		ssh = getenv("GIT_SSH");
++		if (flags & CONNECT_SEND)
++			ssh = getenv("GIT_SSH_SEND");
++		else if (flags & CONNECT_RECEIVE)
++			ssh = getenv("GIT_SSH_RECEIVE");
++		if (!ssh)
++			ssh = getenv("GIT_SSH");
+ 		if (!ssh)
+ 			ssh = "ssh";
+ 		variant = determine_ssh_variant(ssh, 0);
+diff --git a/connect.h b/connect.h
+index 01f14cdf3f..e3ff0d5838 100644
+--- a/connect.h
++++ b/connect.h
+@@ -5,6 +5,8 @@
+ #define CONNECT_DIAG_URL      (1u << 1)
+ #define CONNECT_IPV4          (1u << 2)
+ #define CONNECT_IPV6          (1u << 3)
++#define CONNECT_SEND          (1u << 4)
++#define CONNECT_RECEIVE       (1u << 5)
+ extern struct child_process *git_connect(int fd[2], const char *url, const char *prog, int flags);
+ extern int finish_connect(struct child_process *conn);
+ extern int git_connection_is_socket(struct child_process *conn);
+-- 
+2.15.1.424.g9478a66081
+
