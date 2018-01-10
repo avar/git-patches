@@ -1,0 +1,66 @@
+From d8a53ae3d4f8cc36b9b6ab2081ec0108aed07cec Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 10 Jan 2018 12:14:58 +0000
+Subject: [PATCH 2/2] cat-file: -e should not emit output on stderr
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change "cat-file -e some-garbage" to work as documented. Now it emits:
+
+    $ git cat-file -e some-garbage; echo $?
+    fatal: Not a valid object name some-garbage
+    128
+
+This is a change to longstanding behavior established in
+7950571ad7 ("A few more options for git-cat-file", 2005-12-03) when
+the option was initially added, but we should go with the promise made
+in the documentation.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/cat-file.c  | 8 ++++++--
+ t/t1006-cat-file.sh | 7 +++++++
+ 2 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/cat-file.c b/builtin/cat-file.c
+index f5fa4fd75a..75991788af 100644
+--- a/builtin/cat-file.c
++++ b/builtin/cat-file.c
+@@ -65,8 +65,12 @@ static int cat_one_file(int opt, const char *exp_type, const char *obj_name,
+ 		flags |= OBJECT_INFO_ALLOW_UNKNOWN_TYPE;
+ 
+ 	if (get_oid_with_context(obj_name, GET_OID_RECORD_PATH,
+-				 &oid, &obj_context))
+-		die("Not a valid object name %s", obj_name);
++				 &oid, &obj_context)) {
++		if (opt == 'e')
++			return 1;
++		else
++			die("Not hello a valid object name %s", obj_name);
++	}
+ 
+ 	if (!path)
+ 		path = obj_context.path;
+diff --git a/t/t1006-cat-file.sh b/t/t1006-cat-file.sh
+index b19f332694..c05a899bc4 100755
+--- a/t/t1006-cat-file.sh
++++ b/t/t1006-cat-file.sh
+@@ -201,6 +201,13 @@ do
+     '
+ done
+ 
++test_expect_success 'Providing -e should suppress all error output' '
++	! git cat-file -e some-garbage >stdout 2>stderr &&
++	>expect &&
++	test_cmp expect stdout &&
++	test_cmp expect stderr
++'
++
+ for opt in t s e p
+ do
+     test_expect_success "Passing -$opt with --follow-symlinks fails" '
+-- 
+2.15.1.424.g9478a66081
+
