@@ -4,31 +4,102 @@ References: <20180123221326.28495-1-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 8 Feb 2018 16:06:12 +0000
-Subject: [PATCH v2 00/17] *** SUBJECT HERE ***
+Subject: [PATCH v2 00/17] document & test fetch pruning & add fetch.pruneTags
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+As noted in my 87h8quytmq.fsf@evledraar.gmail.com there was a bug I
+noticed in v3 where it would segfault on some git-fetch invocations,
+but there were not tests anywhere that caught that.
+
+So in addition to fixing that issue, this fleshens out the testing
+being set up as part of this series so we'll test those sorts of
+invocations. It would segfault on some `git fetch <url>`, not `git
+fetch <name>`.
 
 Ævar Arnfjörð Bjarmason (17):
   fetch: don't redundantly NULL something calloc() gave us
+
+Rephrased commit message.
+
   fetch: trivially refactor assignment to ref_nr
+
+New, makes a subsequent change smaller.
+
   fetch: stop accessing "remote" variable indirectly
+
+Typo fix in commit message noted by Junio.
+
   remote: add a macro for "refs/tags/*:refs/tags/*"
+
+New, makes a subsequent change smaller.
+
   fetch tests: refactor in preparation for testing tag pruning
   fetch tests: re-arrange arguments for future readability
   fetch tests: add a tag to be deleted to the pruning tests
+
+No changes.
+
   fetch tests: test --prune and refspec interaction
+
+Changed +refs/tags/*:refs/tags/ to refs/tags/*:refs/tags/. No
+functional difference, since git doesn't care. Just to be consistent
+with the macro added earlier & doing the same in commit messages &
+tests later in the series.
+
   fetch tests: double quote a variable for interpolation
+
+Now back from an earlier version, needed for a later change.
+
   fetch tests: expand case/esac for later change
+
+New, makes the next patch smaller / easier to review.
+
   fetch tests: fetch <url> <spec> as well as fetch [<remote>]
+
+For all `git fetch <name>` we now run another version of the test
+where we test an equivalent `git fetch <url>`. This sort of exhaustive
+testing was missing in our whole test suite, and would have caught the
+segfault in v3.
+
   git fetch doc: add a new section to explain the ins & outs of pruning
   git remote doc: correct dangerous lies about what prune does
   git-fetch & config doc: link to the new PRUNING section
+
+No changes except omitting the "+" in front of refs/tags/[...] as
+noted above.
+
   fetch tests: add scaffolding for the new fetch.pruneTags
+
+Ditto "+" change + minor changes carried over from previous patches.
+
   fetch: add a --fetch-prune option and fetch.pruneTags config
+
+The bug in v3 was that the remote->fetch variable needs to chaned in
+lockstep with remote->fetch_refspec, but only the latter was
+changed. Codepaths that fetched by URL would under --prune-tags expect
+as many items in both, and segfault on the access to remote->fetch.
+
+As explained in the amended commit message the API is not amenable to
+ALLOC_GROW, so there's now a add_prune_tags_to_fetch_refspec()
+function in remote.c which adds the new element to remote->fetch via
+xrealloc() + memcpy().
+
+Careful review of that most welcome.
+
+There's lots more tests that catch the case where it segfaulted.
+
   fetch: make the --fetch-prune work with <url>
+
+The previous patch was changed to document that this wouldn't work:
+
+    git fetch <url of origin> --prune --prune-tag
+
+This makes it work, at the cost of some complexity in fetch_one(). I
+think it makes sense to keep this, I just wanted to split it off from
+the previous patch to clearly show the hoops we need to jump through
+for that one case.
 
  Documentation/config.txt               |  20 ++-
  Documentation/fetch-options.txt        |  17 ++-
