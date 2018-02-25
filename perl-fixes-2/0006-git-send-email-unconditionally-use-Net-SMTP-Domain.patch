@@ -1,0 +1,97 @@
+From 92429af3a34c367a7aaf6ba942fc18ca06e189a2 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180214222146.10655-1-avarab@gmail.com>
+References: <20180214222146.10655-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Feb 2018 22:47:51 +0100
+Subject: [PATCH v2 06/13] git-send-email: unconditionally use
+ Net::{SMTP,Domain}
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Net::SMTP and Net::Domain were both first released with perl
+v5.7.3[1], since my d48b284183 ("perl: bump the required Perl version
+to 5.8 from 5.6.[21]", 2010-09-24) we've depended on 5.8, so there's
+no reason to conditionally require this anymore.
+
+This conditional loading was initially added in
+87840620fd ("send-email: only 'require' instead of 'use' Net::SMTP",
+2006-06-01) for Net::SMTP and 134550fe21 ("git-send-email.perl - try
+to give real name of the calling host to HELO/EHLO", 2010-03-14) for
+Net::Domain, both of which predate the hard dependency on 5.8.
+
+Since they're guaranteed to be installed now let's "use" them
+instead. The cost of loading them both is trivial given what
+git-send-email does (~15ms on my system), and it's better to not defer
+any potential loading errors until runtime.
+
+This patch is better viewed with -w, which shows that the only change
+in the last two hunks is removing the "if eval" wrapper block.
+
+1. $ parallel 'corelist {}' ::: Net::{SMTP,Domain}
+   Data for 2015-02-14
+   Net::SMTP was first released with perl v5.7.3
+
+   Data for 2015-02-14
+   Net::Domain was first released with perl v5.7.3
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 24 +++++++++++-------------
+ 1 file changed, 11 insertions(+), 13 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index bbf4deaa0d..d5a4826a1c 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -31,6 +31,8 @@ use Cwd qw(abs_path cwd);
+ use Git;
+ use Git::I18N;
+ use Git::Mail::Address;
++use Net::Domain ();
++use Net::SMTP ();
+ 
+ Getopt::Long::Configure qw/ pass_through /;
+ 
+@@ -1143,10 +1145,8 @@ sub valid_fqdn {
+ sub maildomain_net {
+ 	my $maildomain;
+ 
+-	if (eval { require Net::Domain; 1 }) {
+-		my $domain = Net::Domain::domainname();
+-		$maildomain = $domain if valid_fqdn($domain);
+-	}
++	my $domain = Net::Domain::domainname();
++	$maildomain = $domain if valid_fqdn($domain);
+ 
+ 	return $maildomain;
+ }
+@@ -1154,17 +1154,15 @@ sub maildomain_net {
+ sub maildomain_mta {
+ 	my $maildomain;
+ 
+-	if (eval { require Net::SMTP; 1 }) {
+-		for my $host (qw(mailhost localhost)) {
+-			my $smtp = Net::SMTP->new($host);
+-			if (defined $smtp) {
+-				my $domain = $smtp->domain;
+-				$smtp->quit;
++	for my $host (qw(mailhost localhost)) {
++		my $smtp = Net::SMTP->new($host);
++		if (defined $smtp) {
++			my $domain = $smtp->domain;
++			$smtp->quit;
+ 
+-				$maildomain = $domain if valid_fqdn($domain);
++			$maildomain = $domain if valid_fqdn($domain);
+ 
+-				last if $maildomain;
+-			}
++			last if $maildomain;
+ 		}
+ 	}
+ 
+-- 
+2.15.1.424.g9478a66081
+
