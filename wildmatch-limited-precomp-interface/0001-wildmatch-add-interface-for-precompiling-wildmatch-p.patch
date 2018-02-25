@@ -1,0 +1,99 @@
+From 60ac9e7d4d69a15bb0bba2c8081c69b3581530e9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Jun 2017 21:02:10 +0000
+Subject: [PATCH 1/2] wildmatch: add interface for precompiling wildmatch()
+ patterns
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add the scaffolding necessary for precompiling wildmatch()
+patterns.
+
+There is currently no point in doing this with the wildmatch()
+function we have now, since it can't make any use of precompiling the
+pattern.
+
+But adding this interface and making use of it will make it easy to
+refactor the wildmatch() function to parse the pattern into opcodes as
+some glob() implementations do, or to drop an alternate wildmatch()
+backend in which trades parsing slowness for faster matching, such as
+the PCRE v2 conversion function that understands the wildmatch()
+syntax.
+
+It's very unlikely that we'll remove the wildmatch() function as a
+convenience wrapper even if we end up requiring a separate compilation
+step in some future implementation. There are a lot of one-shot
+wildmatches in the codebase, in that case most likely wildmatch() will
+be kept around as a shorthand for wildmatch_{compile,match,free}().
+
+I modeled this interface on the PCRE v2 interface. I didn't go with a
+glob(3) & globfree(3)-like interface because that would require every
+wildmatch() user to pass a dummy parameter, which I got rid of in
+55d3426929 ("wildmatch: remove unused wildopts parameter",
+2017-06-22).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ wildmatch.c | 25 +++++++++++++++++++++++++
+ wildmatch.h | 11 +++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/wildmatch.c b/wildmatch.c
+index d074c1be10..032f339391 100644
+--- a/wildmatch.c
++++ b/wildmatch.c
+@@ -276,3 +276,28 @@ int wildmatch(const char *pattern, const char *text, unsigned int flags)
+ {
+ 	return dowild((const uchar*)pattern, (const uchar*)text, flags);
+ }
++
++struct wildmatch_compiled *wildmatch_compile(const char *pattern,
++					     unsigned int flags)
++{
++	struct wildmatch_compiled *wildmatch_compiled = xmalloc(
++		sizeof(struct wildmatch_compiled));
++	wildmatch_compiled->pattern = xstrdup(pattern);
++	wildmatch_compiled->flags = flags;
++
++	return wildmatch_compiled;
++}
++
++int wildmatch_match(struct wildmatch_compiled *wildmatch_compiled,
++		    const char *text)
++{
++	return wildmatch(wildmatch_compiled->pattern, text,
++			 wildmatch_compiled->flags);
++}
++
++void wildmatch_free(struct wildmatch_compiled *wildmatch_compiled)
++{
++	if (wildmatch_compiled)
++		free((void *)wildmatch_compiled->pattern);
++	free(wildmatch_compiled);
++}
+diff --git a/wildmatch.h b/wildmatch.h
+index b8c826aa68..2fc00e0ca0 100644
+--- a/wildmatch.h
++++ b/wildmatch.h
+@@ -10,5 +10,16 @@
+ #define WM_ABORT_ALL -1
+ #define WM_ABORT_TO_STARSTAR -2
+ 
++struct wildmatch_compiled {
++	const char *pattern;
++	unsigned int flags;
++};
++
+ int wildmatch(const char *pattern, const char *text, unsigned int flags);
++struct wildmatch_compiled *wildmatch_compile(const char *pattern,
++					     unsigned int flags);
++int wildmatch_match(struct wildmatch_compiled *wildmatch_compiled,
++		    const char *text);
++void wildmatch_free(struct wildmatch_compiled *wildmatch_compiled);
++
+ #endif
+-- 
+2.15.1.424.g9478a66081
+
