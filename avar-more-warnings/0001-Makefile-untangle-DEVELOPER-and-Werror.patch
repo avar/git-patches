@@ -1,0 +1,106 @@
+From 69445d6337c2b48cf98f2457148c6a4176a4ff63 Mon Sep 17 00:00:00 2001
+In-Reply-To: <DEVELOPER_FATAL=1>
+References: <DEVELOPER_FATAL=1>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 31 Mar 2018 16:09:35 +0000
+Subject: [PATCH] Makefile: untangle DEVELOPER and -Werror
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the DEVELOPER flag, and the newly added EAGER_DEVELOPER flag
+which (approximately) enables -Wextra so that any combination of them
+and -Werror can be set.
+
+I've long wanted to use DEVELOPER=1 in my production builds, but on
+some old systems I still get warnings, and thus the build would
+fail. However if the build/tests fail for some other reason, it would
+still be useful to scroll up and see what the relevant code is warning
+about.
+
+This change allows for that. Now setting DEVELOPER will set -Werror as
+before, but if DEVELOPER_NONFATAL is set you'll get the same warnings,
+but without -Werror.
+
+I've renamed the newly added EAGER_DEVELOPER flag to
+DEVELOPER_EXTRA. The reason is that it approximately turns on -Wextra,
+and it'll be more consistent to add e.g. DEVELOPER_PEDANTIC later than
+inventing some new name of our own (VERY_EAGER_DEVELOPER?).
+
+The DEVELOPER_EXTRA flag implicitly means DEVELOPER_NONFATAL, but just
+so that this change doesn't introduce yet another arbitrary limitation
+it's possible to combine it with DEVELOPER_FATAL, which will turn on
+-Werror for it as well.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile       | 17 +++++++++++------
+ config.mak.dev | 10 ++++++++--
+ 2 files changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index e4f04ce1cb..641461a569 100644
+--- a/Makefile
++++ b/Makefile
+@@ -432,11 +432,16 @@ all::
+ # When cross-compiling, define HOST_CPU as the canonical name of the CPU on
+ # which the built Git will run (for instance "x86_64").
+ #
+-# Define DEVELOPER to enable more compiler warnings. Compiler version
+-# and faimily are auto detected, but could be overridden by defining
+-# COMPILER_FEATURES (see config.mak.dev).
+-# Define EAGER_DEVELOPER keeps compiler warnings non-fatal, but no warning
+-# class is suppressed anymore.
++# Define DEVELOPER to enable more compiler warnings. We'll also enable
++# -Werror unless DEVELOPER_NONFATAL is defined. To enable even more
++# pedantic warnings that'll flag some potential existing issues in the
++# codebase turn on DEVELOPER_EXTRA, which implicitly sets DEVELOPER as
++# well, This is -Wextra with a whitelist of disabled warnings. Unless
++# DEVELOPER_NONFATAL is set DEVELOPER_EXTRA will turn it on
++# implicitly, so if you for some reason want both DEVELOPER and
++# DEVELOPER_EXTRA with fatal warnings, you need to set
++# DEVELOPER_FATAL=1 to force -Werror. See config.mak.dev for how this
++# all works.
+ 
+ GIT-VERSION-FILE: FORCE
+ 	@$(SHELL_PATH) ./GIT-VERSION-GEN
+@@ -1043,7 +1048,7 @@ include config.mak.uname
+ -include config.mak.autogen
+ -include config.mak
+ 
+-ifdef EAGER_DEVELOPER
++ifdef DEVELOPER_EXTRA
+ DEVELOPER = Yes
+ endif
+ ifdef DEVELOPER
+diff --git a/config.mak.dev b/config.mak.dev
+index 13883410b3..40f3365729 100644
+--- a/config.mak.dev
++++ b/config.mak.dev
+@@ -1,6 +1,12 @@
+-ifndef EAGER_DEVELOPER
++ifndef DEVELOPER_NONFATAL
++ifndef DEVELOPER_EXTRA
+ CFLAGS += -Werror
+ endif
++endif
++ifdef DEVELOPER_FATAL
++CFLAGS += -Werror
++endif
++
+ CFLAGS += -Wdeclaration-after-statement
+ CFLAGS += -Wno-format-zero-length
+ CFLAGS += -Wold-style-definition
+@@ -23,7 +29,7 @@ CFLAGS += -Wextra
+ # if a function is public, there should be a prototype and the right
+ # header file should be included. If not, it should be static.
+ CFLAGS += -Wmissing-prototypes
+-ifndef EAGER_DEVELOPER
++ifndef DEVELOPER_EXTRA
+ # These are disabled because we have these all over the place.
+ CFLAGS += -Wno-empty-body
+ CFLAGS += -Wno-missing-field-initializers
+-- 
+2.17.0.rc1.321.gba9d0f2565
+
