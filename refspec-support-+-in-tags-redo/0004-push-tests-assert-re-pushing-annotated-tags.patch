@@ -1,0 +1,111 @@
+From 0d6b780cb3c29c699d561d0b232c9d8df62c1357 Mon Sep 17 00:00:00 2001
+In-Reply-To: <CACBZZX7HFnEMD8PKWj0c7VWqv=yeYCXYJjy-5YPZnF_pJAy0jw@mail.gmail.com>
+References: <CACBZZX7HFnEMD8PKWj0c7VWqv=yeYCXYJjy-5YPZnF_pJAy0jw@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 28 Apr 2018 18:30:22 +0000
+Subject: [PATCH 4/8] push tests: assert re-pushing annotated tags
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the test that asserts that lightweight tags can only be
+clobbered by a force-push to check do the same tests for annotated
+tags.
+
+There used to be less exhaustive tests for this with the code added in
+40eff17999 ("push: require force for annotated tags", 2012-11-29), but
+Junio removed them in 256b9d70a4 ("push: fix "refs/tags/ hierarchy
+cannot be updated without --force"", 2013-01-16) while fixing some of
+the behavior around tag pushing.
+
+That change left us without any coverage asserting that pushing and
+clobbering annotated tags worked as intended.  There was no reason to
+suspect that the receive machinery wouldn't behave the same way with
+annotated tags, but now we know for sure.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5516-fetch-push.sh | 66 ++++++++++++++++++++++++-------------------
+ 1 file changed, 37 insertions(+), 29 deletions(-)
+
+diff --git a/t/t5516-fetch-push.sh b/t/t5516-fetch-push.sh
+index c9a2011915..71fc902062 100755
+--- a/t/t5516-fetch-push.sh
++++ b/t/t5516-fetch-push.sh
+@@ -965,35 +965,43 @@ test_expect_success 'push into aliased refs (inconsistent)' '
+ 	)
+ '
+ 
+-test_expect_success 'push requires --force to update lightweight tag' '
+-	mk_test testrepo heads/master &&
+-	mk_child testrepo child1 &&
+-	mk_child testrepo child2 &&
+-	(
+-		cd child1 &&
+-		git tag Tag &&
+-		git push ../child2 Tag &&
+-		>file1 &&
+-		git add file1 &&
+-		git commit -m "file1" &&
+-		git tag -f Tag &&
+-		test_must_fail git push ../child2 Tag &&
+-		git push --force ../child2 Tag &&
+-		git tag -f Tag HEAD~ &&
+-		test_must_fail git push ../child2 Tag &&
+-		git push --force ../child2 Tag &&
+-		git tag -f Tag &&
+-		test_must_fail git push ../child2 "refs/tags/*:refs/tags/*" &&
+-		git push --force ../child2 "refs/tags/*:refs/tags/*" &&
+-		git tag -f Tag HEAD~ &&
+-		git push ../child2 "+refs/tags/*:refs/tags/*" &&
+-		git tag -f Tag &&
+-		git push --no-force ../child2 "+refs/tags/*:refs/tags/*" &&
+-		git tag -f Tag HEAD~ &&
+-		test_must_fail git push ../child2 tag Tag &&
+-		git push --force ../child2 tag Tag
+-	)
+-'
++test_force_push_tag () {
++	tag_type_description=$1
++	tag_args=$2
++
++	test_expect_success "push requires --force to update $tag_type_description" "
++		mk_test testrepo heads/master &&
++		mk_child testrepo child1 &&
++		mk_child testrepo child2 &&
++		(
++			cd child1 &&
++			git tag Tag &&
++			git push ../child2 Tag &&
++			>file1 &&
++			git add file1 &&
++			git commit -m 'file1' &&
++			git tag $tag_args Tag &&
++			test_must_fail git push ../child2 Tag &&
++			git push --force ../child2 Tag &&
++			git tag $tag_args Tag HEAD~ &&
++			test_must_fail git push ../child2 Tag &&
++			git push --force ../child2 Tag &&
++			git tag $tag_args Tag &&
++			test_must_fail git push ../child2 'refs/tags/*:refs/tags/*' &&
++			git push --force ../child2 'refs/tags/*:refs/tags/*' &&
++			git tag $tag_args Tag HEAD~ &&
++			git push ../child2 '+refs/tags/*:refs/tags/*' &&
++			git tag $tag_args Tag &&function
++			git push --no-force ../child2 '+refs/tags/*:refs/tags/*' &&
++			git tag $tag_args Tag HEAD~ &&
++			test_must_fail git push ../child2 tag Tag &&
++			git push --force ../child2 tag Tag
++		)
++	"
++}
++
++test_force_push_tag "lightweight tag" "-f"
++test_force_push_tag "annotated tag" "-f -a -m'msg'"
+ 
+ test_expect_success 'push --porcelain' '
+ 	mk_empty testrepo &&
+-- 
+2.17.0.290.gded63e768a
+
