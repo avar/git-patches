@@ -1,0 +1,88 @@
+From 668b4443792ce4c2d958da58fd553cfc678ca0a0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 30 Apr 2018 20:40:04 +0000
+Subject: [PATCH 6/7] get_short_oid: learn to disambiguate by ^{blob}
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The disambiguation logic had all the pieces necessary to only print
+out those blobs that were ambiguous, but they hadn't been connected.
+
+The initial logic was added in daba53aeaf ("sha1_name.c: add support
+for disambiguating other types", 2012-07-02), and when the flags were
+propagated in 8a10fea49b ("get_sha1: propagate flags to child
+functions", 2016-09-26) GET_OID_BLOB wasn't added to lookup_flags.
+
+Before this change requests for blobs were simply ignored:
+
+    $ git rev-parse e8f2^{blob}
+    error: short SHA1 e8f2 is ambiguous
+    hint: The candidates are:
+    hint:   e8f2650052 tag v2.17.0
+    hint:   e8f21caf94 commit 2013-06-24 - bash prompt: print unique detached HEAD abbreviated object name
+    hint:   e8f26250fa commit 2017-02-03 - Merge pull request #996 from jeffhostetler/jeffhostetler/register_rename_src
+    hint:   e8f2bc0c06 commit 2015-05-10 - Documentation: note behavior for multiple remote.url entries
+    hint:   e8f2093055 tree
+    hint:   e8f25a3a50 tree
+    hint:   e8f28d537c tree
+    hint:   e8f2cf6ec0 tree
+    hint:   e8f21d02f7 blob
+    hint:   e8f21d577c blob
+    hint:   e8f2867228 blob
+    hint:   e8f2a35526 blob
+    e8f2^{blob}
+    [...]
+
+But now we'll do the right thing and only print the blobs:
+
+    $ git rev-parse e8f2^{blob}
+    error: short SHA1 e8f2 is ambiguous
+    hint: The candidates are:
+    hint:   e8f21d02f7 blob
+    hint:   e8f21d577c blob
+    hint:   e8f2867228 blob
+    hint:   e8f2a35526 blob
+    e8f2^{blob}
+    [...]
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sha1-name.c                         | 2 ++
+ t/t1512-rev-parse-disambiguation.sh | 6 +++++-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/sha1-name.c b/sha1-name.c
+index 68d5f65362..023f9471a8 100644
+--- a/sha1-name.c
++++ b/sha1-name.c
+@@ -971,6 +971,8 @@ static int peel_onion(const char *name, int len, struct object_id *oid,
+ 		lookup_flags |= GET_OID_TAG;
+ 	else if (expected_type == OBJ_TREE)
+ 		lookup_flags |= GET_OID_TREEISH;
++	else if (expected_type == OBJ_BLOB)
++		lookup_flags |= GET_OID_BLOB;
+ 
+ 	if (get_oid_1(name, sp - name - 2, &outer, lookup_flags))
+ 		return -1;
+diff --git a/t/t1512-rev-parse-disambiguation.sh b/t/t1512-rev-parse-disambiguation.sh
+index c7ceda2f21..08ae73e2a5 100755
+--- a/t/t1512-rev-parse-disambiguation.sh
++++ b/t/t1512-rev-parse-disambiguation.sh
+@@ -337,7 +337,11 @@ test_expect_success C_LOCALE_OUTPUT 'ambiguity hints respect type' '
+ 	test_line_count = 7 hints &&
+ 	git rev-parse 000000000^{tag} >stdout &&
+ 	test_line_count = 1 stdout &&
+-	grep -q ^0000000000f8f stdout
++	grep -q ^0000000000f8f stdout &&
++	test_must_fail git rev-parse 000000000^{blob} 2>stderr &&
++	grep ^hint: stderr >hints &&
++	# 5 blobs plus intro line &&
++	test_line_count = 6 hints
+ '
+ 
+ test_expect_success C_LOCALE_OUTPUT 'failed type-selector still shows hint' '
+-- 
+2.17.0.290.gded63e768a
+
