@@ -1,4 +1,4 @@
-From 5dcd8fe05f3d5dc17b98ded2c4a1bc0def90d81e Mon Sep 17 00:00:00 2001
+From e7c427d7d8e189f55c1fc4661ae1f3748eafab3a Mon Sep 17 00:00:00 2001
 In-Reply-To: <20180501120651.15886-1-avarab@gmail.com>
 References: <20180501120651.15886-1-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -58,22 +58,36 @@ I could display them after commits, but it's much less likely that
 we'll display a tag, so if there is one it makes sense to show it
 prominently at the top.
 
-A note on the implementation: I started out with something much
-simpler which just replaced oid_array_sort() in sha1-array.c with a
-custom sort function before calling oid_array_for_each_unique(). But
-then dumbly noticed that it doesn't work because the output function
-was tangled up with the code added in fad6b9e590 ("for_each_abbrev:
-drop duplicate objects", 2016-09-26) to ensure we don't display
-duplicate objects.
+A note on the implementation: Derrick rightly pointed out[1] that
+we're bending over backwards here in get_short_oid() to first
+de-duplicate the list, and then emit it, but could simply do it in one
+step.
 
-That's why we're doing two passes here, first we need to sort the list
-and de-duplicate the objects, then sort them in our custom order, and
-finally output them without re-sorting them. I suppose we could also
-make oid_array_for_each_unique() maintain a hashmap of emitted
-objects, but that would increase its memory profile and wouldn't be
-worth the complexity for this one-off use-case,
-oid_array_for_each_unique() is used in many other places.
+The reason for that is that oid_array_for_each_unique() doesn't
+actually require that the array be sorted by oid_array_sort(), it just
+needs to be sorted in some order that guarantees that all objects with
+the same ID are adjacent to one another, which (barring a hash
+collision, which'll be someone else's problem) the sort_ambiguous()
+function does.
 
+I agree that would be simpler for this code, and had forgotten why I
+initially wrote it like this[2]. But on further reflection I think
+it's better to do more work here just so we're not underhandedly using
+the oid-array API where we lie about the list being sorted. That would
+break any subsequent use of oid_array_lookup() in subtle ways.
+
+I could get around that by hacking the API itself to support this
+use-case and documenting it, which I did as a WIP patch in [3], but I
+think it's too much code smell just for this one call site. It's
+simpler for the API to just introduce a oid_array_for_each() function
+to eagerly spew out the list without sorting or de-duplication, and
+then do the de-duplication and sorting in two passes.
+
+1. https://public-inbox.org/git/20180501130318.58251-1-dstolee@microsoft.com/
+2. https://public-inbox.org/git/876047ze9v.fsf@evledraar.gmail.com/
+3. https://public-inbox.org/git/874ljrzctc.fsf@evledraar.gmail.com/
+
+Helped-by: Derrick Stolee <dstolee@microsoft.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
  Documentation/technical/api-oid-array.txt | 17 +++++++----
