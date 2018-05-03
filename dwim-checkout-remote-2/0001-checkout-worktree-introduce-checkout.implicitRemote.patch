@@ -1,0 +1,260 @@
+From 905a17f35f512fde6940bf11517bff3cf7c41266 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87y3h1ykwn.fsf@evledraar.gmail.com>
+References: <87y3h1ykwn.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 2 May 2018 10:17:01 +0000
+Subject: [PATCH v2] checkout & worktree: introduce checkout.implicitRemote
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Introduce a checkout.implicitRemote setting which can be used to
+designate a remote to prefer (via checkout.implicitRemote=origin) when
+running e.g. "git checkout master" to mean origin/master, even though
+there's other remotes that have the "master" branch.
+
+I want this because it's very handy to use this workflow to checkout a
+repository and create a topic branch, then get back to a "master" as
+retrieved from upstream:
+
+    (
+        rm -rf /tmp/tbdiff &&
+        git clone git@github.com:trast/tbdiff.git &&
+        cd tbdiff &&
+        git branch -m topic &&
+        git checkout master
+    )
+
+That will output:
+
+    Branch 'master' set up to track remote branch 'master' from 'origin'.
+    Switched to a new branch 'master'
+
+But as soon as a new remote is added (e.g. just to inspect something
+from someone else) the DWIMery goes away:
+
+    (
+        rm -rf /tmp/tbdiff &&
+        git clone git@github.com:trast/tbdiff.git &&
+        cd tbdiff &&
+        git branch -m topic &&
+        git remote add avar git@github.com:avar/tbdiff.git &&
+        git fetch avar &&
+        git checkout master
+    )
+
+Will output:
+
+    error: pathspec 'master' did not match any file(s) known to git.
+
+The new checkout.implicitRemote config allows me to say that whenever
+that ambiguity comes up I'd like to prefer "origin", and it'll still
+work as though the only remote I had was "origin".
+
+I considered splitting this into checkout.implicitRemote and
+worktree.implicitRemote, but it's probably less confusing to break our
+own rules that anything shared between config should live in core.*
+than have two config settings, and I couldn't come up with a short
+name under core.* that made sense (core.implicitRemoteForCheckout?).
+
+See also 70c9ac2f19 ("DWIM "git checkout frotz" to "git checkout -b
+frotz origin/frotz"", 2009-10-18) which introduced this DWIM feature
+to begin with, and 4e85333197 ("worktree: make add <path> <branch>
+dwim", 2017-11-26) which added it to git-worktree.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt       | 17 +++++++++++++++++
+ Documentation/git-checkout.txt |  6 ++++++
+ Documentation/git-worktree.txt |  5 +++++
+ builtin/checkout.c             |  6 ++++--
+ checkout.c                     | 17 +++++++++++++++--
+ t/t2024-checkout-dwim.sh       | 10 ++++++++++
+ t/t2025-worktree-add.sh        | 18 ++++++++++++++++++
+ 7 files changed, 75 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 2659153cb3..83460bd443 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1084,6 +1084,23 @@ browser.<tool>.path::
+ 	browse HTML help (see `-w` option in linkgit:git-help[1]) or a
+ 	working repository in gitweb (see linkgit:git-instaweb[1]).
+ 
++checkout.implicitRemote::
++	When you run 'git checkout <something>' and only have one
++	remote, it may implicitly fall back on checking out and
++	tracking e.g. 'origin/<something>'. This stops working as soon
++	as you have more than one remote with a '<something>'
++	reference. This setting allows for setting the name of a
++	special remote that should always win when it comes to
++	disambiguation. The typical use-case is to set this to
++	`origin`.
+++
++Currently this is used by linkgit:git-checkout[1] when 'git checkout
++<something>' will checkout the '<something>' branch on another remote,
++and by linkgit:git-worktree[1] when 'git worktree add' when referring
++to a remote branch.  This setting might be used for other
++checkout-like commands or functionality in the future when
++appropriate.
++
+ clean.requireForce::
+ 	A boolean to make git-clean do nothing unless given -f,
+ 	-i or -n.   Defaults to true.
+diff --git a/Documentation/git-checkout.txt b/Documentation/git-checkout.txt
+index ca5fc9c798..753aa4001f 100644
+--- a/Documentation/git-checkout.txt
++++ b/Documentation/git-checkout.txt
+@@ -38,6 +38,12 @@ equivalent to
+ $ git checkout -b <branch> --track <remote>/<branch>
+ ------------
+ +
++If the branch exists in multiple remotes the `checkout.implicitRemote`
++variable can be used to pick the remote you really mean. Set it to
++e.g. `checkout.implicitRemote=origin` to always checkout remote
++branches from there. See also `checkout.implicitRemote` in
++linkgit:git-config[1].
+++
+ You could omit <branch>, in which case the command degenerates to
+ "check out the current branch", which is a glorified no-op with
+ rather expensive side-effects to show only the tracking information,
+diff --git a/Documentation/git-worktree.txt b/Documentation/git-worktree.txt
+index 2755ca90e3..35798a1132 100644
+--- a/Documentation/git-worktree.txt
++++ b/Documentation/git-worktree.txt
+@@ -60,6 +60,11 @@ with a matching name, treat as equivalent to:
+ $ git worktree add --track -b <branch> <path> <remote>/<branch>
+ ------------
+ +
++It's also possible to use the `checkout.implicitRemote` setting to
++designate a special remote this rule should be applied to, even if the
++branch isn't unique across all remotes. See `checkout.implicitRemote`
++in linkgit:git-config[1].
+++
+ If `<commit-ish>` is omitted and neither `-b` nor `-B` nor `--detach` used,
+ then, as a convenience, a new branch based at HEAD is created automatically,
+ as if `-b $(basename <path>)` was specified.
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index b49b582071..495a5d7955 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -903,8 +903,10 @@ static int parse_branchname_arg(int argc, const char **argv,
+ 	 *   (b) If <something> is _not_ a commit, either "--" is present
+ 	 *       or <something> is not a path, no -t or -b was given, and
+ 	 *       and there is a tracking branch whose name is <something>
+-	 *       in one and only one remote, then this is a short-hand to
+-	 *       fork local <something> from that remote-tracking branch.
++	 *       in one and only one remote (or if the branch exists on the
++	 *       remote named in checkout.implicitRemote), then this is a
++	 *       short-hand to fork local <something> from that
++	 *       remote-tracking branch.
+ 	 *
+ 	 *   (c) Otherwise, if "--" is present, treat it like case (1).
+ 	 *
+diff --git a/checkout.c b/checkout.c
+index ac42630f74..2c898cfe19 100644
+--- a/checkout.c
++++ b/checkout.c
+@@ -1,12 +1,15 @@
+ #include "cache.h"
+ #include "remote.h"
+ #include "checkout.h"
++#include "config.h"
+ 
+ struct tracking_name_data {
+ 	/* const */ char *src_ref;
+ 	char *dst_ref;
+ 	struct object_id *dst_oid;
+ 	int unique;
++	const char *implicit_remote;
++	char *implicit_dst_ref;
+ };
+ 
+ static int check_tracking_name(struct remote *remote, void *cb_data)
+@@ -20,6 +23,8 @@ static int check_tracking_name(struct remote *remote, void *cb_data)
+ 		free(query.dst);
+ 		return 0;
+ 	}
++	if (cb->implicit_remote && !strcmp(remote->name, cb->implicit_remote))
++		cb->implicit_dst_ref = xstrdup(query.dst);
+ 	if (cb->dst_ref) {
+ 		free(query.dst);
+ 		cb->unique = 0;
+@@ -31,13 +36,21 @@ static int check_tracking_name(struct remote *remote, void *cb_data)
+ 
+ const char *unique_tracking_name(const char *name, struct object_id *oid)
+ {
+-	struct tracking_name_data cb_data = { NULL, NULL, NULL, 1 };
++	const char *implicit_remote = NULL;
++	struct tracking_name_data cb_data = { NULL, NULL, NULL, 1, NULL, NULL };
++	if (!git_config_get_string_const("checkout.implicitremote", &implicit_remote))
++		cb_data.implicit_remote = implicit_remote;
+ 	cb_data.src_ref = xstrfmt("refs/heads/%s", name);
+ 	cb_data.dst_oid = oid;
+ 	for_each_remote(check_tracking_name, &cb_data);
+ 	free(cb_data.src_ref);
+-	if (cb_data.unique)
++	free((char *)implicit_remote);
++	if (cb_data.unique) {
++		free(cb_data.implicit_dst_ref);
+ 		return cb_data.dst_ref;
++	}
+ 	free(cb_data.dst_ref);
++	if (cb_data.implicit_dst_ref)
++		return cb_data.implicit_dst_ref;
+ 	return NULL;
+ }
+diff --git a/t/t2024-checkout-dwim.sh b/t/t2024-checkout-dwim.sh
+index 3e5ac81bd2..da6bd74bbc 100755
+--- a/t/t2024-checkout-dwim.sh
++++ b/t/t2024-checkout-dwim.sh
+@@ -68,6 +68,16 @@ test_expect_success 'checkout of branch from multiple remotes fails #1' '
+ 	test_branch master
+ '
+ 
++test_expect_success 'checkout of branch from multiple remotes succeeds with checkout.implicitRemote #1' '
++	git checkout -B master &&
++	test_might_fail git branch -D foo &&
++
++	git -c checkout.implicitRemote=repo_a checkout foo &&
++	test_branch foo &&
++	test_cmp_rev remotes/repo_a/foo HEAD &&
++	test_branch_upstream foo repo_a foo
++'
++
+ test_expect_success 'checkout of branch from a single remote succeeds #1' '
+ 	git checkout -B master &&
+ 	test_might_fail git branch -D bar &&
+diff --git a/t/t2025-worktree-add.sh b/t/t2025-worktree-add.sh
+index d0d2e4f7ec..6eb994ac12 100755
+--- a/t/t2025-worktree-add.sh
++++ b/t/t2025-worktree-add.sh
+@@ -450,6 +450,24 @@ test_expect_success 'git worktree --no-guess-remote option overrides config' '
+ 	)
+ '
+ 
++test_expect_success '"add" <path> <branch> dwims with checkout.implicitRemote' '
++	test_when_finished rm -rf repo_upstream repo_dwim foo &&
++	setup_remote_repo repo_upstream repo_dwim &&
++	git init repo_dwim &&
++	(
++		cd repo_dwim &&
++		git remote add repo_upstream2 ../repo_upstream &&
++		git fetch repo_upstream2 &&
++		test_must_fail git worktree add ../foo foo &&
++		git -c checkout.implicitRemote=repo_upstream worktree add ../foo foo
++	) &&
++	(
++		cd foo &&
++		test_branch_upstream foo repo_upstream foo &&
++		test_cmp_rev refs/remotes/repo_upstream/foo refs/heads/foo
++	)
++'
++
+ post_checkout_hook () {
+ 	gitdir=${1:-.git}
+ 	test_when_finished "rm -f $gitdir/hooks/post-checkout" &&
+-- 
+2.17.0.290.gded63e768a
+
