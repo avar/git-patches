@@ -65,6 +65,236 @@ dwim", 2017-11-26) which added it to git-worktree.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+In v2 I've changed the config name to checkout.implicitRemote as
+suggested above, there's no worktree.implicitRemote, instead the
+config just explains that it's used for checkout-like things (and may
+be expanded in the future).
+
+A branch-diff (new command from JS) follows:
+    
+    1:  18f13ecd89 ! 1:  905a17f35f checkout & worktree: introduce a core.DWIMRemote setting
+        @@ -1,11 +1,11 @@
+         Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+         
+        -    checkout & worktree: introduce a core.DWIMRemote setting
+        +    checkout & worktree: introduce checkout.implicitRemote
+         
+        -    Introduce a core.DWIMRemote setting which can be used to designate a
+        -    remote to prefer (via core.DWIMRemote=origin) when running e.g. "git
+        -    checkout master" to mean origin/master, even though there's other
+        -    remotes that have the "master" branch.
+        +    Introduce a checkout.implicitRemote setting which can be used to
+        +    designate a remote to prefer (via checkout.implicitRemote=origin) when
+        +    running e.g. "git checkout master" to mean origin/master, even though
+        +    there's other remotes that have the "master" branch.
+         
+             I want this because it's very handy to use this workflow to checkout a
+             repository and create a topic branch, then get back to a "master" as
+        @@ -41,16 +41,15 @@
+         
+                 error: pathspec 'master' did not match any file(s) known to git.
+         
+        -    The new core.DWIMRemote config allows me to say that whenever that
+        -    ambiguity comes up I'd like to prefer "origin", and it'll still work
+        -    as though the only remote I had was "origin".
+        +    The new checkout.implicitRemote config allows me to say that whenever
+        +    that ambiguity comes up I'd like to prefer "origin", and it'll still
+        +    work as though the only remote I had was "origin".
+         
+        -    I considered calling the config setting checkout.DWIMRemote, but then
+        -    discovered that this behavior is also used by "worktree" for similar
+        -    purposes, so it makes sense to have it under core.*. As noted in the
+        -    documentation we may also want to use this in other commands in the
+        -    future if they have similar DWIM behavior in the presence of one
+        -    remote.
+        +    I considered splitting this into checkout.implicitRemote and
+        +    worktree.implicitRemote, but it's probably less confusing to break our
+        +    own rules that anything shared between config should live in core.*
+        +    than have two config settings, and I couldn't come up with a short
+        +    name under core.* that made sense (core.implicitRemoteForCheckout?).
+         
+             See also 70c9ac2f19 ("DWIM "git checkout frotz" to "git checkout -b
+             frotz origin/frotz"", 2009-10-18) which introduced this DWIM feature
+        @@ -63,27 +62,29 @@
+         --- a/Documentation/config.txt
+         +++ b/Documentation/config.txt
+         @@
+        - This setting defaults to "refs/notes/commits", and it can be overridden by
+        - the `GIT_NOTES_REF` environment variable.  See linkgit:git-notes[1].
+        + 	browse HTML help (see `-w` option in linkgit:git-help[1]) or a
+        + 	working repository in gitweb (see linkgit:git-instaweb[1]).
+          
+        -+core.DWIMRemote::
+        -+	Various git commands will look at references on the configured
+        -+	remotes and DW[YI]M (Do What (You|I) Mean) if the reference
+        -+	only exists on one remote. This setting allows for setting the
+        -+	name of a special remote that should always win when it comes
+        -+	to disambiguation. The typical use-case is to set this to
+        ++checkout.implicitRemote::
+        ++	When you run 'git checkout <something>' and only have one
+        ++	remote, it may implicitly fall back on checking out and
+        ++	tracking e.g. 'origin/<something>'. This stops working as soon
+        ++	as you have more than one remote with a '<something>'
+        ++	reference. This setting allows for setting the name of a
+        ++	special remote that should always win when it comes to
+        ++	disambiguation. The typical use-case is to set this to
+         +	`origin`.
+         ++
+        -+Currently this is used by linkgit:git-checkout[1] when `git checkout
+        ++Currently this is used by linkgit:git-checkout[1] when 'git checkout
+         +<something>' will checkout the '<something>' branch on another remote,
+        -+and linkgit:git-worktree[1] when 'git worktree add' similarly DWYM
+        -+when a branch is unique across remotes, or this setting is set to a
+        -+special remote. This setting might be used for other commands or
+        -+functionality in the future when appropriate.
+        ++and by linkgit:git-worktree[1] when 'git worktree add' when referring
+        ++to a remote branch.  This setting might be used for other
+        ++checkout-like commands or functionality in the future when
+        ++appropriate.
+         +
+        - core.sparseCheckout::
+        - 	Enable "sparse checkout" feature. See section "Sparse checkout" in
+        - 	linkgit:git-read-tree[1] for more information.
+        + clean.requireForce::
+        + 	A boolean to make git-clean do nothing unless given -f,
+        + 	-i or -n.   Defaults to true.
+         
+         diff --git a/Documentation/git-checkout.txt b/Documentation/git-checkout.txt
+         --- a/Documentation/git-checkout.txt
+        @@ -92,10 +93,11 @@
+          $ git checkout -b <branch> --track <remote>/<branch>
+          ------------
+          +
+        -+If the branch exists in multiple remotes the `core.DWIMRemote`
+        ++If the branch exists in multiple remotes the `checkout.implicitRemote`
+         +variable can be used to pick the remote you really mean. Set it to
+        -+e.g. `core.DWIMRemote=origin` to always checkout remote branches from
+        -+there. See also `core.DWIMRemote` in linkgit:git-config[1].
+        ++e.g. `checkout.implicitRemote=origin` to always checkout remote
+        ++branches from there. See also `checkout.implicitRemote` in
+        ++linkgit:git-config[1].
+         ++
+          You could omit <branch>, in which case the command degenerates to
+          "check out the current branch", which is a glorified no-op with
+        @@ -108,10 +110,10 @@
+          $ git worktree add --track -b <branch> <path> <remote>/<branch>
+          ------------
+          +
+        -+It's also possible to use the `core.DWIMRemote` setting to designate a
+        -+special remote this rule should be applied to, even if the branch
+        -+isn't unique across all remotes. See `core.DWIMRemote` in
+        -+linkgit:git-config[1].
+        ++It's also possible to use the `checkout.implicitRemote` setting to
+        ++designate a special remote this rule should be applied to, even if the
+        ++branch isn't unique across all remotes. See `checkout.implicitRemote`
+        ++in linkgit:git-config[1].
+         ++
+          If `<commit-ish>` is omitted and neither `-b` nor `-B` nor `--detach` used,
+          then, as a convenience, a new branch based at HEAD is created automatically,
+        @@ -125,11 +127,14 @@
+          	 *       or <something> is not a path, no -t or -b was given, and
+          	 *       and there is a tracking branch whose name is <something>
+         -	 *       in one and only one remote, then this is a short-hand to
+        +-	 *       fork local <something> from that remote-tracking branch.
+         +	 *       in one and only one remote (or if the branch exists on the
+        -+	 *       remote named in core.DWIMRemote), then this is a short-hand to
+        - 	 *       fork local <something> from that remote-tracking branch.
+        ++	 *       remote named in checkout.implicitRemote), then this is a
+        ++	 *       short-hand to fork local <something> from that
+        ++	 *       remote-tracking branch.
+          	 *
+          	 *   (c) Otherwise, if "--" is present, treat it like case (1).
+        + 	 *
+         
+         diff --git a/checkout.c b/checkout.c
+         --- a/checkout.c
+        @@ -145,8 +150,8 @@
+          	char *dst_ref;
+          	struct object_id *dst_oid;
+          	int unique;
+        -+	const char *dwim_remote;
+        -+	char *dwim_dst_ref;
+        ++	const char *implicit_remote;
+        ++	char *implicit_dst_ref;
+          };
+          
+          static int check_tracking_name(struct remote *remote, void *cb_data)
+        @@ -154,8 +159,8 @@
+          		free(query.dst);
+          		return 0;
+          	}
+        -+	if (cb->dwim_remote && !strcmp(remote->name, cb->dwim_remote))
+        -+		cb->dwim_dst_ref = xstrdup(query.dst);
+        ++	if (cb->implicit_remote && !strcmp(remote->name, cb->implicit_remote))
+        ++		cb->implicit_dst_ref = xstrdup(query.dst);
+          	if (cb->dst_ref) {
+          		free(query.dst);
+          		cb->unique = 0;
+        @@ -164,23 +169,23 @@
+          const char *unique_tracking_name(const char *name, struct object_id *oid)
+          {
+         -	struct tracking_name_data cb_data = { NULL, NULL, NULL, 1 };
+        -+	const char *dwim_remote = NULL;
+        ++	const char *implicit_remote = NULL;
+         +	struct tracking_name_data cb_data = { NULL, NULL, NULL, 1, NULL, NULL };
+        -+	if (!git_config_get_string_const("core.dwimremote", &dwim_remote))
+        -+		cb_data.dwim_remote = dwim_remote;
+        ++	if (!git_config_get_string_const("checkout.implicitremote", &implicit_remote))
+        ++		cb_data.implicit_remote = implicit_remote;
+          	cb_data.src_ref = xstrfmt("refs/heads/%s", name);
+          	cb_data.dst_oid = oid;
+          	for_each_remote(check_tracking_name, &cb_data);
+          	free(cb_data.src_ref);
+         -	if (cb_data.unique)
+        -+	free((char *)dwim_remote);
+        ++	free((char *)implicit_remote);
+         +	if (cb_data.unique) {
+        -+		free(cb_data.dwim_dst_ref);
+        ++		free(cb_data.implicit_dst_ref);
+          		return cb_data.dst_ref;
+         +	}
+          	free(cb_data.dst_ref);
+        -+	if (cb_data.dwim_dst_ref)
+        -+		return cb_data.dwim_dst_ref;
+        ++	if (cb_data.implicit_dst_ref)
+        ++		return cb_data.implicit_dst_ref;
+          	return NULL;
+          }
+         
+        @@ -191,11 +196,11 @@
+          	test_branch master
+          '
+          
+        -+test_expect_success 'checkout of branch from multiple remotes succeeds with core.DWIMRemote #1' '
+        ++test_expect_success 'checkout of branch from multiple remotes succeeds with checkout.implicitRemote #1' '
+         +	git checkout -B master &&
+         +	test_might_fail git branch -D foo &&
+         +
+        -+	git -c core.DWIMRemote=repo_a checkout foo &&
+        ++	git -c checkout.implicitRemote=repo_a checkout foo &&
+         +	test_branch foo &&
+         +	test_cmp_rev remotes/repo_a/foo HEAD &&
+         +	test_branch_upstream foo repo_a foo
+        @@ -212,7 +217,7 @@
+          	)
+          '
+          
+        -+test_expect_success '"add" <path> <branch> dwims with core.DWIMRemote' '
+        ++test_expect_success '"add" <path> <branch> dwims with checkout.implicitRemote' '
+         +	test_when_finished rm -rf repo_upstream repo_dwim foo &&
+         +	setup_remote_repo repo_upstream repo_dwim &&
+         +	git init repo_dwim &&
+        @@ -221,7 +226,7 @@
+         +		git remote add repo_upstream2 ../repo_upstream &&
+         +		git fetch repo_upstream2 &&
+         +		test_must_fail git worktree add ../foo foo &&
+        -+		git -c core.DWIMRemote=repo_upstream worktree add ../foo foo
+        ++		git -c checkout.implicitRemote=repo_upstream worktree add ../foo foo
+         +	) &&
+         +	(
+         +		cd foo &&
+
  Documentation/config.txt       | 17 +++++++++++++++++
  Documentation/git-checkout.txt |  6 ++++++
  Documentation/git-worktree.txt |  5 +++++
