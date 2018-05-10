@@ -1,0 +1,96 @@
+From e598cbca22685af05415d004880f137320238d84 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180501184016.15061-10-avarab@gmail.com>
+References: <20180501184016.15061-10-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 May 2018 09:23:14 +0000
+Subject: [PATCH v4 6/6] get_short_oid: document & warn if we ignore the type
+ selector
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The SHA1 prefix 06fa currently matches no blobs in git.git. When
+disambiguating short SHA1s we've been quietly ignoring the user's type
+selector as a fallback mechanism, this was intentionally added in
+1ffa26c461 ("get_short_sha1: list ambiguous objects on error",
+2016-09-26).
+
+I think that behavior makes sense, it's not very useful to just show
+nothing because a preference has been expressed via core.disambiguate,
+but it's bad that we're quietly doing this. The user might thing that
+we just didn't understand what e.g 06fa^{blob} meant.
+
+Now we'll instead print a warning if no objects of the requested type
+were found:
+
+    $ git rev-parse 06fa^{blob}
+    error: short SHA1 06fa is ambiguous
+    hint: The candidates are:
+    [... no blobs listed ...]
+    warning: Your hint (via core.disambiguate or peel syntax) was ignored, we fell
+    back to showing all object types since no object of the requested type
+    matched the provide short SHA1 06fa
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sha1-name.c                         | 11 ++++++++++-
+ t/t1512-rev-parse-disambiguation.sh |  5 ++++-
+ 2 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/sha1-name.c b/sha1-name.c
+index 46d8b1afa6..df33cc2dba 100644
+--- a/sha1-name.c
++++ b/sha1-name.c
+@@ -438,6 +438,7 @@ static int get_short_oid(const char *name, int len, struct object_id *oid,
+ 
+ 	if (!quietly && (status == SHORT_NAME_AMBIGUOUS)) {
+ 		struct oid_array collect = OID_ARRAY_INIT;
++		int ignored_hint = 0;
+ 
+ 		error(_("short SHA1 %s is ambiguous"), ds.hex_pfx);
+ 
+@@ -447,8 +448,10 @@ static int get_short_oid(const char *name, int len, struct object_id *oid,
+ 		 * that case, we still want to show them, so disable the hint
+ 		 * function entirely.
+ 		 */
+-		if (!ds.ambiguous)
++		if (!ds.ambiguous) {
+ 			ds.fn = NULL;
++			ignored_hint = 1;
++		}
+ 
+ 		advise(_("The candidates are:"));
+ 		for_each_abbrev(ds.hex_pfx, collect_ambiguous, &collect);
+@@ -457,6 +460,12 @@ static int get_short_oid(const char *name, int len, struct object_id *oid,
+ 		if (oid_array_for_each(&collect, show_ambiguous_object, &ds))
+ 			BUG("show_ambiguous_object shouldn't return non-zero");
+ 		oid_array_clear(&collect);
++
++		if (ignored_hint) {
++			warning(_("Your hint (via core.disambiguate or peel syntax) was ignored, we fell\n"
++				  "back to showing all object types since no object of the requested type\n"
++				  "matched the provide short SHA1 %s"), ds.hex_pfx);
++		}
+ 	}
+ 
+ 	return status;
+diff --git a/t/t1512-rev-parse-disambiguation.sh b/t/t1512-rev-parse-disambiguation.sh
+index 2701462041..1f06c1e61f 100755
+--- a/t/t1512-rev-parse-disambiguation.sh
++++ b/t/t1512-rev-parse-disambiguation.sh
+@@ -344,7 +344,10 @@ test_expect_success C_LOCALE_OUTPUT 'failed type-selector still shows hint' '
+ 	echo 872 | git hash-object --stdin -w &&
+ 	test_must_fail git rev-parse ee3d^{commit} 2>stderr &&
+ 	grep ^hint: stderr >hints &&
+-	test_line_count = 3 hints
++	test_line_count = 3 hints &&
++	grep ^warning stderr >warnings &&
++	grep -q "Your hint.*was ignored" warnings &&
++	grep -q "the provide short SHA1 ee3d" stderr
+ '
+ 
+ test_expect_success 'core.disambiguate config can prefer types' '
+-- 
+2.17.0.410.g4ac3413cc8
+
