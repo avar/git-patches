@@ -4,12 +4,64 @@ References: <20180524190214.GA21354@sigill.intra.peff.net>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 24 May 2018 19:31:29 +0000
-Subject: [PATCH 0/4] *** SUBJECT HERE ***
+Subject: [PATCH 0/4] fsck: doc fixes & fetch.fsck.* implementation
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+On Thu, May 24, 2018 at 9:02 PM, Jeff King <peff@peff.net> wrote:
+> On Thu, May 24, 2018 at 07:04:04PM +0200, Ævar Arnfjörð Bjarmason wrote:
+>
+>> That doesn't work, because that's for the server-side, but I need the
+>> fetch.fsck.* that doesn't exist. This works (I'll send a better patch
+>> with tests / docs etc. soon):
+>
+> Yeah, I think this is the right direction.
+>
+>> +static int fetch_pack_config_cb(const char *var, const char *value, void *cb)
+>> +{
+>> +     if (strcmp(var, "fetch.fsck.skiplist") == 0) {
+>> +             const char *path;
+>> +
+>> +             if (git_config_pathname(&path, var, value))
+>> +                     return 1;
+>> +             strbuf_addf(&fsck_msg_types, "%cskiplist=%s",
+>> +                     fsck_msg_types.len ? ',' : '=', path);
+>> +             free((char *)path);
+>> +             return 0;
+>> +     }
+>> +
+>> +     if (skip_prefix(var, "fetch.fsck.", &var)) {
+>> +             if (is_valid_msg_type(var, value))
+>> +                     strbuf_addf(&fsck_msg_types, "%c%s=%s",
+>> +                             fsck_msg_types.len ? ',' : '=', var, value);
+>> +             else
+>> +                     warning("Skipping unknown msg id '%s'", var);
+>> +             return 0;
+>> +     }
+>
+> This matches what's in receive-pack, though the way we stuff all of the
+> options into a flat string is kind of nasty. I also wonder if we'd
+> eventually run up against command-line limits if somebody had a
+> complicated fsck config.
+
+Yeah, but I'm leaving this for the future. I doubt that it's going to
+happen in practice, although if you have a huge skip-list...
+
+> I wonder if we should simply be telling index-pack "please read fsck
+> config from the prefix 'fetch.fsck'" instead.
+
+I think this whole notion of reading the same config from two places
+sucks, and now with my patches it's three. But I can't think of a
+reasonable way to make it better without even more complexity, and
+maybe it's better to split it up anyway, i.e. the stuff you want to
+accept is different that fsck and fetch.
+
+> I dunno, maybe I am just creating work. Certainly I don't think it
+> should be a blocker for adding fetch.fsck support. But if you want to
+> think about it while you are here or write a patch, I wouldn't complain. :)
+
+Sorry, too late. I already wrote all of this :)
 
 Ævar Arnfjörð Bjarmason (4):
   config doc: don't describe *.fetchObjects twice
