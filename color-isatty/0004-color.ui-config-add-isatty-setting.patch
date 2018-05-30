@@ -1,0 +1,150 @@
+From d900b84a8f21710b571d264f5b2ef00493608427 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 30 May 2018 20:42:44 +0000
+Subject: [PATCH 4/4] color.ui config: add "isatty" setting
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A co-worker of mine who was using UNIX systems when dinosaurs roamed
+the earth was lamenting that kids these days were using tools like
+"git" that thought they knew better than isatty(3) when deciding
+whether or not something was a terminal, and the state of the
+documentation fixed earlier in this series certainly didn't help.
+
+So this setting is a small gift to all the UNIX graybeards out
+there. Now they can set color.ui=isatty and only emit fancy colors in
+situations when the gods of old intended, not whatever heuristic we've
+decided to set "auto" to.
+
+As noted here this is *currently* the same as setting color.ui=auto &
+color.pager=false, but I think it's good to explicitly have this
+setting for any future changes. The reason, as now noted in the
+documentation is that the "auto" setting may become even smarter in
+the future and learn even deeper heuristics for when to turn itself on
+even if isatty(3) were returning true.
+
+At that point the fans of plain isatty(3) will become even more upset
+at what we're doing, so let's give them a simple future-proof opt-out.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt | 10 ++++++++++
+ color.c                  | 12 ++++++++----
+ color.h                  |  1 +
+ t/t7006-pager.sh         | 15 +++++++++++++++
+ 4 files changed, 34 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index b882a88214..183569786f 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1292,6 +1292,16 @@ color.ui::
+ 	determined by a call to `isatty(3)`) or to a pager (unless
+ 	`color.pager` is set to false).
+ +
++If you don't like the magic of `auto` and prefer for git to just ask
++`isatty(3)` whether it's connected to a terminal set this to
++`isatty`. This will cause it to always obey that function, except
++(like `auto`) if `TERM=dumb` is set in the environment. Currently this
++is equivalent to setting `auto` and `color.pager=false`, but in the
++future `auto` may be smart enough to handle other cases, i.e. when
++`isatty(3)` returns `1` but something else other than `TERM=dumb`
++suggests the terminal can't handle colors or not. If you'd like to
++avoid all that magic use `isatty`.
+++
+ Setting this to some value unknown to git will warn and fall back to
+ `auto`. This is so that new values can be recognized in the future
+ without the git configuration file being incompatible between versions
+diff --git a/color.c b/color.c
+index e52c6cdd29..05f95649bc 100644
+--- a/color.c
++++ b/color.c
+@@ -306,6 +306,8 @@ int git_config_colorbool(const char *var, const char *value)
+ 			return 1;
+ 		if (!strcasecmp(value, "auto"))
+ 			return GIT_COLOR_AUTO;
++		if (!strcasecmp(value, "isatty"))
++			return GIT_COLOR_ISATTY;
+ 	}
+ 
+ 	if (!var)
+@@ -332,13 +334,14 @@ int git_config_colorbool(const char *var, const char *value)
+ 	return GIT_COLOR_AUTO;
+ }
+ 
+-static int check_auto_color(int fd)
++static int check_auto_color(int fd, int isatty_only)
+ {
+ 	static int color_stderr_is_tty = -1;
+ 	int *is_tty_p = fd == 1 ? &color_stdout_is_tty : &color_stderr_is_tty;
+ 	if (*is_tty_p < 0)
+ 		*is_tty_p = isatty(fd);
+-	if (*is_tty_p || (fd == 1 && pager_in_use() && pager_use_color)) {
++	if (*is_tty_p || (!isatty_only && fd == 1 && pager_in_use() &&
++			  pager_use_color)) {
+ 		if (!is_terminal_dumb())
+ 			return 1;
+ 	}
+@@ -359,9 +362,10 @@ int want_color_fd(int fd, int var)
+ 	if (var < 0)
+ 		var = git_use_color_default;
+ 
+-	if (var == GIT_COLOR_AUTO) {
++	if (var == GIT_COLOR_AUTO || var == GIT_COLOR_ISATTY) {
++		int isatty_only = var == GIT_COLOR_ISATTY;
+ 		if (want_auto[fd] < 0)
+-			want_auto[fd] = check_auto_color(fd);
++			want_auto[fd] = check_auto_color(fd, isatty_only);
+ 		return want_auto[fd];
+ 	}
+ 	return var;
+diff --git a/color.h b/color.h
+index 5b744e1bc6..01d8cc01a5 100644
+--- a/color.h
++++ b/color.h
+@@ -57,6 +57,7 @@ struct strbuf;
+ #define GIT_COLOR_NEVER  0
+ #define GIT_COLOR_ALWAYS 1
+ #define GIT_COLOR_AUTO   2
++#define GIT_COLOR_ISATTY 3
+ 
+ /* A default list of colors to use for commit graphs and show-branch output */
+ extern const char *column_colors_ansi[];
+diff --git a/t/t7006-pager.sh b/t/t7006-pager.sh
+index b16f2ac28b..ea4f2f47d0 100755
+--- a/t/t7006-pager.sh
++++ b/t/t7006-pager.sh
+@@ -309,6 +309,13 @@ test_expect_success 'no color when stdout is a regular file' '
+ 	! colorful colorless.log
+ '
+ 
++test_expect_success 'no color when stdout is a regular file (isatty)' '
++	rm -f colorless.log &&
++	test_config color.ui isatty &&
++	git log >colorless.log &&
++	! colorful colorless.log
++'
++
+ test_expect_success 'unknown color.ui values default to "auto" (regular file)' '
+ 	rm -f colorless.log &&
+ 	test_config color.ui doesnotexist &&
+@@ -340,6 +347,14 @@ test_expect_success TTY 'colors are suppressed by color.pager' '
+ 	! colorful paginated.out
+ '
+ 
++test_expect_success TTY 'colors are suppressed by color.ui=isatty when writing to a pager' '
++	rm -f paginated.out &&
++	test_config color.ui isatty &&
++	test_config color.pager true &&
++	test_terminal git log &&
++	! colorful paginated.out
++'
++
+ test_expect_success 'color when writing to a file intended for a pager' '
+ 	rm -f colorful.log &&
+ 	test_config color.ui auto &&
+-- 
+2.17.0.290.gded63e768a
+

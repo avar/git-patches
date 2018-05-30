@@ -1,0 +1,113 @@
+From c78462fb63d7d18839ceb3d114b6f403b42140f6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 30 May 2018 20:22:18 +0000
+Subject: [PATCH 3/4] color.ui config: don't die on unknown values
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Before this change git will die on any unknown color.ui values:
+
+    $ git -c color.ui=doesnotexist show
+    fatal: bad numeric config value 'doesnotexist' for 'color.ui': invalid unit
+
+This makes the failure mode of introducing any new values in the
+future really bad, as explained in the documentation being added
+here. Instead let's warn and fall back to "auto".
+
+The reason for the !warned++ pattern is when stepping through this in
+the debugger I found that git_config_colorbool() is called more than
+once on e.g. a "show" if color.ui=foo is set in the config, but
+color.ui=bar in the command-line, and would then warn about
+both.
+
+Maybe we should warn about both in that case, but I don't know if
+there's other cases where not doing this would cause a warning flood,
+and in any case the user is unlikely to have such a bad value in
+multiple places, so this should be good enough.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt |  5 +++++
+ color.c                  | 13 +++++++++++++
+ t/t7006-pager.sh         | 16 ++++++++++++++++
+ 3 files changed, 34 insertions(+)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 4767363519..b882a88214 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1291,6 +1291,11 @@ color.ui::
+ 	want such output to use color when written to the terminal (as
+ 	determined by a call to `isatty(3)`) or to a pager (unless
+ 	`color.pager` is set to false).
+++
++Setting this to some value unknown to git will warn and fall back to
++`auto`. This is so that new values can be recognized in the future
++without the git configuration file being incompatible between versions
++to the point of most porcelain commands dying on the older version.
+ 
+ column.ui::
+ 	Specify whether supported commands should output in columns.
+diff --git a/color.c b/color.c
+index b1c24c69de..e52c6cdd29 100644
+--- a/color.c
++++ b/color.c
+@@ -311,6 +311,19 @@ int git_config_colorbool(const char *var, const char *value)
+ 	if (!var)
+ 		return -1;
+ 
++	/*
++	 * If future git versions introduce new color.ui settings we
++	 * don't want to die right below when git_config_bool() fails
++	 * to parse them as bool.
++	 */
++	if (git_parse_maybe_bool(value) < 0) {
++		static int warned = 0;
++		if (!warned++)
++			warning(_("unknown value '%s' for '%s', falling back to 'auto'"),
++				value, var);
++		return GIT_COLOR_AUTO;
++	}
++
+ 	/* Missing or explicit false to turn off colorization */
+ 	if (!git_config_bool(var, value))
+ 		return 0;
+diff --git a/t/t7006-pager.sh b/t/t7006-pager.sh
+index 7541ba5edb..b16f2ac28b 100755
+--- a/t/t7006-pager.sh
++++ b/t/t7006-pager.sh
+@@ -309,6 +309,14 @@ test_expect_success 'no color when stdout is a regular file' '
+ 	! colorful colorless.log
+ '
+ 
++test_expect_success 'unknown color.ui values default to "auto" (regular file)' '
++	rm -f colorless.log &&
++	test_config color.ui doesnotexist &&
++	git log >colorless.log 2>err &&
++	test_i18ngrep "falling back" err &&
++	! colorful colorless.log
++'
++
+ test_expect_success TTY 'color when writing to a pager' '
+ 	rm -f paginated.out &&
+ 	test_config color.ui auto &&
+@@ -316,6 +324,14 @@ test_expect_success TTY 'color when writing to a pager' '
+ 	colorful paginated.out
+ '
+ 
++test_expect_success TTY 'unknown color.ui values default to "auto" (pager)' '
++	rm -f paginated.out &&
++	test_config color.ui doesnotexist &&
++	test_terminal git log 2>err &&
++	test_i18ngrep "falling back" err &&
++	colorful paginated.out
++'
++
+ test_expect_success TTY 'colors are suppressed by color.pager' '
+ 	rm -f paginated.out &&
+ 	test_config color.ui auto &&
+-- 
+2.17.0.290.gded63e768a
+
