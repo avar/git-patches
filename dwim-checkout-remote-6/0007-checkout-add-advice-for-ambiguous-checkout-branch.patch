@@ -1,0 +1,155 @@
+From 0a148182e60b309f4b18b1aa8081486e04c589a8 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180601211015.11919-1-avarab@gmail.com>
+References: <20180601211015.11919-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 31 May 2018 14:43:30 +0000
+Subject: [PATCH v6 7/8] checkout: add advice for ambiguous "checkout <branch>"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As the "checkout" documentation describes:
+
+    If <branch> is not found but there does exist a tracking branch in
+    exactly one remote (call it <remote>) with a matching name, treat
+    as equivalent to [...] <remote>/<branch.
+
+This is a really useful feature. The problem is that when you add
+another remote (e.g. a fork), git won't find a unique branch name
+anymore, and will instead print this unhelpful message:
+
+    $ git checkout master
+    error: pathspec 'master' did not match any file(s) known to git
+
+Now it will, on my git.git checkout, print:
+
+    $ ./git --exec-path=$PWD checkout master
+    error: pathspec 'master' did not match any file(s) known to git.
+    hint: 'master' matched more than one remote tracking branch.
+    hint: We found 26 remotes with a reference that matched. So we fell back
+    hint: on trying to resolve the argument as a path, but failed there too!
+    hint:
+    hint: If you meant to check out a remote tracking branch on, e.g. 'origin',
+    hint: you can do so by fully qualifying the name with the --track option:
+    hint:
+    hint:     git checkout --track origin/<name>
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt |  7 +++++++
+ advice.c                 |  2 ++
+ advice.h                 |  1 +
+ builtin/checkout.c       | 13 +++++++++++++
+ t/t2024-checkout-dwim.sh | 14 ++++++++++++++
+ 5 files changed, 37 insertions(+)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index ab641bf5a9..dfc0413a84 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -344,6 +344,13 @@ advice.*::
+ 		Advice shown when you used linkgit:git-checkout[1] to
+ 		move to the detach HEAD state, to instruct how to create
+ 		a local branch after the fact.
++	checkoutAmbiguousRemoteBranchName::
++		Advice shown when the argument to
++		linkgit:git-checkout[1] ambiguously resolves to a
++		remote tracking branch on more than one remote in
++		situations where an unambiguous argument would have
++		otherwise caused a remote-tracking branch to be
++		checked out.
+ 	amWorkDir::
+ 		Advice that shows the location of the patch file when
+ 		linkgit:git-am[1] fails to apply it.
+diff --git a/advice.c b/advice.c
+index 370a56d054..75e7dede90 100644
+--- a/advice.c
++++ b/advice.c
+@@ -21,6 +21,7 @@ int advice_add_embedded_repo = 1;
+ int advice_ignored_hook = 1;
+ int advice_waiting_for_editor = 1;
+ int advice_graft_file_deprecated = 1;
++int advice_checkout_ambiguous_remote_branch_name = 1;
+ 
+ static int advice_use_color = -1;
+ static char advice_colors[][COLOR_MAXLEN] = {
+@@ -72,6 +73,7 @@ static struct {
+ 	{ "ignoredhook", &advice_ignored_hook },
+ 	{ "waitingforeditor", &advice_waiting_for_editor },
+ 	{ "graftfiledeprecated", &advice_graft_file_deprecated },
++	{ "checkoutambiguousremotebranchname", &advice_checkout_ambiguous_remote_branch_name },
+ 
+ 	/* make this an alias for backward compatibility */
+ 	{ "pushnonfastforward", &advice_push_update_rejected }
+diff --git a/advice.h b/advice.h
+index 9f5064e82a..4d11d51d43 100644
+--- a/advice.h
++++ b/advice.h
+@@ -22,6 +22,7 @@ extern int advice_add_embedded_repo;
+ extern int advice_ignored_hook;
+ extern int advice_waiting_for_editor;
+ extern int advice_graft_file_deprecated;
++extern int advice_checkout_ambiguous_remote_branch_name;
+ 
+ int git_default_advice_config(const char *var, const char *value);
+ __attribute__((format (printf, 1, 2)))
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index 8c93c55cbc..baa027455a 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -22,6 +22,7 @@
+ #include "resolve-undo.h"
+ #include "submodule-config.h"
+ #include "submodule.h"
++#include "advice.h"
+ 
+ static const char * const checkout_usage[] = {
+ 	N_("git checkout [<options>] <branch>"),
+@@ -1267,6 +1268,18 @@ int cmd_checkout(int argc, const char **argv, const char *prefix)
+ 	UNLEAK(opts);
+ 	if (opts.patch_mode || opts.pathspec.nr) {
+ 		int ret = checkout_paths(&opts, new_branch_info.name);
++		if (ret && dwim_remotes_matched > 1 &&
++		    advice_checkout_ambiguous_remote_branch_name)
++			advise(_("'%s' matched more than one remote tracking branch.\n"
++				 "We found %d remotes with a reference that matched. So we fell back\n"
++				 "on trying to resolve the argument as a path, but failed there too!\n"
++				 "\n"
++				 "If you meant to check out a remote tracking branch on, e.g. 'origin',\n"
++				 "you can do so by fully qualifying the name with the --track option:\n"
++				 "\n"
++				 "    git checkout --track origin/<name>"),
++			       argv[0],
++			       dwim_remotes_matched);
+ 		return ret;
+ 	} else {
+ 		return checkout_branch(&opts, &new_branch_info);
+diff --git a/t/t2024-checkout-dwim.sh b/t/t2024-checkout-dwim.sh
+index ed32828105..fef263a858 100755
+--- a/t/t2024-checkout-dwim.sh
++++ b/t/t2024-checkout-dwim.sh
+@@ -76,6 +76,20 @@ test_expect_success 'checkout of branch from multiple remotes fails #1' '
+ 	test_branch master
+ '
+ 
++test_expect_success 'checkout of branch from multiple remotes fails with advice' '
++	git checkout -B master &&
++	test_might_fail git branch -D foo &&
++	test_must_fail git checkout foo 2>stderr &&
++	test_branch master &&
++	status_uno_is_clean &&
++	test_i18ngrep "^hint: " stderr &&
++	test_must_fail git -c advice.checkoutAmbiguousRemoteBranchName=false \
++		checkout foo 2>stderr &&
++	test_branch master &&
++	status_uno_is_clean &&
++	test_i18ngrep ! "^hint: " stderr
++'
++
+ test_expect_success 'checkout of branch from a single remote succeeds #1' '
+ 	git checkout -B master &&
+ 	test_might_fail git branch -D bar &&
+-- 
+2.17.0.290.gded63e768a
+
