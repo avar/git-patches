@@ -1,0 +1,48 @@
+From 01b02463162eba16d0356b47adffb8a42acc843d Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180605162939.GA158365@google.com>
+References: <20180605162939.GA158365@google.com>
+From: =?UTF-8?q?Martin=20=C3=85gren?= <martin.agren@gmail.com>
+Date: Mon, 4 Jun 2018 16:43:05 +0200
+Subject: [PATCH 3/3] refspec: initalize `refspec_item` in
+ `valid_fetch_refspec()`
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We allocate a `struct refspec_item` on the stack without initializing
+it. In particular, its `dst` and `src` members will contain some random
+data from the stack. When we later call `refspec_item_clear()`, it will
+call `free()` on those pointers. So if the call to `parse_refspec()` did
+not assign to them, we will be freeing some random "pointers". This is
+undefined behavior.
+
+To the best of my understanding, this cannot currently be triggered by
+user-provided data. And for what it's worth, the test-suite does not
+trigger this with SANITIZE=address. It can be provoked by calling
+`valid_fetch_refspec(":*")`.
+
+Zero the struct, as is done in other users of `struct refspec_item` by
+using the refspec_item_init() initialization function.
+
+Signed-off-by: Martin Ågren <martin.agren@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refspec.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/refspec.c b/refspec.c
+index a35493e35e..e8010dce0c 100644
+--- a/refspec.c
++++ b/refspec.c
+@@ -196,7 +196,7 @@ void refspec_clear(struct refspec *rs)
+ int valid_fetch_refspec(const char *fetch_refspec_str)
+ {
+ 	struct refspec_item refspec;
+-	int ret = parse_refspec(&refspec, fetch_refspec_str, REFSPEC_FETCH);
++	int ret = refspec_item_init(&refspec, fetch_refspec_str, REFSPEC_FETCH);
+ 	refspec_item_clear(&refspec);
+ 	return ret;
+ }
+-- 
+2.17.0.290.gded63e768a
+
