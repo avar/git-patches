@@ -1,0 +1,124 @@
+From 7d81c06a23872976a2e19af5b5977e9d388cf496 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180602115042.18167-1-avarab@gmail.com>
+References: <20180602115042.18167-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 31 May 2018 14:41:36 +0000
+Subject: [PATCH v7 5/8] checkout: pass the "num_matches" up to callers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Pass the previously added "num_matches" struct value up to the callers
+of unique_tracking_name(). This will allow callers to optionally print
+better error messages in a later change.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/checkout.c | 10 +++++++---
+ builtin/worktree.c |  4 ++--
+ checkout.c         |  5 ++++-
+ checkout.h         |  3 ++-
+ 4 files changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index 2e1d2376d2..72457fb7d5 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -878,7 +878,8 @@ static int parse_branchname_arg(int argc, const char **argv,
+ 				int dwim_new_local_branch_ok,
+ 				struct branch_info *new_branch_info,
+ 				struct checkout_opts *opts,
+-				struct object_id *rev)
++				struct object_id *rev,
++				int *dwim_remotes_matched)
+ {
+ 	struct tree **source_tree = &opts->source_tree;
+ 	const char **new_branch = &opts->new_branch;
+@@ -972,7 +973,8 @@ static int parse_branchname_arg(int argc, const char **argv,
+ 			recover_with_dwim = 0;
+ 
+ 		if (recover_with_dwim) {
+-			const char *remote = unique_tracking_name(arg, rev);
++			const char *remote = unique_tracking_name(arg, rev,
++								  dwim_remotes_matched);
+ 			if (remote) {
+ 				*new_branch = arg;
+ 				arg = remote;
+@@ -1109,6 +1111,7 @@ int cmd_checkout(int argc, const char **argv, const char *prefix)
+ 	struct branch_info new_branch_info;
+ 	char *conflict_style = NULL;
+ 	int dwim_new_local_branch = 1;
++	int dwim_remotes_matched = 0;
+ 	struct option options[] = {
+ 		OPT__QUIET(&opts.quiet, N_("suppress progress reporting")),
+ 		OPT_STRING('b', NULL, &opts.new_branch, N_("branch"),
+@@ -1219,7 +1222,8 @@ int cmd_checkout(int argc, const char **argv, const char *prefix)
+ 			opts.track == BRANCH_TRACK_UNSPECIFIED &&
+ 			!opts.new_branch;
+ 		int n = parse_branchname_arg(argc, argv, dwim_ok,
+-					     &new_branch_info, &opts, &rev);
++					     &new_branch_info, &opts, &rev,
++					     &dwim_remotes_matched);
+ 		argv += n;
+ 		argc -= n;
+ 	}
+diff --git a/builtin/worktree.c b/builtin/worktree.c
+index 5c7d2bb180..a763dbdccb 100644
+--- a/builtin/worktree.c
++++ b/builtin/worktree.c
+@@ -412,7 +412,7 @@ static const char *dwim_branch(const char *path, const char **new_branch)
+ 	if (guess_remote) {
+ 		struct object_id oid;
+ 		const char *remote =
+-			unique_tracking_name(*new_branch, &oid);
++			unique_tracking_name(*new_branch, &oid, NULL);
+ 		return remote;
+ 	}
+ 	return NULL;
+@@ -484,7 +484,7 @@ static int add(int ac, const char **av, const char *prefix)
+ 
+ 		commit = lookup_commit_reference_by_name(branch);
+ 		if (!commit) {
+-			remote = unique_tracking_name(branch, &oid);
++			remote = unique_tracking_name(branch, &oid, NULL);
+ 			if (remote) {
+ 				new_branch = branch;
+ 				branch = remote;
+diff --git a/checkout.c b/checkout.c
+index 7662a39a62..ee3a7e9c05 100644
+--- a/checkout.c
++++ b/checkout.c
+@@ -32,12 +32,15 @@ static int check_tracking_name(struct remote *remote, void *cb_data)
+ 	return 0;
+ }
+ 
+-const char *unique_tracking_name(const char *name, struct object_id *oid)
++const char *unique_tracking_name(const char *name, struct object_id *oid,
++				 int *dwim_remotes_matched)
+ {
+ 	struct tracking_name_data cb_data = TRACKING_NAME_DATA_INIT;
+ 	cb_data.src_ref = xstrfmt("refs/heads/%s", name);
+ 	cb_data.dst_oid = oid;
+ 	for_each_remote(check_tracking_name, &cb_data);
++	if (dwim_remotes_matched)
++		*dwim_remotes_matched = cb_data.num_matches;
+ 	free(cb_data.src_ref);
+ 	if (cb_data.num_matches == 1)
+ 		return cb_data.dst_ref;
+diff --git a/checkout.h b/checkout.h
+index 4cd4cd1c23..6b2073310c 100644
+--- a/checkout.h
++++ b/checkout.h
+@@ -9,6 +9,7 @@
+  * exists, NULL otherwise.
+  */
+ extern const char *unique_tracking_name(const char *name,
+-					struct object_id *oid);
++					struct object_id *oid,
++					int *dwim_remotes_matched);
+ 
+ #endif /* CHECKOUT_H */
+-- 
+2.17.0.290.gded63e768a
+
