@@ -4,12 +4,84 @@ References: <20180602115042.18167-1-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Tue, 5 Jun 2018 14:39:14 +0000
-Subject: [PATCH v7 0/8] *** SUBJECT HERE ***
+Subject: [PATCH v7 0/8] ambiguous checkout UI & checkout.defaultRemote
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+Fixes issues noted with v6, hopefully ready for queuing. A tbdiff with
+v6:
+
+1: ab4529d9f5 = 1: 2ca81c76fc checkout tests: index should be clean after dwim checkout
+2: c8bbece403 = 2: 19b14a1c75 checkout.h: wrap the arguments to unique_tracking_name()
+3: 881fe63f4f = 3: 8bc6a9c052 checkout.c: introduce an *_INIT macro
+4: 72ddaeddd3 ! 4: 34f3b67f9b checkout.c: change "unique" member to "num_matches"
+    @@ -1,6 +1,6 @@
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    -    checkout.c]: change "unique" member to "num_matches"
+    +    checkout.c: change "unique" member to "num_matches"
+         
+         Internally track how many matches we find in the check_tracking_name()
+         callback. Nothing uses this now, but it will be made use of in a later
+5: 5e8c82680b = 5: 7d81c06a23 checkout: pass the "num_matches" up to callers
+6: 07e667f80a = 6: e86636ad2c builtin/checkout.c: use "ret" variable for return
+7: 0a148182e6 ! 7: c2130b347c checkout: add advice for ambiguous "checkout <branch>"
+    @@ -27,6 +27,28 @@
+             hint: you can do so by fully qualifying the name with the --track option:
+             hint:
+             hint:     git checkout --track origin/<name>
+    +    
+    +    Note that the "error: pathspec[...]" message is still printed. This is
+    +    because whatever else checkout may have tried earlier, its final
+    +    fallback is to try to resolve the argument as a path. E.g. in this
+    +    case:
+    +    
+    +        $ ./git --exec-path=$PWD checkout master pu
+    +        error: pathspec 'master' did not match any file(s) known to git.
+    +        error: pathspec 'pu' did not match any file(s) known to git.
+    +    
+    +    There we don't print the "hint:" implicitly due to earlier logic
+    +    around the DWIM fallback. That fallback is only used if it looks like
+    +    we have one argument that might be a branch.
+    +    
+    +    I can't think of an intrinsic reason for why we couldn't in some
+    +    future change skip printing the "error: pathspec[...]" error. However,
+    +    to do so we'd need to pass something down to checkout_paths() to make
+    +    it suppress printing an error on its own, and for us to be confident
+    +    that we're not silencing cases where those errors are meaningful.
+    +    
+    +    I don't think that's worth it since determining whether that's the
+    +    case could easily change due to future changes in the checkout logic.
+         
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+8: f3a52a26a2 ! 8: f1ac0f7351 checkout & worktree: introduce checkout.defaultRemote
+    @@ -53,12 +53,12 @@
+         
+             $ ./git --exec-path=$PWD checkout master
+             error: pathspec 'master' did not match any file(s) known to git.
+    -        hint: The argument 'master' matched more than one remote tracking branch.
+    +        hint: 'master' matched more than one remote tracking branch.
+             hint: We found 26 remotes with a reference that matched. So we fell back
+             hint: on trying to resolve the argument as a path, but failed there too!
+             hint:
+    -        hint: If you meant to check out a remote tracking branch on e.g. 'origin'
+    -        hint: you can do so by fully-qualifying the name with the --track option:
+    +        hint: If you meant to check out a remote tracking branch on, e.g. 'origin',
+    +        hint: you can do so by fully qualifying the name with the --track option:
+             hint:
+             hint:     git checkout --track origin/<name>
+             hint:
+    @@ -263,7 +263,7 @@
+      	status_uno_is_clean &&
+     -	test_i18ngrep ! "^hint: " stderr
+     +	test_i18ngrep ! "^hint: " stderr &&
+    -+	# Make sure the likes of checkout -p don not print this hint
+    ++	# Make sure the likes of checkout -p do not print this hint
+     +	git checkout -p foo 2>stderr &&
+     +	test_i18ngrep ! "^hint: " stderr &&
+     +	status_uno_is_clean
 
 Ævar Arnfjörð Bjarmason (8):
   checkout tests: index should be clean after dwim checkout
