@@ -1,0 +1,195 @@
+From 8e82e7ace14ddca3bcc2d5c78deaa5d35ff8274e Mon Sep 17 00:00:00 2001
+In-Reply-To: <87lgbsz61p.fsf@evledraar.gmail.com>
+References: <87lgbsz61p.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 6 Jun 2018 10:14:52 +0000
+Subject: [RFC PATCH 2/2] sha1-name: add core.validateAbbrev & relative
+ core.abbrev
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since Linus added auto-sizing for abbreviations in
+e6c587c733 ("abbrev: auto size the default abbreviation", 2016-09-30)
+we've been less likely to produce a short SHA-1 today that'll collide
+on the same repository tomorrow, since before we'd always pick the
+bare minimum we could get away with.
+
+But we still do a full disambiguation check, which can be very
+expensive in some cases. There's a work-in-progress MIDX
+implementation to address that[1].
+
+This change adds an alternate method of achieving some of the same
+ends (but possibly not all, see [2] and replies to the original thread
+at [1]).
+
+Now, as described in the docs the user can set a relative abbreviation
+length via core.abbrev, e.g. on linux.git core.abbrev=+2 will produce
+SHA-1s that are 14 characters (as opposed to the implicit 12).
+
+This in combination with core.validateAbbrev=false (off by default)
+allows for picking a trade-off between performance, and the odds that
+future or remote (or current and local) short SHA-1 will be ambiguous.
+
+1. https://public-inbox.org/git/20180107181459.222909-1-dstolee@microsoft.com/
+2. https://public-inbox.org/git/87lgbsz61p.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt | 46 ++++++++++++++++++++++++++++++++++++++++
+ cache.h                  |  2 ++
+ config.c                 | 14 ++++++++++++
+ environment.c            |  2 ++
+ sha1-name.c              | 15 +++++++++++++
+ 5 files changed, 79 insertions(+)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index ab641bf5a9..8624110818 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -919,6 +919,52 @@ core.abbrev::
+ 	in your repository, which hopefully is enough for
+ 	abbreviated object names to stay unique for some time.
+ 	The minimum length is 4.
+++
++This can also be set to relative values such as `+2` or `-2`, which
++means to add or subtract N characters from the SHA-1 that Git would
++otherwise print. This is useful in combination with the
++`core.validateAbbrev` setting, or to get more future-proof hashes to
++reference in the future in a repository whose number of objects is
++expected to grow.
++
++core.validateAbbrev::
++	If set to false (true by default) don't do any validation when
++	printing abbreviated object names to see if they're really
++	unique. This makes printing objects more performant at the
++	cost of potentially printing object names that aren't unique
++	within the current repository.
+++
++When printing abbreviated object names Git needs to look through the
++local object store. This is an `O(log N)` operation assuming all the
++objects are in a single pack file, but `X * O(log N)` given `X` pack
++files, which can get expensive on some larger repositories.
+++
++This setting changes that to `O(1)`, but with the trade-off that
++depending on the value of `core.abbrev` way may be printing
++abbreviated hashes that collide. Too see how likely this is, try
++running:
+++
++-----------------------------------------------------------------------------------------------------------
++git log --all --pretty=format:%h --abbrev=4 | perl -nE 'chomp; say length' | sort | uniq -c | sort -nr
++-----------------------------------------------------------------------------------------------------------
+++
++This shows how many commits were found at each abbreviation length. On
++linux.git in June 2018 this shows a bit more than 750,000 commits,
++with just 4 needing 11 characters to be fully abbreviated, and the
++default heuristic picks a length of 12.
+++
++Even without `core.validateAbbrev=false` the results abbreviation
++already a bit of a probability game. They're guaranteed at the moment
++of generation, but as more objects are added, ambiguities may be
++introduced. Likewise, what's unambiguous for you may not be for
++somebody else you're communicating with, if they have their own clone.
+++
++Therefore the default of `core.validateAbbrev=true` may not save you
++in practice if you're sharing the SHA-1 or noting it now to use after
++a `git fetch`. You may be better off setting `core.abbrev` to
++e.g. `+2` to add 2 extra characters to the SHA-1 in combination with
++`core.validateAbbrev=false` to get a reasonable trade-off between
++safety and performance.
+ 
+ add.ignoreErrors::
+ add.ignore-errors (deprecated)::
+diff --git a/cache.h b/cache.h
+index 89a107a7f7..6dc5af9482 100644
+--- a/cache.h
++++ b/cache.h
+@@ -772,6 +772,8 @@ extern int check_stat;
+ extern int quote_path_fully;
+ extern int has_symlinks;
+ extern int minimum_abbrev, default_abbrev;
++extern int default_abbrev_relative;
++extern int validate_abbrev;
+ extern int ignore_case;
+ extern int assume_unchanged;
+ extern int prefer_symlink_refs;
+diff --git a/config.c b/config.c
+index 12f762ad92..b6e0d17af1 100644
+--- a/config.c
++++ b/config.c
+@@ -1146,11 +1146,25 @@ static int git_default_core_config(const char *var, const char *value)
+ 		return 0;
+ 	}
+ 
++	if (!strcmp(var, "core.validateabbrev")) {
++		if (!value)
++			return config_error_nonbool(var);
++		validate_abbrev =  git_config_bool(var, value);
++		return 0;
++	}
++
+ 	if (!strcmp(var, "core.abbrev")) {
+ 		if (!value)
+ 			return config_error_nonbool(var);
+ 		if (!strcasecmp(value, "auto")) {
+ 			default_abbrev = -1;
++		} else if (*value == '+' || *value == '-') {
++			int relative = git_config_int(var, value);
++			if (relative == 0)
++				die(_("bad core.abbrev value %s. "
++				      "relative values must be non-zero"),
++				    value);
++			default_abbrev_relative = relative;
+ 		} else {
+ 			int abbrev = git_config_int(var, value);
+ 			if (abbrev < minimum_abbrev || abbrev > 40)
+diff --git a/environment.c b/environment.c
+index 2a6de2330b..4a24d8126b 100644
+--- a/environment.c
++++ b/environment.c
+@@ -22,6 +22,8 @@ int trust_ctime = 1;
+ int check_stat = 1;
+ int has_symlinks = 1;
+ int minimum_abbrev = 4, default_abbrev = -1;
++int default_abbrev_relative = 0;
++int validate_abbrev = 1;
+ int ignore_case;
+ int assume_unchanged;
+ int prefer_symlink_refs;
+diff --git a/sha1-name.c b/sha1-name.c
+index 60d9ef3c7e..aa7ccea14d 100644
+--- a/sha1-name.c
++++ b/sha1-name.c
+@@ -576,6 +576,7 @@ int find_unique_abbrev_r(char *hex, const struct object_id *oid, int len)
+ 	struct disambiguate_state ds;
+ 	struct min_abbrev_data mad;
+ 	struct object_id oid_ret;
++	int dar = default_abbrev_relative;
+ 	if (len < 0) {
+ 		unsigned long count = approximate_object_count();
+ 		/*
+@@ -602,6 +603,20 @@ int find_unique_abbrev_r(char *hex, const struct object_id *oid, int len)
+ 	if (len == GIT_SHA1_HEXSZ || !len)
+ 		return GIT_SHA1_HEXSZ;
+ 
++	if (dar) {
++		if (len + dar < MINIMUM_ABBREV) {
++			len = MINIMUM_ABBREV;
++			dar = 0;
++		}
++
++		if (validate_abbrev) {
++			len += dar;
++		} else {
++			hex[len + dar] = 0;
++			return len + dar;
++		}
++	}
++
+ 	mad.init_len = len;
+ 	mad.cur_len = len;
+ 	mad.hex = hex;
+-- 
+2.17.0.290.gded63e768a
+
