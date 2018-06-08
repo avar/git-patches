@@ -1,0 +1,96 @@
+From e3e055e91ff41f526e6985078510581430771d6e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 6 Jun 2018 13:54:44 +0000
+Subject: [PATCH 02/20] test library: add a test_byte_count
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This new function is like test_line_count except it uses "wc -c"
+instead of "wc -l". Perhaps this should be a parameter, but I don't
+see us needing "wc -m" (chars), "wc -w" (words) etc.
+
+Change a couple of existing tests that use this, I expect to use this
+in later patches when adding more tests.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/README                   |  4 ++++
+ t/t6006-rev-list-format.sh |  6 ++----
+ t/test-lib-functions.sh    | 23 +++++++++++++++++++++++
+ 3 files changed, 29 insertions(+), 4 deletions(-)
+
+diff --git a/t/README b/t/README
+index eede11d649..3139c27e4e 100644
+--- a/t/README
++++ b/t/README
+@@ -728,6 +728,10 @@ library for your script to use.
+    Check whether the <expected> rev points to the same commit as the
+    <actual> rev.
+ 
++ - test_byte_count (= | -lt | -ge | ...) <length> <file>
++
++   Check whether a file has the number of bytes it is expected to.
++
+  - test_line_count (= | -lt | -ge | ...) <length> <file>
+ 
+    Check whether a file has the number of lines it is expected to.
+diff --git a/t/t6006-rev-list-format.sh b/t/t6006-rev-list-format.sh
+index ec42c2f779..ec068c55ab 100755
+--- a/t/t6006-rev-list-format.sh
++++ b/t/t6006-rev-list-format.sh
+@@ -456,14 +456,12 @@ test_expect_success '--abbrev' '
+ 
+ test_expect_success '%H is not affected by --abbrev-commit' '
+ 	git log -1 --format=%H --abbrev-commit --abbrev=20 HEAD >actual &&
+-	len=$(wc -c <actual) &&
+-	test $len = 41
++	test_byte_count = 41 actual
+ '
+ 
+ test_expect_success '%h is not affected by --abbrev-commit' '
+ 	git log -1 --format=%h --abbrev-commit --abbrev=20 HEAD >actual &&
+-	len=$(wc -c <actual) &&
+-	test $len = 21
++	test_byte_count = 21 actual
+ '
+ 
+ test_expect_success '"%h %gD: %gs" is same as git-reflog' '
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 2b2181dca0..91a566f14e 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -589,6 +589,29 @@ test_path_is_missing () {
+ 	fi
+ }
+ 
++# test_byte_count checks that a file has the number of bytes it
++# ought to. For example:
++#
++#	test_expect_success 'produce exactly one byte of output' '
++#		do something >output &&
++#		test_byte_count = 1 output
++#	'
++#
++# is like "test $(wc -c <output) = 1" except that it passes the
++# output through when the number of bytes is wrong.
++
++test_byte_count () {
++	if test $# != 3
++	then
++		error "bug in the test script: not 3 parameters to test_byte_count"
++	elif ! test $(wc -c <"$3") "$1" "$2"
++	then
++		echo "test_byte_count: byte count for $3 !$1 $2"
++		cat "$3"
++		return 1
++	fi
++}
++
+ # test_line_count checks that a file has the number of lines it
+ # ought to. For example:
+ #
+-- 
+2.17.0.290.gded63e768a
+

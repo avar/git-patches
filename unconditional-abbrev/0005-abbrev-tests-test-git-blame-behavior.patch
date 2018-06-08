@@ -1,0 +1,88 @@
+From 6914a7f16c17d07354b218b9b40bd1d3130614ed Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 6 Jun 2018 20:45:04 +0000
+Subject: [PATCH 05/20] abbrev tests: test "git-blame" behavior
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests showing how "git-blame" behaves. As noted in an earlier
+change there's a behavior difference between core.abbrev=40 and
+--abbrev=40.
+
+Let's also assert that neither way of changing the abbreviation length
+modifies the porcelain output.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0014-abbrev.sh | 48 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 48 insertions(+)
+
+diff --git a/t/t0014-abbrev.sh b/t/t0014-abbrev.sh
+index 1c60f5ff93..77f15d5b0b 100755
+--- a/t/t0014-abbrev.sh
++++ b/t/t0014-abbrev.sh
+@@ -12,6 +12,10 @@ cut_tr_d_n_field_n() {
+ 	cut -d " " -f $1 | tr_d_n
+ }
+ 
++nocaret() {
++	sed 's/\^//'
++}
++
+ test_expect_success 'setup' '
+ 	test_commit A &&
+ 	git tag -a -mannotated A.annotated &&
+@@ -115,4 +119,48 @@ do
+ 	"
+ done
+ 
++for i in $(test_seq 4 40)
++do
++	for opt in --porcelain --line-porcelain
++	do
++		test_expect_success "blame $opt ignores core.abbrev=$i and --abbrev=$i" "
++			git -c core.abbrev=$i blame $opt A.t | head -n 1 | cut_tr_d_n_field_n 1 >blame &&
++			test_byte_count = 40 blame &&
++			git blame $opt --abbrev=$i A.t | head -n 1 | cut_tr_d_n_field_n 1 >blame &&
++			test_byte_count = 40 blame
++		"
++	done
++
++
++	test_expect_success "blame core.abbrev=$i and --abbrev=$i with boundary" "
++		# See the blame documentation for why this is off-by-one
++		git -c core.abbrev=$i blame A.t | cut_tr_d_n_field_n 1 | nocaret >blame &&
++		test_byte_count = $i blame &&
++		git blame --abbrev=$i A.t | cut_tr_d_n_field_n 1 | nocaret >blame &&
++		if test $i -eq 40
++		then
++			test_byte_count = 39 blame
++		else
++			test_byte_count = $i blame
++		fi
++	"
++
++	test_expect_success "blame core.abbrev=$i and --abbrev=$i without boundary" "
++		git -c core.abbrev=$i blame B.t | cut_tr_d_n_field_n 1 | nocaret >blame &&
++		if test $i -eq 40
++		then
++			test_byte_count = $i blame
++		else
++			test_byte_count = \$(($i + 1)) blame
++		fi &&
++		git blame --abbrev=$i B.t | cut_tr_d_n_field_n 1 | nocaret >blame &&
++		if test $i -eq 40
++		then
++			test_byte_count = $i blame
++		else
++			test_byte_count = \$(($i + 1)) blame
++		fi
++	"
++done
++
+ test_done
+-- 
+2.17.0.290.gded63e768a
+

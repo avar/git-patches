@@ -1,0 +1,80 @@
+From 2d108158006ba2ebe872e8db76f721b1c1b3f41a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Jun 2018 19:11:22 +0000
+Subject: [PATCH 16/20] abbrev: unify the handling of non-numeric values
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Unify how --abbrev=XYZ and core.abbrev=XYZ is handled. 2/4 parsers for
+these values would just let these invalid values pass, treating them
+as though "0" was provided, which due to other inconsistent fallback
+logic (soon to be fixed) would be treated as providing MINIMUM_ABBREV.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c            |  5 ++++-
+ revision.c        |  5 ++++-
+ t/t0014-abbrev.sh | 10 +++++-----
+ 3 files changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/diff.c b/diff.c
+index 136d44b455..75935322f1 100644
+--- a/diff.c
++++ b/diff.c
+@@ -4801,7 +4801,10 @@ int diff_opt_parse(struct diff_options *options,
+ 	else if (!strcmp(arg, "--abbrev"))
+ 		options->abbrev = DEFAULT_ABBREV;
+ 	else if (skip_prefix(arg, "--abbrev=", &arg)) {
+-		options->abbrev = strtoul(arg, NULL, 10);
++		char *end;
++		options->abbrev = strtoul(arg, &end, 10);
++		if (*end)
++			die("--abbrev expects a numerical value, got '%s'", arg);
+ 		if (options->abbrev < MINIMUM_ABBREV)
+ 			options->abbrev = MINIMUM_ABBREV;
+ 		else if (the_hash_algo->hexsz < options->abbrev)
+diff --git a/revision.c b/revision.c
+index 40fd91ff2b..aa87afa77f 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2047,7 +2047,10 @@ static int handle_revision_opt(struct rev_info *revs, int argc, const char **arg
+ 	} else if (!strcmp(arg, "--abbrev")) {
+ 		revs->abbrev = DEFAULT_ABBREV;
+ 	} else if (skip_prefix(arg, "--abbrev=", &optarg)) {
+-		revs->abbrev = strtoul(optarg, NULL, 10);
++		char *end;
++		revs->abbrev = strtoul(optarg, &end, 10);
++		if (*end)
++			die("--abbrev expects a numerical value, got '%s'", optarg);
+ 		if (revs->abbrev < MINIMUM_ABBREV)
+ 			revs->abbrev = MINIMUM_ABBREV;
+ 		else if (revs->abbrev > hexsz)
+diff --git a/t/t0014-abbrev.sh b/t/t0014-abbrev.sh
+index 6dee92f35e..203fe316b9 100755
+--- a/t/t0014-abbrev.sh
++++ b/t/t0014-abbrev.sh
+@@ -64,14 +64,14 @@ test_expect_success 'abbrev non-integer value handling differs ' '
+ 	test_must_fail git branch -v --abbrev=XYZ 2>stderr &&
+ 	test_i18ngrep "expects a numerical value" stderr &&
+ 
+-	git log --abbrev=XYZ -1 --pretty=format:%h 2>stderr &&
+-	! test -s stderr &&
++	test_must_fail git log --abbrev=XYZ -1 --pretty=format:%h 2>stderr &&
++	test_i18ngrep "expects a numerical value" stderr &&
+ 
+-	git diff --raw --abbrev=XYZ HEAD~ 2>stderr &&
+-	! test -s stderr &&
++	test_must_fail git diff --raw --abbrev=XYZ HEAD~ 2>stderr &&
++	test_i18ngrep "expects a numerical value" stderr &&
+ 
+ 	test_must_fail git diff --raw --abbrev=XYZ --no-index X Y 2>stderr &&
+-	! test -s stderr
++	test_i18ngrep "expects a numerical value" stderr
+ '
+ 
+ for i in -41 -20 -10 -1 -0 +0 0 1 2 3 41
+-- 
+2.17.0.290.gded63e768a
+

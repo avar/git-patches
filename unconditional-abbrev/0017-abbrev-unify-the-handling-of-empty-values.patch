@@ -1,0 +1,100 @@
+From 89c1029cd27eb51f7374a7cb24ca80fd79ed6e04 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Jun 2018 19:57:49 +0000
+Subject: [PATCH 17/20] abbrev: unify the handling of empty values
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+For no good reason the --abbrev= command-line option was less strict
+than the core.abbrev config option, which came down to the latter
+using git_config_int() which rejects an empty string, but the rest of
+the parsing using strtoul() which will convert it to 0.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c             |  2 ++
+ parse-options-cb.c |  2 ++
+ revision.c         |  2 ++
+ t/t0014-abbrev.sh  | 22 ++++++++--------------
+ 4 files changed, 14 insertions(+), 14 deletions(-)
+
+diff --git a/diff.c b/diff.c
+index 75935322f1..cab79d24ab 100644
+--- a/diff.c
++++ b/diff.c
+@@ -4802,6 +4802,8 @@ int diff_opt_parse(struct diff_options *options,
+ 		options->abbrev = DEFAULT_ABBREV;
+ 	else if (skip_prefix(arg, "--abbrev=", &arg)) {
+ 		char *end;
++		if (!strcmp(arg, ""))
++			die("--abbrev expects a value, got '%s'", arg);
+ 		options->abbrev = strtoul(arg, &end, 10);
+ 		if (*end)
+ 			die("--abbrev expects a numerical value, got '%s'", arg);
+diff --git a/parse-options-cb.c b/parse-options-cb.c
+index e3cd87fbd6..aa9984f164 100644
+--- a/parse-options-cb.c
++++ b/parse-options-cb.c
+@@ -16,6 +16,8 @@ int parse_opt_abbrev_cb(const struct option *opt, const char *arg, int unset)
+ 	if (!arg) {
+ 		v = unset ? 0 : DEFAULT_ABBREV;
+ 	} else {
++		if (!strcmp(arg, ""))
++			return opterror(opt, "expects a value", 0);
+ 		v = strtol(arg, (char **)&arg, 10);
+ 		if (*arg)
+ 			return opterror(opt, "expects a numerical value", 0);
+diff --git a/revision.c b/revision.c
+index aa87afa77f..d39a292895 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2048,6 +2048,8 @@ static int handle_revision_opt(struct rev_info *revs, int argc, const char **arg
+ 		revs->abbrev = DEFAULT_ABBREV;
+ 	} else if (skip_prefix(arg, "--abbrev=", &optarg)) {
+ 		char *end;
++		if (!strcmp(optarg, ""))
++			die("--abbrev expects a value, got '%s'", optarg);
+ 		revs->abbrev = strtoul(optarg, &end, 10);
+ 		if (*end)
+ 			die("--abbrev expects a numerical value, got '%s'", optarg);
+diff --git a/t/t0014-abbrev.sh b/t/t0014-abbrev.sh
+index 203fe316b9..8448f78560 100755
+--- a/t/t0014-abbrev.sh
++++ b/t/t0014-abbrev.sh
+@@ -38,23 +38,17 @@ test_expect_success 'abbrev empty value handling differs ' '
+ 	test_must_fail git -c core.abbrev= log -1 --pretty=format:%h 2>stderr &&
+ 	test_i18ngrep "bad numeric config value.*invalid unit" stderr &&
+ 
+-	git branch -v --abbrev= | cut_tr_d_n_field_n 3 >branch &&
+-	test_byte_count = 40 branch &&
++	test_must_fail git branch -v --abbrev= 2>stderr &&
++	test_i18ngrep "expects a value" stderr &&
+ 
+-	git log --abbrev= -1 --pretty=format:%h >log &&
+-	test_byte_count = 4 log &&
++	test_must_fail git log --abbrev= -1 --pretty=format:%h 2>stderr &&
++	test_i18ngrep "expects a value" stderr &&
+ 
+-	git diff --raw --abbrev= HEAD~ >diff &&
+-	cut_tr_d_n_field_n 3 <diff >diff.3 &&
+-	test_byte_count = 4 diff.3 &&
+-	cut_tr_d_n_field_n 4 <diff >diff.4 &&
+-	test_byte_count = 4 diff.4 &&
++	test_must_fail git diff --raw --abbrev= HEAD~ 2>stderr &&
++	test_i18ngrep "expects a value" stderr &&
+ 
+-	test_must_fail git diff --raw --abbrev= --no-index X Y >diff &&
+-	cut_tr_d_n_field_n 3 <diff >diff.3 &&
+-	test_byte_count = 4 diff.3 &&
+-	cut_tr_d_n_field_n 4 <diff >diff.4 &&
+-	test_byte_count = 4 diff.4
++	test_must_fail git diff --raw --abbrev= --no-index X Y 2>stderr &&
++	test_i18ngrep "expects a value" stderr
+ '
+ 
+ test_expect_success 'abbrev non-integer value handling differs ' '
+-- 
+2.17.0.290.gded63e768a
+

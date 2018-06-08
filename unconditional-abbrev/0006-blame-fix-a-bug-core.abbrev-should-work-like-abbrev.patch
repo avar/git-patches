@@ -1,0 +1,94 @@
+From fcf85daee37dfcf9aaf0117f57ddb07f6e3da834 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Jun 2018 12:17:47 +0000
+Subject: [PATCH 06/20] blame: fix a bug, core.abbrev should work like --abbrev
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since 84393bfd73 ("blame: add --abbrev command line option and make it
+honor core.abbrev", 2011-04-06) first released with v1.7.6 "git blame"
+has supported both core.abbrev and --abbrev to change the abbreviation
+length.
+
+Initially output wouldn't alter the abbreviation length to account for
+the boundary commit. This was changed in 91229834c2 ("blame: fix
+alignment with --abbrev=40", 2017-01-05) first released with v2.11.1.
+
+That change had a bug which I'm fixing here. It didn't account for the
+abbreviation length also being set via core.abbrev, not just via the
+--abbrev command-line option.
+
+So let's handle that. The easiest way to do that is to check if the
+global default_abbrev variable (-1 by default) has been set by
+git_default_core_config(), and if so pretend we had the --abbrev
+option is set, in lieu of making everything that uses the "abbrev"
+variable now read that OR default_abbrev).
+
+The reason I'm documenting these past behaviors is that whatever our
+desires with --porcelain people do parse the human-readable "git
+blame" output, and for any machine use are likely to use
+core.abbrev=40 or --abbrev=40. Documenting how the format has changed
+over time will help those users avoid nasty surprises.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-blame.txt | 8 +++++++-
+ builtin/blame.c             | 2 ++
+ t/t0014-abbrev.sh           | 7 ++++++-
+ 3 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/git-blame.txt b/Documentation/git-blame.txt
+index 7b562494ac..d6cddbcb2e 100644
+--- a/Documentation/git-blame.txt
++++ b/Documentation/git-blame.txt
+@@ -92,7 +92,13 @@ include::blame-options.txt[]
+ Because of this UI design, the only way to get the full SHA-1 of the
+ boundary commit is to use the `--porcelain` format. With `--abbrev=40`
+ only 39 characters of the boundary SHA-1 will be emitted, since one
+-will be used for the caret to mark the boundary.
++will be used for the caret to mark the boundary. This behavior was
++different before 2.11.1, git would then emit the 40 character if
++requested, resulting in unaligned output.
+++
++Before 2.19, setting `core.abbrev=40` wouldn't apply the above rule
++and would cause blame to emit output that was unaligned. This bug has
++since been fixed.
+ 
+ 
+ THE PORCELAIN FORMAT
+diff --git a/builtin/blame.c b/builtin/blame.c
+index 4202584f97..6ab08561d1 100644
+--- a/builtin/blame.c
++++ b/builtin/blame.c
+@@ -868,6 +868,8 @@ int cmd_blame(int argc, const char **argv, const char *prefix)
+ 	} else if (show_progress < 0)
+ 		show_progress = isatty(2);
+ 
++	if (default_abbrev >= 0)
++		abbrev = default_abbrev;
+ 	if (0 < abbrev && abbrev < GIT_SHA1_HEXSZ)
+ 		/* one more abbrev length is needed for the boundary commit */
+ 		abbrev++;
+diff --git a/t/t0014-abbrev.sh b/t/t0014-abbrev.sh
+index 77f15d5b0b..934c54a96b 100755
+--- a/t/t0014-abbrev.sh
++++ b/t/t0014-abbrev.sh
+@@ -135,7 +135,12 @@ do
+ 	test_expect_success "blame core.abbrev=$i and --abbrev=$i with boundary" "
+ 		# See the blame documentation for why this is off-by-one
+ 		git -c core.abbrev=$i blame A.t | cut_tr_d_n_field_n 1 | nocaret >blame &&
+-		test_byte_count = $i blame &&
++		if test $i -eq 40
++		then
++			test_byte_count = 39 blame
++		else
++			test_byte_count = $i blame
++		fi &&
+ 		git blame --abbrev=$i A.t | cut_tr_d_n_field_n 1 | nocaret >blame &&
+ 		if test $i -eq 40
+ 		then
+-- 
+2.17.0.290.gded63e768a
+
