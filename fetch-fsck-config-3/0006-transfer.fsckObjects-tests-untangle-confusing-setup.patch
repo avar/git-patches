@@ -1,0 +1,77 @@
+From 3c479d3ca8d22585ab196f98e45ea5a97ec76420 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180525192811.25680-1-avarab@gmail.com>
+References: <20180525192811.25680-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 27 Jul 2018 11:26:18 +0000
+Subject: [PATCH v3 06/10] transfer.fsckObjects tests: untangle confusing setup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The tests for transfer.fsckObjects have grown organically over time to
+not make much sense.
+
+Initially when these were added in b10a53583f ("test: fetch/receive
+with fsckobjects", 2011-09-04) they were only testing the "corrupt or
+missing object" case, but later on in 70a4ae73d8 ("fsck: add a simple
+test for receive.fsck.<msg-id>", 2015-06-22) they were expanded to
+check for the fsck.<msg-id> feature.
+
+The problem was that we still kept the same corrupt test repo, making
+it harder to add new tests that check the entirety of the repository
+between operations via "git fsck" to see whether only known issues
+that can be ignored with fsck.<msg-id> have occurred.
+
+The tests only did the right thing because such a full "git fsck" was
+never done after a certain point, and instead we were only
+manipulating specific refs. This makes it harder to add new tests, and
+none of the fsck.<msg-id> tests relied on this.
+
+So let's not confuse the two and repair the corrupt repository before
+we run the fsck.<msg-id> tests.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5504-fetch-receive-strict.sh | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/t/t5504-fetch-receive-strict.sh b/t/t5504-fetch-receive-strict.sh
+index e1f8768094..57ff78c201 100755
+--- a/t/t5504-fetch-receive-strict.sh
++++ b/t/t5504-fetch-receive-strict.sh
+@@ -3,13 +3,16 @@
+ test_description='fetch/receive strict mode'
+ . ./test-lib.sh
+ 
+-test_expect_success setup '
++test_expect_success 'setup and inject "corrupt or missing" object' '
+ 	echo hello >greetings &&
+ 	git add greetings &&
+ 	git commit -m greetings &&
+ 
+ 	S=$(git rev-parse :greetings | sed -e "s|^..|&/|") &&
+ 	X=$(echo bye | git hash-object -w --stdin | sed -e "s|^..|&/|") &&
++	echo $S >S &&
++	echo $X >X &&
++	cp .git/objects/$S .git/objects/$S.back &&
+ 	mv -f .git/objects/$X .git/objects/$S &&
+ 
+ 	test_must_fail git fsck
+@@ -115,6 +118,13 @@ test_expect_success 'push with transfer.fsckobjects' '
+ 	test_cmp exp act
+ '
+ 
++test_expect_success 'repair the "corrupt or missing" object' '
++	mv -f .git/objects/$(cat S) .git/objects/$(cat X) &&
++	mv .git/objects/$(cat S).back .git/objects/$(cat S) &&
++	rm -rf .git/objects/$(cat X) &&
++	git fsck
++'
++
+ cat >bogus-commit <<EOF
+ tree $EMPTY_TREE
+ author Bugs Bunny 1234567890 +0000
+-- 
+2.18.0.345.g5c9ce644c3
+

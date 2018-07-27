@@ -1,0 +1,67 @@
+From 51729bbb6ab01ebb86337499b5fa99d6cfa28dc4 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180525192811.25680-1-avarab@gmail.com>
+References: <20180525192811.25680-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 25 May 2018 18:50:03 +0000
+Subject: [PATCH v3 05/10] config doc: elaborate on fetch.fsckObjects security
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the transfer.fsckObjects documentation to explicitly note the
+unique security and/or corruption issues fetch.fsckObjects suffers
+from, since it doesn't have a quarantine environment.
+
+This was already alluded to in the existing documentation, but let's
+spell it out so there's no confusion here, and give a concrete example
+of how to work around this limitation.
+
+Let's also prominently note that this is considered to be a limitation
+of the current implementation, rather than something that's intended
+and by design, since we might change this in the future.
+
+See
+https://public-inbox.org/git/20180531060259.GE17344@sigill.intra.peff.net/
+for further details.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 291b4f3c57..7ff453c53b 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -3408,6 +3408,27 @@ On the receiving side, failing fsckObjects will make those objects
+ unreachable, see "QUARANTINE ENVIRONMENT" in
+ linkgit:git-receive-pack[1]. On the fetch side, malformed objects will
+ instead be left unreferenced in the repository.
+++
++Due to the non-quarantine nature of the `fetch.fsckObjects`
++implementation it can not be relied upon to leave the object store
++clean like `receive.fsckObjects` can.
+++
++As objects are unpacked they're written to the object store, so there
++can be cases where malicious objects get introduced even though the
++"fetch" failed, only to have a subsequent "fetch" succeed because only
++new incoming objects are checked, not those that have already been
++written to the object store. That difference in behavior should not be
++relied upon. In the future, such objects may be quarantined for
++"fetch" as well.
+++
++For now, the paranoid need to find some way to emulate the quarantine
++environment if they'd like the same protection as "push". E.g. in the
++case of an internal mirror do the mirroring in two steps, one to fetch
++the untrusted objects, and then do a second "push" (which will use the
++quarantine) to another internal repo, and have internal clients
++consume this pushed-to repository, or embargo internal fetches and
++only allow them once a full "fsck" has run (and no new fetches have
++happened in the meantime).
+ 
+ transfer.hideRefs::
+ 	String(s) `receive-pack` and `upload-pack` use to decide which
+-- 
+2.18.0.345.g5c9ce644c3
+
