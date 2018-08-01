@@ -1,0 +1,107 @@
+From bb45acc98ecdb897b86da4a6530fdd549cf12ddb Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180731180248.42787-1-jonathantanmy@google.com>
+References: <20180731180248.42787-1-jonathantanmy@google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Aug 2018 15:01:13 +0000
+Subject: [PATCH 1/2] negotiator: unknown fetch.negotiationAlgorithm should
+ error out
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the handling of fetch.negotiationAlgorithm=<str> to error out
+on unknown strings, i.e. everything except "default" or "skipping".
+
+This changes the behavior added in 42cc7485a2 ("negotiator/skipping:
+skip commits during fetch", 2018-07-16) which would ignore all unknown
+values and silently fall back to the "default" value.
+
+For a feature like this it's much better to produce an error than
+proceed. We don't want users to debug some amazingly slow fetch that
+should benefit from "skipping", only to find that they'd forgotten to
+deploy the new git version on that particular machine.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt             |  3 ++-
+ fetch-negotiator.c                   | 12 +++++++++---
+ t/t5552-skipping-fetch-negotiator.sh | 23 +++++++++++++++++++++++
+ 3 files changed, 34 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 63365dcf3d..84f73d7458 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1536,9 +1536,10 @@ fetch.negotiationAlgorithm::
+ 	sent when negotiating the contents of the packfile to be sent by the
+ 	server. Set to "skipping" to use an algorithm that skips commits in an
+ 	effort to converge faster, but may result in a larger-than-necessary
+-	packfile; any other value instructs Git to use the default algorithm
++	packfile; The default is "default" which instructs Git to use the default algorithm
+ 	that never skips commits (unless the server has acknowledged it or one
+ 	of its descendants).
++	Unknown values will cause 'git fetch' to error out.
+ 
+ format.attach::
+ 	Enable multipart/mixed attachments as the default for
+diff --git a/fetch-negotiator.c b/fetch-negotiator.c
+index 5d283049f4..d6d685cba0 100644
+--- a/fetch-negotiator.c
++++ b/fetch-negotiator.c
+@@ -6,9 +6,15 @@
+ void fetch_negotiator_init(struct fetch_negotiator *negotiator,
+ 			   const char *algorithm)
+ {
+-	if (algorithm && !strcmp(algorithm, "skipping")) {
+-		skipping_negotiator_init(negotiator);
+-		return;
++	if (algorithm) {
++		if (!strcmp(algorithm, "skipping")) {
++			skipping_negotiator_init(negotiator);
++			return;
++		} else if (!strcmp(algorithm, "default")) {
++			/* Fall through to default initialization */
++		} else {
++			die("unknown fetch negotiation algorithm '%s'", algorithm);
++		}
+ 	}
+ 	default_negotiator_init(negotiator);
+ }
+diff --git a/t/t5552-skipping-fetch-negotiator.sh b/t/t5552-skipping-fetch-negotiator.sh
+index 0a8e0e42ed..3b60bd44e0 100755
+--- a/t/t5552-skipping-fetch-negotiator.sh
++++ b/t/t5552-skipping-fetch-negotiator.sh
+@@ -47,6 +47,29 @@ test_expect_success 'commits with no parents are sent regardless of skip distanc
+ 	have_not_sent c6 c4 c3
+ '
+ 
++test_expect_success 'unknown fetch.negotiationAlgorithm values error out' '
++	rm -rf server client trace &&
++	git init server &&
++	test_commit -C server to_fetch &&
++
++	git init client &&
++	test_commit -C client on_client &&
++	git -C client checkout on_client &&
++
++	test_config -C client fetch.negotiationAlgorithm invalid &&
++	test_must_fail git -C client fetch "$(pwd)/server" 2>err &&
++	test_i18ngrep "unknown fetch negotiation algorithm" err &&
++
++	# Explicit "default" value
++	test_config -C client fetch.negotiationAlgorithm default &&
++	git -C client -c fetch.negotiationAlgorithm=default fetch "$(pwd)/server" &&
++
++	# Implementation detail: If there is nothing to fetch, we will not error out
++	test_config -C client fetch.negotiationAlgorithm invalid &&
++	git -C client fetch "$(pwd)/server" 2>err &&
++	test_i18ngrep ! "unknown fetch negotiation algorithm" err
++'
++
+ test_expect_success 'when two skips collide, favor the larger one' '
+ 	rm -rf server client trace &&
+ 	git init server &&
+-- 
+2.18.0.345.g5c9ce644c3
+
