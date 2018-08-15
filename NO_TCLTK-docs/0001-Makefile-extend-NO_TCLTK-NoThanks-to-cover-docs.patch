@@ -1,0 +1,186 @@
+From 2738450fdf804dde578865734c060288f1989f18 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 15 Aug 2018 13:52:48 +0000
+Subject: [PATCH] Makefile: extend NO_TCLTK=NoThanks to cover docs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the NO_TCLTK=NoThanks flag to be understood by the
+Documentation Makefile.
+
+Before this change compiling and installing with NO_TCLTK would result
+in no git-gui, gitk or git-citool being installed, but their
+respective manual pages would still be installed.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/Makefile | 23 ++++++++++++++++++-----
+ Makefile               | 39 +++++++++++++++++++++------------------
+ 2 files changed, 39 insertions(+), 23 deletions(-)
+
+diff --git a/Documentation/Makefile b/Documentation/Makefile
+index d079d7c73a..d53979939e 100644
+--- a/Documentation/Makefile
++++ b/Documentation/Makefile
+@@ -1,5 +1,7 @@
+ # Guard against environment variables
+ MAN1_TXT =
++MAN1_TXT_WIP =
++TCLTK_FILES =
+ MAN5_TXT =
+ MAN7_TXT =
+ TECH_DOCS =
+@@ -7,13 +9,24 @@ ARTICLES =
+ SP_ARTICLES =
+ OBSOLETE_HTML =
+ 
+-MAN1_TXT += $(filter-out \
++MAN1_TXT_WIP += $(filter-out \
+ 		$(addsuffix .txt, $(ARTICLES) $(SP_ARTICLES)), \
+ 		$(wildcard git-*.txt))
+-MAN1_TXT += git.txt
+-MAN1_TXT += gitk.txt
+-MAN1_TXT += gitremote-helpers.txt
+-MAN1_TXT += gitweb.txt
++MAN1_TXT_WIP += git.txt
++MAN1_TXT_WIP += gitremote-helpers.txt
++MAN1_TXT_WIP += gitweb.txt
++
++ifndef NO_TCLTK
++MAN1_TXT_WIP += gitk.txt
++MAN1_TXT = $(MAN1_TXT_WIP)
++else
++TCLTK_FILES += git-gui.txt
++TCLTK_FILES += gitk.txt
++TCLTK_FILES += git-citool.txt
++MAN1_TXT = $(filter-out \
++		$(TCLTK_FILES), \
++		$(MAN1_TXT_WIP))
++endif
+ 
+ MAN5_TXT += gitattributes.txt
+ MAN5_TXT += githooks.txt
+diff --git a/Makefile b/Makefile
+index bc4fc8eeab..8abb23f6ce 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2372,21 +2372,21 @@ export DEFAULT_EDITOR DEFAULT_PAGER
+ 
+ .PHONY: doc man man-perl html info pdf
+ doc: man-perl
+-	$(MAKE) -C Documentation all
++	$(MAKE) -C Documentation all NO_TCLTK='$(NO_TCLTK)'
+ 
+ man: man-perl
+-	$(MAKE) -C Documentation man
++	$(MAKE) -C Documentation man NO_TCLTK='$(NO_TCLTK)'
+ 
+ man-perl: perl/build/man/man3/Git.3pm
+ 
+ html:
+-	$(MAKE) -C Documentation html
++	$(MAKE) -C Documentation html NO_TCLTK='$(NO_TCLTK)'
+ 
+ info:
+-	$(MAKE) -C Documentation info
++	$(MAKE) -C Documentation info NO_TCLTK='$(NO_TCLTK)'
+ 
+ pdf:
+-	$(MAKE) -C Documentation pdf
++	$(MAKE) -C Documentation pdf NO_TCLTK='$(NO_TCLTK)'
+ 
+ XGETTEXT_FLAGS = \
+ 	--force-po \
+@@ -2802,10 +2802,10 @@ install-gitweb:
+ 	$(MAKE) -C gitweb install
+ 
+ install-doc: install-man-perl
+-	$(MAKE) -C Documentation install
++	$(MAKE) -C Documentation install NO_TCLTK='$(NO_TCLTK)'
+ 
+ install-man: install-man-perl
+-	$(MAKE) -C Documentation install-man
++	$(MAKE) -C Documentation install-man NO_TCLTK='$(NO_TCLTK)'
+ 
+ install-man-perl: man-perl
+ 	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(mandir_SQ)/man3'
+@@ -2813,22 +2813,22 @@ install-man-perl: man-perl
+ 	(cd '$(DESTDIR_SQ)$(mandir_SQ)/man3' && umask 022 && $(TAR) xof -)
+ 
+ install-html:
+-	$(MAKE) -C Documentation install-html
++	$(MAKE) -C Documentation install-html NO_TCLTK='$(NO_TCLTK)'
+ 
+ install-info:
+-	$(MAKE) -C Documentation install-info
++	$(MAKE) -C Documentation install-info NO_TCLTK='$(NO_TCLTK)'
+ 
+ install-pdf:
+-	$(MAKE) -C Documentation install-pdf
++	$(MAKE) -C Documentation install-pdf NO_TCLTK='$(NO_TCLTK)'
+ 
+ quick-install-doc:
+-	$(MAKE) -C Documentation quick-install
++	$(MAKE) -C Documentation quick-install NO_TCLTK='$(NO_TCLTK)'
+ 
+ quick-install-man:
+-	$(MAKE) -C Documentation quick-install-man
++	$(MAKE) -C Documentation quick-install-man NO_TCLTK='$(NO_TCLTK)'
+ 
+ quick-install-html:
+-	$(MAKE) -C Documentation quick-install-html
++	$(MAKE) -C Documentation quick-install-html NO_TCLTK='$(NO_TCLTK)'
+ 
+ 
+ 
+@@ -2875,13 +2875,16 @@ manpages = git-manpages-$(GIT_VERSION)
+ dist-doc:
+ 	$(RM) -r .doc-tmp-dir
+ 	mkdir .doc-tmp-dir
+-	$(MAKE) -C Documentation WEBDOC_DEST=../.doc-tmp-dir install-webdoc
++	$(MAKE) -C Documentation NO_TCLTK='$(NO_TCLTK)' \
++		WEBDOC_DEST=../.doc-tmp-dir install-webdoc
+ 	cd .doc-tmp-dir && $(TAR) cf ../$(htmldocs).tar .
+ 	gzip -n -9 -f $(htmldocs).tar
+ 	:
+ 	$(RM) -r .doc-tmp-dir
+ 	mkdir -p .doc-tmp-dir/man1 .doc-tmp-dir/man5 .doc-tmp-dir/man7
+-	$(MAKE) -C Documentation DESTDIR=./ \
++	$(MAKE) -C Documentation \
++		NO_TCLTK='$(NO_TCLTK)' \
++		DESTDIR=./ \
+ 		man1dir=../.doc-tmp-dir/man1 \
+ 		man5dir=../.doc-tmp-dir/man5 \
+ 		man7dir=../.doc-tmp-dir/man7 \
+@@ -2915,7 +2918,7 @@ clean: profile-clean coverage-clean
+ 	$(RM) $(GIT_TARNAME).tar.gz git-core_$(GIT_VERSION)-*.tar.gz
+ 	$(RM) $(htmldocs).tar.gz $(manpages).tar.gz
+ 	$(RM) contrib/coccinelle/*.cocci.patch*
+-	$(MAKE) -C Documentation/ clean
++	$(MAKE) -C Documentation/ clean NO_TCLTK='$(NO_TCLTK)'
+ ifndef NO_PERL
+ 	$(MAKE) -C gitweb clean
+ 	$(RM) -r perl/build/
+@@ -2944,7 +2947,7 @@ ALL_COMMANDS += git-gui git-citool
+ 
+ .PHONY: check-docs
+ check-docs::
+-	$(MAKE) -C Documentation lint-docs
++	$(MAKE) -C Documentation lint-docs NO_TCLTK='$(NO_TCLTK)'
+ 	@(for v in $(ALL_COMMANDS); \
+ 	do \
+ 		case "$$v" in \
+@@ -2968,7 +2971,7 @@ check-docs::
+ 		    -e '/^#/d' \
+ 		    -e 's/[ 	].*//' \
+ 		    -e 's/^/listed /' command-list.txt; \
+-		$(MAKE) -C Documentation print-man1 | \
++		$(MAKE) -C Documentation print-man1  NO_TCLTK='$(NO_TCLTK)' | \
+ 		grep '\.txt$$' | \
+ 		sed -e 's|Documentation/|documented |' \
+ 		    -e 's/\.txt//'; \
+-- 
+2.18.0.865.gffc8e1a3cd6
+
