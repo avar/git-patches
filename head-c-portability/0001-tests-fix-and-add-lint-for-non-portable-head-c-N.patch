@@ -1,0 +1,89 @@
+From d5d9bb00748b266617b89e8478765b2373b08512 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 23 Aug 2018 08:53:07 +0000
+Subject: [PATCH] tests: fix and add lint for non-portable head -c N
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "head -c BYTES" option is non-portable (not in POSIX[1]). Change
+such invocations to use the test_copy_bytes wrapper added in
+48860819e8 ("t9300: factor out portable "head -c" replacement",
+2016-06-30).
+
+This fixes a test added in 9d2e330b17 ("ewah_read_mmap: bounds-check
+mmap reads", 2018-06-14), which has been breaking
+t5310-pack-bitmaps.sh on OpenBSD since 2.18.0. The OpenBSD ports
+already have a similar workaround after their upgrade to 2.18.0[2].
+
+I have not tested this on IRIX, but according to 4de0bbd898 ("t9300:
+use perl "head -c" clone in place of "dd bs=1 count=16000" kluge",
+2010-12-13) this invocation would have broken things there too.
+
+Also, change a valgrind-specific codepath in test-lib.sh to use this
+wrapper. Given where valgrind runs I don't think this would ever
+become a portability issue in practice, but it's easier to just use
+the wrapper than introduce some exception for the "make test-lint"
+check being added here.
+
+1. http://pubs.opengroup.org/onlinepubs/9699919799/utilities/head.html
+2. https://github.com/openbsd/ports/commit/08d5d82eaefe5cf2f125ecc0c6a57df9cf91350c#diff-f7d3c4fabeed1691620d608f1534f5e5
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/check-non-portable-shell.pl | 1 +
+ t/t5310-pack-bitmaps.sh       | 2 +-
+ t/test-lib.sh                 | 4 ++--
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/t/check-non-portable-shell.pl b/t/check-non-portable-shell.pl
+index d5823f71d8..94a7e6165e 100755
+--- a/t/check-non-portable-shell.pl
++++ b/t/check-non-portable-shell.pl
+@@ -35,6 +35,7 @@ sub err {
+ 		chomp;
+ 	}
+ 
++	/\bhead\s+-c\b/ and err 'head -c is not portable (use test_copy_bytes BYTES <file >out)';
+ 	/\bsed\s+-i/ and err 'sed -i is not portable';
+ 	/\becho\s+-[neE]/ and err 'echo with option is not portable (use printf)';
+ 	/^\s*declare\s+/ and err 'arrays/declare not portable';
+diff --git a/t/t5310-pack-bitmaps.sh b/t/t5310-pack-bitmaps.sh
+index 557bd0d0c0..7bff7923f2 100755
+--- a/t/t5310-pack-bitmaps.sh
++++ b/t/t5310-pack-bitmaps.sh
+@@ -335,7 +335,7 @@ test_expect_success 'truncated bitmap fails gracefully' '
+ 	git rev-list --use-bitmap-index --count --all >expect &&
+ 	bitmap=$(ls .git/objects/pack/*.bitmap) &&
+ 	test_when_finished "rm -f $bitmap" &&
+-	head -c 512 <$bitmap >$bitmap.tmp &&
++	test_copy_bytes 512 <$bitmap >$bitmap.tmp &&
+ 	mv -f $bitmap.tmp $bitmap &&
+ 	git rev-list --use-bitmap-index --count --all >actual 2>stderr &&
+ 	test_cmp expect actual &&
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 8bb0f4348e..44288cbb59 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -867,7 +867,7 @@ then
+ 		# handle only executables, unless they are shell libraries that
+ 		# need to be in the exec-path.
+ 		test -x "$1" ||
+-		test "# " = "$(head -c 2 <"$1")" ||
++		test "# " = "$(test_copy_bytes 2 <"$1")" ||
+ 		return;
+ 
+ 		base=$(basename "$1")
+@@ -882,7 +882,7 @@ then
+ 		# do not override scripts
+ 		if test -x "$symlink_target" &&
+ 		    test ! -d "$symlink_target" &&
+-		    test "#!" != "$(head -c 2 < "$symlink_target")"
++		    test "#!" != "$(test_copy_bytes 2 <"$symlink_target")"
+ 		then
+ 			symlink_target=../valgrind.sh
+ 		fi
+-- 
+2.18.0.865.gffc8e1a3cd6
+
