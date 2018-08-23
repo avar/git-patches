@@ -1,0 +1,114 @@
+From a5dc4bf077fee577c47638ccae116986c35537fb Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180823152502.3886-2-avarab@gmail.com>
+References: <20180823152502.3886-2-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 23 Aug 2018 15:11:32 +0000
+Subject: [PATCH v3 2/5] tests: fix and add lint for non-portable seq
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The seq command is not in POSIX, and doesn't exist on
+e.g. OpenBSD. We've had the test_seq wrapper since d17cf5f3a3 ("tests:
+Introduce test_seq", 2012-08-04), but use of it keeps coming back,
+e.g. in the recently added "fetch negotiator" tests being added here.
+
+So let's also add a check to "make test-lint". The regex is aiming to
+capture the likes of $(seq ..) and "seq" as a stand-alone command,
+without capturing some existing cases where we e.g. have files called
+"seq", as \bseq\b would do.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/check-non-portable-shell.pl        |  1 +
+ t/t5552-skipping-fetch-negotiator.sh | 12 ++++++------
+ t/t5703-upload-pack-ref-in-want.sh   |  4 ++--
+ 3 files changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/t/check-non-portable-shell.pl b/t/check-non-portable-shell.pl
+index c8f10d40a1..75f38298d7 100755
+--- a/t/check-non-portable-shell.pl
++++ b/t/check-non-portable-shell.pl
+@@ -42,6 +42,7 @@ sub err {
+ 	/\btest\s+[^=]*==/ and err '"test a == b" is not portable (use =)';
+ 	/\bwc -l.*"\s*=/ and err '`"$(wc -l)"` is not portable (use test_line_count)';
+ 	/\bhead\s+-c\b/ and err 'head -c is not portable (use test_copy_bytes BYTES <file >out)';
++	/(?:\$\(seq|^\s*seq\b)/ and err 'seq is not portable (use test_seq)';
+ 	/\bexport\s+[A-Za-z0-9_]*=/ and err '"export FOO=bar" is not portable (use FOO=bar && export FOO)';
+ 	/^\s*([A-Z0-9_]+=(\w+|(["']).*?\3)\s+)+(\w+)/ and exists($func{$4}) and
+ 		err '"FOO=bar shell_func" assignment extends beyond "shell_func"';
+diff --git a/t/t5552-skipping-fetch-negotiator.sh b/t/t5552-skipping-fetch-negotiator.sh
+index 5ad5bece55..30857b84a8 100755
+--- a/t/t5552-skipping-fetch-negotiator.sh
++++ b/t/t5552-skipping-fetch-negotiator.sh
+@@ -46,7 +46,7 @@ test_expect_success 'commits with no parents are sent regardless of skip distanc
+ 	test_commit -C server to_fetch &&
+ 
+ 	git init client &&
+-	for i in $(seq 7)
++	for i in $(test_seq 7)
+ 	do
+ 		test_commit -C client c$i
+ 	done &&
+@@ -89,7 +89,7 @@ test_expect_success 'when two skips collide, favor the larger one' '
+ 	test_commit -C server to_fetch &&
+ 
+ 	git init client &&
+-	for i in $(seq 11)
++	for i in $(test_seq 11)
+ 	do
+ 		test_commit -C client c$i
+ 	done &&
+@@ -168,14 +168,14 @@ test_expect_success 'do not send "have" with ancestors of commits that server AC
+ 	test_commit -C server to_fetch &&
+ 
+ 	git init client &&
+-	for i in $(seq 8)
++	for i in $(test_seq 8)
+ 	do
+ 		git -C client checkout --orphan b$i &&
+ 		test_commit -C client b$i.c0
+ 	done &&
+-	for j in $(seq 19)
++	for j in $(test_seq 19)
+ 	do
+-		for i in $(seq 8)
++		for i in $(test_seq 8)
+ 		do
+ 			git -C client checkout b$i &&
+ 			test_commit -C client b$i.c$j
+@@ -205,7 +205,7 @@ test_expect_success 'do not send "have" with ancestors of commits that server AC
+ 
+ 	# fetch-pack should thus not send any more commits in the b1 branch, but
+ 	# should still send the others (in this test, just check b2).
+-	for i in $(seq 0 8)
++	for i in $(test_seq 0 8)
+ 	do
+ 		have_not_sent b1.c$i
+ 	done &&
+diff --git a/t/t5703-upload-pack-ref-in-want.sh b/t/t5703-upload-pack-ref-in-want.sh
+index a73c55a47e..d1ccc22331 100755
+--- a/t/t5703-upload-pack-ref-in-want.sh
++++ b/t/t5703-upload-pack-ref-in-want.sh
+@@ -176,7 +176,7 @@ test_expect_success 'setup repos for change-while-negotiating test' '
+ 		git clone "http://127.0.0.1:$LIB_HTTPD_PORT/smart/repo" "$LOCAL_PRISTINE" &&
+ 		cd "$LOCAL_PRISTINE" &&
+ 		git checkout -b side &&
+-		for i in $(seq 1 33); do test_commit s$i; done &&
++		for i in $(test_seq 1 33); do test_commit s$i; done &&
+ 
+ 		# Add novel commits to upstream
+ 		git checkout master &&
+@@ -289,7 +289,7 @@ test_expect_success 'setup repos for fetching with ref-in-want tests' '
+ 		git clone "file://$REPO" "$LOCAL_PRISTINE" &&
+ 		cd "$LOCAL_PRISTINE" &&
+ 		git checkout -b side &&
+-		for i in $(seq 1 33); do test_commit s$i; done &&
++		for i in $(test_seq 1 33); do test_commit s$i; done &&
+ 
+ 		# Add novel commits to upstream
+ 		git checkout master &&
+-- 
+2.18.0.865.gffc8e1a3cd6
+
