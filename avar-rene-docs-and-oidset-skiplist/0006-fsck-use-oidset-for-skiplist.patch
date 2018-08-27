@@ -1,0 +1,151 @@
+From f8bf19827f160fcc80bfd2765471b6dbe8d4e761 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ren=C3=A9=20Scharfe?= <l.s.r@web.de>
+Date: Sat, 25 Aug 2018 20:50:36 +0200
+Subject: [PATCH v3 6/7] fsck: use oidset for skiplist
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Object IDs to skip are stored in a shared static oid_array.  Lookups do
+a binary search on the sorted array.  The code checks if the object IDs
+are already in the correct order while loading and skips sorting in that
+case.  Lookups are done before reporting a (non-fatal) corruption and
+before checking .gitmodules files.
+
+Simplify the code by using an oidset instead.  Memory usage is a bit
+higher, but we don't need to worry about any sort order anymore.  Embed
+the oidset into struct fsck_options to make its ownership clear (no
+hidden sharing) and avoid unnecessary pointer indirection.
+
+Performance on repositories with a low number of reported issues and
+.gitmodules files (i.e. the usual case) won't be affected much.  The
+oidset should be a bit quicker with higher numbers of bad objects in
+the skipList.
+
+Helped-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Rene Scharfe <l.s.r@web.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt | 11 ++++++-----
+ fsck.c                   | 23 ++---------------------
+ fsck.h                   |  8 +++++---
+ 3 files changed, 13 insertions(+), 29 deletions(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index a8dfafa61d..3d0556e85d 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1729,11 +1729,12 @@ all three of them they must all set to the same values.
+ +
+ Older versions of Git (before 2.20) documented that the object names
+ list should be sorted. This was never a requirement, the object names
+-can appear in any order, but when reading the list we track whether
+-the list is sorted for the purposes of an internal binary search
+-implementation, which can save itself some work with an already sorted
+-list.  Unless you have a humongous list there's no reason to go out of
+-your way to pre-sort the list.
++could appear in any order, but when reading the list we tracked whether
++the list was sorted for the purposes of an internal binary search
++implementation, which could save itself some work with an already sorted
++list. Unless you had a humongous list there was no reason to go out of
++your way to pre-sort the list. After Git version 2.20 a hash implementation
++is used instead, so there's now no reason to pre-sort the list.
+ 
+ gc.aggressiveDepth::
+ 	The depth parameter used in the delta compression
+diff --git a/fsck.c b/fsck.c
+index 972a26b9ba..4c643f1d40 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -10,7 +10,6 @@
+ #include "fsck.h"
+ #include "refs.h"
+ #include "utf8.h"
+-#include "sha1-array.h"
+ #include "decorate.h"
+ #include "oidset.h"
+ #include "packfile.h"
+@@ -182,19 +181,10 @@ static int fsck_msg_type(enum fsck_msg_id msg_id,
+ 
+ static void init_skiplist(struct fsck_options *options, const char *path)
+ {
+-	static struct oid_array skiplist = OID_ARRAY_INIT;
+-	int sorted;
+ 	FILE *fp;
+ 	struct strbuf sb = STRBUF_INIT;
+ 	struct object_id oid;
+ 
+-	if (options->skiplist)
+-		sorted = options->skiplist->sorted;
+-	else {
+-		sorted = 1;
+-		options->skiplist = &skiplist;
+-	}
+-
+ 	fp = fopen(path, "r");
+ 	if (!fp)
+ 		die("Could not open skip list: %s", path);
+@@ -202,19 +192,12 @@ static void init_skiplist(struct fsck_options *options, const char *path)
+ 		const char *p;
+ 		if (parse_oid_hex(sb.buf, &oid, &p) || *p != '\0')
+ 			die("Invalid SHA-1: %s", sb.buf);
+-		oid_array_append(&skiplist, &oid);
+-		if (sorted && skiplist.nr > 1 &&
+-				oidcmp(&skiplist.oid[skiplist.nr - 2],
+-				       &oid) > 0)
+-			sorted = 0;
++		oidset_insert(&options->skiplist, &oid);
+ 	}
+ 	if (ferror(fp))
+ 		die_errno("Could not read '%s'", path);
+ 	fclose(fp);
+ 	strbuf_release(&sb);
+-
+-	if (sorted)
+-		skiplist.sorted = 1;
+ }
+ 
+ static int parse_msg_type(const char *str)
+@@ -319,9 +302,7 @@ static void append_msg_id(struct strbuf *sb, const char *msg_id)
+ 
+ static int object_on_skiplist(struct fsck_options *opts, struct object *obj)
+ {
+-	if (opts && opts->skiplist && obj)
+-		return oid_array_lookup(opts->skiplist, &obj->oid) >= 0;
+-	return 0;
++	return opts && obj && oidset_contains(&opts->skiplist, &obj->oid);
+ }
+ 
+ __attribute__((format (printf, 4, 5)))
+diff --git a/fsck.h b/fsck.h
+index 0c7e8c9428..b95595ae5f 100644
+--- a/fsck.h
++++ b/fsck.h
+@@ -1,6 +1,8 @@
+ #ifndef GIT_FSCK_H
+ #define GIT_FSCK_H
+ 
++#include "oidset.h"
++
+ #define FSCK_ERROR 1
+ #define FSCK_WARN 2
+ #define FSCK_IGNORE 3
+@@ -35,12 +37,12 @@ struct fsck_options {
+ 	fsck_error error_func;
+ 	unsigned strict:1;
+ 	int *msg_type;
+-	struct oid_array *skiplist;
++	struct oidset skiplist;
+ 	struct decoration *object_names;
+ };
+ 
+-#define FSCK_OPTIONS_DEFAULT { NULL, fsck_error_function, 0, NULL }
+-#define FSCK_OPTIONS_STRICT { NULL, fsck_error_function, 1, NULL }
++#define FSCK_OPTIONS_DEFAULT { NULL, fsck_error_function, 0, NULL, OIDSET_INIT }
++#define FSCK_OPTIONS_STRICT { NULL, fsck_error_function, 1, NULL, OIDSET_INIT }
+ 
+ /* descend in all linked child objects
+  * the return value is:
+-- 
+2.19.0.rc0.228.g281dcd1b4d0
+

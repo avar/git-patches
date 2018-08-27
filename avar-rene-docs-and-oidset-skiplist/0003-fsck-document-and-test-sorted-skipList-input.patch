@@ -1,0 +1,97 @@
+From 15a6e16dc1a356fc2a88d296f95d43ee2e633446 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 27 Aug 2018 18:05:20 +0000
+Subject: [PATCH v3 3/7] fsck: document and test sorted skipList input
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ever since the skipList support was first added in cd94c6f91 ("fsck:
+git receive-pack: support excluding objects from fsck'ing",
+2015-06-22) the documentation for the format has that the file is a
+sorted list of object names.
+
+Thus, anyone using the feature would have thought the list needed to
+be sorted. E.g. I recently in conjunction with my fetch.fsck.*
+implementation in 1362df0d41 ("fetch: implement fetch.fsck.*",
+2018-07-27) wrote some code to ship a skipList, and went out of my way
+to sort it.
+
+Doing so seems intuitive, since it contains fixed-width records, and
+has no support for comments, so one might expect it to be binary
+searched in-place on-disk.
+
+However, as documented here this was never a requirement, so let's
+change the documentation. Since this is a file format change let's
+also document what was said about this in the past, so e.g. someone
+like myself reading the new docs can see this never needed to be
+sorted ("why do I have all this code to sort this thing...").
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt        | 10 +++++++++-
+ t/t5504-fetch-receive-strict.sh | 19 +++++++++++++++++++
+ 2 files changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 1c42364988..9359fb534e 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1708,7 +1708,7 @@ doing the same for `receive.fsck.<msg-id>` and `fetch.fsck.<msg-id>`
+ will only cause git to warn.
+ 
+ fsck.skipList::
+-	The path to a sorted list of object names (i.e. one SHA-1 per
++	The path to a list of object names (i.e. one SHA-1 per
+ 	line) that are known to be broken in a non-fatal way and should
+ 	be ignored. This feature is useful when an established project
+ 	should be accepted despite early commits containing errors that
+@@ -1723,6 +1723,14 @@ Unlike variables like `color.ui` and `core.editor` the
+ fall back on the `fsck.skipList` configuration if they aren't set. To
+ uniformly configure the same fsck settings in different circumstances
+ all three of them they must all set to the same values.
+++
++Older versions of Git (before 2.20) documented that the object names
++list should be sorted. This was never a requirement, the object names
++can appear in any order, but when reading the list we track whether
++the list is sorted for the purposes of an internal binary search
++implementation, which can save itself some work with an already sorted
++list.  Unless you have a humongous list there's no reason to go out of
++your way to pre-sort the list.
+ 
+ gc.aggressiveDepth::
+ 	The depth parameter used in the delta compression
+diff --git a/t/t5504-fetch-receive-strict.sh b/t/t5504-fetch-receive-strict.sh
+index cbae31f330..fa56052f0f 100755
+--- a/t/t5504-fetch-receive-strict.sh
++++ b/t/t5504-fetch-receive-strict.sh
+@@ -142,6 +142,25 @@ test_expect_success 'fsck with no skipList input' '
+ 	test_i18ngrep "missingEmail" err
+ '
+ 
++test_expect_success 'setup sorted and unsorted skipLists' '
++	cat >SKIP.unsorted <<-EOF &&
++	0000000000000000000000000000000000000004
++	0000000000000000000000000000000000000002
++	$commit
++	0000000000000000000000000000000000000001
++	0000000000000000000000000000000000000003
++	EOF
++	sort SKIP.unsorted >SKIP.sorted
++'
++
++test_expect_success 'fsck with sorted skipList' '
++	git -c fsck.skipList=SKIP.sorted fsck
++'
++
++test_expect_success 'fsck with unsorted skipList' '
++	git -c fsck.skipList=SKIP.unsorted fsck
++'
++
+ test_expect_success 'fsck with invalid or bogus skipList input' '
+ 	git -c fsck.skipList=/dev/null -c fsck.missingEmail=ignore fsck &&
+ 	test_must_fail git -c fsck.skipList=does-not-exist -c fsck.missingEmail=ignore fsck 2>err &&
+-- 
+2.19.0.rc0.228.g281dcd1b4d0
+

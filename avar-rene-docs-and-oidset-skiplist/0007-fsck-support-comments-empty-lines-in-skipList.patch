@@ -1,0 +1,85 @@
+From 2a9d74cf664155cd336a09c4580d66679cd71d44 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 27 Aug 2018 18:52:26 +0000
+Subject: [PATCH v3 7/7] fsck: support comments & empty lines in skipList
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+It's annoying not to be able to put comments and empty lines in the
+skipList, when e.g. keeping a big central list of commits to skip in
+/etc/gitconfig, which was my motivation for 1362df0d41 ("fetch:
+implement fetch.fsck.*", 2018-07-27).
+
+Implement that, and document what version of Git this was changed in,
+since this on-disk format can be expected to be used by multiple
+versions of git.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt        | 4 ++--
+ fsck.c                          | 2 ++
+ t/t5504-fetch-receive-strict.sh | 8 ++++----
+ 3 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 3d0556e85d..e6f95a7fb2 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1710,8 +1710,8 @@ will only cause git to warn.
+ fsck.skipList::
+ 	The path to a list of object names (i.e. one SHA-1 per
+ 	line) that are known to be broken in a non-fatal way and should
+-	be ignored. Comments ('#') and empty lines are not supported, and
+-	will error out.
++	be ignored. On versions of Git 2.20 and later comments ('#') and empty
++	lines are ignored, but will error out on older versions.
+ +
+ This feature is useful when an established project should be accepted
+ despite early commits containing errors that can be safely ignored
+diff --git a/fsck.c b/fsck.c
+index 4c643f1d40..589548308a 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -190,6 +190,8 @@ static void init_skiplist(struct fsck_options *options, const char *path)
+ 		die("Could not open skip list: %s", path);
+ 	while (!strbuf_getline(&sb, fp)) {
+ 		const char *p;
++		if (!strcmp(sb.buf, "") || starts_with(sb.buf, "#"))
++			continue;
+ 		if (parse_oid_hex(sb.buf, &oid, &p) || *p != '\0')
+ 			die("Invalid SHA-1: %s", sb.buf);
+ 		oidset_insert(&options->skiplist, &oid);
+diff --git a/t/t5504-fetch-receive-strict.sh b/t/t5504-fetch-receive-strict.sh
+index 9ffb329227..a1bac164d1 100755
+--- a/t/t5504-fetch-receive-strict.sh
++++ b/t/t5504-fetch-receive-strict.sh
+@@ -169,20 +169,20 @@ test_expect_success 'fsck with invalid or bogus skipList input' '
+ 	test_i18ngrep "Invalid SHA-1: \[core\]" err
+ '
+ 
+-test_expect_success 'fsck with invalid or bogus skipList input (comments & empty lines)' '
++test_expect_success 'fsck with other accepted skipList input (comments & empty lines)' '
+ 	cat >SKIP.with-comment <<-EOF &&
+ 	# Some bad commit
+ 	0000000000000000000000000000000000000001
+ 	EOF
+ 	test_must_fail git -c fsck.skipList=SKIP.with-comment fsck 2>err-with-comment &&
+-	test_i18ngrep "^fatal: Invalid SHA-1: # Some bad commit$" err-with-comment &&
++	test_i18ngrep "missingEmail" err-with-comment &&
+ 	cat >SKIP.with-empty-line <<-EOF &&
+ 	0000000000000000000000000000000000000001
+ 
+-	$commit
++	0000000000000000000000000000000000000002
+ 	EOF
+ 	test_must_fail git -c fsck.skipList=SKIP.with-empty-line fsck 2>err-with-empty-line &&
+-	test_i18ngrep "^fatal: Invalid SHA-1: " err-with-empty-line
++	test_i18ngrep "missingEmail" err-with-empty-line
+ '
+ 
+ test_expect_success 'fsck no garbage output from comments & empty lines errors' '
+-- 
+2.19.0.rc0.228.g281dcd1b4d0
+
