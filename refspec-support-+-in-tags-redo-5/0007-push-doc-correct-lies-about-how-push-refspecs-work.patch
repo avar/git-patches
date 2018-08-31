@@ -1,0 +1,124 @@
+From 9f8785e01a0909b16eae2bc0a63d314a5489670d Mon Sep 17 00:00:00 2001
+In-Reply-To: <20180813192249.27585-1-avarab@gmail.com>
+References: <20180813192249.27585-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 28 Apr 2018 19:18:56 +0000
+Subject: [PATCH v5 7/9] push doc: correct lies about how push refspecs work
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There's complex rules governing whether a push is allowed to take
+place depending on whether we're pushing to refs/heads/*, refs/tags/*
+or refs/not-that/*. See is_branch() in refs.c, and the various
+assertions in refs/files-backend.c. (e.g. "trying to write non-commit
+object %s to branch '%s'").
+
+This documentation has never been quite correct, but went downhill
+after dbfeddb12e ("push: require force for refs under refs/tags/",
+2012-11-29) when we started claiming that <dst> couldn't be a tag
+object, which is incorrect. After some of the logic in that patch was
+changed in 256b9d70a4 ("push: fix "refs/tags/ hierarchy cannot be
+updated without --force"", 2013-01-16) the docs weren't updated, and
+we've had some version of documentation that confused whether <src>
+was a tag or not with whether <dst> would accept either an annotated
+tag object or the commit it points to.
+
+This makes the intro somewhat more verbose & complex, perhaps we
+should have a shorter description here and split the full complexity
+into a dedicated section. Very few users will find themselves needing
+to e.g. push blobs or trees to refs/custom-namespace/* (or blobs or
+trees at all), and that could be covered separately as an advanced
+topic.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-push.txt     | 52 ++++++++++++++++++++++++++++------
+ Documentation/gitrevisions.txt |  7 +++--
+ 2 files changed, 48 insertions(+), 11 deletions(-)
+
+diff --git a/Documentation/git-push.txt b/Documentation/git-push.txt
+index 71c78ac1a4..f345bd30fc 100644
+--- a/Documentation/git-push.txt
++++ b/Documentation/git-push.txt
+@@ -74,14 +74,50 @@ without any `<refspec>` on the command line.  Otherwise, missing
+ `:<dst>` means to update the same ref as the `<src>`.
+ +
+ The object referenced by <src> is used to update the <dst> reference
+-on the remote side.  By default this is only allowed if <dst> is not
+-a tag (annotated or lightweight), and then only if it can fast-forward
+-<dst>.  By having the optional leading `+`, you can tell Git to update
+-the <dst> ref even if it is not allowed by default (e.g., it is not a
+-fast-forward.).
+-+
+-Pushing an empty <src> allows you to delete the <dst> ref from
+-the remote repository.
++on the remote side. Whether this is allowed depends on where in
++`refs/*` the <dst> reference lives as described in detail below, in
++those sections "update" means any modifications except deletes, which
++as noted after the next few sections are treated differently.
+++
++The `refs/heads/*` namespace will only accept commit objects, and
++updates only if they can be fast-forwarded.
+++
++The `refs/tags/*` namespace will accept any kind of object (as
++commits, trees and blobs can be tagged), and any updates to them will
++be rejected.
+++
++It's possible to push any type of object to any namespace outside of
++`refs/{tags,heads}/*`. In the case of tags and commits, these will be
++treated as if they were the commits inside `refs/heads/*` for the
++purposes of whether the update is allowed.
+++
++I.e. a fast-forward of commits and tags outside `refs/{tags,heads}/*`
++is allowed, even in cases where what's being fast-forwarded is not a
++commit, but a tag object which happens to point to a new commit which
++is a fast-forward of the commit the last tag (or commit) it's
++replacing. Replacing a tag with an entirely different tag is also
++allowed, if it points to the same commit, as well as pushing a peeled
++tag, i.e. pushing the commit that existing tag object points to, or a
++new tag object which an existing commit points to.
+++
++Tree and blob objects outside of `refs/{tags,heads}/*` will be treated
++the same way as if they were inside `refs/tags/*`, any update of them
++will be rejected.
+++
++All of the rules described above about what's not allowed as an update
++can be overridden by adding an the optional leading `+` to a refspec
++(or using `--force` command line option). The only exception to this
++is that no amount of forcing will make the `refs/heads/*` namespace
++accept a non-commit object. Hooks and configuration can also override
++or amend these rules, see e.g. `receive.denyNonFastForwards` in
++linkgit:git-config[1] and`pre-receive` and `update` in
++linkgit:githooks[5].
+++
++Pushing an empty <src> allows you to delete the <dst> ref from the
++remote repository. Deletions are always accepted without a leading `+`
++in the refspec (or `--force`), except when forbidden by configuration
++or hooks. See `receive.denyDeletes` in linkgit:git-config[1] and
++`pre-receive` and `update` in linkgit:githooks[5].
+ +
+ The special refspec `:` (or `+:` to allow non-fast-forward updates)
+ directs Git to push "matching" branches: for every branch that exists on
+diff --git a/Documentation/gitrevisions.txt b/Documentation/gitrevisions.txt
+index 1f6cceaefb..d407b7dee1 100644
+--- a/Documentation/gitrevisions.txt
++++ b/Documentation/gitrevisions.txt
+@@ -19,9 +19,10 @@ walk the revision graph (such as linkgit:git-log[1]), all commits which are
+ reachable from that commit. For commands that walk the revision graph one can
+ also specify a range of revisions explicitly.
+ 
+-In addition, some Git commands (such as linkgit:git-show[1]) also take
+-revision parameters which denote other objects than commits, e.g. blobs
+-("files") or trees ("directories of files").
++In addition, some Git commands (such as linkgit:git-show[1] and
++linkgit:git-push[1]) can also take revision parameters which denote
++other objects than commits, e.g. blobs ("files") or trees
++("directories of files").
+ 
+ include::revisions.txt[]
+ 
+-- 
+2.19.0.rc1.350.ge57e33dbd1
+
