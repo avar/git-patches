@@ -1,0 +1,71 @@
+From 97ae7feeffbd826d8c5db002bca0e335920e6aef Mon Sep 17 00:00:00 2001
+In-Reply-To: <2b31e12e-20e9-3d08-58bd-977f8b83e0a7@web.de>
+References: <2b31e12e-20e9-3d08-58bd-977f8b83e0a7@web.de>
+From: =?UTF-8?q?Ren=C3=A9=20Scharfe?= <l.s.r@web.de>
+Date: Tue, 28 Aug 2018 07:59:22 +0000
+Subject: [PATCH v5 07/10] fsck: add a performance test for skipList
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Create a performance test to see how the skipList implementation
+performs. First we setup N bad commits, then we see how progressively
+working our way up to 0..N in increments of 10x does. I.e. the
+needle(s) in the haystack get progressively more numerous.
+
+Signed-off-by: René Scharfe <l.s.r@web.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/p1451-fsck-skip-list.sh | 40 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+ create mode 100755 t/perf/p1451-fsck-skip-list.sh
+
+diff --git a/t/perf/p1451-fsck-skip-list.sh b/t/perf/p1451-fsck-skip-list.sh
+new file mode 100755
+index 0000000000..c2b97d2487
+--- /dev/null
++++ b/t/perf/p1451-fsck-skip-list.sh
+@@ -0,0 +1,40 @@
++#!/bin/sh
++
++test_description='Test fsck skipList performance'
++
++. ./perf-lib.sh
++
++test_perf_fresh_repo
++
++n=1000000
++
++test_expect_success "setup $n bad commits" '
++	for i in $(test_seq 1 $n)
++	do
++		echo "commit refs/heads/master" &&
++		echo "committer C <c@example.com> 1234567890 +0000" &&
++		echo "data <<EOF" &&
++		echo "$i.Q." &&
++		echo "EOF"
++	done | q_to_nul | git fast-import
++'
++
++skip=0
++while test $skip -le $n
++do
++	test_expect_success "create skipList for $skip bad commits" '
++		git log --format=%H --max-count=$skip |
++		sort >skiplist
++	'
++
++	test_perf "fsck with $skip skipped bad commits" '
++		git -c fsck.skipList=skiplist fsck
++	'
++
++	case $skip in
++	0) skip=1 ;;
++	*) skip=${skip}0 ;;
++	esac
++done
++
++test_done
+-- 
+2.19.0.rc1.350.ge57e33dbd1
+

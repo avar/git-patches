@@ -1,0 +1,83 @@
+From 084442e494b8b6e4ce2f511988cc70f49a92faf1 Mon Sep 17 00:00:00 2001
+In-Reply-To: <2b31e12e-20e9-3d08-58bd-977f8b83e0a7@web.de>
+References: <2b31e12e-20e9-3d08-58bd-977f8b83e0a7@web.de>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 27 Aug 2018 18:28:05 +0000
+Subject: [PATCH v5 04/10] fsck: document and test commented & empty line
+ skipList input
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There is currently no comment syntax for the fsck.skipList, this isn't
+really by design, and it would be nice to have support for comments.
+
+Document that this doesn't work, and test for how this errors
+out. These tests reveal a current bug, if there's invalid input the
+output will emit some of the next line, and then go into uninitialized
+memory. This is fixed in a subsequent change.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt        | 11 +++++++----
+ t/t5504-fetch-receive-strict.sh | 21 +++++++++++++++++++++
+ 2 files changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index fd1b5837d0..0e1ce7de8b 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1712,10 +1712,13 @@ will only cause git to warn.
+ fsck.skipList::
+ 	The path to a list of object names (i.e. one SHA-1 per
+ 	line) that are known to be broken in a non-fatal way and should
+-	be ignored. This feature is useful when an established project
+-	should be accepted despite early commits containing errors that
+-	can be safely ignored such as invalid committer email addresses.
+-	Note: corrupt objects cannot be skipped with this setting.
++	be ignored. Comments ('#') and empty lines are not supported, and
++	will error out.
+++
++This feature is useful when an established project should be accepted
++despite early commits containing errors that can be safely ignored
++such as invalid committer email addresses.  Note: corrupt objects
++cannot be skipped with this setting.
+ +
+ Like `fsck.<msg-id>` this variable has corresponding
+ `receive.fsck.skipList` and `fetch.fsck.skipList` variants.
+diff --git a/t/t5504-fetch-receive-strict.sh b/t/t5504-fetch-receive-strict.sh
+index fa56052f0f..38aaf3b928 100755
+--- a/t/t5504-fetch-receive-strict.sh
++++ b/t/t5504-fetch-receive-strict.sh
+@@ -169,6 +169,27 @@ test_expect_success 'fsck with invalid or bogus skipList input' '
+ 	test_i18ngrep "Invalid SHA-1: \[core\]" err
+ '
+ 
++test_expect_success 'fsck with invalid or bogus skipList input (comments & empty lines)' '
++	cat >SKIP.with-comment <<-EOF &&
++	# Some bad commit
++	0000000000000000000000000000000000000001
++	EOF
++	test_must_fail git -c fsck.skipList=SKIP.with-comment fsck 2>err-with-comment &&
++	test_i18ngrep "^fatal: Invalid SHA-1: # Some bad commit$" err-with-comment &&
++	cat >SKIP.with-empty-line <<-EOF &&
++	0000000000000000000000000000000000000001
++
++	0000000000000000000000000000000000000002
++	EOF
++	test_must_fail git -c fsck.skipList=SKIP.with-empty-line fsck 2>err-with-empty-line &&
++	test_i18ngrep "^fatal: Invalid SHA-1: " err-with-empty-line
++'
++
++test_expect_failure 'fsck no garbage output from comments & empty lines errors' '
++	test_line_count = 1 err-with-comment &&
++	test_line_count = 1 err-with-empty-line
++'
++
+ test_expect_success 'push with receive.fsck.skipList' '
+ 	git push . $commit:refs/heads/bogus &&
+ 	rm -rf dst &&
+-- 
+2.19.0.rc1.350.ge57e33dbd1
+

@@ -1,0 +1,133 @@
+From e6839a81a1d6f854e1f445e5f31dab7c2e2e8145 Mon Sep 17 00:00:00 2001
+In-Reply-To: <2b31e12e-20e9-3d08-58bd-977f8b83e0a7@web.de>
+References: <2b31e12e-20e9-3d08-58bd-977f8b83e0a7@web.de>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 27 Aug 2018 18:52:26 +0000
+Subject: [PATCH v5 10/10] fsck: support comments & empty lines in skipList
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+It's annoying not to be able to put comments and empty lines in the
+skipList, when e.g. keeping a big central list of commits to skip in
+/etc/gitconfig, which was my motivation for 1362df0d41 ("fetch:
+implement fetch.fsck.*", 2018-07-27).
+
+Implement that, and document what version of Git this was changed in,
+since this on-disk format can be expected to be used by multiple
+versions of git.
+
+There is no notable performance impact from this change, using the
+test setup described a couple of commits back:
+
+    Test                                             HEAD~             HEAD
+    ----------------------------------------------------------------------------------------
+    1450.3: fsck with 0 skipped bad commits          7.69(7.27+0.42)   7.86(7.48+0.37) +2.2%
+    1450.5: fsck with 1 skipped bad commits          7.69(7.30+0.38)   7.83(7.47+0.36) +1.8%
+    1450.7: fsck with 10 skipped bad commits         7.76(7.38+0.38)   7.79(7.38+0.41) +0.4%
+    1450.9: fsck with 100 skipped bad commits        7.76(7.38+0.38)   7.74(7.36+0.38) -0.3%
+    1450.11: fsck with 1000 skipped bad commits      7.71(7.30+0.41)   7.72(7.34+0.38) +0.1%
+    1450.13: fsck with 10000 skipped bad commits     7.74(7.34+0.40)   7.72(7.34+0.38) -0.3%
+    1450.15: fsck with 100000 skipped bad commits    7.75(7.40+0.35)   7.70(7.29+0.40) -0.6%
+    1450.17: fsck with 1000000 skipped bad commits   7.12(6.86+0.26)   7.13(6.87+0.26) +0.1%
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config.txt        |  5 +++--
+ fsck.c                          | 14 ++++++++++++++
+ t/t5504-fetch-receive-strict.sh | 19 ++++++++++++++++---
+ 3 files changed, 33 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/config.txt b/Documentation/config.txt
+index 161ffe259e..0906db3a99 100644
+--- a/Documentation/config.txt
++++ b/Documentation/config.txt
+@@ -1712,8 +1712,9 @@ will only cause git to warn.
+ fsck.skipList::
+ 	The path to a list of object names (i.e. one unabbreviated SHA-1 per
+ 	line) that are known to be broken in a non-fatal way and should
+-	be ignored. Comments ('#') and empty lines are not supported, and
+-	will error out.
++	be ignored. On versions of Git 2.20 and later comments ('#'), empty
++	lines, and any leading and trailing whitespace is ignored. Everything
++	but a SHA-1 per line will error out on older versions.
+ +
+ This feature is useful when an established project should be accepted
+ despite early commits containing errors that can be safely ignored
+diff --git a/fsck.c b/fsck.c
+index 4c643f1d40..859b050b05 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -190,6 +190,20 @@ static void init_skiplist(struct fsck_options *options, const char *path)
+ 		die("Could not open skip list: %s", path);
+ 	while (!strbuf_getline(&sb, fp)) {
+ 		const char *p;
++		const char *hash;
++
++		/*
++		 * Allow trailing comments, leading whitespace
++		 * (including before commits), and empty or whitespace
++		 * only lines.
++		 */
++		hash = strchr(sb.buf, '#');
++		if (hash)
++			strbuf_setlen(&sb, hash - sb.buf);
++		strbuf_trim(&sb);
++		if (!sb.len)
++			continue;
++
+ 		if (parse_oid_hex(sb.buf, &oid, &p) || *p != '\0')
+ 			die("Invalid SHA-1: %s", sb.buf);
+ 		oidset_insert(&options->skiplist, &oid);
+diff --git a/t/t5504-fetch-receive-strict.sh b/t/t5504-fetch-receive-strict.sh
+index d67ab37321..7bc706873c 100755
+--- a/t/t5504-fetch-receive-strict.sh
++++ b/t/t5504-fetch-receive-strict.sh
+@@ -169,20 +169,20 @@ test_expect_success 'fsck with invalid or bogus skipList input' '
+ 	test_i18ngrep "Invalid SHA-1: \[core\]" err
+ '
+ 
+-test_expect_success 'fsck with invalid or bogus skipList input (comments & empty lines)' '
++test_expect_success 'fsck with other accepted skipList input (comments & empty lines)' '
+ 	cat >SKIP.with-comment <<-EOF &&
+ 	# Some bad commit
+ 	0000000000000000000000000000000000000001
+ 	EOF
+ 	test_must_fail git -c fsck.skipList=SKIP.with-comment fsck 2>err-with-comment &&
+-	test_i18ngrep "^fatal: Invalid SHA-1: # Some bad commit$" err-with-comment &&
++	test_i18ngrep "missingEmail" err-with-comment &&
+ 	cat >SKIP.with-empty-line <<-EOF &&
+ 	0000000000000000000000000000000000000001
+ 
+ 	0000000000000000000000000000000000000002
+ 	EOF
+ 	test_must_fail git -c fsck.skipList=SKIP.with-empty-line fsck 2>err-with-empty-line &&
+-	test_i18ngrep "^fatal: Invalid SHA-1: " err-with-empty-line
++	test_i18ngrep "missingEmail" err-with-empty-line
+ '
+ 
+ test_expect_success 'fsck no garbage output from comments & empty lines errors' '
+@@ -196,6 +196,19 @@ test_expect_success 'fsck with invalid abbreviated skipList input' '
+ 	test_i18ngrep "^fatal: Invalid SHA-1: " err-abbreviated
+ '
+ 
++test_expect_success 'fsck with exhaustive accepted skipList input (various types of comments etc.)' '
++	>SKIP.exhaustive &&
++	echo "# A commented line" >>SKIP.exhaustive &&
++	echo "" >>SKIP.exhaustive &&
++	echo " " >>SKIP.exhaustive &&
++	echo " # Comment after whitespace" >>SKIP.exhaustive &&
++	echo "$commit # Our bad commit (with leading whitespace and trailing comment)" >>SKIP.exhaustive &&
++	echo "# Some bad commit (leading whitespace)" >>SKIP.exhaustive &&
++	echo "  0000000000000000000000000000000000000001" >>SKIP.exhaustive &&
++	git -c fsck.skipList=SKIP.exhaustive fsck 2>err &&
++	test_must_be_empty err
++'
++
+ test_expect_success 'push with receive.fsck.skipList' '
+ 	git push . $commit:refs/heads/bogus &&
+ 	rm -rf dst &&
+-- 
+2.19.0.rc1.350.ge57e33dbd1
+
