@@ -1,0 +1,77 @@
+From 775237cffb86e21732616fa95a254a98d2d4054a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 4 Sep 2018 20:12:46 +0000
+Subject: [PATCH v2 2/2] commit-graph verify: add progress output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+For the reasons explained in the "commit-graph write: add progress
+output" commit leading up to this one, emit progress on "commit-graph
+verify". Since e0fd51e1d7 ("fsck: verify commit-graph", 2018-06-27)
+"git fsck" has called this command if core.commitGraph=true, but
+there's been no progress output to indicate that anything was
+different. Now there is (on my tiny dotfiles.git repository):
+
+    $ git -c core.commitGraph=true -C ~/ fsck
+    Checking object directories: 100% (256/256), done.
+    Checking objects: 100% (2821/2821), done.
+    dangling blob 5b8bbdb9b788ed90459f505b0934619c17cc605b
+    Verifying commits in commit graph: 100% (867/867), done.
+
+And on a larger repository, such as the 2015-04-03-1M-git.git test
+repository:
+
+    $ time git -c core.commitGraph=true -C ~/g/2015-04-03-1M-git/ commit-graph verify
+    Verifying commits in commit graph: 100% (1000447/1000447), done.
+    real    0m7.813s
+    [...]
+
+Since the "commit-graph verify" subcommand is never called from "git
+gc", we don't have to worry about passing some some "report_progress"
+progress variable around for this codepath.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit-graph.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index 2c5d996194..0bfb8c180e 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -922,6 +922,7 @@ int verify_commit_graph(struct repository *r, struct commit_graph *g)
+ 	int generation_zero = 0;
+ 	struct hashfile *f;
+ 	int devnull;
++	struct progress *progress = NULL;
+ 
+ 	if (!g) {
+ 		graph_report("no commit-graph file loaded");
+@@ -989,11 +990,14 @@ int verify_commit_graph(struct repository *r, struct commit_graph *g)
+ 	if (verify_commit_graph_error & ~VERIFY_COMMIT_GRAPH_ERROR_HASH)
+ 		return verify_commit_graph_error;
+ 
++	progress = start_progress("Verifying commits in commit graph",
++				  g->num_commits);
+ 	for (i = 0; i < g->num_commits; i++) {
+ 		struct commit *graph_commit, *odb_commit;
+ 		struct commit_list *graph_parents, *odb_parents;
+ 		uint32_t max_generation = 0;
+ 
++		display_progress(progress, i + 1);
+ 		hashcpy(cur_oid.hash, g->chunk_oid_lookup + g->hash_len * i);
+ 
+ 		graph_commit = lookup_commit(r, &cur_oid);
+@@ -1070,6 +1074,7 @@ int verify_commit_graph(struct repository *r, struct commit_graph *g)
+ 				     graph_commit->date,
+ 				     odb_commit->date);
+ 	}
++	stop_progress(&progress);
+ 
+ 	return verify_commit_graph_error;
+ }
+-- 
+2.19.0.rc1.350.ge57e33dbd1
+
