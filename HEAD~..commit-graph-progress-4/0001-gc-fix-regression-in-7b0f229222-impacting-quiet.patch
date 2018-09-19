@@ -1,0 +1,83 @@
+From 1e50732146d7243bb7bcada6aea8bd43d0678afe Mon Sep 17 00:00:00 2001
+In-Reply-To: <87tvmljtaz.fsf@evledraar.gmail.com>
+References: <87tvmljtaz.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 19 Sep 2018 20:29:54 +0000
+Subject: [PATCH] gc: fix regression in 7b0f229222 impacting --quiet
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in my recent 7b0f229222 ("commit-graph write: add
+progress output", 2018-09-17), the newly added progress output for
+"commit-graph write" didn't check the --quiet option.
+
+Do so, and add a test asserting that this works as expected. Since the
+TTY perquisite isn't available everywhere let's add a version of this
+that both requires and doesn't require that. This test might be overly
+specific and will break if new progress output is added, but I think
+it'll serve as a good reminder to test the undertested progress
+mode(s).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c  |  2 +-
+ t/t6500-gc.sh | 21 +++++++++++++++++++++
+ 2 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 06ddd3aea5..91ffb1a803 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -647,7 +647,7 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 
+ 	if (gc_write_commit_graph)
+ 		write_commit_graph_reachable(get_object_directory(), 0,
+-					     !daemonized);
++					     !quiet && !daemonized);
+ 
+ 	if (auto_gc && too_many_loose_objects())
+ 		warning(_("There are too many unreachable loose objects; "
+diff --git a/t/t6500-gc.sh b/t/t6500-gc.sh
+index 818435f04e..6183702c30 100755
+--- a/t/t6500-gc.sh
++++ b/t/t6500-gc.sh
+@@ -4,6 +4,7 @@ test_description='basic git gc tests
+ '
+ 
+ . ./test-lib.sh
++. "$TEST_DIRECTORY"/lib-terminal.sh
+ 
+ test_expect_success 'setup' '
+ 	# do not let the amount of physical memory affects gc
+@@ -99,6 +100,26 @@ test_expect_success 'auto gc with too many loose objects does not attempt to cre
+ 	test_line_count = 2 new # There is one new pack and its .idx
+ '
+ 
++test_expect_success 'gc --no-quiet' '
++	git -c gc.writeCommitGraph=true gc --no-quiet >stdout 2>stderr &&
++	! test -s stdout &&
++	test_line_count = 1 stderr &&
++	test_i18ngrep "Computing commit graph generation numbers" stderr
++'
++
++test_expect_success TTY 'with TTY: gc --no-quiet' '
++	test_terminal git -c gc.writeCommitGraph=true gc --no-quiet >stdout 2>stderr &&
++	! test -s stdout &&
++	test_i18ngrep "Enumerating objects" stderr &&
++	test_i18ngrep "Computing commit graph generation numbers" stderr
++'
++
++test_expect_success 'gc --quiet' '
++	git -c gc.writeCommitGraph=true gc --quiet >stdout 2>stderr &&
++	! test -s stdout &&
++	! test -s stderr
++'
++
+ run_and_wait_for_auto_gc () {
+ 	# We read stdout from gc for the side effect of waiting until the
+ 	# background gc process exits, closing its fd 9.  Furthermore, the
+-- 
+2.19.0.444.g18242da7ef
+
