@@ -1,0 +1,480 @@
+From c93bf2f23f23e9d04b8cef08a26720af7d5d86d2 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqsh0xtwgb.fsf@gitster-ct.c.googlers.com>
+References: <xmqqsh0xtwgb.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 23 Oct 2018 20:28:43 +0000
+Subject: [PATCH] i18n: make GETTEXT_POISON a runtime option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the GETTEXT_POISON compile-time + runtime GIT_GETTEXT_POISON
+test parameter to only be a GIT_TEST_GETTEXT_POISON=<boolean> runtime
+parameter, to be consistent with other parameters documented in
+"Running tests with special setups" in t/README.
+
+When I added GETTEXT_POISON in bb946bba76 ("i18n: add GETTEXT_POISON
+to simulate unfriendly translator", 2011-02-22) I was concerned with
+ensuring that the _() function would get constant folded if NO_GETTEXT
+was defined or if it wasn't and GETTEXT_POISON wasn't defined.
+
+But as the benchmark in my [1] shows doing a one-off runtime
+getenv("GIT_TEST_[...]") is trivial, and since GETTEXT_POISON was
+originally added this has become the common idiom in the codebase for
+turning on special test setups.
+
+So change GETTEXT_POISON to work the same way. Now the
+GETTEXT_POISON=YesPlease compile-time option is gone, and running the
+tests with GIT_TEST_GETTEXT_POISON=[true|false] can be toggled on/off
+without recompiling.
+
+This allows for conditionally amending tests to test with/without
+poison, similar to what 859fdc0c3c ("commit-graph: define
+GIT_TEST_COMMIT_GRAPH", 2018-08-29) did for GIT_TEST_COMMIT_GRAPH, but
+this patch doesn't change any of the existing tests to work like that.
+
+Notes on the implementation:
+
+ * The only reason we need a new "git-sh-i18n--helper" and the
+   corresponding "test-tool gettext-poison" is to expose
+   git_env_bool() to shellscripts, since git-sh-i18n and friends need
+   to inspect the $GIT_TEST_GETTEXT_POISON variable.
+
+   We only call these if $GIT_TEST_GETTEXT_POISON is set, or in the
+   test suite, and this code can go away for non-test code once the
+   last i18n-using shellscript is rewritten in C.
+
+ * We still compile a dedicated GETTEXT_POISON build in Travis CI,
+   this is probably the wrong thing to do and should be followed-up
+   with something similar to ae59a4e44f ("travis: run tests with
+   GIT_TEST_SPLIT_INDEX", 2018-01-07) to re-use an existing test setup
+   for running in the GIT_TEST_GETTEXT_POISON mode.
+
+ * The reason for not doing:
+
+       test_lazy_prereq GETTEXT_POISON 'test-tool gettext-poison'
+       test_lazy_prereq C_LOCALE_OUTPUT '! test-tool gettext-poison'
+
+   In test-lib.sh is because there's some interpolation problem with
+   that syntax which makes t6040-tracking-info.sh fail. Hence using
+   the simpler test_set_prereq.
+
+See also
+https://public-inbox.org/git/871s8gd32p.fsf@evledraar.gmail.com/ for
+more discussion.
+
+1. https://public-inbox.org/git/871s8gd32p.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .gitignore                     |  1 +
+ .travis.yml                    |  2 +-
+ Makefile                       | 11 ++---------
+ builtin.h                      |  1 +
+ builtin/sh-i18n--helper.c      | 27 +++++++++++++++++++++++++++
+ ci/lib-travisci.sh             |  4 ++--
+ gettext.c                      |  5 ++---
+ gettext.h                      |  4 ----
+ git-sh-i18n.sh                 |  3 ++-
+ git.c                          |  1 +
+ po/README                      | 13 ++++---------
+ t/README                       |  6 ++++++
+ t/helper/test-gettext-poison.c |  9 +++++++++
+ t/helper/test-tool.c           |  1 +
+ t/helper/test-tool.h           |  1 +
+ t/t0000-basic.sh               |  2 +-
+ t/t3406-rebase-message.sh      |  2 +-
+ t/t7201-co.sh                  |  5 ++++-
+ t/test-lib-functions.sh        |  8 ++++----
+ t/test-lib.sh                  | 11 ++---------
+ 20 files changed, 72 insertions(+), 45 deletions(-)
+ create mode 100644 builtin/sh-i18n--helper.c
+ create mode 100644 t/helper/test-gettext-poison.c
+
+diff --git a/.gitignore b/.gitignore
+index 9d1363a1eb..f7b7977910 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -148,6 +148,7 @@
+ /git-serve
+ /git-sh-i18n
+ /git-sh-i18n--envsubst
++/git-sh-i18n--helper
+ /git-sh-setup
+ /git-sh-i18n
+ /git-shell
+diff --git a/.travis.yml b/.travis.yml
+index 4d4e26c9df..4523a2e5ec 100644
+--- a/.travis.yml
++++ b/.travis.yml
+@@ -26,7 +26,7 @@ addons:
+ 
+ matrix:
+   include:
+-    - env: jobname=GETTEXT_POISON
++    - env: jobname=GIT_TEST_GETTEXT_POISON
+       os: linux
+       compiler:
+       addons:
+diff --git a/Makefile b/Makefile
+index d18ab0fe78..684dec4d39 100644
+--- a/Makefile
++++ b/Makefile
+@@ -362,11 +362,6 @@ all::
+ # Define HAVE_DEV_TTY if your system can open /dev/tty to interact with the
+ # user.
+ #
+-# Define GETTEXT_POISON if you are debugging the choice of strings marked
+-# for translation.  In a GETTEXT_POISON build, you can turn all strings marked
+-# for translation into gibberish by setting the GIT_GETTEXT_POISON variable
+-# (to any value) in your environment.
+-#
+ # Define JSMIN to point to JavaScript minifier that functions as
+ # a filter to have gitweb.js minified.
+ #
+@@ -714,6 +709,7 @@ TEST_BUILTINS_OBJS += test-dump-split-index.o
+ TEST_BUILTINS_OBJS += test-dump-untracked-cache.o
+ TEST_BUILTINS_OBJS += test-example-decorate.o
+ TEST_BUILTINS_OBJS += test-genrandom.o
++TEST_BUILTINS_OBJS += test-gettext-poison.o
+ TEST_BUILTINS_OBJS += test-hashmap.o
+ TEST_BUILTINS_OBJS += test-index-version.o
+ TEST_BUILTINS_OBJS += test-json-writer.o
+@@ -1099,6 +1095,7 @@ BUILTIN_OBJS += builtin/revert.o
+ BUILTIN_OBJS += builtin/rm.o
+ BUILTIN_OBJS += builtin/send-pack.o
+ BUILTIN_OBJS += builtin/serve.o
++BUILTIN_OBJS += builtin/sh-i18n--helper.o
+ BUILTIN_OBJS += builtin/shortlog.o
+ BUILTIN_OBJS += builtin/show-branch.o
+ BUILTIN_OBJS += builtin/show-index.o
+@@ -1439,9 +1436,6 @@ endif
+ ifdef NO_SYMLINK_HEAD
+ 	BASIC_CFLAGS += -DNO_SYMLINK_HEAD
+ endif
+-ifdef GETTEXT_POISON
+-	BASIC_CFLAGS += -DGETTEXT_POISON
+-endif
+ ifdef NO_GETTEXT
+ 	BASIC_CFLAGS += -DNO_GETTEXT
+ 	USE_GETTEXT_SCHEME ?= fallthrough
+@@ -2591,7 +2585,6 @@ ifdef GIT_TEST_CMP_USE_COPIED_CONTEXT
+ 	@echo GIT_TEST_CMP_USE_COPIED_CONTEXT=YesPlease >>$@+
+ endif
+ 	@echo NO_GETTEXT=\''$(subst ','\'',$(subst ','\'',$(NO_GETTEXT)))'\' >>$@+
+-	@echo GETTEXT_POISON=\''$(subst ','\'',$(subst ','\'',$(GETTEXT_POISON)))'\' >>$@+
+ ifdef GIT_PERF_REPEAT_COUNT
+ 	@echo GIT_PERF_REPEAT_COUNT=\''$(subst ','\'',$(subst ','\'',$(GIT_PERF_REPEAT_COUNT)))'\' >>$@+
+ endif
+diff --git a/builtin.h b/builtin.h
+index 962f0489ab..a40c56e7a2 100644
+--- a/builtin.h
++++ b/builtin.h
+@@ -219,6 +219,7 @@ extern int cmd_revert(int argc, const char **argv, const char *prefix);
+ extern int cmd_rm(int argc, const char **argv, const char *prefix);
+ extern int cmd_send_pack(int argc, const char **argv, const char *prefix);
+ extern int cmd_serve(int argc, const char **argv, const char *prefix);
++extern int cmd_sh_i18n__helper(int argc, const char **argv, const char *prefix);
+ extern int cmd_shortlog(int argc, const char **argv, const char *prefix);
+ extern int cmd_show(int argc, const char **argv, const char *prefix);
+ extern int cmd_show_branch(int argc, const char **argv, const char *prefix);
+diff --git a/builtin/sh-i18n--helper.c b/builtin/sh-i18n--helper.c
+new file mode 100644
+index 0000000000..1fba8b902b
+--- /dev/null
++++ b/builtin/sh-i18n--helper.c
+@@ -0,0 +1,27 @@
++#include "builtin.h"
++#include "cache.h"
++#include "config.h"
++#include "parse-options.h"
++
++static const char * const builtin_sh_i18n_helper_usage[] = {
++	N_("git sh-i18n--helper [<options>]"),
++	NULL
++};
++
++int cmd_sh_i18n__helper(int argc, const char **argv, const char *prefix)
++{
++	int poison = -1;
++	struct option options[] = {
++		OPT_BOOL(0, "git-test-gettext-poison", &poison,
++			 N_("is GIT_TEST_GETTEXT_POISON in effect?")),
++		OPT_END()
++	};
++
++	argc = parse_options(argc, argv, NULL, options,
++			     builtin_sh_i18n_helper_usage, PARSE_OPT_KEEP_ARGV0);
++
++	if (poison != -1)
++		return !git_env_bool("GIT_TEST_GETTEXT_POISON", 0);
++
++	usage_with_options(builtin_sh_i18n_helper_usage, options);
++}
+diff --git a/ci/lib-travisci.sh b/ci/lib-travisci.sh
+index 06970f7213..6a89d0d7d8 100755
+--- a/ci/lib-travisci.sh
++++ b/ci/lib-travisci.sh
+@@ -123,7 +123,7 @@ osx-clang|osx-gcc)
+ 	# Travis CI OS X
+ 	export GIT_SKIP_TESTS="t9810 t9816"
+ 	;;
+-GETTEXT_POISON)
+-	export GETTEXT_POISON=YesPlease
++GIT_TEST_GETTEXT_POISON)
++	export GIT_TEST_GETTEXT_POISON=true
+ 	;;
+ esac
+diff --git a/gettext.c b/gettext.c
+index 7272771c8e..722a2f726c 100644
+--- a/gettext.c
++++ b/gettext.c
+@@ -7,6 +7,7 @@
+ #include "gettext.h"
+ #include "strbuf.h"
+ #include "utf8.h"
++#include "config.h"
+ 
+ #ifndef NO_GETTEXT
+ #	include <locale.h>
+@@ -46,15 +47,13 @@ const char *get_preferred_languages(void)
+ 	return NULL;
+ }
+ 
+-#ifdef GETTEXT_POISON
+ int use_gettext_poison(void)
+ {
+ 	static int poison_requested = -1;
+ 	if (poison_requested == -1)
+-		poison_requested = getenv("GIT_GETTEXT_POISON") ? 1 : 0;
++		poison_requested = git_env_bool("GIT_TEST_GETTEXT_POISON", 0);
+ 	return poison_requested;
+ }
+-#endif
+ 
+ #ifndef NO_GETTEXT
+ static int test_vsnprintf(const char *fmt, ...)
+diff --git a/gettext.h b/gettext.h
+index 7eee64a34f..4c492d9f57 100644
+--- a/gettext.h
++++ b/gettext.h
+@@ -41,11 +41,7 @@ static inline int gettext_width(const char *s)
+ }
+ #endif
+ 
+-#ifdef GETTEXT_POISON
+ extern int use_gettext_poison(void);
+-#else
+-#define use_gettext_poison() 0
+-#endif
+ 
+ static inline FORMAT_PRESERVING(1) const char *_(const char *msgid)
+ {
+diff --git a/git-sh-i18n.sh b/git-sh-i18n.sh
+index 9d065fb4bf..c0713b1ee9 100644
+--- a/git-sh-i18n.sh
++++ b/git-sh-i18n.sh
+@@ -17,7 +17,8 @@ export TEXTDOMAINDIR
+ 
+ # First decide what scheme to use...
+ GIT_INTERNAL_GETTEXT_SH_SCHEME=fallthrough
+-if test -n "$GIT_GETTEXT_POISON"
++if test -n "$GIT_TEST_GETTEXT_POISON" &&
++	    git sh-i18n--helper --git-test-gettext-poison
+ then
+ 	GIT_INTERNAL_GETTEXT_SH_SCHEME=poison
+ elif test -n "@@USE_GETTEXT_SCHEME@@"
+diff --git a/git.c b/git.c
+index 5920f8019b..125c523720 100644
+--- a/git.c
++++ b/git.c
+@@ -539,6 +539,7 @@ static struct cmd_struct commands[] = {
+ 	{ "rm", cmd_rm, RUN_SETUP },
+ 	{ "send-pack", cmd_send_pack, RUN_SETUP },
+ 	{ "serve", cmd_serve, RUN_SETUP },
++	{ "sh-i18n--helper", cmd_sh_i18n__helper, 0 },
+ 	{ "shortlog", cmd_shortlog, RUN_SETUP_GENTLY | USE_PAGER },
+ 	{ "show", cmd_show, RUN_SETUP },
+ 	{ "show-branch", cmd_show_branch, RUN_SETUP },
+diff --git a/po/README b/po/README
+index fef4c0f0b5..dba46c4a40 100644
+--- a/po/README
++++ b/po/README
+@@ -289,16 +289,11 @@ something in the test suite might still depend on the US English
+ version of the strings, e.g. to grep some error message or other
+ output.
+ 
+-To smoke out issues like these Git can be compiled with gettext poison
+-support, at the top-level:
++To smoke out issues like these Git tested with a translation mode that
++emits gibberish on every call to gettext. To use it run the test suite
++with it, e.g.:
+ 
+-    make GETTEXT_POISON=YesPlease
+-
+-That'll give you a git which emits gibberish on every call to
+-gettext. It's obviously not meant to be installed, but you should run
+-the test suite with it:
+-
+-    cd t && prove -j 9 ./t[0-9]*.sh
++    cd t && GIT_TEST_GETTEXT_POISON=true prove -j 9 ./t[0-9]*.sh
+ 
+ If tests break with it you should inspect them manually and see if
+ what you're translating is sane, i.e. that you're not translating
+diff --git a/t/README b/t/README
+index 8847489640..53c3dee7a9 100644
+--- a/t/README
++++ b/t/README
+@@ -301,6 +301,12 @@ that cannot be easily covered by a few specific test cases. These
+ could be enabled by running the test suite with correct GIT_TEST_
+ environment set.
+ 
++GIT_TEST_GETTEXT_POISON=<boolean> turns all strings marked for
++translation into gibberish. Used for spotting those tests that need to
++be marked with a C_LOCALE_OUTPUT prerequisite when adding more strings
++for translation. See "Testing marked strings" in po/README for
++details.
++
+ GIT_TEST_SPLIT_INDEX=<boolean> forces split-index mode on the whole
+ test suite. Accept any boolean values that are accepted by git-config.
+ 
+diff --git a/t/helper/test-gettext-poison.c b/t/helper/test-gettext-poison.c
+new file mode 100644
+index 0000000000..476be95da5
+--- /dev/null
++++ b/t/helper/test-gettext-poison.c
+@@ -0,0 +1,9 @@
++#include "test-tool.h"
++#include "git-compat-util.h"
++#include "thread-utils.h"
++#include "gettext.h"
++
++int cmd__gettext_poison(int argc, const char **argv)
++{
++	return use_gettext_poison() ? 0 : 1;
++}
+diff --git a/t/helper/test-tool.c b/t/helper/test-tool.c
+index 6b5836dc1b..3e75672a37 100644
+--- a/t/helper/test-tool.c
++++ b/t/helper/test-tool.c
+@@ -19,6 +19,7 @@ static struct test_cmd cmds[] = {
+ 	{ "dump-untracked-cache", cmd__dump_untracked_cache },
+ 	{ "example-decorate", cmd__example_decorate },
+ 	{ "genrandom", cmd__genrandom },
++	{ "gettext-poison", cmd__gettext_poison },
+ 	{ "hashmap", cmd__hashmap },
+ 	{ "index-version", cmd__index_version },
+ 	{ "json-writer", cmd__json_writer },
+diff --git a/t/helper/test-tool.h b/t/helper/test-tool.h
+index e4890566da..04f033b7fc 100644
+--- a/t/helper/test-tool.h
++++ b/t/helper/test-tool.h
+@@ -15,6 +15,7 @@ int cmd__dump_split_index(int argc, const char **argv);
+ int cmd__dump_untracked_cache(int argc, const char **argv);
+ int cmd__example_decorate(int argc, const char **argv);
+ int cmd__genrandom(int argc, const char **argv);
++int cmd__gettext_poison(int argc, const char **argv);
+ int cmd__hashmap(int argc, const char **argv);
+ int cmd__index_version(int argc, const char **argv);
+ int cmd__json_writer(int argc, const char **argv);
+diff --git a/t/t0000-basic.sh b/t/t0000-basic.sh
+index 4d23373526..b6566003dd 100755
+--- a/t/t0000-basic.sh
++++ b/t/t0000-basic.sh
+@@ -274,7 +274,7 @@ test_expect_success 'pretend we have a mix of all possible results' "
+ 	EOF
+ "
+ 
+-test_expect_success 'test --verbose' '
++test_expect_success C_LOCALE_OUTPUT 'test --verbose' '
+ 	test_must_fail run_sub_test_lib_test \
+ 		test-verbose "test verbose" --verbose <<-\EOF &&
+ 	test_expect_success "passing test" true
+diff --git a/t/t3406-rebase-message.sh b/t/t3406-rebase-message.sh
+index 0392e36d23..2bdcf83808 100755
+--- a/t/t3406-rebase-message.sh
++++ b/t/t3406-rebase-message.sh
+@@ -77,7 +77,7 @@ test_expect_success 'rebase -n overrides config rebase.stat config' '
+ #     "Does not point to a valid commit: invalid-ref"
+ #
+ # NEEDSWORK: This "grep" is fine in real non-C locales, but
+-# GETTEXT_POISON poisons the refname along with the enclosing
++# GIT_TEST_GETTEXT_POISON poisons the refname along with the enclosing
+ # error message.
+ test_expect_success 'rebase --onto outputs the invalid ref' '
+ 	test_must_fail git rebase --onto invalid-ref HEAD HEAD 2>err &&
+diff --git a/t/t7201-co.sh b/t/t7201-co.sh
+index 826987ca80..cb2c8cf3f3 100755
+--- a/t/t7201-co.sh
++++ b/t/t7201-co.sh
+@@ -256,7 +256,10 @@ test_expect_success 'checkout to detach HEAD' '
+ 	git checkout -f renamer && git clean -f &&
+ 	git checkout renamer^ 2>messages &&
+ 	test_i18ngrep "HEAD is now at 7329388" messages &&
+-	(test_line_count -gt 1 messages || test -n "$GETTEXT_POISON") &&
++	(
++		test_line_count -gt 1 messages ||
++		test_have_prereq GETTEXT_POISON
++	) &&
+ 	H=$(git rev-parse --verify HEAD) &&
+ 	M=$(git show-ref -s --verify refs/heads/master) &&
+ 	test "z$H" = "z$M" &&
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 78d8c3783b..f46e21cfa0 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -755,16 +755,16 @@ test_cmp_bin() {
+ 
+ # Use this instead of test_cmp to compare files that contain expected and
+ # actual output from git commands that can be translated.  When running
+-# under GETTEXT_POISON this pretends that the command produced expected
++# under GIT_TEST_GETTEXT_POISON this pretends that the command produced expected
+ # results.
+ test_i18ncmp () {
+-	test -n "$GETTEXT_POISON" || test_cmp "$@"
++	! test_have_prereq C_LOCALE_OUTPUT || test_cmp "$@"
+ }
+ 
+ # Use this instead of "grep expected-string actual" to see if the
+ # output from a git command that can be translated either contains an
+ # expected string, or does not contain an unwanted one.  When running
+-# under GETTEXT_POISON this pretends that the command produced expected
++# under GIT_TEST_GETTEXT_POISON this pretends that the command produced expected
+ # results.
+ test_i18ngrep () {
+ 	eval "last_arg=\${$#}"
+@@ -779,7 +779,7 @@ test_i18ngrep () {
+ 		error "bug in the test script: too few parameters to test_i18ngrep"
+ 	fi
+ 
+-	if test -n "$GETTEXT_POISON"
++	if ! test_have_prereq C_LOCALE_OUTPUT
+ 	then
+ 		# pretend success
+ 		return 0
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 897e6fcc94..ec77aa57d4 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1104,15 +1104,8 @@ test -n "$USE_LIBPCRE1" && test_set_prereq LIBPCRE1
+ test -n "$USE_LIBPCRE2" && test_set_prereq LIBPCRE2
+ test -z "$NO_GETTEXT" && test_set_prereq GETTEXT
+ 
+-# Can we rely on git's output in the C locale?
+-if test -n "$GETTEXT_POISON"
+-then
+-	GIT_GETTEXT_POISON=YesPlease
+-	export GIT_GETTEXT_POISON
+-	test_set_prereq GETTEXT_POISON
+-else
+-	test_set_prereq C_LOCALE_OUTPUT
+-fi
++test-tool gettext-poison && test_set_prereq GETTEXT_POISON
++test-tool gettext-poison || test_set_prereq C_LOCALE_OUTPUT
+ 
+ if test -z "$GIT_TEST_CHECK_CACHE_TREE"
+ then
+-- 
+2.19.1.568.g152ad8e336
+
