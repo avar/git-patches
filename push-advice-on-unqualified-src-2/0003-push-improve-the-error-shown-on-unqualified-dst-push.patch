@@ -1,0 +1,95 @@
+From 052fc5860efe028a8f98f5858165ab51b2fd99b9 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqq5zy8f6gr.fsf@gitster-ct.c.googlers.com>
+References: <xmqq5zy8f6gr.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Oct 2018 15:18:26 +0000
+Subject: [PATCH v2 3/7] push: improve the error shown on unqualified <dst>
+ push
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Improve the error message added in f8aae12034 ("push: allow
+unqualified dest refspecs to DWIM", 2008-04-23), which before this
+change looks like this:
+
+    $ git push avar v2.19.0^{commit}:newbranch -n
+    error: unable to push to unqualified destination: newbranch
+    The destination refspec neither matches an existing ref on the remote nor
+    begins with refs/, and we are unable to guess a prefix based on the source ref.
+    error: failed to push some refs to 'git@github.com:avar/git.git'
+
+This message needed to be read very carefully to spot how to fix the
+error, i.e. to push to refs/heads/newbranch. Now the message will look
+like this instead:
+
+    $ ./git-push avar v2.19.0^{commit}:newbranch -n
+    error: The destination you provided is not a full refname (i.e.,
+    starting with "refs/"). We tried to guess what you meant by:
+
+    - Looking for a ref that matches 'newbranch' on the remote side.
+    - Checking if the <src> being pushed ('v2.19.0^{commit}')
+      is a ref in "refs/{heads,tags}/". If so we add a
+      corresponding refs/{heads,tags}/ prefix on the remote side.
+
+    Neither worked, so we gave up. You must fully-qualify the ref.
+    error: failed to push some refs to 'git@github.com:avar/git.git'
+
+This improvement is the result of on-list discussion in [1] and [2],
+as well as my own fixes / reformatting / phrasing on top.
+
+The suggestion by Jeff on-list was to make that second bullet point
+"Looking at the refname of the local source.". The version being added
+here is more verbose, but also more accurate. saying "local source"
+could refer to any ref in the local refstore, including something in
+refs/remotes/*. A later change will teach guess_ref() to infer a ref
+type from remote-tracking refs, so let's not confuse the two.
+
+While I'm at it, add a "TRANSLATORS" comment since the message has
+gotten more complex and it's not as clear what the two %s's refer to.
+
+1. https://public-inbox.org/git/20181010205505.GB12949@sigill.intra.peff.net/
+2. https://public-inbox.org/git/xmqqbm81lb7c.fsf@gitster-ct.c.googlers.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ remote.c | 22 ++++++++++++++++------
+ 1 file changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/remote.c b/remote.c
+index 5cb3d00bfb..f4b438ff74 100644
+--- a/remote.c
++++ b/remote.c
+@@ -1049,12 +1049,22 @@ static int match_explicit(struct ref *src, struct ref *dst,
+ 			matched_dst = make_linked_ref(dst_guess, dst_tail);
+ 			free(dst_guess);
+ 		} else {
+-			error(_("unable to push to unqualified destination: %s\n"
+-				"The destination refspec neither matches an "
+-				"existing ref on the remote nor\n"
+-				"begins with refs/, and we are unable to "
+-				"guess a prefix based on the source ref."),
+-			      dst_value);
++			/*
++			 * TRANSLATORS: "matches '%s'%" is the <dst>
++			 * part of "git push <remote> <src>:<dst>"
++			 * push, and "being pushed ('%s')" is the
++			 * <src>.
++			 */
++			error(_("The destination you provided is not a full refname (i.e.,\n"
++				"starting with \"refs/\"). We tried to guess what you meant by:\n"
++				"\n"
++				"- Looking for a ref that matches '%s' on the remote side.\n"
++				"- Checking if the <src> being pushed ('%s')\n"
++				"  is a ref in \"refs/{heads,tags}/\". If so we add a corresponding\n"
++				"  refs/{heads,tags}/ prefix on the remote side.\n"
++				"\n"
++				"Neither worked, so we gave up. You must fully-qualify the ref."),
++			      dst_value, matched_src->name);
+ 		}
+ 		break;
+ 	default:
+-- 
+2.19.1.759.g500967bb5e
+

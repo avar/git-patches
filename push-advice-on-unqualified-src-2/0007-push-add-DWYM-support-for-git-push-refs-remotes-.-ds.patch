@@ -1,0 +1,111 @@
+From 4e1953da8245f14551d1cd12d37b757edad5aff0 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqq5zy8f6gr.fsf@gitster-ct.c.googlers.com>
+References: <xmqq5zy8f6gr.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Oct 2018 18:56:41 +0000
+Subject: [PATCH v2 7/7] push: add DWYM support for "git push
+ refs/remotes/...:<dst>"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add DWYM support for pushing a ref in refs/remotes/* when the <dst>
+ref is unqualified, e.g.:
+
+    git push origin refs/remotes/origin/master:upstream-master
+
+Before this we wouldn't know what do do with
+refs/remotes/origin/master, now we'll look it up and discover that
+it's a commit (or tag) and add a refs/{heads,tags}/ prefix to <dst> as
+appropriate.
+
+I'm bending over backwards and assuming that someone might have hacked
+in remote tracking tags (see [1] for a discussion of how that can be
+done), but punting on any tree or blob objects found under
+refs/remotes/*.
+
+This is the first use of the %N$<fmt> style of printf format in
+the *.[ch] files in our codebase, but it's supported by POSIX[2] and
+there's existing uses for it in po/*.po files, so hopefully it won't
+cause any trouble. It's more obvious for translators than to have a
+3rd argument to the function identical to the 2nd, by re-using the 2nd
+it's clear that we're continuing to talk about the <src> part of the
+refspec.
+
+1. https://public-inbox.org/git/87zi1jxjqn.fsf@evledraar.gmail.com/
+2. http://pubs.opengroup.org/onlinepubs/7908799/xsh/fprintf.html
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ remote.c          | 20 +++++++++++++++++++-
+ t/t5505-remote.sh | 14 +++++++++-----
+ 2 files changed, 28 insertions(+), 6 deletions(-)
+
+diff --git a/remote.c b/remote.c
+index 93f802509d..c243e3d89e 100644
+--- a/remote.c
++++ b/remote.c
+@@ -973,6 +973,21 @@ static char *guess_ref(const char *name, struct ref *peer)
+ 		strbuf_addstr(&buf, "refs/heads/");
+ 	} else if (starts_with(r, "refs/tags/")) {
+ 		strbuf_addstr(&buf, "refs/tags/");
++	} else if (starts_with(r, "refs/remotes/")) {
++		struct object_id oid;
++		enum object_type type;
++
++		if (get_oid(peer->name, &oid))
++			BUG("'%s' is not a valid object, "
++			    "match_explicit_lhs() should catch this!",
++			    peer->name);
++		type = oid_object_info(the_repository, &oid, NULL);
++		if (type == OBJ_COMMIT)
++			strbuf_addstr(&buf, "refs/heads/");
++		else if (type == OBJ_TAG)
++			strbuf_addstr(&buf, "refs/tags/");
++		else
++			return NULL;
+ 	} else {
+ 		return NULL;
+ 	}
+@@ -1024,8 +1039,11 @@ static void show_push_unqualified_ref_name_error(const char *dst_value,
+ 		"- Checking if the <src> being pushed ('%s')\n"
+ 		"  is a ref in \"refs/{heads,tags}/\". If so we add a corresponding\n"
+ 		"  refs/{heads,tags}/ prefix on the remote side.\n"
++		"- Checking if the <src> being pushed ('%2$s')\n"
++		"  is a commit or tag in \"refs/remotes/*\". Then we infer a\n"
++		"  corresponding refs/{heads,tags} on the remote side.\n"
+ 		"\n"
+-		"Neither worked, so we gave up. You must fully-qualify the ref."),
++		"None of those worked, so we gave up. You must fully-qualify the ref."),
+ 	      dst_value, matched_src_name);
+ 
+ 	if (!advice_push_unqualified_ref_name)
+diff --git a/t/t5505-remote.sh b/t/t5505-remote.sh
+index 979a13b415..a6337b50e4 100755
+--- a/t/t5505-remote.sh
++++ b/t/t5505-remote.sh
+@@ -1260,11 +1260,15 @@ test_expect_success 'refs/remotes/* <src> refspec and unqualified <dst> DWIM and
+ 		git config --add remote.two.fetch "+refs/blobs/*:refs/remotes/two-blobs/*" &&
+ 		git fetch --no-tags two &&
+ 
+-		test_must_fail git push origin refs/remotes/two/another:dst 2>err &&
+-		test_i18ngrep "error: The destination you" err &&
+-
+-		test_must_fail git push origin refs/remotes/two-tags/some-tag:dst-tag 2>err &&
+-		test_i18ngrep "error: The destination you" err &&
++		echo commit >expected &&
++		git push origin refs/remotes/two/another:dst &&
++		git -C ../one cat-file -t refs/heads/dst >actual &&
++		test_cmp expected actual &&
++
++		echo tag >expected &&
++		git push origin refs/remotes/two-tags/some-tag:dst-tag &&
++		git -C ../one cat-file -t refs/tags/dst-tag >actual &&
++		test_cmp expected actual &&
+ 
+ 		test_must_fail git push origin refs/remotes/two-trees/my-head-tree:dst-tree 2>err &&
+ 		test_i18ngrep "error: The destination you" err &&
+-- 
+2.19.1.759.g500967bb5e
+
