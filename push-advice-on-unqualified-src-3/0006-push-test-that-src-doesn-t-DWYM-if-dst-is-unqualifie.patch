@@ -1,0 +1,69 @@
+From 92ff7534371be42cf6af45154b4d2f18c696b028 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181026192734.9609-1-avarab@gmail.com>
+References: <20181026192734.9609-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Oct 2018 18:43:11 +0000
+Subject: [PATCH v3 6/8] push: test that <src> doesn't DWYM if <dst> is
+ unqualified
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test asserting that "git push origin <src>:<dst>" where <src> is
+a branch, tag, tree or blob in refs/remotes/* doesn't DWYM when <dst>
+is unqualified. This has never worked, but there's been no test for
+this behavior.
+
+See f88395ac23 ("Renaming push.", 2005-08-03), bb9fca80ce ("git-push:
+Update description of refspecs and add examples", 2007-06-09) and
+f8aae12034 ("push: allow unqualified dest refspecs to DWIM",
+2008-04-23) which are most relevant commits that have changed or
+documented the behavior of this feature in the past.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5505-remote.sh | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/t/t5505-remote.sh b/t/t5505-remote.sh
+index 2e58721f98..979a13b415 100755
+--- a/t/t5505-remote.sh
++++ b/t/t5505-remote.sh
+@@ -1246,5 +1246,33 @@ test_expect_success 'unqualified <dst> refspec DWIM and advice' '
+ 	)
+ '
+ 
++test_expect_success 'refs/remotes/* <src> refspec and unqualified <dst> DWIM and advice' '
++	(
++		cd two &&
++		git tag -a -m "Some tag" some-tag master &&
++		git update-ref refs/trees/my-head-tree HEAD^{tree} &&
++		git update-ref refs/blobs/my-file-blob HEAD:file
++	) &&
++	(
++		cd test &&
++		git config --add remote.two.fetch "+refs/tags/*:refs/remotes/two-tags/*" &&
++		git config --add remote.two.fetch "+refs/trees/*:refs/remotes/two-trees/*" &&
++		git config --add remote.two.fetch "+refs/blobs/*:refs/remotes/two-blobs/*" &&
++		git fetch --no-tags two &&
++
++		test_must_fail git push origin refs/remotes/two/another:dst 2>err &&
++		test_i18ngrep "error: The destination you" err &&
++
++		test_must_fail git push origin refs/remotes/two-tags/some-tag:dst-tag 2>err &&
++		test_i18ngrep "error: The destination you" err &&
++
++		test_must_fail git push origin refs/remotes/two-trees/my-head-tree:dst-tree 2>err &&
++		test_i18ngrep "error: The destination you" err &&
++
++		test_must_fail git push origin refs/remotes/two-blobs/my-file-blob:dst-blob 2>err &&
++		test_i18ngrep "error: The destination you" err
++	)
++'
++
+ 
+ test_done
+-- 
+2.19.1.759.g500967bb5e
+
