@@ -1,0 +1,90 @@
+From 2a4392f742f83fb5518c37989c9da4aa4b8875c3 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181028225023.26427-1-avarab@gmail.com>
+References: <20181028225023.26427-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 28 Oct 2018 20:40:25 +0000
+Subject: [PATCH v2 2/3] pack-objects tests: don't leave test .git corrupt at
+ end
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the pack-objects tests to not leave their .git directory
+corrupt and the end.
+
+In 2fca19fbb5 ("fix multiple issues with t5300", 2010-02-03) a comment
+was added warning against adding any subsequent tests, but since
+4614043c8f ("index-pack: use streaming interface for collision test on
+large blobs", 2012-05-24) the comment has drifted away from the code,
+mentioning two test, when we actually have three.
+
+Instead of having this warning let's just create a new .git directory
+specifically for these tests.
+
+As an aside, it would be interesting to instrument the test suite to
+run a "git fsck" at the very end (in "test_done"). That would have
+errored before this change, and may find other issues #leftoverbits.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5300-pack-object.sh | 37 ++++++++++++++++++++-----------------
+ 1 file changed, 20 insertions(+), 17 deletions(-)
+
+diff --git a/t/t5300-pack-object.sh b/t/t5300-pack-object.sh
+index a0309e4bab..410a09b0dd 100755
+--- a/t/t5300-pack-object.sh
++++ b/t/t5300-pack-object.sh
+@@ -468,29 +468,32 @@ test_expect_success 'pack-objects in too-many-packs mode' '
+ 	git fsck
+ '
+ 
+-#
+-# WARNING!
+-#
+-# The following test is destructive.  Please keep the next
+-# two tests at the end of this file.
+-#
+-
+-test_expect_success 'fake a SHA1 hash collision' '
+-	long_a=$(git hash-object a | sed -e "s!^..!&/!") &&
+-	long_b=$(git hash-object b | sed -e "s!^..!&/!") &&
+-	test -f	.git/objects/$long_b &&
+-	cp -f	.git/objects/$long_a \
+-		.git/objects/$long_b
++test_expect_success 'setup: fake a SHA1 hash collision' '
++	git init corrupt &&
++	(
++		cd corrupt &&
++		long_a=$(git hash-object -w ../a | sed -e "s!^..!&/!") &&
++		long_b=$(git hash-object -w ../b | sed -e "s!^..!&/!") &&
++		test -f	.git/objects/$long_b &&
++		cp -f	.git/objects/$long_a \
++			.git/objects/$long_b
++	)
+ '
+ 
+ test_expect_success 'make sure index-pack detects the SHA1 collision' '
+-	test_must_fail git index-pack -o bad.idx test-3.pack 2>msg &&
+-	test_i18ngrep "SHA1 COLLISION FOUND" msg
++	(
++		cd corrupt &&
++		test_must_fail git index-pack -o ../bad.idx ../test-3.pack 2>msg &&
++		test_i18ngrep "SHA1 COLLISION FOUND" msg
++	)
+ '
+ 
+ test_expect_success 'make sure index-pack detects the SHA1 collision (large blobs)' '
+-	test_must_fail git -c core.bigfilethreshold=1 index-pack -o bad.idx test-3.pack 2>msg &&
+-	test_i18ngrep "SHA1 COLLISION FOUND" msg
++	(
++		cd corrupt &&
++		test_must_fail git -c core.bigfilethreshold=1 index-pack -o ../bad.idx ../test-3.pack 2>msg &&
++		test_i18ngrep "SHA1 COLLISION FOUND" msg
++	)
+ '
+ 
+ test_done
+-- 
+2.19.1.899.g0250525e69
+
