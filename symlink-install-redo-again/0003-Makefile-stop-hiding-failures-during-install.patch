@@ -1,0 +1,88 @@
+From e50e86a067a801e924209c7293f29c78872221dd Mon Sep 17 00:00:00 2001
+In-Reply-To: <87efkkdwcv.fsf@evledraar.gmail.com>
+References: <87efkkdwcv.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Mar 2018 20:41:29 +0000
+Subject: [RFC/PATCH 3/5] Makefile: stop hiding failures during "install"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the fallback mechanism where we try to create hardlinks and
+ultimately fall back on a plain copy to emit the errors it encounters
+instead of hiding them away and silently falling back to copying.
+
+Hiding these errors dates back to 3e073dc561 ("Makefile: always
+provide a fallback when hardlinks fail", 2008-08-25) when the existing
+"hardlink or copy" logic was amended to hide the errors.
+
+At that time "make install" hadn't yet been taught any of the
+NO_*_HARDLINK options, that happened later in 3426e34fed ("Add
+NO_CROSS_DIRECTORY_HARDLINKS support to the Makefile", 2009-05-11) and
+was finally finished to roughly the current form in
+70de5e65e8 ("Makefile: NO_INSTALL_HARDLINKS", 2012-05-02).
+
+If someone is building a git in an environment where hard linking
+fails, they can now specify some combination of
+NO_INSTALL_HARDLINKS=YesPlease and NO_INSTALL_HARDLINKS=YesPlease, it
+doesn't make sense anymore to not only implicitly fall back to
+copying, but to do so silently.
+
+This change leaves no way to not get errors spewed if we're trying and
+failing to e.g. make symlinks and having to fall back on "cp". I think
+that's OK.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ install_programs | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/install_programs b/install_programs
+index d3333cd25f..367e9a6cdf 100755
+--- a/install_programs
++++ b/install_programs
+@@ -58,7 +58,7 @@ then
+ 		test -n "$INSTALL_SYMLINKS" &&
+ 		ln -s "$destdir_from_execdir/$bindir_relative/$p" "$execdir/$p" ||
+ 		{ test -z "$NO_INSTALL_HARDLINKS$NO_CROSS_DIRECTORY_HARDLINKS" &&
+-		  ln "$bindir/$p" "$execdir/$p" 2>/dev/null ||
++		  ln "$bindir/$p" "$execdir/$p" ||
+ 		  cp "$bindir/$p" "$execdir/$p" || exit; }
+ 	done
+ fi &&
+@@ -69,8 +69,8 @@ do
+ 	test -n "$INSTALL_SYMLINKS" &&
+ 	ln -s "git$X" "$bindir/$p" ||
+ 	{ test -z "$NO_INSTALL_HARDLINKS" &&
+-	  ln "$bindir/git$X" "$bindir/$p" 2>/dev/null ||
+-	  ln -s "git$X" "$bindir/$p" 2>/dev/null ||
++	  ln "$bindir/git$X" "$bindir/$p" ||
++	  ln -s "git$X" "$bindir/$p" ||
+ 	  cp "$bindir/git$X" "$bindir/$p" || exit; }
+ done &&
+ 
+@@ -79,8 +79,8 @@ for p in $list_execdir_git_dashed; do
+ 	test -n "$INSTALL_SYMLINKS" &&
+ 	ln -s "$destdir_from_execdir/$bindir_relative/git$X" "$execdir/$p" ||
+ 	{ test -z "$NO_INSTALL_HARDLINKS" &&
+-	  ln "$execdir/git$X" "$execdir/$p" 2>/dev/null ||
+-	  ln -s "git$X" "$execdir/$p" 2>/dev/null ||
++	  ln "$execdir/git$X" "$execdir/$p" ||
++	  ln -s "git$X" "$execdir/$p" ||
+ 	  cp "$execdir/git$X" "$execdir/$p" || exit; }
+ done &&
+ 
+@@ -89,7 +89,7 @@ for p in $list_execdir_curl_aliases; do
+ 	test -n "$INSTALL_SYMLINKS" &&
+ 	ln -s "git-remote-http$X" "$execdir/$p" ||
+ 	{ test -z "$NO_INSTALL_HARDLINKS" &&
+-	  ln "$execdir/git-remote-http$X" "$execdir/$p" 2>/dev/null ||
+-	  ln -s "git-remote-http$X" "$execdir/$p" 2>/dev/null ||
++	  ln "$execdir/git-remote-http$X" "$execdir/$p" ||
++	  ln -s "git-remote-http$X" "$execdir/$p" ||
+ 	  cp "$execdir/git-remote-http$X" "$execdir/$p" || exit; }
+ done
+-- 
+2.19.1.930.g4563a0d9d0
+
