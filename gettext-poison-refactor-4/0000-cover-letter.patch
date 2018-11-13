@@ -4,12 +4,105 @@ References: <20181101193115.32681-1-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 8 Nov 2018 20:39:02 +0000
-Subject: [PATCH v4 0/2] *** SUBJECT HERE ***
+Subject: [PATCH v4 0/2] i18n: make GETTEXT_POISON a runtime option
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+Addresses all the feedback against v3. Includes a patch by Junio
+sitting in "pu" (and I fixed the grammar error Eric pointed out in its
+commit message).
+
+Range-diff:
+
+1:  cc24ba8de8 ! 1:  2210ee8bd9 i18n: make GETTEXT_POISON a runtime option
+    @@ -34,11 +34,11 @@
+     
+         Notes on the implementation:
+     
+    -     * We still compile a dedicated GETTEXT_POISON build in Travis CI.
+    -       This is probably the wrong thing to do and should be followed-up
+    -       with something similar to ae59a4e44f ("travis: run tests with
+    -       GIT_TEST_SPLIT_INDEX", 2018-01-07) to re-use an existing test setup
+    -       for running in the GIT_TEST_GETTEXT_POISON mode.
+    +     * We still compile a dedicated GETTEXT_POISON build in Travis
+    +       CI. Perhaps this should be revisited and integrated into the
+    +       "linux-gcc" build, see ae59a4e44f ("travis: run tests with
+    +       GIT_TEST_SPLIT_INDEX", 2018-01-07) for prior art in that area. Then
+    +       again maybe not, see [2].
+     
+          * We now skip a test in t0000-basic.sh under
+            GIT_TEST_GETTEXT_POISON=YesPlease that wasn't skipped before. This
+    @@ -56,12 +56,22 @@
+            so we populate the "poison_requested" variable in a codepath that's
+            won't suffer from that race condition.
+     
+    -    See also [3] for more on the motivation behind this patch, and the
+    +     * We error out in the Makefile if you're still saying
+    +       GETTEXT_POISON=YesPlease to prompt users to change their
+    +       invocation.
+    +
+    +     * We should not print out poisoned messages during the test
+    +       initialization itself to keep it more readable, so the test library
+    +       hides the variable if set in $GIT_TEST_GETTEXT_POISON_ORIG during
+    +       setup. See [3].
+    +
+    +    See also [4] for more on the motivation behind this patch, and the
+         history of the GETTEXT_POISON facility.
+     
+         1. https://public-inbox.org/git/871s8gd32p.fsf@evledraar.gmail.com/
+    -    2. https://public-inbox.org/git/87woq7b58k.fsf@evledraar.gmail.com/
+    -    3. https://public-inbox.org/git/878t2pd6yu.fsf@evledraar.gmail.com/
+    +    2. https://public-inbox.org/git/20181102163725.GY30222@szeder.dev/
+    +    3. https://public-inbox.org/git/20181022202241.18629-2-szeder.dev@gmail.com/
+    +    4. https://public-inbox.org/git/878t2pd6yu.fsf@evledraar.gmail.com/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ -181,7 +191,7 @@
+      #else
+      static inline void git_setup_gettext(void)
+      {
+    -+	use_gettext_poison();; /* getenv() reentrancy paranoia */
+    ++	use_gettext_poison(); /* getenv() reentrancy paranoia */
+      }
+      static inline int gettext_width(const char *s)
+      {
+    @@ -392,8 +402,32 @@
+      --- a/t/test-lib.sh
+      +++ b/t/test-lib.sh
+     @@
+    + TZ=UTC
+    + export LANG LC_ALL PAGER TZ
+    + EDITOR=:
+    ++
+    ++# GIT_TEST_GETTEXT_POISON should not influence git commands executed
+    ++# during initialization of test-lib and the test repo. Back it up,
+    ++# unset and then restore after initialization is finished.
+    ++if test -n "$GIT_TEST_GETTEXT_POISON"
+    ++then
+    ++	GIT_TEST_GETTEXT_POISON_ORIG=$GIT_TEST_GETTEXT_POISON
+    ++	unset GIT_TEST_GETTEXT_POISON
+    ++fi
+    ++
+    + # A call to "unset" with no arguments causes at least Solaris 10
+    + # /usr/xpg4/bin/sh and /bin/ksh to bail out.  So keep the unsets
+    + # deriving from the command substitution clustered with the other
+    +@@
+    + test -n "$USE_LIBPCRE2" && test_set_prereq LIBPCRE2
+      test -z "$NO_GETTEXT" && test_set_prereq GETTEXT
+      
+    ++if test -n "$GIT_TEST_GETTEXT_POISON_ORIG"
+    ++then
+    ++	GIT_TEST_GETTEXT_POISON=$GIT_TEST_GETTEXT_POISON_ORIG
+    ++	unset GIT_TEST_GETTEXT_POISON_ORIG
+    ++fi
+    ++
+      # Can we rely on git's output in the C locale?
+     -if test -n "$GETTEXT_POISON"
+     +if test -z "$GIT_TEST_GETTEXT_POISON"
+-:  ---------- > 2:  a6948d936a Makefile: ease dynamic-gettext-poison transition
+
 
 Junio C Hamano (1):
   Makefile: ease dynamic-gettext-poison transition
