@@ -1,0 +1,123 @@
+From 02ad0e4db82965b42c4551274d2d1682d178fa4c Mon Sep 17 00:00:00 2001
+In-Reply-To: <874lcl2e9t.fsf@evledraar.gmail.com>
+References: <874lcl2e9t.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 13 Nov 2018 13:46:23 +0000
+Subject: [RFC/PATCH] read-cache: write all indexes with the same permissions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the code that writes out the shared index to use
+create_tempfile() instead of mks_tempfile();
+
+The create_tempfile() function is used to write out the main
+.git/index (via .git/index.lock) using lock_file(). The
+create_tempfile() function respects the umask, whereas the
+mks_tempfile() function will create files with 0600 permissions.
+
+A bug related to this was spotted, fixed and tested for in
+df801f3f9f ("read-cache: use shared perms when writing shared index",
+2017-06-25) and 3ee83f48e5 ("t1700: make sure split-index respects
+core.sharedrepository", 2017-06-25).
+
+However, as noted in those commits we'd still create the file as 0600,
+and would just re-chmod it depending on the setting of
+core.sharedRepository. So without core.splitIndex a system with
+e.g. the umask set to group writeability would work, but not with
+core.splitIndex set.
+
+Let's instead make the two consistent by using create_tempfile(). This
+allows us to remove the code added in df801f3f9f (subsequently
+modified in 59f9d2dd60 ("read-cache.c: move tempfile creation/cleanup
+out of write_shared_index", 2018-01-14)) as redundant. The
+create_tempfile() function itself calls adjust_shared_perm().
+
+Now we're not leaking the implementation detail that we're using a
+mkstemp()-like API for something that's not really a mkstemp()
+use-case. See c18b80a0e8 ("update-index: new options to enable/disable
+split index mode", 2014-06-13) for the initial implementation which
+used mkstemp() without a wrapper.
+
+One thing I was paranoid about when making this change was not
+introducing a race condition where with
+e.g. core.sharedRepository=0600 we'd do something different for
+"index" v.s. "sharedindex.*", as the former has a *.lock file, not the
+latter.
+
+But I'm confident that we're exposing no such edge-case. With a user
+umask of e.g. 0022 and core.sharedRepository=0600 we initially create
+both "index' and "sharedindex.*" files that are globally readable, but
+re-chmod them while they're still empty.
+
+Ideally we'd split up the adjust_shared_perm() function to one that
+can give us the mode we want so we could just call open() instead of
+open() followed by chmod(), but that's an unrelated cleanup. We
+already have that minor issue with the "index" file #leftoverbits.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ read-cache.c           |  7 +------
+ t/t1700-split-index.sh | 20 ++++++++++++++++++++
+ 2 files changed, 21 insertions(+), 6 deletions(-)
+
+diff --git a/read-cache.c b/read-cache.c
+index f3a848d61c..7135537554 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -3074,11 +3074,6 @@ static int write_shared_index(struct index_state *istate,
+ 	ret = do_write_index(si->base, *temp, 1);
+ 	if (ret)
+ 		return ret;
+-	ret = adjust_shared_perm(get_tempfile_path(*temp));
+-	if (ret) {
+-		error("cannot fix permission bits on %s", get_tempfile_path(*temp));
+-		return ret;
+-	}
+ 	ret = rename_tempfile(temp,
+ 			      git_path("sharedindex.%s", oid_to_hex(&si->base->oid)));
+ 	if (!ret) {
+@@ -3159,7 +3154,7 @@ int write_locked_index(struct index_state *istate, struct lock_file *lock,
+ 		struct tempfile *temp;
+ 		int saved_errno;
+ 
+-		temp = mks_tempfile(git_path("sharedindex_XXXXXX"));
++		temp = create_tempfile(git_path("sharedindex_XXXXXX"));
+ 		if (!temp) {
+ 			oidclr(&si->base_oid);
+ 			ret = do_write_locked_index(istate, lock, flags);
+diff --git a/t/t1700-split-index.sh b/t/t1700-split-index.sh
+index 2ac47aa0e4..fa1d3d468b 100755
+--- a/t/t1700-split-index.sh
++++ b/t/t1700-split-index.sh
+@@ -381,6 +381,26 @@ test_expect_success 'check splitIndex.sharedIndexExpire set to "never" and "now"
+ 	test $(ls .git/sharedindex.* | wc -l) -le 2
+ '
+ 
++test_expect_success POSIXPERM 'same mode for index & split index' '
++	git init same-mode &&
++	(
++		cd same-mode &&
++		test_commit A &&
++		test_modebits .git/index >index_mode &&
++		test_must_fail git config core.sharedRepository &&
++		git -c core.splitIndex=true status &&
++		shared=$(ls .git/sharedindex.*) &&
++		case "$shared" in
++		*" "*)
++			# we have more than one???
++			false ;;
++		*)
++			test_modebits "$shared" >split_index_mode &&
++			test_cmp index_mode split_index_mode ;;
++		esac
++	)
++'
++
+ while read -r mode modebits
+ do
+ 	test_expect_success POSIXPERM "split index respects core.sharedrepository $mode" '
+-- 
+2.19.1.1182.g4ecb1133ce
+
