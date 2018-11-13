@@ -1,0 +1,106 @@
+From ed67dba073c255fc0c4ddb6d322b5d01f2926350 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqftw73r9a.fsf@gitster-ct.c.googlers.com>
+References: <xmqqftw73r9a.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 9 Nov 2018 09:24:34 +0000
+Subject: [PATCH v5 3/3] range-diff: make diff option behavior (e.g. --stat)
+ consistent
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the behavior when diff options (e.g. "--stat") are passed
+consistent with how "diff" behaves.
+
+Before 73a834e9e2 ("range-diff: relieve callers of low-level
+configuration burden", 2018-07-22) running range-diff with "--stat"
+would produce stat output and the diff output, as opposed to how
+"diff" behaves where once "--stat" is specified "--patch" also needs
+to be provided to emit the patch output.
+
+As noted in a previous change ("range-diff doc: add a section about
+output stability", 2018-11-07) the "--stat" output with "range-diff"
+is useless at the moment.
+
+But we should behave consistently with "diff" in anticipation of such
+output being useful in the future, because it would make for confusing
+UI if "diff" and "range-diff" behaved differently when it came to how
+they interpret diff options.
+
+The new behavior is also consistent with the existing documentation
+added in ba931edd28 ("range-diff: populate the man page",
+2018-08-13). See "[...]also accepts the regular diff options[...]" in
+git-range-diff(1).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ range-diff.c          |  3 ++-
+ t/t3206-range-diff.sh | 23 -----------------------
+ 2 files changed, 2 insertions(+), 24 deletions(-)
+
+diff --git a/range-diff.c b/range-diff.c
+index ec937008d0..767af8c5bb 100644
+--- a/range-diff.c
++++ b/range-diff.c
+@@ -461,7 +461,8 @@ int show_range_diff(const char *range1, const char *range2,
+ 		struct strbuf indent = STRBUF_INIT;
+ 
+ 		memcpy(&opts, diffopt, sizeof(opts));
+-		opts.output_format |= DIFF_FORMAT_PATCH;
++		if (!opts.output_format)
++			opts.output_format = DIFF_FORMAT_PATCH;
+ 		opts.flags.suppress_diff_headers = 1;
+ 		opts.flags.dual_color_diffed_diffs = dual_color;
+ 		opts.output_prefix = output_prefix_cb;
+diff --git a/t/t3206-range-diff.sh b/t/t3206-range-diff.sh
+index ab44e085d5..e497c1358f 100755
+--- a/t/t3206-range-diff.sh
++++ b/t/t3206-range-diff.sh
+@@ -134,43 +134,20 @@ test_expect_success 'changed commit with --no-patch diff option' '
+ '
+ 
+ test_expect_success 'changed commit with --stat diff option' '
+-	four_spaces="    " &&
+ 	git range-diff --no-color --stat topic...changed >actual &&
+ 	cat >expected <<-EOF &&
+ 	1:  4de457d = 1:  a4b3333 s/5/A/
+ 	     a => b | 0
+ 	     1 file changed, 0 insertions(+), 0 deletions(-)
+-	$four_spaces
+ 	2:  fccce22 = 2:  f51d370 s/4/A/
+ 	     a => b | 0
+ 	     1 file changed, 0 insertions(+), 0 deletions(-)
+-	$four_spaces
+ 	3:  147e64e ! 3:  0559556 s/11/B/
+ 	     a => b | 0
+ 	     1 file changed, 0 insertions(+), 0 deletions(-)
+-	$four_spaces
+-	    @@ -10,7 +10,7 @@
+-	      9
+-	      10
+-	     -11
+-	    -+B
+-	    ++BB
+-	      12
+-	      13
+-	      14
+ 	4:  a63e992 ! 4:  d966c5c s/12/B/
+ 	     a => b | 0
+ 	     1 file changed, 0 insertions(+), 0 deletions(-)
+-	$four_spaces
+-	    @@ -8,7 +8,7 @@
+-	     @@
+-	      9
+-	      10
+-	    - B
+-	    + BB
+-	     -12
+-	     +B
+-	      13
+ 	EOF
+ 	test_cmp expected actual
+ '
+-- 
+2.19.1.1182.g4ecb1133ce
+
