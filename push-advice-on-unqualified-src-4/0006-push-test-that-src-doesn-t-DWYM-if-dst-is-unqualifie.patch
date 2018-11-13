@@ -1,0 +1,76 @@
+From 86cb0bbd95c11c79d14e1cd5b9de62221a99586f Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181026230741.23321-1-avarab@gmail.com>
+References: <20181026230741.23321-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Oct 2018 18:43:11 +0000
+Subject: [PATCH v4 6/7] push: test that <src> doesn't DWYM if <dst> is
+ unqualified
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test asserting that "git push origin <src>:<dst>" where <src> is
+a branch, tag, tree or blob in refs/remotes/* doesn't DWYM when <dst>
+is unqualified. This has never been the case, but there haven't been
+any tests for this behavior.
+
+See f88395ac23 ("Renaming push.", 2005-08-03), bb9fca80ce ("git-push:
+Update description of refspecs and add examples", 2007-06-09) and
+f8aae12034 ("push: allow unqualified dest refspecs to DWIM",
+2008-04-23) which are most relevant commits that have changed or
+documented the behavior of the DWYM feature in the past.
+
+These tests were originally meant to lead up to a patch that made
+refs/remotes/* on the LHS imply refs/heads/* on the RHS, see [1]. That
+patch proved controversial and may not ever land in git.git, but we
+should have the tests that remind us what the current behavior is in
+case it's ever changed.
+
+1. https://public-inbox.org/git/20181026230741.23321-8-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5505-remote.sh | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/t/t5505-remote.sh b/t/t5505-remote.sh
+index f069cbcc24..883b32efa0 100755
+--- a/t/t5505-remote.sh
++++ b/t/t5505-remote.sh
+@@ -1249,5 +1249,32 @@ test_expect_success 'unqualified <dst> refspec DWIM and advice' '
+ 	)
+ '
+ 
++test_expect_success 'refs/remotes/* <src> refspec and unqualified <dst> DWIM and advice' '
++	(
++		cd two &&
++		git tag -a -m "Some tag" my-tag master &&
++		git update-ref refs/trees/my-head-tree HEAD^{tree} &&
++		git update-ref refs/blobs/my-file-blob HEAD:file
++	) &&
++	(
++		cd test &&
++		git config --add remote.two.fetch "+refs/tags/*:refs/remotes/tags-from-two/*" &&
++		git config --add remote.two.fetch "+refs/trees/*:refs/remotes/trees-from-two/*" &&
++		git config --add remote.two.fetch "+refs/blobs/*:refs/remotes/blobs-from-two/*" &&
++		git fetch --no-tags two &&
++
++		test_must_fail git push origin refs/remotes/two/another:dst 2>err &&
++		test_i18ngrep "error: The destination you" err &&
++
++		test_must_fail git push origin refs/remotes/tags-from-two/my-tag:dst-tag 2>err &&
++		test_i18ngrep "error: The destination you" err &&
++
++		test_must_fail git push origin refs/remotes/trees-from-two/my-head-tree:dst-tree 2>err &&
++		test_i18ngrep "error: The destination you" err &&
++
++		test_must_fail git push origin refs/remotes/blobs-from-two/my-file-blob:dst-blob 2>err &&
++		test_i18ngrep "error: The destination you" err
++	)
++'
+ 
+ test_done
+-- 
+2.19.1.1182.g4ecb1133ce
+
