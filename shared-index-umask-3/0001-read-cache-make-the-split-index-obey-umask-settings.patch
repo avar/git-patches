@@ -1,0 +1,89 @@
+From ed4c80dc250927f6fda2b3aaa836609c2cb605d7 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87efbi1tk4.fsf@evledraar.gmail.com>
+References: <87efbi1tk4.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Nov 2018 18:31:05 +0100
+Subject: [PATCH v3] read-cache: make the split index obey umask settings
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the split index write out its .git/sharedindex_* files with the
+same permissions as .git/index. This only changes the behavior when
+core.sharedRepository isn't set, i.e. the user's umask settings will
+be respected.
+
+This hasn't been the case ever since the split index was originally
+implemented in c18b80a0e8 ("update-index: new options to
+enable/disable split index mode", 2014-06-13). A mkstemp()-like
+function has always been used to create it. First mkstemp() itself,
+and then later our own mkstemp()-like in
+f6ecc62dbf ("write_shared_index(): use tempfile module", 2015-08-10)
+
+A related bug was fixed in df801f3f9f ("read-cache: use shared perms
+when writing shared index", 2017-06-25). Since then the split index
+has respected core.sharedRepository.
+
+However, using that setting should not be required simply to make git
+obey the user's umask setting. It's intended for the use-case of
+overriding whatever that umask is set to. This fixes cases where the
+user has e.g. set his umask to 022 on a shared server in anticipation
+of other user's needing to run "status", "log" etc. in his repository.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Christian Couder <chriscool@tuxfamily.org>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ read-cache.c           |  3 ++-
+ t/t1700-split-index.sh | 20 ++++++++++++++++++++
+ 2 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/read-cache.c b/read-cache.c
+index 4ca81286c0..e7e77e780b 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -3150,7 +3150,8 @@ int write_locked_index(struct index_state *istate, struct lock_file *lock,
+ 		struct tempfile *temp;
+ 		int saved_errno;
+ 
+-		temp = mks_tempfile(git_path("sharedindex_XXXXXX"));
++		/* Same initial permissions as the main .git/index file */
++		temp = mks_tempfile_sm(git_path("sharedindex_XXXXXX"), 0, 0666);
+ 		if (!temp) {
+ 			oidclr(&si->base_oid);
+ 			ret = do_write_locked_index(istate, lock, flags);
+diff --git a/t/t1700-split-index.sh b/t/t1700-split-index.sh
+index 2ac47aa0e4..fa1d3d468b 100755
+--- a/t/t1700-split-index.sh
++++ b/t/t1700-split-index.sh
+@@ -381,6 +381,26 @@ test_expect_success 'check splitIndex.sharedIndexExpire set to "never" and "now"
+ 	test $(ls .git/sharedindex.* | wc -l) -le 2
+ '
+ 
++test_expect_success POSIXPERM 'same mode for index & split index' '
++	git init same-mode &&
++	(
++		cd same-mode &&
++		test_commit A &&
++		test_modebits .git/index >index_mode &&
++		test_must_fail git config core.sharedRepository &&
++		git -c core.splitIndex=true status &&
++		shared=$(ls .git/sharedindex.*) &&
++		case "$shared" in
++		*" "*)
++			# we have more than one???
++			false ;;
++		*)
++			test_modebits "$shared" >split_index_mode &&
++			test_cmp index_mode split_index_mode ;;
++		esac
++	)
++'
++
+ while read -r mode modebits
+ do
+ 	test_expect_success POSIXPERM "split index respects core.sharedrepository $mode" '
+-- 
+2.19.1.1182.g4ecb1133ce
+
