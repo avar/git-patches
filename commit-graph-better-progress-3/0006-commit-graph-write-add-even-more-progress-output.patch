@@ -1,0 +1,92 @@
+From 2e943fa9250dba93cc39f9e6544a7bb6e1e8de0b Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181120165800.GB30222@szeder.dev> --range-diff=commit-graph-better-progress-2>
+References: <20181120165800.GB30222@szeder.dev> --range-diff=commit-graph-better-progress-2>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 20 Nov 2018 15:41:12 +0100
+Subject: [PATCH v2 6/6] commit-graph write: add even more progress output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add more progress output to sections of code that can collectively
+take 5-10 seconds on a large enough repository. On a test repository
+with I have with ~7 million commits and ~50 million objects we'll now
+emit:
+
+    $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+    Finding commits for commit graph among packed objects: 100% (50026015/50026015), done.
+    Annotating commit graph: 21567407, done.
+    Counting distinct commits in commit graph: 100% (7189147/7189147), done.
+    Finding extra edges in commit graph: 100% (7189147/7189147), done.
+    Computing commit graph generation numbers: 100% (7144680/7144680), done.
+    Writing out commit graph: 21434417, done.
+
+Whereas on a medium-sized repository such as linux.git these new
+progress bars won't have time to kick in and as before and we'll still
+emit output like:
+
+    $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+    Finding commits for commit graph among packed objects: 100% (6365492/6365492), done.
+    Annotating commit graph: 2391666, done.
+    Computing commit graph generation numbers: 100% (797222/797222), done.
+    Writing out commit graph: 2399912, done.
+
+The "Counting distinct commits in commit graph" phase will spend most
+of its time paused at "0/*" as we QSORT(...) the list. That's not
+optimal, but at least we don't seem to be stalling anymore.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit-graph.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index 0e98679bce..1ad9000060 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -887,12 +887,19 @@ void write_commit_graph(const char *obj_dir,
+ 
+ 	close_reachable(&oids, report_progress);
+ 
++	if (report_progress)
++		progress = start_delayed_progress(
++			_("Counting distinct commits in commit graph"),
++			oids.nr);
++	display_progress(progress, 0); /* TODO: Measure QSORT() progress */
+ 	QSORT(oids.list, oids.nr, commit_compare);
+ 	count_distinct = 1;
+ 	for (i = 1; i < oids.nr; i++) {
++		display_progress(progress, i + 1);
+ 		if (!oideq(&oids.list[i - 1], &oids.list[i]))
+ 			count_distinct++;
+ 	}
++	stop_progress(&progress);
+ 
+ 	if (count_distinct >= GRAPH_PARENT_MISSING)
+ 		die(_("the commit graph format cannot write %d commits"), count_distinct);
+@@ -902,8 +909,13 @@ void write_commit_graph(const char *obj_dir,
+ 	ALLOC_ARRAY(commits.list, commits.alloc);
+ 
+ 	num_extra_edges = 0;
++	if (report_progress)
++		progress = start_delayed_progress(
++			_("Finding extra edges in commit graph"),
++			oids.nr);
+ 	for (i = 0; i < oids.nr; i++) {
+ 		int num_parents = 0;
++		display_progress(progress, i + 1);
+ 		if (i > 0 && oideq(&oids.list[i - 1], &oids.list[i]))
+ 			continue;
+ 
+@@ -920,6 +932,7 @@ void write_commit_graph(const char *obj_dir,
+ 		commits.nr++;
+ 	}
+ 	num_chunks = num_extra_edges ? 4 : 3;
++	stop_progress(&progress);
+ 
+ 	if (commits.nr >= GRAPH_PARENT_MISSING)
+ 		die(_("too many commits to write graph"));
+-- 
+2.20.0.rc0.387.gc7a69e6b6c
+
