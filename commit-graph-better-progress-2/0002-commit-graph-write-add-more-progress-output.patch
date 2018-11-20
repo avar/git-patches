@@ -1,0 +1,165 @@
+From 751d3a756166b32c026c086d63ae0bd6d5a190ca Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181119225720.GV30222@szeder.dev>
+References: <20181119225720.GV30222@szeder.dev>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 20 Nov 2018 13:18:37 +0100
+Subject: [PATCH 2/6] commit-graph write: add more progress output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add more progress output to the output already added in
+7b0f229222 ("commit-graph write: add progress output", 2018-09-17).
+
+As noted in that commit most of the progress output isn't displayed on
+small repositories, but before this change we'd noticeably hang for
+2-3 seconds at the end on medium sized repositories such as linux.git.
+
+Now we'll instead show output like this, and have no human-observable
+point at which we're not producing progress output:
+
+    $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+    Finding commits for commit graph: 6418991, done.
+    Computing commit graph generation numbers: 100% (797205/797205), done.
+    Writing out commit graph chunks: 2399861, done.
+
+This "graph chunks" number is not meant to be meaningful to the user,
+but just to show that we're doing work and the command isn't
+hanging.
+
+On a much larger in-house repository I have we'll show (note how we
+also say "Annotating[...]"):
+
+    $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+    Finding commits for commit graph: 48271163, done.
+    Annotating commit graph: 21424536, done.
+    Computing commit graph generation numbers: 100% (7141512/7141512), done.
+    Writing out commit graph chunks: 21424913, done.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit-graph.c | 47 ++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 38 insertions(+), 9 deletions(-)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index e6d0d7722b..afce20dd4d 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -433,7 +433,9 @@ struct tree *get_commit_tree_in_graph(struct repository *r, const struct commit
+ 
+ static void write_graph_chunk_fanout(struct hashfile *f,
+ 				     struct commit **commits,
+-				     int nr_commits)
++				     int nr_commits,
++				     struct progress *progress,
++				     uint64_t *progress_cnt)
+ {
+ 	int i, count = 0;
+ 	struct commit **list = commits;
+@@ -445,6 +447,8 @@ static void write_graph_chunk_fanout(struct hashfile *f,
+ 	 */
+ 	for (i = 0; i < 256; i++) {
+ 		while (count < nr_commits) {
++			if (progress)
++				display_progress(progress, ++*progress_cnt);
+ 			if ((*list)->object.oid.hash[0] != i)
+ 				break;
+ 			count++;
+@@ -456,12 +460,17 @@ static void write_graph_chunk_fanout(struct hashfile *f,
+ }
+ 
+ static void write_graph_chunk_oids(struct hashfile *f, int hash_len,
+-				   struct commit **commits, int nr_commits)
++				   struct commit **commits, int nr_commits,
++				   struct progress *progress,
++				   uint64_t *progress_cnt)
+ {
+ 	struct commit **list = commits;
+ 	int count;
+-	for (count = 0; count < nr_commits; count++, list++)
++	for (count = 0; count < nr_commits; count++, list++) {
++		if (progress)
++			display_progress(progress, ++*progress_cnt);
+ 		hashwrite(f, (*list)->object.oid.hash, (int)hash_len);
++	}
+ }
+ 
+ static const unsigned char *commit_to_sha1(size_t index, void *table)
+@@ -471,7 +480,9 @@ static const unsigned char *commit_to_sha1(size_t index, void *table)
+ }
+ 
+ static void write_graph_chunk_data(struct hashfile *f, int hash_len,
+-				   struct commit **commits, int nr_commits)
++				   struct commit **commits, int nr_commits,
++				   struct progress *progress,
++				   uint64_t *progress_cnt)
+ {
+ 	struct commit **list = commits;
+ 	struct commit **last = commits + nr_commits;
+@@ -482,6 +493,9 @@ static void write_graph_chunk_data(struct hashfile *f, int hash_len,
+ 		int edge_value;
+ 		uint32_t packedDate[2];
+ 
++		if (progress)
++			display_progress(progress, ++*progress_cnt);
++
+ 		parse_commit(*list);
+ 		hashwrite(f, get_commit_tree_oid(*list)->hash, hash_len);
+ 
+@@ -542,7 +556,9 @@ static void write_graph_chunk_data(struct hashfile *f, int hash_len,
+ 
+ static void write_graph_chunk_large_edges(struct hashfile *f,
+ 					  struct commit **commits,
+-					  int nr_commits)
++					  int nr_commits,
++					  struct progress *progress,
++					  uint64_t *progress_cnt)
+ {
+ 	struct commit **list = commits;
+ 	struct commit **last = commits + nr_commits;
+@@ -566,6 +582,9 @@ static void write_graph_chunk_large_edges(struct hashfile *f,
+ 						  nr_commits,
+ 						  commit_to_sha1);
+ 
++			if (progress)
++				display_progress(progress, ++*progress_cnt);
++
+ 			if (edge_value < 0)
+ 				edge_value = GRAPH_PARENT_MISSING;
+ 			else if (!parent->next)
+@@ -764,6 +783,7 @@ void write_commit_graph(const char *obj_dir,
+ 	int num_extra_edges;
+ 	struct commit_list *parent;
+ 	struct progress *progress = NULL;
++	uint64_t progress_cnt;
+ 
+ 	if (!commit_graph_compatible(the_repository))
+ 		return;
+@@ -937,10 +957,19 @@ void write_commit_graph(const char *obj_dir,
+ 		hashwrite(f, chunk_write, 12);
+ 	}
+ 
+-	write_graph_chunk_fanout(f, commits.list, commits.nr);
+-	write_graph_chunk_oids(f, GRAPH_OID_LEN, commits.list, commits.nr);
+-	write_graph_chunk_data(f, GRAPH_OID_LEN, commits.list, commits.nr);
+-	write_graph_chunk_large_edges(f, commits.list, commits.nr);
++	if (report_progress)
++		progress = start_delayed_progress(
++			_("Writing out commit graph chunks"),
++			progress_cnt = 0);
++	write_graph_chunk_fanout(f, commits.list, commits.nr, progress,
++				 &progress_cnt);
++	write_graph_chunk_oids(f, GRAPH_OID_LEN, commits.list, commits.nr,
++			       progress, &progress_cnt);
++	write_graph_chunk_data(f, GRAPH_OID_LEN, commits.list, commits.nr,
++			       progress, &progress_cnt);
++	write_graph_chunk_large_edges(f, commits.list, commits.nr, progress,
++				      &progress_cnt);
++	stop_progress(&progress);
+ 
+ 	close_commit_graph(the_repository);
+ 	finalize_hashfile(f, NULL, CSUM_HASH_IN_STREAM | CSUM_FSYNC);
+-- 
+2.20.0.rc0.387.gc7a69e6b6c
+
