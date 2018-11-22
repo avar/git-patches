@@ -1,0 +1,81 @@
+From 3138b00a2c5fb3aa59ecfaf584d79aca69b9bfe9 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181121012600.26951-1-szeder.dev@gmail.com>
+References: <20181121012600.26951-1-szeder.dev@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 20 Nov 2018 13:58:22 +0100
+Subject: [PATCH v3 06/10] commit-graph write: show progress for object search
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Show the percentage progress for the "Finding commits for commit
+graph" phase for the common case where we're operating on all packs in
+the repository, as "commit-graph write" or "gc" will do.
+
+Before we'd emit on e.g. linux.git with "commit-graph write":
+
+    Finding commits for commit graph: 6365492, done.
+    [...]
+
+And now:
+
+    Finding commits for commit graph: 100% (6365492/6365492), done.
+    [...]
+
+Since the commit graph only includes those commits that are packed
+(via for_each_packed_object(...)) the approximate_object_count()
+returns the actual number of objects we're going to process.
+
+Still, it is possible due to a race with "gc" or another process
+maintaining packs that the number of objects we're going to process is
+lower than what approximate_object_count() reported. In that case we
+don't want to stop the progress bar short of 100%. So let's make sure
+it snaps to 100% at the end.
+
+The inverse case is also possible and more likely. I.e. that a new
+pack has been added between approximate_object_count() and
+for_each_packed_object(). In that case the percentage will go beyond
+100%, and we'll do nothing to snap it back to 100% at the end.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit-graph.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index 8e5970f0b9..d6166beb19 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -781,12 +781,14 @@ void write_commit_graph(const char *obj_dir,
+ 	struct progress *progress = NULL;
+ 	uint64_t progress_cnt = 0;
+ 	struct strbuf progress_title = STRBUF_INIT;
++	unsigned long approx_nr_objects;
+ 
+ 	if (!commit_graph_compatible(the_repository))
+ 		return;
+ 
+ 	oids.nr = 0;
+-	oids.alloc = approximate_object_count() / 32;
++	approx_nr_objects = approximate_object_count();
++	oids.alloc = approx_nr_objects / 32;
+ 	oids.progress = NULL;
+ 	oids.progress_done = 0;
+ 
+@@ -866,8 +868,11 @@ void write_commit_graph(const char *obj_dir,
+ 	if (!pack_indexes && !commit_hex) {
+ 		if (report_progress)
+ 			oids.progress = start_delayed_progress(
+-				_("Finding commits for commit graph"), 0);
++				_("Finding commits for commit graph"),
++				approx_nr_objects);
+ 		for_each_packed_object(add_packed_commits, &oids, 0);
++		if (oids.progress_done < approx_nr_objects)
++			display_progress(oids.progress, approx_nr_objects);
+ 		stop_progress(&oids.progress);
+ 	}
+ 
+-- 
+2.20.0.rc0.387.gc7a69e6b6c
+

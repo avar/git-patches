@@ -1,0 +1,53 @@
+From 904dda1e7aba3d1107c1824fae2b4b1f2a3e1407 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181121012600.26951-1-szeder.dev@gmail.com>
+References: <20181121012600.26951-1-szeder.dev@gmail.com>
+From: =?UTF-8?q?SZEDER=20G=C3=A1bor?= <szeder.dev@gmail.com>
+Date: Wed, 21 Nov 2018 02:26:00 +0100
+Subject: [PATCH v3 02/10] commit-graph: don't call
+ write_graph_chunk_large_edges() unnecessarily
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The optional 'Large Edge List' chunk of the commit graph file stores
+parent information for commits with more than two parents.  Since the
+chunk is optional, write_commit_graph() looks through all commits to
+find those with more than two parents, and then writes the commit
+graph file header accordingly, i.e. if there are no such commits, then
+there won't be a 'Large Edge List' chunk written, only the three
+mandatory chunks.
+
+However, when it comes to writing chunk data, write_commit_graph()
+unconditionally invokes write_graph_chunk_large_edges(), even when it
+was decided earlier that that chunk won't be written.  Strictly
+speaking there is no bug here, because write_graph_chunk_large_edges()
+won't write anything because it won't find any commits with more than
+two parents, but then it unnecessarily and in vain looks through all
+commits once again in search for such commits.
+
+Don't call write_graph_chunk_large_edges() when that chunk won't be
+written to spare an unnecessary iteration over all commits.
+
+Signed-off-by: SZEDER Gábor <szeder.dev@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit-graph.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index 7b4e3a02cf..965eb23a7b 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -940,7 +940,8 @@ void write_commit_graph(const char *obj_dir,
+ 	write_graph_chunk_fanout(f, commits.list, commits.nr);
+ 	write_graph_chunk_oids(f, GRAPH_OID_LEN, commits.list, commits.nr);
+ 	write_graph_chunk_data(f, GRAPH_OID_LEN, commits.list, commits.nr);
+-	write_graph_chunk_large_edges(f, commits.list, commits.nr);
++	if (num_large_edges)
++		write_graph_chunk_large_edges(f, commits.list, commits.nr);
+ 
+ 	close_commit_graph(the_repository);
+ 	finalize_hashfile(f, NULL, CSUM_HASH_IN_STREAM | CSUM_FSYNC);
+-- 
+2.20.0.rc0.387.gc7a69e6b6c
+

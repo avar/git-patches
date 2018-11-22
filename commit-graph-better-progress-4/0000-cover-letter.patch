@@ -1,0 +1,288 @@
+From dfaf84098383f6fe027dbde6d6b7ce9aae6540af Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181121012600.26951-1-szeder.dev@gmail.com>
+References: <20181121012600.26951-1-szeder.dev@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Nov 2018 13:26:01 +0000
+Subject: [PATCH v3 00/10] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+SZEDER Gábor (2):
+  commit-graph: rename 'num_extra_edges' variable to 'num_large_edges'
+  commit-graph: don't call write_graph_chunk_large_edges() unnecessarily
+
+Ævar Arnfjörð Bjarmason (8):
+  commit-graph write: rephrase confusing progress output
+  commit-graph write: add "Writing out" progress output
+  commit-graph write: more descriptive "writing out" output
+  commit-graph write: show progress for object search
+  commit-graph write: add more descriptive progress output
+  commit-graph write: remove empty line for readability
+  commit-graph write: add itermediate progress
+  commit-graph write: emit a percentage for all progress
+
+ commit-graph.c | 130 ++++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 102 insertions(+), 28 deletions(-)
+
+Range-diff:
+ -:  ---------- >  1:  c9d6c78870 read-cache: make the split index obey umask settings
+ -:  ---------- >  2:  7e097e27d3 legacy-rebase: backport -C<n> and --whitespace=<option> checks
+ -:  ---------- >  3:  d8465500c3 eoie: default to not writing EOIE section
+ -:  ---------- >  4:  429160544d ieot: default to not writing IEOT section
+ -:  ---------- >  5:  4d86503eed rebase: warn about the correct tree's OID
+ -:  ---------- >  6:  bc35ac1a6a pack-objects: fix tree_depth and layer invariants
+ -:  ---------- >  7:  e159b81071 pack-objects: zero-initialize tree_depth/layer arrays
+ -:  ---------- >  8:  3949053617 pack-objects: fix off-by-one in delta-island tree-depth computation
+ -:  ---------- >  9:  6056817879 Documentation: build technical/multi-pack-index
+ -:  ---------- > 10:  e66ceca94b clone: fix colliding file detection on APFS
+ -:  ---------- > 11:  2a9dedef2e index: make index.threads=true enable ieot and eoie
+ -:  ---------- > 12:  98cdfbb84a Git 2.19.2
+ -:  ---------- > 13:  7f4e641693 Git 2.20-rc1
+ -:  ---------- > 14:  07d06c50c0 commit-graph: rename 'num_extra_edges' variable to 'num_large_edges'
+ -:  ---------- > 15:  904dda1e7a commit-graph: don't call write_graph_chunk_large_edges() unnecessarily
+ 1:  9f7fb459bd = 16:  1126c7e29d commit-graph write: rephrase confusing progress output
+     a => b | 0
+     1 file changed, 0 insertions(+), 0 deletions(-)
+    
+ 2:  093c63e99f ! 17:  2b52ad2284 commit-graph write: add more progress output
+     a => b | 0
+     1 file changed, 0 insertions(+), 0 deletions(-)
+    
+    @@ -1,9 +1,10 @@
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    -    commit-graph write: add more progress output
+    +    commit-graph write: add "Writing out" progress output
+     
+    -    Add more progress output to the output already added in
+    -    7b0f229222 ("commit-graph write: add progress output", 2018-09-17).
+    +    Add progress output to be shown when we're writing out the
+    +    commit-graph, this adds to the output already added in 7b0f229222
+    +    ("commit-graph write: add progress output", 2018-09-17).
+     
+         As noted in that commit most of the progress output isn't displayed on
+         small repositories, but before this change we'd noticeably hang for
+    @@ -13,30 +14,13 @@
+         point at which we're not producing progress output:
+     
+             $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+    -        Finding commits for commit graph: 6365492, done.
+    +        Finding commits for commit graph: 6365442, done.
+             Computing commit graph generation numbers: 100% (797222/797222), done.
+    -        Writing out commit graph: 2399912, done.
+    +        Writing out commit graph: 100% (3986110/3986110), done.
+     
+    -    This "writing out" number is not meant to be meaningful to the user,
+    -    but just to show that we're doing work and the command isn't
+    -    hanging.
+    -
+    -    In the current implementation it's approximately 4x the number of
+    -    commits. As noted in on-list discussion[1] we could add the loops up
+    -    and show percentage progress here, but I don't think it's worth it. It
+    -    would make the implementation more complex and harder to maintain for
+    -    very little gain.
+    -
+    -    On a much larger in-house repository I have we'll show (note how we
+    -    also say "Annotating[...]"):
+    -
+    -        $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+    -        Finding commits for commit graph: 50026015, done.
+    -        Annotating commit graph: 21567407, done.
+    -        Computing commit graph generation numbers: 100% (7144680/7144680), done.
+    -        Writing out commit graph: 21434417, done.
+    -
+    -    1. https://public-inbox.org/git/20181120165800.GB30222@szeder.dev/
+    +    This "Writing out" number is 4x or 5x the number of commits, depending
+    +    on the graph we're processing. A later change will make this explicit
+    +    to the user.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ -55,13 +39,13 @@
+      	int i, count = 0;
+      	struct commit **list = commits;
+     @@
+    - 	 */
+    - 	for (i = 0; i < 256; i++) {
+      		while (count < nr_commits) {
+    -+			display_progress(progress, ++*progress_cnt);
+      			if ((*list)->object.oid.hash[0] != i)
+      				break;
+    ++			display_progress(progress, ++*progress_cnt);
+      			count++;
+    + 			list++;
+    + 		}
+     @@
+      }
+      
+    @@ -112,15 +96,17 @@
+      	struct commit **list = commits;
+      	struct commit **last = commits + nr_commits;
+     @@
+    - 						  commits,
+    - 						  nr_commits,
+    - 						  commit_to_sha1);
+    -+			display_progress(progress, ++*progress_cnt);
+      
+    - 			if (edge_value < 0)
+    - 				edge_value = GRAPH_PARENT_MISSING;
+    + 	while (list < last) {
+    + 		int num_parents = 0;
+    ++
+    ++		display_progress(progress, ++*progress_cnt);
+    ++
+    + 		for (parent = (*list)->parents; num_parents < 3 && parent;
+    + 		     parent = parent->next)
+    + 			num_parents++;
+     @@
+    - 	int num_extra_edges;
+    + 	int num_large_edges;
+      	struct commit_list *parent;
+      	struct progress *progress = NULL;
+     +	uint64_t progress_cnt = 0;
+    @@ -134,19 +120,25 @@
+     -	write_graph_chunk_fanout(f, commits.list, commits.nr);
+     -	write_graph_chunk_oids(f, GRAPH_OID_LEN, commits.list, commits.nr);
+     -	write_graph_chunk_data(f, GRAPH_OID_LEN, commits.list, commits.nr);
+    --	write_graph_chunk_large_edges(f, commits.list, commits.nr);
+    -+	if (report_progress)
+    ++	if (report_progress) {
+    ++		/*
+    ++		 * Each of the write_graph_chunk_*() functions just
+    ++		 * below loops over our N commits. This number must be
+    ++		 * kept in sync with the number of passes we're doing.
+    ++		 */
+    ++		int graph_passes = 4;
+    ++		if (num_large_edges)
+    ++			graph_passes++;
+     +		progress = start_delayed_progress(
+     +			_("Writing out commit graph"),
+    -+			0);
+    -+	write_graph_chunk_fanout(f, commits.list, commits.nr, progress,
+    -+				 &progress_cnt);
+    -+	write_graph_chunk_oids(f, GRAPH_OID_LEN, commits.list, commits.nr,
+    -+			       progress, &progress_cnt);
+    -+	write_graph_chunk_data(f, GRAPH_OID_LEN, commits.list, commits.nr,
+    -+			       progress, &progress_cnt);
+    -+	write_graph_chunk_large_edges(f, commits.list, commits.nr, progress,
+    -+				      &progress_cnt);
+    ++			graph_passes * commits.nr);
+    ++	}
+    ++	write_graph_chunk_fanout(f, commits.list, commits.nr, progress, &progress_cnt);
+    ++	write_graph_chunk_oids(f, GRAPH_OID_LEN, commits.list, commits.nr, progress, &progress_cnt);
+    ++	write_graph_chunk_data(f, GRAPH_OID_LEN, commits.list, commits.nr, progress, &progress_cnt);
+    + 	if (num_large_edges)
+    +-		write_graph_chunk_large_edges(f, commits.list, commits.nr);
+    ++		write_graph_chunk_large_edges(f, commits.list, commits.nr, progress, &progress_cnt);
+     +	stop_progress(&progress);
+      
+      	close_commit_graph(the_repository);
+ -:  ---------- > 18:  b1773677b1 commit-graph write: more descriptive "writing out" output
+ 3:  6c71de9460 ! 19:  3138b00a2c commit-graph write: show progress for object search
+     a => b | 0
+     1 file changed, 0 insertions(+), 0 deletions(-)
+    
+    @@ -37,9 +37,9 @@
+      --- a/commit-graph.c
+      +++ b/commit-graph.c
+     @@
+    - 	struct commit_list *parent;
+      	struct progress *progress = NULL;
+      	uint64_t progress_cnt = 0;
+    + 	struct strbuf progress_title = STRBUF_INIT;
+     +	unsigned long approx_nr_objects;
+      
+      	if (!commit_graph_compatible(the_repository))
+ 4:  c665dbdacb ! 20:  f41e3b3eb3 commit-graph write: add more describing progress output
+     a => b | 0
+     1 file changed, 0 insertions(+), 0 deletions(-)
+    
+    @@ -1,6 +1,6 @@
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    -    commit-graph write: add more describing progress output
+    +    commit-graph write: add more descriptive progress output
+     
+         Make the progress output shown when we're searching for commits to
+         include in the graph more descriptive. This amends code I added in
+    @@ -36,14 +36,6 @@
+      diff --git a/commit-graph.c b/commit-graph.c
+      --- a/commit-graph.c
+      +++ b/commit-graph.c
+    -@@
+    - 	struct progress *progress = NULL;
+    - 	uint64_t progress_cnt = 0;
+    - 	unsigned long approx_nr_objects;
+    -+	struct strbuf progress_title = STRBUF_INIT;
+    - 
+    - 	if (!commit_graph_compatible(the_repository))
+    - 		return;
+     @@
+      		strbuf_addf(&packname, "%s/pack/", obj_dir);
+      		dirlen = packname.len;
+    @@ -99,12 +91,3 @@
+      				approx_nr_objects);
+      		for_each_packed_object(add_packed_commits, &oids, 0);
+      		if (oids.progress_done < approx_nr_objects)
+    -@@
+    - 				      &progress_cnt);
+    - 	stop_progress(&progress);
+    - 
+    -+	strbuf_release(&progress_title);
+    -+
+    - 	close_commit_graph(the_repository);
+    - 	finalize_hashfile(f, NULL, CSUM_HASH_IN_STREAM | CSUM_FSYNC);
+    - 	commit_lock_file(&lk);
+ 5:  f70fc5045d = 21:  74037032d3 commit-graph write: remove empty line for readability
+     a => b | 0
+     1 file changed, 0 insertions(+), 0 deletions(-)
+    
+ 6:  2e943fa925 ! 22:  502da68d14 commit-graph write: add even more progress output
+     a => b | 0
+     1 file changed, 0 insertions(+), 0 deletions(-)
+    
+    @@ -1,11 +1,13 @@
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    -    commit-graph write: add even more progress output
+    +    commit-graph write: add itermediate progress
+     
+    -    Add more progress output to sections of code that can collectively
+    -    take 5-10 seconds on a large enough repository. On a test repository
+    -    with I have with ~7 million commits and ~50 million objects we'll now
+    -    emit:
+    +    Add progress output to sections of code between "Annotating[...]" and
+    +    "Computing[...]generation numbers". This can collectively take 5-10
+    +    seconds on a large enough repository.
+    +
+    +    On a test repository with I have with ~7 million commits and ~50
+    +    million objects we'll now emit:
+     
+             $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+             Finding commits for commit graph among packed objects: 100% (50026015/50026015), done.
+    @@ -57,7 +59,7 @@
+     @@
+      	ALLOC_ARRAY(commits.list, commits.alloc);
+      
+    - 	num_extra_edges = 0;
+    + 	num_large_edges = 0;
+     +	if (report_progress)
+     +		progress = start_delayed_progress(
+     +			_("Finding extra edges in commit graph"),
+    @@ -71,7 +73,7 @@
+     @@
+      		commits.nr++;
+      	}
+    - 	num_chunks = num_extra_edges ? 4 : 3;
+    + 	num_chunks = num_large_edges ? 4 : 3;
+     +	stop_progress(&progress);
+      
+      	if (commits.nr >= GRAPH_PARENT_MISSING)
+ -:  ---------- > 23:  dfaf840983 commit-graph write: emit a percentage for all progress
+-- 
+2.20.0.rc0.387.gc7a69e6b6c
+

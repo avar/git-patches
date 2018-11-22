@@ -1,0 +1,75 @@
+From b1773677b1e59e949881149e0240a3aba8c1560e Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181121012600.26951-1-szeder.dev@gmail.com>
+References: <20181121012600.26951-1-szeder.dev@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Nov 2018 13:42:51 +0100
+Subject: [PATCH v3 05/10] commit-graph write: more descriptive "writing out"
+ output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the "Writing out" part of the progress output more
+descriptive. Depending on the shape of the graph we either make 4 or 5
+passes over it.
+
+Let's present this information to the user in case they're wondering
+what this number, which is much larger than their number of commits,
+has to do with writing out the commit graph. Now e.g. on linux.git we
+emit:
+
+    $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+    Finding commits for commit graph: 6365442, done.
+    Computing commit graph generation numbers: 100% (797222/797222), done.
+    Writing out commit graph in 5 passes: 100% (3986110/3986110), done.
+
+A note on i18n: Why are we using the Q_() function and passing a
+number & English text for a singular which'll never be used? Because
+the plural rules of translated languages may not match those of
+English, and to use the plural function we need to use this format.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit-graph.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index e32a5cc1bc..8e5970f0b9 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -780,6 +780,7 @@ void write_commit_graph(const char *obj_dir,
+ 	struct commit_list *parent;
+ 	struct progress *progress = NULL;
+ 	uint64_t progress_cnt = 0;
++	struct strbuf progress_title = STRBUF_INIT;
+ 
+ 	if (!commit_graph_compatible(the_repository))
+ 		return;
+@@ -962,8 +963,13 @@ void write_commit_graph(const char *obj_dir,
+ 		int graph_passes = 4;
+ 		if (num_large_edges)
+ 			graph_passes++;
++		strbuf_addf(&progress_title,
++			    Q_("Writing out commit graph in %d pass",
++			       "Writing out commit graph in %d passes",
++			       graph_passes),
++			    graph_passes);
+ 		progress = start_delayed_progress(
+-			_("Writing out commit graph"),
++			progress_title.buf,
+ 			graph_passes * commits.nr);
+ 	}
+ 	write_graph_chunk_fanout(f, commits.list, commits.nr, progress, &progress_cnt);
+@@ -973,6 +979,8 @@ void write_commit_graph(const char *obj_dir,
+ 		write_graph_chunk_large_edges(f, commits.list, commits.nr, progress, &progress_cnt);
+ 	stop_progress(&progress);
+ 
++	strbuf_release(&progress_title);
++
+ 	close_commit_graph(the_repository);
+ 	finalize_hashfile(f, NULL, CSUM_HASH_IN_STREAM | CSUM_FSYNC);
+ 	commit_lock_file(&lk);
+-- 
+2.20.0.rc0.387.gc7a69e6b6c
+
