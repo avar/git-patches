@@ -1,0 +1,69 @@
+From 472eb667624558cd43671d66e7e8f8a7e0048bfa Mon Sep 17 00:00:00 2001
+In-Reply-To: <82ccde9ed8a390133852a5d9e07ef471f94db263.1524955439.git.johannes.schindelin@gmx.de>
+References: <82ccde9ed8a390133852a5d9e07ef471f94db263.1524955439.git.johannes.schindelin@gmx.de>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 27 Nov 2018 21:06:30 +0100
+Subject: [PATCH] advice: don't pointlessly suggest --convert-graft-file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The advice to run 'git replace --convert-graft-file' added in
+f9f99b3f7d ("Deprecate support for .git/info/grafts", 2018-04-29)
+didn't add an exception for the 'git replace --convert-graft-file'
+codepath itself.
+
+As a result we'd suggest running --convert-graft-file while the user
+was running --convert-graft-file, which makes no sense. Before:
+
+    $ git replace --convert-graft-file
+    hint: Support for <GIT_DIR>/info/grafts is deprecated
+    hint: and will be removed in a future Git version.
+    hint:
+    hint: Please use "git replace --convert-graft-file"
+    hint: to convert the grafts into replace refs.
+    hint:
+    hint: Turn this message off by running
+    hint: "git config advice.graftFileDeprecated false"
+
+Add a check for that case and skip printing the advice while the user
+is busy following our advice.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/replace.c  | 1 +
+ t/t6050-replace.sh | 5 ++++-
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/replace.c b/builtin/replace.c
+index a58b9c6d13..affcdfb416 100644
+--- a/builtin/replace.c
++++ b/builtin/replace.c
+@@ -495,6 +495,7 @@ static int convert_graft_file(int force)
+ 	if (!fp)
+ 		return -1;
+ 
++	advice_graft_file_deprecated = 0;
+ 	while (strbuf_getline(&buf, fp) != EOF) {
+ 		if (*buf.buf == '#')
+ 			continue;
+diff --git a/t/t6050-replace.sh b/t/t6050-replace.sh
+index 86374a9c52..5d6d3184ac 100755
+--- a/t/t6050-replace.sh
++++ b/t/t6050-replace.sh
+@@ -461,7 +461,10 @@ test_expect_success '--convert-graft-file' '
+ 	printf "%s\n%s %s\n\n# comment\n%s\n" \
+ 		$(git rev-parse HEAD^^ HEAD^ HEAD^^ HEAD^2) \
+ 		>.git/info/grafts &&
+-	git replace --convert-graft-file &&
++	git status 2>stderr &&
++	test_i18ngrep "hint:.*grafts is deprecated" stderr &&
++	git replace --convert-graft-file 2>stderr &&
++	test_i18ngrep ! "hint:.*grafts is deprecated" stderr &&
+ 	test_path_is_missing .git/info/grafts &&
+ 
+ 	: verify that the history is now "grafted" &&
+-- 
+2.20.0.rc1.379.g1dd7ef354c
+
