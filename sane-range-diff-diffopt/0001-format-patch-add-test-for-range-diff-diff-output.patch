@@ -1,0 +1,94 @@
+From 129f0fb6c66187c1796d112cb03f5b4c67958f00 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqk1l32jo2.fsf@gitster-ct.c.googlers.com>
+References: <xmqqk1l32jo2.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 28 Nov 2018 20:07:26 +0100
+Subject: [PATCH 1/2] format-patch: add test for --range-diff diff output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in 43dafc4172 ("format-patch: don't include --stat with
+--range-diff output", 2018-11-22) the diff options provided on the
+command-line currently affect both the range-diff and the patch
+output, but there was no test for checking this with output where we'd
+show a patch diff. Let's add one.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3206-range-diff.sh | 60 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 60 insertions(+)
+
+diff --git a/t/t3206-range-diff.sh b/t/t3206-range-diff.sh
+index 90def330bd..bc5facc1cd 100755
+--- a/t/t3206-range-diff.sh
++++ b/t/t3206-range-diff.sh
+@@ -267,4 +267,64 @@ test_expect_success 'format-patch --range-diff as commentary' '
+ 	test_i18ngrep "^Range-diff:$" actual
+ '
+ 
++test_expect_success 'format-patch with <common diff option>' '
++	# No diff options
++	git format-patch --cover-letter --stdout --range-diff=topic~..topic \
++		changed~..changed >actual.raw &&
++	sed -ne "/^1:/,/^--/p" <actual.raw >actual.range-diff &&
++	sed -e "s|:$||" >expect <<-\EOF &&
++	1:  a63e992 ! 1:  d966c5c s/12/B/
++	    @@ -8,7 +8,7 @@
++	     @@
++	      9
++	      10
++	    - B
++	    + BB
++	     -12
++	     +B
++	      13
++	-- :
++	EOF
++	test_cmp expect actual.range-diff &&
++	sed -ne "/^--- /,/^--/p" <actual.raw >actual.diff &&
++	sed -e "s|:$||" >expect <<-\EOF &&
++	--- a/file
++	+++ b/file
++	@@ -9,7 +9,7 @@ A
++	 9
++	 10
++	 BB
++	-12
++	+B
++	 13
++	 14
++	 15
++	-- :
++	EOF
++	test_cmp expect actual.diff &&
++
++	# -U0
++	git format-patch --cover-letter --stdout -U0 \
++		--range-diff=topic~..topic changed~..changed >actual.raw &&
++	sed -ne "/^1:/,/^--/p" <actual.raw >actual.range-diff &&
++	sed -e "s|:$||" >expect <<-\EOF &&
++	1:  a63e992 ! 1:  d966c5c s/12/B/
++	    @@ -11 +11 @@
++	    - B
++	    + BB
++	-- :
++	EOF
++	test_cmp expect actual.range-diff &&
++	sed -ne "/^--- /,/^--/p" <actual.raw >actual.diff &&
++	sed -e "s|:$||" >expect <<-\EOF &&
++	--- a/file
++	+++ b/file
++	@@ -12 +12 @@ BB
++	-12
++	+B
++	-- :
++	EOF
++	test_cmp expect actual.diff
++'
++
+ test_done
+-- 
+2.20.0.rc1.387.gf8505762e3
+
