@@ -1,0 +1,229 @@
+From 1bf7731c9eb311b6c04ca3b79b7ac831c7513e6b Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181211135501.GA13731@sigill.intra.peff.net>
+References: <20181211135501.GA13731@sigill.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 11 Dec 2018 22:04:39 +0100
+Subject: [PATCH 3/3] tests: mark tests broken under
+ GIT_TEST_PROTOCOL_VERSION=2
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Mark those tests that have behavior differences or bugs under
+protocol.version=0.
+
+Whether or not these tests should exhibit different behavior is
+outside the scope of this change. Some (such as t5700-protocol-v1.sh)
+clearly should, but others (such as t7406-submodule-update.sh) might
+indicate bugs in the protocol v2 code.
+
+Tracking down which is which is outside the scope of this
+change. Let's first exhaustively annotate where the differences are,
+so that we can spot future behavior differences or regressions.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5500-fetch-pack.sh                | 4 +++-
+ t/t5503-tagfollow.sh                 | 8 ++++----
+ t/t5512-ls-remote.sh                 | 8 ++++----
+ t/t5515-fetch-merge-logic.sh         | 1 +
+ t/t5516-fetch-push.sh                | 3 ++-
+ t/t5537-fetch-shallow.sh             | 3 ++-
+ t/t5552-skipping-fetch-negotiator.sh | 1 +
+ t/t5616-partial-clone.sh             | 3 ++-
+ t/t5700-protocol-v1.sh               | 1 +
+ t/t7406-submodule-update.sh          | 3 ++-
+ 10 files changed, 22 insertions(+), 13 deletions(-)
+
+diff --git a/t/t5500-fetch-pack.sh b/t/t5500-fetch-pack.sh
+index 086f2c40f6..9c18875c9c 100755
+--- a/t/t5500-fetch-pack.sh
++++ b/t/t5500-fetch-pack.sh
+@@ -41,7 +41,8 @@ pull_to_client () {
+ 	test_expect_success "$number pull" '
+ 		(
+ 			cd client &&
+-			git fetch-pack -k -v .. $heads &&
++			GIT_TEST_PROTOCOL_VERSION=0 \
++				git fetch-pack -k -v .. $heads &&
+ 
+ 			case "$heads" in
+ 			    *A*)
+@@ -440,6 +441,7 @@ test_expect_success 'setup tests for the --stdin parameter' '
+ '
+ 
+ test_expect_success 'fetch refs from cmdline' '
++	sane_unset GIT_TEST_PROTOCOL_VERSION &&
+ 	(
+ 		cd client &&
+ 		git fetch-pack --no-progress .. $(cat ../input)
+diff --git a/t/t5503-tagfollow.sh b/t/t5503-tagfollow.sh
+index 4ca48f0276..220c677f24 100755
+--- a/t/t5503-tagfollow.sh
++++ b/t/t5503-tagfollow.sh
+@@ -56,7 +56,7 @@ test_expect_success 'fetch A (new commit : 1 connection)' '
+ 	rm -f $U &&
+ 	(
+ 		cd cloned &&
+-		GIT_TRACE_PACKET=$UPATH git fetch &&
++		GIT_TRACE_PACKET=$UPATH GIT_TEST_PROTOCOL_VERSION=0 git fetch &&
+ 		test $A = $(git rev-parse --verify origin/master)
+ 	) &&
+ 	get_needs $U >actual &&
+@@ -86,7 +86,7 @@ test_expect_success 'fetch C, T (new branch, tag : 1 connection)' '
+ 	rm -f $U &&
+ 	(
+ 		cd cloned &&
+-		GIT_TRACE_PACKET=$UPATH git fetch &&
++		GIT_TRACE_PACKET=$UPATH GIT_TEST_PROTOCOL_VERSION=0 git fetch &&
+ 		test $C = $(git rev-parse --verify origin/cat) &&
+ 		test $T = $(git rev-parse --verify tag1) &&
+ 		test $A = $(git rev-parse --verify tag1^0)
+@@ -122,7 +122,7 @@ test_expect_success 'fetch B, S (commit and tag : 1 connection)' '
+ 	rm -f $U &&
+ 	(
+ 		cd cloned &&
+-		GIT_TRACE_PACKET=$UPATH git fetch &&
++		GIT_TRACE_PACKET=$UPATH GIT_TEST_PROTOCOL_VERSION=0 git fetch &&
+ 		test $B = $(git rev-parse --verify origin/master) &&
+ 		test $B = $(git rev-parse --verify tag2^0) &&
+ 		test $S = $(git rev-parse --verify tag2)
+@@ -146,7 +146,7 @@ test_expect_success 'new clone fetch master and tags' '
+ 		cd clone2 &&
+ 		git init &&
+ 		git remote add origin .. &&
+-		GIT_TRACE_PACKET=$UPATH git fetch &&
++		GIT_TRACE_PACKET=$UPATH GIT_TEST_PROTOCOL_VERSION=0 git fetch &&
+ 		test $B = $(git rev-parse --verify origin/master) &&
+ 		test $S = $(git rev-parse --verify tag2) &&
+ 		test $B = $(git rev-parse --verify tag2^0) &&
+diff --git a/t/t5512-ls-remote.sh b/t/t5512-ls-remote.sh
+index ca69636fd5..28420c4f77 100755
+--- a/t/t5512-ls-remote.sh
++++ b/t/t5512-ls-remote.sh
+@@ -223,7 +223,7 @@ test_expect_success 'ls-remote --symref' '
+ 	$(git rev-parse refs/tags/mark1.10)	refs/tags/mark1.10
+ 	$(git rev-parse refs/tags/mark1.2)	refs/tags/mark1.2
+ 	EOF
+-	git ls-remote --symref >actual &&
++	GIT_TEST_PROTOCOL_VERSION=0 git ls-remote --symref >actual &&
+ 	test_cmp expect actual
+ '
+ 
+@@ -243,7 +243,7 @@ test_expect_failure 'ls-remote with filtered symref (--heads)' '
+ 	1bd44cb9d13204b0fe1958db0082f5028a16eb3a	refs/heads/foo
+ 	1bd44cb9d13204b0fe1958db0082f5028a16eb3a	refs/heads/master
+ 	EOF
+-	git ls-remote --symref --heads . >actual &&
++	GIT_TEST_PROTOCOL_VERSION=0 git ls-remote --symref --heads . >actual &&
+ 	test_cmp expect actual
+ '
+ 
+@@ -252,9 +252,9 @@ test_expect_success 'ls-remote --symref omits filtered-out matches' '
+ 	1bd44cb9d13204b0fe1958db0082f5028a16eb3a	refs/heads/foo
+ 	1bd44cb9d13204b0fe1958db0082f5028a16eb3a	refs/heads/master
+ 	EOF
+-	git ls-remote --symref --heads . >actual &&
++	GIT_TEST_PROTOCOL_VERSION=0  git ls-remote --symref --heads . >actual &&
+ 	test_cmp expect actual &&
+-	git ls-remote --symref . "refs/heads/*" >actual &&
++	GIT_TEST_PROTOCOL_VERSION=0 git ls-remote --symref . "refs/heads/*" >actual &&
+ 	test_cmp expect actual
+ '
+ 
+diff --git a/t/t5515-fetch-merge-logic.sh b/t/t5515-fetch-merge-logic.sh
+index 36b0dbc01c..2a3d1d84d6 100755
+--- a/t/t5515-fetch-merge-logic.sh
++++ b/t/t5515-fetch-merge-logic.sh
+@@ -7,6 +7,7 @@
+ test_description='Merge logic in fetch'
+ 
+ . ./test-lib.sh
++sane_unset GIT_TEST_PROTOCOL_VERSION
+ 
+ LF='
+ '
+diff --git a/t/t5516-fetch-push.sh b/t/t5516-fetch-push.sh
+index 49e5d305e5..0722d288cd 100755
+--- a/t/t5516-fetch-push.sh
++++ b/t/t5516-fetch-push.sh
+@@ -1129,7 +1129,8 @@ do
+ 	'
+ done
+ 
+-test_expect_success 'fetch exact SHA1' '
++test_expect_success 'fetch exact SHA1 in protocol v0' '
++	sane_unset GIT_TEST_PROTOCOL_VERSION &&
+ 	mk_test testrepo heads/master hidden/one &&
+ 	git push testrepo master:refs/hidden/one &&
+ 	(
+diff --git a/t/t5537-fetch-shallow.sh b/t/t5537-fetch-shallow.sh
+index 6faf17e17a..f8f14c0ca2 100755
+--- a/t/t5537-fetch-shallow.sh
++++ b/t/t5537-fetch-shallow.sh
+@@ -127,7 +127,8 @@ test_expect_success 'fetch that requires changes in .git/shallow is filtered' '
+ 	git init notshallow &&
+ 	(
+ 	cd notshallow &&
+-	git fetch ../shallow/.git refs/heads/*:refs/remotes/shallow/*&&
++	GIT_TEST_PROTOCOL_VERSION=0 \
++		git fetch ../shallow/.git refs/heads/*:refs/remotes/shallow/* &&
+ 	git for-each-ref --format="%(refname)" >actual.refs &&
+ 	cat <<EOF >expect.refs &&
+ refs/remotes/shallow/no-shallow
+diff --git a/t/t5552-skipping-fetch-negotiator.sh b/t/t5552-skipping-fetch-negotiator.sh
+index 30857b84a8..c5b39b8248 100755
+--- a/t/t5552-skipping-fetch-negotiator.sh
++++ b/t/t5552-skipping-fetch-negotiator.sh
+@@ -127,6 +127,7 @@ test_expect_success 'use ref advertisement to filter out commits' '
+ 	# not need to send any ancestors of "c3", but we still need to send "c3"
+ 	# itself.
+ 	test_config -C client fetch.negotiationalgorithm skipping &&
++	sane_unset GIT_TEST_PROTOCOL_VERSION &&
+ 	trace_fetch client origin to_fetch &&
+ 	have_sent c5 c4^ c2side &&
+ 	have_not_sent c4 c4^^ c4^^^
+diff --git a/t/t5616-partial-clone.sh b/t/t5616-partial-clone.sh
+index 336f02a41a..feedf84ce1 100755
+--- a/t/t5616-partial-clone.sh
++++ b/t/t5616-partial-clone.sh
+@@ -144,7 +144,8 @@ test_expect_success 'manual prefetch of missing objects' '
+ 	sort >observed.oids &&
+ 
+ 	test_line_count = 6 observed.oids &&
+-	git -C pc1 fetch-pack --stdin "file://$(pwd)/srv.bare" <observed.oids &&
++	GIT_TEST_PROTOCOL_VERSION=0 \
++		git -C pc1 fetch-pack --stdin "file://$(pwd)/srv.bare" <observed.oids &&
+ 
+ 	git -C pc1 rev-list --quiet --objects --missing=print \
+ 		master..origin/master >revs &&
+diff --git a/t/t5700-protocol-v1.sh b/t/t5700-protocol-v1.sh
+index ba86a44eb1..244ff6879d 100755
+--- a/t/t5700-protocol-v1.sh
++++ b/t/t5700-protocol-v1.sh
+@@ -5,6 +5,7 @@ test_description='test git wire-protocol transition'
+ TEST_NO_CREATE_REPO=1
+ 
+ . ./test-lib.sh
++sane_unset GIT_TEST_PROTOCOL_VERSION
+ 
+ # Test protocol v1 with 'git://' transport
+ #
+diff --git a/t/t7406-submodule-update.sh b/t/t7406-submodule-update.sh
+index e87164aa8f..dd41a96c20 100755
+--- a/t/t7406-submodule-update.sh
++++ b/t/t7406-submodule-update.sh
+@@ -943,7 +943,8 @@ test_expect_success 'submodule update clone shallow submodule outside of depth'
+ 		cd super3 &&
+ 		sed -e "s#url = ../#url = file://$pwd/#" <.gitmodules >.gitmodules.tmp &&
+ 		mv -f .gitmodules.tmp .gitmodules &&
+-		test_must_fail git submodule update --init --depth=1 2>actual &&
++		test_must_fail env GIT_TEST_PROTOCOL_VERSION=0 \
++			git submodule update --init --depth=1 2>actual &&
+ 		test_i18ngrep "Direct fetching of that commit failed." actual &&
+ 		git -C ../submodule config uploadpack.allowReachableSHA1InWant true &&
+ 		git submodule update --init --depth=1 >actual &&
+-- 
+2.20.0.405.gbc1bbc6f85
+
