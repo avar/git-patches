@@ -1,0 +1,103 @@
+From fffad6e2314c48f34cdfdb5ecfb9131f7ff35b70 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqimzygmz6.fsf@gitster-ct.c.googlers.com>
+References: <xmqqimzygmz6.fsf@gitster-ct.c.googlers.com>
+From: Jeff King <peff@peff.net>
+Date: Tue, 11 Dec 2018 05:44:39 -0500
+Subject: [PATCH v2 3/8] upload-pack: support hidden refs with protocol v2
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the v2 protocol, upload-pack's advertisement has been moved to the
+"ls-refs" command. That command does not respect hidden-ref config (like
+transfer.hiderefs) at all, and advertises everything.
+
+While there are some features that are not supported in v2 (e.g., v2
+always allows fetching any sha1 without respect to advertisements), the
+lack of this feature is not documented and is likely just a bug. Let's
+make it work, as otherwise upgrading a server to a v2-capable git will
+start exposing these refs that the repository admin has asked to remain
+hidden.
+
+Note that we depend on the config_context from the caller here to
+realize that we should respect uploadpack.hiderefs. When run from the
+"git-serve" tool, we won't have that context and will only respect
+transfer.hiderefs. This should be OK, as git-serve is not actually used
+for normal protocol operations.
+
+Note also that we don't need to worry about the "An attempt to update
+or delete a hidden ref by git push is rejected" feature of
+receive.hideRefs, see git-config(1). This is because there's no v2
+push protocol yet.
+
+Signed-off-by: Jeff King <peff@peff.net>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ls-refs.c            | 12 ++++++++++++
+ t/t5512-ls-remote.sh |  6 ++++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/ls-refs.c b/ls-refs.c
+index e8e31475f0..8a8143338b 100644
+--- a/ls-refs.c
++++ b/ls-refs.c
+@@ -5,6 +5,7 @@
+ #include "argv-array.h"
+ #include "ls-refs.h"
+ #include "pkt-line.h"
++#include "config.h"
+ 
+ /*
+  * Check if one of the prefixes is a prefix of the ref.
+@@ -40,6 +41,9 @@ static int send_ref(const char *refname, const struct object_id *oid,
+ 	const char *refname_nons = strip_namespace(refname);
+ 	struct strbuf refline = STRBUF_INIT;
+ 
++	if (ref_is_hidden(refname_nons, refname))
++		return 0;
++
+ 	if (!ref_match(&data->prefixes, refname))
+ 		return 0;
+ 
+@@ -69,6 +73,12 @@ static int send_ref(const char *refname, const struct object_id *oid,
+ 	return 0;
+ }
+ 
++static int ls_refs_config(const char *var, const char *value,
++			  void *config_context)
++{
++	return parse_hide_refs_config(var, value, config_context);
++}
++
+ int ls_refs(struct repository *r,
+ 	    const char *config_section,
+ 	    struct argv_array *keys,
+@@ -78,6 +88,8 @@ int ls_refs(struct repository *r,
+ 
+ 	memset(&data, 0, sizeof(data));
+ 
++	git_config(ls_refs_config, (void *)config_section);
++
+ 	while (packet_reader_read(request) != PACKET_READ_FLUSH) {
+ 		const char *arg = request->line;
+ 		const char *out;
+diff --git a/t/t5512-ls-remote.sh b/t/t5512-ls-remote.sh
+index 32e722db2e..ca69636fd5 100755
+--- a/t/t5512-ls-remote.sh
++++ b/t/t5512-ls-remote.sh
+@@ -204,6 +204,12 @@ test_expect_success 'overrides work between mixed transfer/upload-pack hideRefs'
+ 	grep refs/tags/magic actual
+ '
+ 
++test_expect_success 'protocol v2 supports hiderefs' '
++	test_config uploadpack.hiderefs refs/tags &&
++	git -c protocol.version=2 ls-remote . >actual &&
++	! grep refs/tags actual
++'
++
+ test_expect_success 'ls-remote --symref' '
+ 	git fetch origin &&
+ 	cat >expect <<-EOF &&
+-- 
+2.20.0.405.gbc1bbc6f85
+

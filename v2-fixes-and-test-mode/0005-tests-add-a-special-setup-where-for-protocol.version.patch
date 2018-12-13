@@ -1,0 +1,128 @@
+From 7c2d6ccdb8d6435089a72aa55c31f094c82164ed Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqimzygmz6.fsf@gitster-ct.c.googlers.com>
+References: <xmqqimzygmz6.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 11 Dec 2018 22:21:33 +0100
+Subject: [PATCH v2 5/8] tests: add a special setup where for protocol.version
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a GIT_TEST_PROTOCOL_VERSION=X test mode which is equivalent to
+running with protocol.version=X. This is needed to spot regressions
+and differences such as "ls-refs" behaving differently with
+transfer.hideRefs. See
+https://public-inbox.org/git/20181211104236.GA6899@sigill.intra.peff.net/
+for a fix for that regression.
+
+With this all tests pass with GIT_TEST_PROTOCOL_VERSION=0, but fail
+with GIT_TEST_PROTOCOL_VERSION=[1|2]. That's OK since this is a new
+test mode, subsequent patches will fix up these test failures.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ protocol.c               | 13 ++++++++++++-
+ t/README                 |  6 ++++++
+ t/t0410-partial-clone.sh |  3 ++-
+ t/t5516-fetch-push.sh    |  3 ++-
+ t/t5700-protocol-v1.sh   |  1 +
+ t/t5702-protocol-v2.sh   |  1 +
+ 6 files changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/protocol.c b/protocol.c
+index 5e636785d1..aa06c3b5bc 100644
+--- a/protocol.c
++++ b/protocol.c
+@@ -17,7 +17,18 @@ static enum protocol_version parse_protocol_version(const char *value)
+ enum protocol_version get_protocol_version_config(void)
+ {
+ 	const char *value;
+-	if (!git_config_get_string_const("protocol.version", &value)) {
++	const char *git_test_k = "GIT_TEST_PROTOCOL_VERSION";
++	const char *git_test_v = getenv(git_test_k);
++
++	if (git_test_v && strlen(git_test_v)) {
++		enum protocol_version version = parse_protocol_version(git_test_v);
++
++		if (version == protocol_unknown_version)
++			die("unknown value for %s: %s", git_test_k,
++			    git_test_v);
++
++		return version;
++	} else if (!git_config_get_string_const("protocol.version", &value)) {
+ 		enum protocol_version version = parse_protocol_version(value);
+ 
+ 		if (version == protocol_unknown_version)
+diff --git a/t/README b/t/README
+index 28711cc508..89629c5818 100644
+--- a/t/README
++++ b/t/README
+@@ -311,6 +311,12 @@ marked strings" in po/README for details.
+ GIT_TEST_SPLIT_INDEX=<boolean> forces split-index mode on the whole
+ test suite. Accept any boolean values that are accepted by git-config.
+ 
++GIT_TEST_PROTOCOL_VERSION=<'protocol.version' config value>, when set,
++runs the test suite with the given protocol.version. E.g. "0", "1" or
++"2". Can be set to the empty string within tests themselves (e.g. "env
++GIT_TEST_PROTOCOL_VERSION= <cmd>") to unset the value in the
++environment as a workaround for "env --unset" not being portable.
++
+ GIT_TEST_FULL_IN_PACK_ARRAY=<boolean> exercises the uncommon
+ pack-objects code path where there are more than 1024 packs even if
+ the actual number of packs in repository is below this limit. Accept
+diff --git a/t/t0410-partial-clone.sh b/t/t0410-partial-clone.sh
+index ba3887f178..8ba3d9b5ab 100755
+--- a/t/t0410-partial-clone.sh
++++ b/t/t0410-partial-clone.sh
+@@ -178,7 +178,8 @@ test_expect_success 'fetching of missing objects works with ref-in-want enabled'
+ 
+ 	rm -rf repo/.git/objects/* &&
+ 	rm -f trace &&
+-	GIT_TRACE_PACKET="$(pwd)/trace" git -C repo cat-file -p "$HASH" &&
++	GIT_TRACE_PACKET="$(pwd)/trace" env GIT_TEST_PROTOCOL_VERSION= \
++		git -C repo cat-file -p "$HASH" &&
+ 	grep "git< fetch=.*ref-in-want" trace
+ '
+ 
+diff --git a/t/t5516-fetch-push.sh b/t/t5516-fetch-push.sh
+index 37e8e80893..08cdee0b95 100755
+--- a/t/t5516-fetch-push.sh
++++ b/t/t5516-fetch-push.sh
+@@ -1187,7 +1187,8 @@ test_expect_success 'fetch exact SHA1 in protocol v2' '
+ 
+ 	# fetching the hidden object succeeds by default
+ 	# NEEDSWORK: should this match the v0 behavior instead?
+-	git -C child fetch -v ../testrepo $the_commit:refs/heads/copy
++	env GIT_TEST_PROTOCOL_VERSION= \
++		git -C child fetch -v ../testrepo $the_commit:refs/heads/copy
+ '
+ 
+ for configallowtipsha1inwant in true false
+diff --git a/t/t5700-protocol-v1.sh b/t/t5700-protocol-v1.sh
+index ba86a44eb1..e4d375c462 100755
+--- a/t/t5700-protocol-v1.sh
++++ b/t/t5700-protocol-v1.sh
+@@ -8,6 +8,7 @@ TEST_NO_CREATE_REPO=1
+ 
+ # Test protocol v1 with 'git://' transport
+ #
++unset GIT_TEST_PROTOCOL_VERSION
+ . "$TEST_DIRECTORY"/lib-git-daemon.sh
+ start_git_daemon --export-all --enable=receive-pack
+ daemon_parent=$GIT_DAEMON_DOCUMENT_ROOT_PATH/parent
+diff --git a/t/t5702-protocol-v2.sh b/t/t5702-protocol-v2.sh
+index 0f2b09ebb8..d1549f294e 100755
+--- a/t/t5702-protocol-v2.sh
++++ b/t/t5702-protocol-v2.sh
+@@ -8,6 +8,7 @@ TEST_NO_CREATE_REPO=1
+ 
+ # Test protocol v2 with 'git://' transport
+ #
++unset GIT_TEST_PROTOCOL_VERSION
+ . "$TEST_DIRECTORY"/lib-git-daemon.sh
+ start_git_daemon --export-all --enable=receive-pack
+ daemon_parent=$GIT_DAEMON_DOCUMENT_ROOT_PATH/parent
+-- 
+2.20.0.405.gbc1bbc6f85
+
