@@ -1,0 +1,91 @@
+From d69dbf81de08da684686e1cc675c0cad969b6e6d Mon Sep 17 00:00:00 2001
+In-Reply-To: <20181122153922.16912-2-avarab@gmail.com>
+References: <20181122153922.16912-2-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Jan 2019 23:47:42 +0100
+Subject: [PATCH v5 9/9] commit-graph write: emit a percentage for all progress
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up 01ca387774 ("commit-graph: split up close_reachable()
+progress output", 2018-11-19) by making the progress bars in
+close_reachable() report a completion percentage. This fixes the last
+occurrence where in the commit graph writing where we didn't report
+that.
+
+The change in 01ca387774 split up the 1x progress bar in
+close_reachable() into 3x, but left them as dumb counters without a
+percentage completion. Fixing that is easy, and the only reason it
+wasn't done already is because that commit was rushed in during the
+v2.20.0 RC period to fix the unrelated issue of over-reporting commit
+numbers. See [1] and follow-ups for ML activity at the time and [2]
+for an alternative approach where the progress bars weren't split up.
+
+Now for e.g. linux.git we'll emit:
+
+    $ ~/g/git/git --exec-path=$HOME/g/git commit-graph write
+    Finding commits for commit graph among packed objects: 100% (6529159/6529159), done.
+    Expanding reachable commits in commit graph: 100% (815990/815980), done.
+    Computing commit graph generation numbers: 100% (815983/815983), done.
+    Writing out commit graph in 4 passes: 100% (3263932/3263932), done.
+
+1. https://public-inbox.org/git/20181119202300.18670-1-avarab@gmail.com/
+2. https://public-inbox.org/git/20181122153922.16912-11-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit-graph.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index 60ec7c1b22..b6a074c80d 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -653,15 +653,15 @@ static void add_missing_parents(struct packed_oid_list *oids, struct commit *com
+ 
+ static void close_reachable(struct packed_oid_list *oids, int report_progress)
+ {
+-	int i, j;
++	int i;
+ 	struct commit *commit;
+ 	struct progress *progress = NULL;
+ 
+ 	if (report_progress)
+ 		progress = start_delayed_progress(
+-			_("Loading known commits in commit graph"), j = 0);
++			_("Loading known commits in commit graph"), oids->nr);
+ 	for (i = 0; i < oids->nr; i++) {
+-		display_progress(progress, ++j);
++		display_progress(progress, i + 1);
+ 		commit = lookup_commit(the_repository, &oids->list[i]);
+ 		if (commit)
+ 			commit->object.flags |= UNINTERESTING;
+@@ -675,9 +675,9 @@ static void close_reachable(struct packed_oid_list *oids, int report_progress)
+ 	 */
+ 	if (report_progress)
+ 		progress = start_delayed_progress(
+-			_("Expanding reachable commits in commit graph"), j = 0);
++			_("Expanding reachable commits in commit graph"), oids->nr);
+ 	for (i = 0; i < oids->nr; i++) {
+-		display_progress(progress, ++j);
++		display_progress(progress, i + 1);
+ 		commit = lookup_commit(the_repository, &oids->list[i]);
+ 
+ 		if (commit && !parse_commit(commit))
+@@ -687,9 +687,9 @@ static void close_reachable(struct packed_oid_list *oids, int report_progress)
+ 
+ 	if (report_progress)
+ 		progress = start_delayed_progress(
+-			_("Clearing commit marks in commit graph"), j = 0);
++			_("Clearing commit marks in commit graph"), oids->nr);
+ 	for (i = 0; i < oids->nr; i++) {
+-		display_progress(progress, ++j);
++		display_progress(progress, i + 1);
+ 		commit = lookup_commit(the_repository, &oids->list[i]);
+ 
+ 		if (commit)
+-- 
+2.20.1.153.gd81d796ee0
+
