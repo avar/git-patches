@@ -1,0 +1,68 @@
+From ffd41a882a05b4bdb287e7714a184d50ea1bd5ca Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190204184850.10040-1-williamh@gentoo.org>
+References: <20190204184850.10040-1-williamh@gentoo.org>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 5 Feb 2019 20:30:43 +0100
+Subject: [PATCH v6 1/2] ident: test how GIT_* and user.{name,email} interact
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There were no explicit tests for the interaction between setting GIT_*
+in the environment, and the user.{name,email} config variables. These
+tests are basic, but we're about to learn
+{author,committer}.{name,email} in addition to user.{name,email}, so
+they'll soon become more useful.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7517-per-repo-email.sh | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/t/t7517-per-repo-email.sh b/t/t7517-per-repo-email.sh
+index 231b8cc19d..84bd9e89e5 100755
+--- a/t/t7517-per-repo-email.sh
++++ b/t/t7517-per-repo-email.sh
+@@ -85,4 +85,38 @@ test_expect_success REBASE_P \
+ 	test_must_fail git rebase -p master
+ '
+ 
++test_expect_success 'fallbacks for GIT_* and user.{name,email}' '
++	# We must have committer in the object
++	test_must_fail test_env \
++		GIT_AUTHOR_NAME=author.name \
++		GIT_AUTHOR_EMAIL=author@email \
++		GIT_COMMITTER_NAME= \
++		GIT_COMMITTER_EMAIL= \
++		test_commit A 2>stderr &&
++	test_i18ngrep "empty ident name.*not allowed" stderr &&
++
++	# With no committer E-Mail we will have an empty field
++	test_env \
++		GIT_AUTHOR_NAME=author.name \
++		GIT_AUTHOR_EMAIL=author@email \
++		GIT_COMMITTER_NAME=committer.name \
++		GIT_COMMITTER_EMAIL= \
++		test_commit B 2>stderr &&
++	echo "author.name author@email committer.name " >expected &&
++	git log --format="%an %ae %cn %ce" -1 >actual &&
++	test_cmp expected actual &&
++
++	# Environment overrides config
++	test_config user.name author.config.name &&
++	test_env \
++		GIT_AUTHOR_NAME=author.name \
++		GIT_AUTHOR_EMAIL=author@email \
++		GIT_COMMITTER_NAME=committer.name \
++		GIT_COMMITTER_EMAIL= \
++		test_commit C 2>stderr &&
++	echo "author.name author@email committer.name " >expected &&
++	git log --format="%an %ae %cn %ce" -1 >actual &&
++	test_cmp expected actual
++'
++
+ test_done
+-- 
+2.20.1.611.gfbb209baf1
+
