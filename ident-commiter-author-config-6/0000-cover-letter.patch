@@ -3,7 +3,7 @@ In-Reply-To: <20190204184850.10040-1-williamh@gentoo.org>
 References: <20190204184850.10040-1-williamh@gentoo.org>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
-Date: Tue, 5 Feb 2019 20:42:49 +0100
+Date: Tue, 5 Feb 2019 20:43:16 +0100
 Subject: [PATCH v6 0/2] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -31,8 +31,330 @@ William Hubbs (1):
  11 files changed, 223 insertions(+), 45 deletions(-)
 
 Range-diff:
-1:  ffd41a882a = 1:  ffd41a882a ident: test how GIT_* and user.{name,email} interact
-2:  788ec8412d = 2:  788ec8412d config: allow giving separate author and committer idents
+-:  ---------- > 1:  ffd41a882a ident: test how GIT_* and user.{name,email} interact
+1:  1172f91155 ! 2:  788ec8412d config: allow giving separate author and committer idents
+    @@ -21,6 +21,7 @@
+         committer identification.
+     
+         Signed-off-by: William Hubbs <williamh@gentoo.org>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      diff --git a/Documentation/config/user.txt b/Documentation/config/user.txt
+      --- a/Documentation/config/user.txt
+    @@ -54,6 +55,20 @@
+      user.useConfigOnly::
+      	Instruct Git to avoid trying to guess defaults for `user.email`
+     
+    + diff --git a/Documentation/git-commit-tree.txt b/Documentation/git-commit-tree.txt
+    + --- a/Documentation/git-commit-tree.txt
+    + +++ b/Documentation/git-commit-tree.txt
+    +@@
+    + (nb "<", ">" and "\n"s are stripped)
+    + 
+    + In case (some of) these environment variables are not set, the information
+    +-is taken from the configuration items user.name and user.email, or, if not
+    ++is taken from the configuration items user.name and user.email, or the more
+    ++specific author.{name,email} and committer.{name,email} variables, or, if not
+    + present, the environment variable EMAIL, or, if that is not set,
+    + system user name and the hostname used for outgoing mail (taken
+    + from `/etc/mailname` and falling back to the fully qualified hostname when
+    +
+      diff --git a/blame.c b/blame.c
+      --- a/blame.c
+      +++ b/blame.c
+    @@ -75,7 +90,7 @@
+      	}
+      
+      	author = fmt_ident(state->author_name, state->author_email,
+    -+		WANT_AUTHOR_IDENT,
+    ++			WANT_AUTHOR_IDENT,
+      			state->ignore_date ? NULL : state->author_date,
+      			IDENT_STRICT);
+      
+    @@ -89,7 +104,7 @@
+      
+     -	strbuf_addstr(author_ident, fmt_ident(name, email, date, IDENT_STRICT));
+     +	strbuf_addstr(author_ident, fmt_ident(name, email, WANT_AUTHOR_IDENT, date,
+    -+				IDENT_STRICT));
+    ++					      IDENT_STRICT));
+      	assert_split_ident(&author, author_ident);
+      	export_one("GIT_AUTHOR_NAME", author.name_begin, author.name_end, 0);
+      	export_one("GIT_AUTHOR_EMAIL", author.mail_begin, author.mail_end, 0);
+    @@ -113,8 +128,8 @@
+     -extern const char *fmt_ident(const char *name, const char *email, const char *date_str, int);
+     -extern const char *fmt_name(const char *name, const char *email);
+     +extern const char *fmt_ident(const char *name, const char *email,
+    -+		enum want_ident whose_ident,
+    -+		const char *date_str, int);
+    ++			     enum want_ident whose_ident,
+    ++			     const char *date_str, int flag);
+     +extern const char *fmt_name(enum want_ident);
+      extern const char *ident_default_name(void);
+      extern const char *ident_default_email(void);
+    @@ -129,8 +144,8 @@
+      
+     -	if (starts_with(var, "user."))
+     +	if (starts_with(var, "user.") ||
+    -+		starts_with(var, "author.") ||
+    -+			starts_with(var, "committer."))
+    ++	    starts_with(var, "author.") ||
+    ++	    starts_with(var, "committer."))
+      		return git_ident_config(var, value, cb);
+      
+      	if (starts_with(var, "i18n."))
+    @@ -154,7 +169,8 @@
+      
+      const char *fmt_ident(const char *name, const char *email,
+     -		      const char *date_str, int flag)
+    -+		      enum want_ident whose_ident, const char *date_str, int flag)
+    ++		      enum want_ident whose_ident, const char *date_str,
+    ++		      int flag)
+      {
+      	static struct strbuf ident = STRBUF_INIT;
+      	int strict = (flag & IDENT_STRICT);
+    @@ -232,68 +248,75 @@
+      	return ident_is_sufficient(author_ident_explicitly_given);
+      }
+      
+    --int git_ident_config(const char *var, const char *value, void *data)
+    -+static int set_ident(const char *var, const char *value)
+    - {
+    --	if (!strcmp(var, "user.useconfigonly")) {
+    --		ident_use_config_only = git_config_bool(var, value);
+    -+	if (!strcmp(var, "author.name")) {
+    -+		if (!value)
+    -+			return config_error_nonbool(var);
+    -+		strbuf_reset(&git_author_name);
+    -+		strbuf_addstr(&git_author_name, value);
+    -+		author_ident_explicitly_given |= IDENT_NAME_GIVEN;
+    -+		ident_config_given |= IDENT_NAME_GIVEN;
+    -+		return 0;
+    -+	}
+    -+
+    -+	if (!strcmp(var, "author.email")) {
+    -+		if (!value)
+    -+			return config_error_nonbool(var);
+    -+		strbuf_reset(&git_author_email);
+    -+		strbuf_addstr(&git_author_email, value);
+    -+		author_ident_explicitly_given |= IDENT_MAIL_GIVEN;
+    -+		ident_config_given |= IDENT_MAIL_GIVEN;
+    -+		return 0;
+    -+	}
+    ++static int set_ident_internal(const char *var, const char *value,
+    ++			    struct strbuf *sb, const int flag)
+    ++{
+    ++	if (!value)
+    ++		return config_error_nonbool(var);
+    ++	strbuf_reset(sb);
+    ++	strbuf_addstr(sb, value);
+    ++	author_ident_explicitly_given |= flag;
+    ++	ident_config_given |= flag;
+    ++	return 0;
+    ++}
+     +
+    -+	if (!strcmp(var, "committer.name")) {
+    -+		if (!value)
+    -+			return config_error_nonbool(var);
+    -+		strbuf_reset(&git_committer_name);
+    -+		strbuf_addstr(&git_committer_name, value);
+    -+		committer_ident_explicitly_given |= IDENT_NAME_GIVEN;
+    -+		ident_config_given |= IDENT_NAME_GIVEN;
+    -+		return 0;
+    -+	}
+    ++static int set_ident(const char *var, const char *value)
+    ++{
+    ++	if (!strcmp(var, "author.name"))
+    ++		return set_ident_internal(var, value, &git_author_name,
+    ++					  IDENT_NAME_GIVEN);
+    ++	else if (!strcmp(var, "author.email"))
+    ++		return set_ident_internal(var, value, &git_author_email,
+    ++					  IDENT_MAIL_GIVEN);
+    ++	else if (!strcmp(var, "committer.name"))
+    ++		return set_ident_internal(var, value, &git_committer_name,
+    ++					  IDENT_NAME_GIVEN);
+    ++	else if (!strcmp(var, "committer.email"))
+    ++		return set_ident_internal(var, value, &git_committer_email,
+    ++					  IDENT_MAIL_GIVEN);
+    ++	else if (!strcmp(var, "user.name"))
+    ++		return set_ident_internal(var, value, &git_default_name,
+    ++					  IDENT_NAME_GIVEN);
+    ++	else if (!strcmp(var, "user.email"))
+    ++		return set_ident_internal(var, value, &git_default_email,
+    ++					  IDENT_MAIL_GIVEN);
+    ++	return 0;
+    ++}
+     +
+    -+	if (!strcmp(var, "committer.email")) {
+    -+		if (!value)
+    -+			return config_error_nonbool(var);
+    -+		strbuf_reset(&git_committer_email);
+    -+		strbuf_addstr(&git_committer_email, value);
+    -+		committer_ident_explicitly_given |= IDENT_MAIL_GIVEN;
+    -+		ident_config_given |= IDENT_MAIL_GIVEN;
+    + int git_ident_config(const char *var, const char *value, void *data)
+    + {
+    + 	if (!strcmp(var, "user.useconfigonly")) {
+    +@@
+      		return 0;
+      	}
+      
+    -@@
+    - 	return 0;
+    +-	if (!strcmp(var, "user.name")) {
+    +-		if (!value)
+    +-			return config_error_nonbool(var);
+    +-		strbuf_reset(&git_default_name);
+    +-		strbuf_addstr(&git_default_name, value);
+    +-		committer_ident_explicitly_given |= IDENT_NAME_GIVEN;
+    +-		author_ident_explicitly_given |= IDENT_NAME_GIVEN;
+    +-		ident_config_given |= IDENT_NAME_GIVEN;
+    +-		return 0;
+    +-	}
+    +-
+    +-	if (!strcmp(var, "user.email")) {
+    +-		if (!value)
+    +-			return config_error_nonbool(var);
+    +-		strbuf_reset(&git_default_email);
+    +-		strbuf_addstr(&git_default_email, value);
+    +-		committer_ident_explicitly_given |= IDENT_MAIL_GIVEN;
+    +-		author_ident_explicitly_given |= IDENT_MAIL_GIVEN;
+    +-		ident_config_given |= IDENT_MAIL_GIVEN;
+    +-		return 0;
+    +-	}
+    +-
+    +-	return 0;
+    ++	return set_ident(var, value);
+      }
+      
+    -+int git_ident_config(const char *var, const char *value, void *data)
+    -+{
+    -+	if (!strcmp(var, "user.useconfigonly")) {
+    -+		ident_use_config_only = git_config_bool(var, value);
+    -+		return 0;
+    -+	}
+    -+
+    -+	return set_ident(var, value);
+    -+}
+    -+
+      static int buf_cmp(const char *a_begin, const char *a_end,
+    - 		   const char *b_begin, const char *b_end)
+    - {
+     
+      diff --git a/log-tree.c b/log-tree.c
+      --- a/log-tree.c
+    @@ -317,7 +340,8 @@
+      
+      	strbuf_reset(&out);
+     -	strbuf_addstr(&out, fmt_ident(name, email, date, 0));
+    -+	strbuf_addstr(&out, fmt_ident(name, email, WANT_AUTHOR_IDENT, date, 0));
+    ++	strbuf_addstr(&out, fmt_ident(name, email, WANT_AUTHOR_IDENT, date,
+    ++				      0));
+      	strbuf_swap(buf, &out);
+      	strbuf_release(&out);
+      	free(name);
+    @@ -339,15 +363,24 @@
+      	test_must_fail git rebase -p master
+      '
+      
+    +-test_expect_success 'fallbacks for GIT_* and user.{name,email}' '
+    ++test_expect_success 'fallbacks for GIT_* and {user,author,committer}.{name,email}' '
+    + 	# We must have committer in the object
+    + 	test_must_fail test_env \
+    + 		GIT_AUTHOR_NAME=author.name \
+    +@@
+    + 	test_cmp expected actual
+    + '
+    + 
+     +test_expect_success 'author.name overrides user.name' '
+     +	test_config user.name user &&
+     +	test_config user.email user@example.com &&
+     +	test_config author.name author &&
+     +	test_commit author-name-override-user &&
+    -+	echo author user@example.com > expected-author &&
+    -+	echo user user@example.com > expected-committer &&
+    -+	git log --format="%an %ae" -1 > actual-author &&
+    -+	git log --format="%cn %ce" -1 > actual-committer &&
+    ++	echo author user@example.com >expected-author &&
+    ++	echo user user@example.com >expected-committer &&
+    ++	git log --format="%an %ae" -1 >actual-author &&
+    ++	git log --format="%cn %ce" -1 >actual-committer &&
+     +	test_cmp expected-author actual-author &&
+     +	test_cmp expected-committer actual-committer
+     +'
+    @@ -357,10 +390,10 @@
+     +	test_config user.email user@example.com &&
+     +	test_config author.email author@example.com &&
+     +	test_commit author-email-override-user &&
+    -+	echo user author@example.com > expected-author &&
+    -+	echo user user@example.com > expected-committer &&
+    -+	git log --format="%an %ae" -1 > actual-author &&
+    -+	git log --format="%cn %ce" -1 > actual-committer &&
+    ++	echo user author@example.com >expected-author &&
+    ++	echo user user@example.com >expected-committer &&
+    ++	git log --format="%an %ae" -1 >actual-author &&
+    ++	git log --format="%cn %ce" -1 >actual-committer &&
+     +	test_cmp expected-author actual-author &&
+     +	test_cmp expected-committer actual-committer
+     +'
+    @@ -370,10 +403,10 @@
+     +	test_config user.email user@example.com &&
+     +	test_config committer.name committer &&
+     +	test_commit committer-name-override-user &&
+    -+	echo user user@example.com > expected-author &&
+    -+	echo committer user@example.com > expected-committer &&
+    -+	git log --format="%an %ae" -1 > actual-author &&
+    -+	git log --format="%cn %ce" -1 > actual-committer &&
+    ++	echo user user@example.com >expected-author &&
+    ++	echo committer user@example.com >expected-committer &&
+    ++	git log --format="%an %ae" -1 >actual-author &&
+    ++	git log --format="%cn %ce" -1 >actual-committer &&
+     +	test_cmp expected-author actual-author &&
+     +	test_cmp expected-committer actual-committer
+     +'
+    @@ -383,10 +416,10 @@
+     +	test_config user.email user@example.com &&
+     +	test_config committer.email committer@example.com &&
+     +	test_commit committer-email-override-user &&
+    -+	echo user user@example.com > expected-author &&
+    -+	echo user committer@example.com > expected-committer &&
+    -+	git log --format="%an %ae" -1 > actual-author &&
+    -+	git log --format="%cn %ce" -1 > actual-committer &&
+    ++	echo user user@example.com >expected-author &&
+    ++	echo user committer@example.com >expected-committer &&
+    ++	git log --format="%an %ae" -1 >actual-author &&
+    ++	git log --format="%cn %ce" -1 >actual-committer &&
+     +	test_cmp expected-author actual-author &&
+     +	test_cmp expected-committer actual-committer
+     +'
+    @@ -398,17 +431,17 @@
+     +	test_config author.email author@example.com &&
+     +	test_config committer.name committer &&
+     +	test_config committer.email committer@example.com &&
+    -+	GIT_AUTHOR_NAME=env_author && export GIT_AUTHOR_NAME &&
+    -+	GIT_AUTHOR_EMAIL=env_author@example.com && export GIT_AUTHOR_EMAIL &&
+    -+	GIT_COMMITTER_NAME=env_commit && export GIT_COMMITTER_NAME &&
+    -+	GIT_COMMITTER_EMAIL=env_commit@example.com && export GIT_COMMITTER_EMAIL &&
+    -+	test_commit env-override-conf &&
+    -+	echo env_author env_author@example.com > expected-author &&
+    -+	echo env_commit env_commit@example.com > expected-committer &&
+    -+	git log --format="%an %ae" -1 > actual-author &&
+    -+	git log --format="%cn %ce" -1 > actual-committer &&
+    -+	sane_unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL &&
+    -+	sane_unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL &&
+    ++
+    ++	test_env \
+    ++		GIT_AUTHOR_NAME=env_author \
+    ++		GIT_AUTHOR_EMAIL=env_author@example.com \
+    ++		GIT_COMMITTER_NAME=env_commit \
+    ++		GIT_COMMITTER_EMAIL=env_commit@example.com \
+    ++		test_commit env-override-conf &&
+    ++	echo env_author env_author@example.com >expected-author &&
+    ++	echo env_commit env_commit@example.com >expected-committer &&
+    ++	git log --format="%an %ae" -1 >actual-author &&
+    ++	git log --format="%cn %ce" -1 >actual-committer &&
+     +	test_cmp expected-author actual-author &&
+     +	test_cmp expected-committer actual-committer
+     +'
 -- 
 2.20.1.611.gfbb209baf1
 
