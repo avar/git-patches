@@ -1,0 +1,54 @@
+From d64d0d71d95150a0412c0486ed2517187b74061f Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqo9a9stbs.fsf@gitster-ct.c.googlers.com>
+References: <xmqqo9a9stbs.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 27 Nov 2018 17:28:59 +0100
+Subject: [PATCH v2] tests: avoid syntax triggering old dash bug
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Avoid a bug in dash that's been fixed ever since its
+ec2c84d ("[PARSER] Fix clobbering of checkkwd", 2011-03-15)[1] first
+released with dash v0.5.7 in July 2011. This failing test was
+introduced in 5f9674243d ("config: add --expiry-date", 2017-11-18).
+
+This fixes 1/2 tests failing on Debian Lenny & Squeeze. The other
+failure is due to 1b42f45255 ("git-svn: apply "svn.pathnameencoding"
+before URL encoding", 2016-02-09).
+
+The dash bug is triggered by this test because the heredoc contains a
+command embedded in "$()" with a "{}" block coming right after
+it. Refactoring the "$()" to e.g. be a variable that was set earlier
+will also work around it, but let's instead break up the "EOF" and the
+"{}".
+
+An earlier version of this patch[2] mitigated the issue by breaking
+the "$()" out of the "{}" block, that worked, but just because it
+broke up the "EOF" and "{}" block. Putting e.g. "echo &&" between the
+two would also work.
+
+1. https://git.kernel.org/pub/scm/utils/dash/dash.git/
+2. https://public-inbox.org/git/20181127164253.9832-1-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1300-config.sh | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/t/t1300-config.sh b/t/t1300-config.sh
+index 9652b241c7..428177c390 100755
+--- a/t/t1300-config.sh
++++ b/t/t1300-config.sh
+@@ -892,6 +892,7 @@ test_expect_success 'get --expiry-date' '
+ 	1510348087
+ 	0
+ 	EOF
++	: "work around heredoc parsing bug fixed in dash 0.5.7 (in ec2c84d)" &&
+ 	{
+ 		echo "$rel_out $(git config --expiry-date date.valid1)"
+ 		git config --expiry-date date.valid2 &&
+-- 
+2.20.1.611.gfbb209baf1
+
