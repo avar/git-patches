@@ -1,0 +1,77 @@
+From f1613548cc2ada6920cafe99a9bd17e09765acd8 Mon Sep 17 00:00:00 2001
+In-Reply-To: <tencent_1D3185A4545436CD715E41F5@qq.com>
+References: <tencent_1D3185A4545436CD715E41F5@qq.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Feb 2019 14:37:02 +0100
+Subject: [PATCH] receive-pack: fix use after free bug
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The resolve_ref_unsafe() function can, and sometimes will in the case
+of this codepath, return the char * passed to it to the caller. In
+this case we construct a strbuf, free it, and then continue using the
+dst_name after that free().
+
+The code being fixed dates back to da3efdb17b ("receive-pack: detect
+aliased updates which can occur with symrefs", 2010-04-19). When it
+was originally added it didn't have this bug, it was introduced when
+it was subsequently modified to use strbuf in 6b01ecfe22 ("ref
+namespaces: Support remote repositories via upload-pack and
+receive-pack", 2011-07-08).
+
+Reported-by: 王健强 <jianqiang.wang@securitygossip.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/receive-pack.c | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+index d58b7750b6..643e641d9b 100644
+--- a/builtin/receive-pack.c
++++ b/builtin/receive-pack.c
+@@ -1201,13 +1201,18 @@ static void run_update_post_hook(struct command *commands)
+ static void check_aliased_update(struct command *cmd, struct string_list *list)
+ {
+ 	struct strbuf buf = STRBUF_INIT;
+-	const char *dst_name;
++	int buf_detached = 0;
++	char *dst_name;
+ 	struct string_list_item *item;
+ 	struct command *dst_cmd;
+ 	int flag;
+ 
+ 	strbuf_addf(&buf, "%s%s", get_git_namespace(), cmd->ref_name);
+-	dst_name = resolve_ref_unsafe(buf.buf, 0, NULL, &flag);
++	dst_name = (char *)resolve_ref_unsafe(buf.buf, 0, NULL, &flag);
++	if (dst_name == buf.buf) {
++		buf_detached = 1;
++		strbuf_detach(&buf, NULL);
++	}
+ 	strbuf_release(&buf);
+ 
+ 	if (!(flag & REF_ISSYMREF))
+@@ -1217,12 +1222,17 @@ static void check_aliased_update(struct command *cmd, struct string_list *list)
+ 		rp_error("refusing update to broken symref '%s'", cmd->ref_name);
+ 		cmd->skip_update = 1;
+ 		cmd->error_string = "broken symref";
++		if (buf_detached)
++			free(dst_name);
+ 		return;
+ 	}
+-	dst_name = strip_namespace(dst_name);
++	dst_name = (char *)strip_namespace(dst_name);
+ 
+-	if ((item = string_list_lookup(list, dst_name)) == NULL)
++	if ((item = string_list_lookup(list, dst_name)) == NULL) {
++		if (buf_detached)
++			free(dst_name);
+ 		return;
++	}
+ 
+ 	cmd->skip_update = 1;
+ 
+-- 
+2.21.0.rc0.258.g878e2cd30e
+
