@@ -24,6 +24,42 @@ receive-pack", 2011-07-08).
 Reported-by: 王健强 <jianqiang.wang@securitygossip.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+On Mon, Feb 18, 2019 at 2:07 PM 王健强 <jianqiang.wang@securitygossip.com> wrote:
+>
+> hello developers:
+>         I found a potential use after bug in git latest version.
+>         in /builtin/receive-pack.c.
+>         line 1210 "dst_name = resolve_ref_unsafe(buf.buf, 0, NULL, &flag);", the function "resolve_ref_unsafe" may directly return the first argument "buf.buf" whose value will be assigned to "dst_name".
+>         in line 1211 "strbuf_release(&buf);". the memory region "buf.buf" is released which means "dst_name" is freed.
+>         in the following lines, "dst_name" is used which causes the bug.
+>         I hope it would help you!
+
+Thanks. I can confirm this. Here's a patch that fixes the issue.
+
+For on-list members, I also pushed it as
+avar/receive-pack-strbuf-use-after-free to git/cabal.git :
+https://github.com/git/cabal/tree/avar/receive-pack-strbuf-use-after-free
+
+Maybe others have better ideas if/how this can be exploited in
+practice. The dst_name memory are could point to anything at this
+point, and we'll first check if it's a valid pointer, then pass it to
+strip_namespace(), and then use it in a string list lookup. So
+e.g. with this (which seems possible due to this):
+
+            dst_name = (char *)strip_namespace(dst_name);
+    +       dst_name = "refs/heads/master";
+
+We'll fail two tests due to trying to update the wrong ref to the
+wrong value, whether it's exploitable remotely in practice is another
+matter.
+
+My hunch says no, since any malicious use of this would need to
+arrange for a remote receive-pack process to "free" memory in such a
+way that it reads the bad thing you're interested in replacing instead
+of the value it thought it had. Theoretically possible, but seems
+implausible in practice.
+
  builtin/receive-pack.c | 18 ++++++++++++++----
  1 file changed, 14 insertions(+), 4 deletions(-)
 

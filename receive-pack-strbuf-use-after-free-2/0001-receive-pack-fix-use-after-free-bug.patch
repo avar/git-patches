@@ -41,6 +41,96 @@ Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
  builtin/receive-pack.c | 23 +++++++++++++++--------
  1 file changed, 15 insertions(+), 8 deletions(-)
 
+On Mon, Feb 18, 2019 at 3:34 PM Jeff King <peff@peff.net> wrote:
+>
+> On Mon, Feb 18, 2019 at 02:54:05PM +0100, Ævar Arnfjörð Bjarmason wrote:
+>
+> > Maybe others have better ideas if/how this can be exploited in
+> > practice. The dst_name memory are could point to anything at this
+> > point, and we'll first check if it's a valid pointer, then pass it to
+> > strip_namespace(), and then use it in a string list lookup. So
+> > e.g. with this (which seems possible due to this):
+> >
+> >             dst_name = (char *)strip_namespace(dst_name);
+> >     +       dst_name = "refs/heads/master";
+> >
+> > We'll fail two tests due to trying to update the wrong ref to the
+> > wrong value, whether it's exploitable remotely in practice is another
+> > matter.
+> >
+> > My hunch says no, since any malicious use of this would need to
+> > arrange for a remote receive-pack process to "free" memory in such a
+> > way that it reads the bad thing you're interested in replacing instead
+> > of the value it thought it had. Theoretically possible, but seems
+> > implausible in practice.
+>
+> I don't think there's any way that there can be another allocation
+> between the free and the access. Both strip_namespace() and
+> string_list_lookup() are effectively read only. Which explains why
+> nobody ever noticed this bug, even though it's nearly 8 years old and is
+> run on every single ref update of every push. Unless free() is
+> scribbling over the memory preemptively, the contents will still be
+> there (though I am a little surprised that neither valgrind nor ASan
+> noticed).
+
+As noted (hopefully correctly) in the updated commit message here C
+makes no guarantees in theory, but I think in practice you're right.
+
+CC-ing this list for now, will wait a bit to see if anyone chimes in
+with an objection to going public first...
+
+> I think it's probably fine to just treat this like any normal bug and
+> discuss it on the public list.
+
+Agreed.
+
+> Regarding your patch:
+>
+> > diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+> > index d58b7750b6..643e641d9b 100644
+> > --- a/builtin/receive-pack.c
+> > +++ b/builtin/receive-pack.c
+> > @@ -1201,13 +1201,18 @@ static void run_update_post_hook(struct command *commands)
+> >  static void check_aliased_update(struct command *cmd, struct string_list *list)
+> >  {
+> >       struct strbuf buf = STRBUF_INIT;
+> > -     const char *dst_name;
+> > +     int buf_detached = 0;
+> > +     char *dst_name;
+>
+> I think switching to free via dst_name is a mistake. For instance,
+> here...
+>
+> > -     dst_name = strip_namespace(dst_name);
+> > +     dst_name = (char *)strip_namespace(dst_name);
+>
+> We may end up skipping past the namespace prefix of dst_name, after
+> which it contains a pointer to the inside of a heap block.
+>
+> > -     if ((item = string_list_lookup(list, dst_name)) == NULL)
+> > +     if ((item = string_list_lookup(list, dst_name)) == NULL) {
+> > +             if (buf_detached)
+> > +                     free(dst_name);
+> >               return;
+> > +     }
+>
+> And then this free() will corrupt the heap.
+
+Eek, well spotted. Thanks.
+
+> I think it's simpler to keep the strbuf as the source of allocation, and
+> then these "if detached then free" blocks can just be
+> strbuf_release(&buf). Or we can use a goto with a single cleanup point,
+> like:
+>
+> [...]
+>
+> (If you really hate goto's, I also think everything after
+> resolve_ref_unsafe() could go into a helper function).
+
+Don't hate it, but maybe splitting it up like that is easier to read /
+maintain? A version of that below:
+
 diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
 index d58b7750b6..0874f5c1b7 100644
 --- a/builtin/receive-pack.c
