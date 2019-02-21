@@ -1,0 +1,89 @@
+From 45d621d309d9e111ef0f69a003eab24da8876edc Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqq8sybz7b2.fsf@gitster-ct.c.googlers.com>
+References: <xmqq8sybz7b2.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Feb 2019 18:49:39 +0100
+Subject: [PATCH 1/2] tests: fix unportable "\?" and "\+" regex syntax
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix widely supported but non-POSIX basic regex syntax introduced in
+[1] and [2]. On GNU, NetBSD and FreeBSD the following works:
+
+    $ echo xy >f
+    $ grep 'xy\?' f; echo $?
+    xy
+    0
+
+The same goes for "\+". The "?" and "+" syntax is not in the BRE
+syntax, just in ERE, but on some implementations it can be invoked by
+prefixing the meta-operator with "\", but not on OpenBSD:
+
+    $ uname -a
+    OpenBSD obsd.my.domain 6.2 GENERIC#132 amd64
+    $ grep --version
+    grep version 0.9
+    $ grep 'xy\?' f; echo $?
+    1
+
+Let's fix this by moving to ERE syntax instead, where "?" and "+" are
+universally supported:
+
+    $ grep -E 'xy?' f; echo $?
+    xy
+    0
+
+1. 2ed5c8e174 ("describe: setup working tree for --dirty", 2019-02-03)
+2. c801170b0c ("t6120: test for describe with a bare repository",
+   2019-02-03)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6120-describe.sh | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/t/t6120-describe.sh b/t/t6120-describe.sh
+index ee5b03ee18..2b883d8174 100755
+--- a/t/t6120-describe.sh
++++ b/t/t6120-describe.sh
+@@ -146,7 +146,7 @@ check_describe A-* HEAD
+ test_expect_success 'describe works from outside repo using --git-dir' '
+ 	git clone --bare "$TRASH_DIRECTORY" "$TRASH_DIRECTORY/bare" &&
+ 	git --git-dir "$TRASH_DIRECTORY/bare" describe >out &&
+-	grep "^A-[1-9][0-9]\?-g[0-9a-f]\+$" out
++	grep -E "^A-[1-9][0-9]?-g[0-9a-f]+$" out
+ '
+ 
+ check_describe "A-*[0-9a-f]" --dirty
+@@ -156,7 +156,7 @@ test_expect_success 'describe --dirty with --work-tree' '
+ 		cd "$TEST_DIRECTORY" &&
+ 		git --git-dir "$TRASH_DIRECTORY/.git" --work-tree "$TRASH_DIRECTORY" describe --dirty >"$TRASH_DIRECTORY/out"
+ 	) &&
+-	grep "^A-[1-9][0-9]\?-g[0-9a-f]\+$" out
++	grep -E "^A-[1-9][0-9]?-g[0-9a-f]+$" out
+ '
+ 
+ test_expect_success 'set-up dirty work tree' '
+@@ -170,7 +170,7 @@ test_expect_success 'describe --dirty with --work-tree (dirty)' '
+ 		cd "$TEST_DIRECTORY" &&
+ 		git --git-dir "$TRASH_DIRECTORY/.git" --work-tree "$TRASH_DIRECTORY" describe --dirty >"$TRASH_DIRECTORY/out"
+ 	) &&
+-	grep "^A-[1-9][0-9]\?-g[0-9a-f]\+-dirty$" out
++	grep -E "^A-[1-9][0-9]?-g[0-9a-f]+-dirty$" out
+ '
+ 
+ check_describe "A-*[0-9a-f].mod" --dirty=.mod
+@@ -180,7 +180,7 @@ test_expect_success 'describe --dirty=.mod with --work-tree (dirty)' '
+ 		cd "$TEST_DIRECTORY" &&
+ 		git --git-dir "$TRASH_DIRECTORY/.git" --work-tree "$TRASH_DIRECTORY" describe --dirty=.mod >"$TRASH_DIRECTORY/out"
+ 	) &&
+-	grep "^A-[1-9][0-9]\?-g[0-9a-f]\+.mod$" out
++	grep -E "^A-[1-9][0-9]?-g[0-9a-f]+.mod$" out
+ '
+ 
+ test_expect_success 'describe --dirty HEAD' '
+-- 
+2.21.0.rc0.258.g878e2cd30e
+

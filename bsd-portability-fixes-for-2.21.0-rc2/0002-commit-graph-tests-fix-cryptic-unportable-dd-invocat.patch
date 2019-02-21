@@ -1,0 +1,57 @@
+From facdc9df7fa2769c77845aa800fea8f23742f663 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqq8sybz7b2.fsf@gitster-ct.c.googlers.com>
+References: <xmqq8sybz7b2.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Feb 2019 16:33:12 +0100
+Subject: [PATCH 2/2] commit-graph tests: fix cryptic unportable "dd"
+ invocation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change an unportable invocation of "dd" that truncated the
+commit-graph to call Perl's truncate() function instead.
+
+In POSIX it is unspecified what happens when count=0 is
+provided[1]. The NetBSD "dd" behavior differs from GNU (and seemingly
+other BSDs), which as left this test broken since
+d2b86fbaa1 ("commit-graph: fix buffer read-overflow", 2019-01-15).
+
+In POSIX the truncate(2) and ftruncate(2) functions are
+portable. We've used the latter since 271421cd34 ("Update partial HTTP
+transfers.", 2005-09-30), but the truncate(1) command-line tool is
+GNU-specific. Thus let's use Perl's version of it. We could also just
+introduce a "test-tool truncate" in the future if we wanted to avoid
+shelling out to perl.
+
+On Linux and NetBSD we don't need the "if -s $ARGV[0] > $ARGV[1]"
+condition I'm adding. We never have a $zero_pos longer than the file
+being truncated. But let's have that condition to future-proof the
+code, and because "the behavior is undefined if LENGTH is greater than
+the length of the file" (perldoc -f truncate).
+
+1. http://pubs.opengroup.org/onlinepubs/9699919799/utilities/dd.html
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5318-commit-graph.sh | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/t/t5318-commit-graph.sh b/t/t5318-commit-graph.sh
+index d4bd1522fe..d99bea6cce 100755
+--- a/t/t5318-commit-graph.sh
++++ b/t/t5318-commit-graph.sh
+@@ -382,7 +382,8 @@ corrupt_graph_and_verify() {
+ 	test_when_finished mv commit-graph-backup $objdir/info/commit-graph &&
+ 	cp $objdir/info/commit-graph commit-graph-backup &&
+ 	printf "$data" | dd of="$objdir/info/commit-graph" bs=1 seek="$pos" conv=notrunc &&
+-	dd of="$objdir/info/commit-graph" bs=1 seek="$zero_pos" count=0 &&
++	perl -we 'truncate $ARGV[0], $ARGV[1] if -s $ARGV[0] > $ARGV[1]' \
++		$objdir/info/commit-graph $zero_pos &&
+ 	generate_zero_bytes $(($orig_size - $zero_pos)) >>"$objdir/info/commit-graph" &&
+ 	test_must_fail git commit-graph verify 2>test_err &&
+ 	grep -v "^+" test_err >err &&
+-- 
+2.21.0.rc0.258.g878e2cd30e
+
