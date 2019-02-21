@@ -1,0 +1,102 @@
+From b2dd394cc74e2c7f0d7ee467cd1b8eeecb714011 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Feb 2019 12:14:59 +0100
+Subject: [PATCH 5/8] commit-graph: don't pass filename to
+ load_commit_graph_one_fd_st()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+An earlier change implemented load_commit_graph_one_fd_st() in a way
+that was bug-compatible with earlier code in terms of the "graph file
+%s is too small" error message printing out the path to the
+commit-graph (".git/objects/info/commit-graph").
+
+But change that, because:
+
+ * A function that takes an already-open file descriptor also needing
+   the filename isn't very intuitive.
+
+ * The vast majority of errors we might emit when loading the graph
+   come from parse_commit_graph(), which doesn't report the
+   filename. Let's not do that either in this case for consistency.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/commit-graph.c | 4 ++--
+ commit-graph.c         | 7 +++----
+ commit-graph.h         | 3 +--
+ 3 files changed, 6 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/commit-graph.c b/builtin/commit-graph.c
+index 32bcc63427..8196fdbe9c 100644
+--- a/builtin/commit-graph.c
++++ b/builtin/commit-graph.c
+@@ -64,7 +64,7 @@ static int graph_verify(int argc, const char **argv)
+ 	open_ok = open_commit_graph(graph_name, &fd, &st);
+ 	if (!open_ok)
+ 		return 0;
+-	graph = load_commit_graph_one_fd_st(graph_name, fd, &st);
++	graph = load_commit_graph_one_fd_st(fd, &st);
+ 	FREE_AND_NULL(graph_name);
+ 
+ 	if (!graph)
+@@ -102,7 +102,7 @@ static int graph_read(int argc, const char **argv)
+ 	if (!open_ok)
+ 		die_errno(_("Could not open commit-graph '%s'"), graph_name);
+ 
+-	graph = load_commit_graph_one_fd_st(graph_name, fd, &st);
++	graph = load_commit_graph_one_fd_st(fd, &st);
+ 	if (!graph)
+ 		return 1;
+ 
+diff --git a/commit-graph.c b/commit-graph.c
+index b1ba7a09cc..d945e8f3e0 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -92,8 +92,7 @@ int open_commit_graph(const char *graph_file, int *fd, struct stat *st)
+ 	return 1;
+ }
+ 
+-struct commit_graph *load_commit_graph_one_fd_st(const char *graph_file,
+-						 int fd, struct stat *st)
++struct commit_graph *load_commit_graph_one_fd_st(int fd, struct stat *st)
+ {
+ 	void *graph_map;
+ 	size_t graph_size;
+@@ -103,7 +102,7 @@ struct commit_graph *load_commit_graph_one_fd_st(const char *graph_file,
+ 
+ 	if (graph_size < GRAPH_MIN_SIZE) {
+ 		close(fd);
+-		error(_("graph file %s is too small"), graph_file);
++		error(_("commit-graph file is too small"));
+ 		return 0;
+ 	}
+ 	graph_map = xmmap(NULL, graph_size, PROT_READ, MAP_PRIVATE, fd, 0);
+@@ -127,7 +126,7 @@ struct commit_graph *load_commit_graph_one(const char *graph_file)
+ 	if (!open_ok)
+ 		return NULL;
+ 
+-	return load_commit_graph_one_fd_st(graph_file, fd, &st);
++	return load_commit_graph_one_fd_st(fd, &st);
+ }
+ 
+ struct commit_graph *parse_commit_graph(void *graph_map, int fd,
+diff --git a/commit-graph.h b/commit-graph.h
+index e4f17071e2..36d8109901 100644
+--- a/commit-graph.h
++++ b/commit-graph.h
+@@ -54,8 +54,7 @@ struct commit_graph {
+ };
+ 
+ struct commit_graph *load_commit_graph_one(const char *graph_file);
+-struct commit_graph *load_commit_graph_one_fd_st(const char *graph_file,
+-						 int fd, struct stat *st);
++struct commit_graph *load_commit_graph_one_fd_st(int fd, struct stat *st);
+ 
+ struct commit_graph *parse_commit_graph(void *graph_map, int fd,
+ 					size_t graph_size);
+-- 
+2.21.0.rc0.258.g878e2cd30e
+

@@ -1,0 +1,67 @@
+From 9987149e5c4e6bdfbf4e8e1c498e000e7c942c5e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Feb 2019 12:58:53 +0100
+Subject: [PATCH 6/8] commit-graph verify: detect inability to read the graph
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change "commit-graph verify" to error on open() failures other than
+ENOENT. As noted in the third paragraph of 283e68c72f ("commit-graph:
+add 'verify' subcommand", 2018-06-27) and the test it added it's
+intentional that "commit-graph verify" doesn't error out when the file
+doesn't exist.
+
+But let's not be overly promiscuous in what we accept. If we can't
+read the file for other reasons, e.g. permission errors, bad file
+descriptor etc. we'd like to report an error to the user.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/commit-graph.c  |  4 +++-
+ t/t5318-commit-graph.sh | 12 ++++++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/commit-graph.c b/builtin/commit-graph.c
+index 8196fdbe9c..537fdfd0f0 100644
+--- a/builtin/commit-graph.c
++++ b/builtin/commit-graph.c
+@@ -62,8 +62,10 @@ static int graph_verify(int argc, const char **argv)
+ 
+ 	graph_name = get_commit_graph_filename(opts.obj_dir);
+ 	open_ok = open_commit_graph(graph_name, &fd, &st);
+-	if (!open_ok)
++	if (!open_ok && errno == ENOENT)
+ 		return 0;
++	if (!open_ok)
++		die_errno(_("Could not open commit-graph '%s'"), graph_name);
+ 	graph = load_commit_graph_one_fd_st(fd, &st);
+ 	FREE_AND_NULL(graph_name);
+ 
+diff --git a/t/t5318-commit-graph.sh b/t/t5318-commit-graph.sh
+index 0d012f55e5..1ee00fa333 100755
+--- a/t/t5318-commit-graph.sh
++++ b/t/t5318-commit-graph.sh
+@@ -400,6 +400,18 @@ corrupt_graph_and_verify() {
+ 
+ }
+ 
++test_expect_success 'detect permission problem' '
++	corrupt_graph_setup &&
++	chmod 000 $objdir/info/commit-graph &&
++
++	# Skip as root, or in other cases (odd fs or OS) where a
++	# "chmod 000 file" does not yield EACCES on e.g. "cat file"
++	if ! test -r $objdir/info/commit-graph
++	then
++		corrupt_graph_verify "Could not open"
++	fi
++'
++
+ test_expect_success 'detect too small' '
+ 	corrupt_graph_setup &&
+ 	echo "a small graph" >$objdir/info/commit-graph &&
+-- 
+2.21.0.rc0.258.g878e2cd30e
+
