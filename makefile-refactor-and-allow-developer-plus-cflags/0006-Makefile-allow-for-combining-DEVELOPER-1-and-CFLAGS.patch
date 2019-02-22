@@ -1,0 +1,178 @@
+From 0cb6e846ff664ed2f2e35c7f9a4fc519a3afa3fa Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190222105658.26831-1-avarab@gmail.com>
+References: <20190222105658.26831-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Feb 2019 12:03:55 +0100
+Subject: [PATCH v2 6/6] Makefile: allow for combining DEVELOPER=1 and
+ CFLAGS="..."
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ever since the DEVELOPER=1 facility introduced there's been no way to
+have custom CFLAGS (e.g. CFLAGS="-O0 -g -ggdb3") while still
+benefiting from the set of warnings and assertions DEVELOPER=1
+enables.
+
+This is because the semantics of variables in the Makefile are such
+that the user setting CFLAGS overrides anything we set, including what
+we're doing in config.mak.dev[1].
+
+So let's introduce a "DEVELOPER_CFLAGS" variable in config.mak.dev and
+add it to ALL_CFLAGS. Before this the ALL_CFLAGS variable
+would (basically, there's some nuance we won't go into) be set to:
+
+    $(CPPFLAGS) [$(CFLAGS) *or* $(CFLAGS) in config.mak.dev] $(BASIC_CFLAGS) $(EXTRA_CPPFLAGS)
+
+But will now be:
+
+    $(DEVELOPER_CFLAGS) $(CPPFLAGS) $(CFLAGS) $(BASIC_CFLAGS) $(EXTRA_CPPFLAGS)
+
+The reason for putting DEVELOPER_CFLAGS first is to allow for
+selectively overriding something DEVELOPER=1 brings in. On both GCC
+and Clang later settings override earlier ones. E.g. "-Wextra
+-Wno-extra" will enable no "extra" warnings, but not if those two
+arguments are reversed.
+
+Examples of things that weren't possible before, but are now:
+
+    # Use -O0 instead of -O2 for less painful debuggng
+    DEVELOPER=1 CFLAGS="-O0 -g"
+    # DEVELOPER=1 plus -Wextra, but disable some of the warnings
+    DEVELOPER=1 DEVOPTS="no-error extra-all" CFLAGS="-O0 -g -Wno-unused-parameter"
+
+The reason for the patches leading up to this one re-arranged the
+various *FLAGS assignments and includes is just for readability. The
+Makefile supports assignments out of order, e.g.:
+
+    $ cat Makefile
+    X = $(A) $(B) $(C)
+    A = A
+    B = B
+    include c.mak
+    all:
+            @echo $(X)
+    $ cat c.mak
+    C=C
+    $ make
+    A B C
+
+So we could have gotten away with the much smaller change of changing
+"CFLAGS" in config.mak.dev to "DEVELOPER_CFLAGS" and adding that to
+ALL_CFLAGS earlier in the Makefile "before" the config.mak.*
+includes. But I think it's more readable to use variables "after"
+they're included.
+
+1. https://www.gnu.org/software/make/manual/html_node/Overriding.html
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile       |  8 ++++++--
+ config.mak.dev | 44 ++++++++++++++++++++++----------------------
+ 2 files changed, 28 insertions(+), 24 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 82cfd6c2e4..710a3475a9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -479,7 +479,11 @@ all::
+ #
+ # Define DEVELOPER to enable more compiler warnings. Compiler version
+ # and family are auto detected, but could be overridden by defining
+-# COMPILER_FEATURES (see config.mak.dev)
++# COMPILER_FEATURES (see config.mak.dev). You can still set
++# CFLAGS="..." in combination with DEVELOPER enables, whether that's
++# for tweaking something unrelated (e.g. optimization level), or for
++# selectively overriding something DEVELOPER or one of the DEVOPTS
++# (see just below) brings in.
+ #
+ # When DEVELOPER is set, DEVOPTS can be used to control compiler
+ # options.  This variable contains keywords separated by
+@@ -1169,7 +1173,7 @@ ifdef DEVELOPER
+ include config.mak.dev
+ endif
+ 
+-ALL_CFLAGS = $(CPPFLAGS) $(CFLAGS)
++ALL_CFLAGS = $(DEVELOPER_CFLAGS) $(CPPFLAGS) $(CFLAGS)
+ ALL_LDFLAGS = $(LDFLAGS)
+ 
+ comma := ,
+diff --git a/config.mak.dev b/config.mak.dev
+index 7354fe15b3..bf1f3fcdee 100644
+--- a/config.mak.dev
++++ b/config.mak.dev
+@@ -1,41 +1,41 @@
+ ifeq ($(filter no-error,$(DEVOPTS)),)
+-CFLAGS += -Werror
++DEVELOPER_CFLAGS += -Werror
+ endif
+ ifneq ($(filter pedantic,$(DEVOPTS)),)
+-CFLAGS += -pedantic
++DEVELOPER_CFLAGS += -pedantic
+ # don't warn for each N_ use
+-CFLAGS += -DUSE_PARENS_AROUND_GETTEXT_N=0
+-endif
+-CFLAGS += -Wall
+-CFLAGS += -Wdeclaration-after-statement
+-CFLAGS += -Wformat-security
+-CFLAGS += -Wno-format-zero-length
+-CFLAGS += -Wold-style-definition
+-CFLAGS += -Woverflow
+-CFLAGS += -Wpointer-arith
+-CFLAGS += -Wstrict-prototypes
+-CFLAGS += -Wunused
+-CFLAGS += -Wvla
++DEVELOPER_CFLAGS += -DUSE_PARENS_AROUND_GETTEXT_N=0
++endif
++DEVELOPER_CFLAGS += -Wall
++DEVELOPER_CFLAGS += -Wdeclaration-after-statement
++DEVELOPER_CFLAGS += -Wformat-security
++DEVELOPER_CFLAGS += -Wno-format-zero-length
++DEVELOPER_CFLAGS += -Wold-style-definition
++DEVELOPER_CFLAGS += -Woverflow
++DEVELOPER_CFLAGS += -Wpointer-arith
++DEVELOPER_CFLAGS += -Wstrict-prototypes
++DEVELOPER_CFLAGS += -Wunused
++DEVELOPER_CFLAGS += -Wvla
+ 
+ ifndef COMPILER_FEATURES
+ COMPILER_FEATURES := $(shell ./detect-compiler $(CC))
+ endif
+ 
+ ifneq ($(filter clang4,$(COMPILER_FEATURES)),)
+-CFLAGS += -Wtautological-constant-out-of-range-compare
++DEVELOPER_CFLAGS += -Wtautological-constant-out-of-range-compare
+ endif
+ 
+ ifneq ($(or $(filter gcc6,$(COMPILER_FEATURES)),$(filter clang4,$(COMPILER_FEATURES))),)
+-CFLAGS += -Wextra
++DEVELOPER_CFLAGS += -Wextra
+ # if a function is public, there should be a prototype and the right
+ # header file should be included. If not, it should be static.
+-CFLAGS += -Wmissing-prototypes
++DEVELOPER_CFLAGS += -Wmissing-prototypes
+ ifeq ($(filter extra-all,$(DEVOPTS)),)
+ # These are disabled because we have these all over the place.
+-CFLAGS += -Wno-empty-body
+-CFLAGS += -Wno-missing-field-initializers
+-CFLAGS += -Wno-sign-compare
+-CFLAGS += -Wno-unused-parameter
++DEVELOPER_CFLAGS += -Wno-empty-body
++DEVELOPER_CFLAGS += -Wno-missing-field-initializers
++DEVELOPER_CFLAGS += -Wno-sign-compare
++DEVELOPER_CFLAGS += -Wno-unused-parameter
+ endif
+ endif
+ 
+@@ -43,6 +43,6 @@ endif
+ # not worth fixing since newer compilers correctly stop complaining
+ ifneq ($(filter gcc4,$(COMPILER_FEATURES)),)
+ ifeq ($(filter gcc5,$(COMPILER_FEATURES)),)
+-CFLAGS += -Wno-uninitialized
++DEVELOPER_CFLAGS += -Wno-uninitialized
+ endif
+ endif
+-- 
+2.21.0.rc2.1.g2d5e20a900.dirty
+
