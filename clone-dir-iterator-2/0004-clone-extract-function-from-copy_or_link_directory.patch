@@ -1,0 +1,66 @@
+From f26eddb55635c79bc0ebc230a321e9decf7a9f97 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190226051804.10631-1-matheus.bernardino@usp.br>
+References: <20190226051804.10631-1-matheus.bernardino@usp.br>
+From: Matheus Tavares <matheus.bernardino@usp.br>
+Date: Tue, 26 Feb 2019 02:18:03 -0300
+Subject: [RFC PATCH v3 4/5] clone: extract function from
+ copy_or_link_directory
+
+Extract dir creation code snippet from copy_or_link_directory to its own
+function named mkdir_if_missing. This change will help removing
+copy_or_link_directory's explicit recursion, which will be done in a
+following patch. Also makes code more readable.
+
+Signed-off-by: Matheus Tavares <matheus.bernardino@usp.br>
+---
+ builtin/clone.c | 27 +++++++++++++++++++--------
+ 1 file changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index cae069f03b..fd580fa98d 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -392,6 +392,24 @@ static void copy_alternates(struct strbuf *src, struct strbuf *dst,
+ 	fclose(in);
+ }
+ 
++static void mkdir_if_missing(const char *pathname, mode_t mode)
++{
++	/*
++	 * Create a dir at pathname unless there's already one.
++	 */
++	struct stat st;
++
++	if (mkdir(pathname, mode)) {
++		if (errno != EEXIST)
++			die_errno(_("failed to create directory '%s'"),
++				  pathname);
++		else if (stat(pathname, &st))
++			die_errno(_("failed to stat '%s'"), pathname);
++		else if (!S_ISDIR(st.st_mode))
++			die(_("%s exists and is not a directory"), pathname);
++	}
++}
++
+ static void copy_or_link_directory(struct strbuf *src, struct strbuf *dest,
+ 				   const char *src_repo, int src_baselen)
+ {
+@@ -404,14 +422,7 @@ static void copy_or_link_directory(struct strbuf *src, struct strbuf *dest,
+ 	if (!dir)
+ 		die_errno(_("failed to open '%s'"), src->buf);
+ 
+-	if (mkdir(dest->buf, 0777)) {
+-		if (errno != EEXIST)
+-			die_errno(_("failed to create directory '%s'"), dest->buf);
+-		else if (stat(dest->buf, &buf))
+-			die_errno(_("failed to stat '%s'"), dest->buf);
+-		else if (!S_ISDIR(buf.st_mode))
+-			die(_("%s exists and is not a directory"), dest->buf);
+-	}
++	mkdir_if_missing(dest->buf, 0777);
+ 
+ 	strbuf_addch(src, '/');
+ 	src_len = src->len;
+-- 
+2.21.0.rc2.261.ga7da99ff1b
+

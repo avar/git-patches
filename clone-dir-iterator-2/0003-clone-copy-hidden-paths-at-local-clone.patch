@@ -1,0 +1,73 @@
+From 031268927e2b8ad9a91f6677f20074b86e2d2cc7 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190226051804.10631-1-matheus.bernardino@usp.br>
+References: <20190226051804.10631-1-matheus.bernardino@usp.br>
+From: Matheus Tavares <matheus.bernardino@usp.br>
+Date: Tue, 26 Feb 2019 02:18:02 -0300
+Subject: [RFC PATCH v3 3/5] clone: copy hidden paths at local clone
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the copy_or_link_directory function no longer skip hidden paths.
+This function, used to copy .git/objects, currently skips all hidden
+directories but not hidden files, which is an odd behaviour. The reason
+for that could be unintentional: probably the intention was to skip '.'
+and '..' only but it ended up accidentally skipping all directories
+starting with '.'. Besides being more natural, the new behaviour is more
+permissive to the user.
+
+Also adjusted tests to reflect this change.
+
+Signed-off-by: Matheus Tavares <matheus.bernardino@usp.br>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/clone.c            | 2 +-
+ t/t5604-clone-reference.sh | 9 +++++++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index 50bde99618..cae069f03b 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -428,7 +428,7 @@ static void copy_or_link_directory(struct strbuf *src, struct strbuf *dest,
+ 			continue;
+ 		}
+ 		if (S_ISDIR(buf.st_mode)) {
+-			if (de->d_name[0] != '.')
++			if (!is_dot_or_dotdot(de->d_name))
+ 				copy_or_link_directory(src, dest,
+ 						       src_repo, src_baselen);
+ 			continue;
+diff --git a/t/t5604-clone-reference.sh b/t/t5604-clone-reference.sh
+index cb0dc22d14..d650f67ca5 100755
+--- a/t/t5604-clone-reference.sh
++++ b/t/t5604-clone-reference.sh
+@@ -247,16 +247,25 @@ test_expect_success 'clone a repo with garbage in objects/*' '
+ 	done &&
+ 	find S-* -name "*some*" | sort >actual &&
+ 	cat >expected <<-EOF &&
++	S--dissociate/.git/objects/.some-hidden-dir
++	S--dissociate/.git/objects/.some-hidden-dir/.some-dot-file
++	S--dissociate/.git/objects/.some-hidden-dir/some-file
+ 	S--dissociate/.git/objects/.some-hidden-file
+ 	S--dissociate/.git/objects/some-dir
+ 	S--dissociate/.git/objects/some-dir/.some-dot-file
+ 	S--dissociate/.git/objects/some-dir/some-file
+ 	S--dissociate/.git/objects/some-file
++	S--local/.git/objects/.some-hidden-dir
++	S--local/.git/objects/.some-hidden-dir/.some-dot-file
++	S--local/.git/objects/.some-hidden-dir/some-file
+ 	S--local/.git/objects/.some-hidden-file
+ 	S--local/.git/objects/some-dir
+ 	S--local/.git/objects/some-dir/.some-dot-file
+ 	S--local/.git/objects/some-dir/some-file
+ 	S--local/.git/objects/some-file
++	S--no-hardlinks/.git/objects/.some-hidden-dir
++	S--no-hardlinks/.git/objects/.some-hidden-dir/.some-dot-file
++	S--no-hardlinks/.git/objects/.some-hidden-dir/some-file
+ 	S--no-hardlinks/.git/objects/.some-hidden-file
+ 	S--no-hardlinks/.git/objects/some-dir
+ 	S--no-hardlinks/.git/objects/some-dir/.some-dot-file
+-- 
+2.21.0.rc2.261.ga7da99ff1b
+
