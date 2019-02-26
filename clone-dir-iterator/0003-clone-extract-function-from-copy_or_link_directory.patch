@@ -1,0 +1,66 @@
+From a9718976fb6dd9849044417aed3adad024fa5c31 Mon Sep 17 00:00:00 2001
+In-Reply-To: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+References: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+From: Matheus Tavares <matheus.bernardino@usp.br>
+Date: Sat, 23 Feb 2019 16:03:08 -0300
+Subject: [WIP RFC PATCH 3/7] clone: extract function from
+ copy_or_link_directory
+
+Extract dir creation code snippet from copy_or_link_directory to its own
+function named mkdir_if_missing. This change will help removing
+copy_or_link_directory's explicit recursion, which will be done in a
+following patch. Also makes code more readable.
+
+Signed-off-by: Matheus Tavares <matheus.bernardino@usp.br>
+---
+ builtin/clone.c | 27 +++++++++++++++++++--------
+ 1 file changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index 50bde99618..862d2ea69c 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -392,6 +392,24 @@ static void copy_alternates(struct strbuf *src, struct strbuf *dst,
+ 	fclose(in);
+ }
+ 
++static void mkdir_if_missing(const char *pathname, mode_t mode)
++{
++	/*
++	 * Create a dir at pathname unless there's already one.
++	 */
++	struct stat st;
++
++	if (mkdir(pathname, mode)) {
++		if (errno != EEXIST)
++			die_errno(_("failed to create directory '%s'"),
++				  pathname);
++		else if (stat(pathname, &st))
++			die_errno(_("failed to stat '%s'"), pathname);
++		else if (!S_ISDIR(st.st_mode))
++			die(_("%s exists and is not a directory"), pathname);
++	}
++}
++
+ static void copy_or_link_directory(struct strbuf *src, struct strbuf *dest,
+ 				   const char *src_repo, int src_baselen)
+ {
+@@ -404,14 +422,7 @@ static void copy_or_link_directory(struct strbuf *src, struct strbuf *dest,
+ 	if (!dir)
+ 		die_errno(_("failed to open '%s'"), src->buf);
+ 
+-	if (mkdir(dest->buf, 0777)) {
+-		if (errno != EEXIST)
+-			die_errno(_("failed to create directory '%s'"), dest->buf);
+-		else if (stat(dest->buf, &buf))
+-			die_errno(_("failed to stat '%s'"), dest->buf);
+-		else if (!S_ISDIR(buf.st_mode))
+-			die(_("%s exists and is not a directory"), dest->buf);
+-	}
++	mkdir_if_missing(dest->buf, 0777);
+ 
+ 	strbuf_addch(src, '/');
+ 	src_len = src->len;
+-- 
+2.21.0.rc2.1.g2d5e20a900.dirty
+

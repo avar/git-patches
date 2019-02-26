@@ -1,0 +1,161 @@
+From 00658c94016a491f235058cbbeff2ceda4b0905a Mon Sep 17 00:00:00 2001
+In-Reply-To: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+References: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+From: Matheus Tavares <matheus.bernardino@usp.br>
+Date: Sat, 23 Feb 2019 16:03:07 -0300
+Subject: [WIP RFC PATCH 1/7] dir-iterator: add pedantic option to
+ dir_iterator_begin
+
+Add the pedantic option to dir-iterator's initialization function,
+dir_iterator_begin. When this option is set to true,
+dir_iterator_advance will immediately return ITER_ERROR when failing to
+fetch the next entry. When set to false, dir_iterator_advance will emit
+a warning and keep looking for the next entry.
+
+Also adjust refs/files-backend.c to the new dir_iterator_begin
+signature.
+
+Signed-off-by: Matheus Tavares <matheus.bernardino@usp.br>
+---
+ dir-iterator.c       | 23 +++++++++++++++++++++--
+ dir-iterator.h       | 16 +++++++++++++---
+ refs/files-backend.c |  2 +-
+ 3 files changed, 35 insertions(+), 6 deletions(-)
+
+diff --git a/dir-iterator.c b/dir-iterator.c
+index f2dcd82fde..070a656555 100644
+--- a/dir-iterator.c
++++ b/dir-iterator.c
+@@ -48,6 +48,13 @@ struct dir_iterator_int {
+ 	 * that will be included in this iteration.
+ 	 */
+ 	struct dir_iterator_level *levels;
++
++	/*
++	 * Boolean value to define dir-iterator's behaviour when failing to
++	 * fetch next entry. See comments on dir_iterator_begin at
++	 * dir-iterator.h
++	 */
++	int pedantic;
+ };
+ 
+ int dir_iterator_advance(struct dir_iterator *dir_iterator)
+@@ -71,6 +78,8 @@ int dir_iterator_advance(struct dir_iterator *dir_iterator)
+ 
+ 			level->dir = opendir(iter->base.path.buf);
+ 			if (!level->dir && errno != ENOENT) {
++				if (iter->pedantic)
++					goto error_out;
+ 				warning("error opening directory %s: %s",
+ 					iter->base.path.buf, strerror(errno));
+ 				/* Popping the level is handled below */
+@@ -122,6 +131,8 @@ int dir_iterator_advance(struct dir_iterator *dir_iterator)
+ 			if (!de) {
+ 				/* This level is exhausted; pop up a level. */
+ 				if (errno) {
++					if (iter->pedantic)
++						goto error_out;
+ 					warning("error reading directory %s: %s",
+ 						iter->base.path.buf, strerror(errno));
+ 				} else if (closedir(level->dir))
+@@ -139,10 +150,13 @@ int dir_iterator_advance(struct dir_iterator *dir_iterator)
+ 
+ 			strbuf_addstr(&iter->base.path, de->d_name);
+ 			if (lstat(iter->base.path.buf, &iter->base.st) < 0) {
+-				if (errno != ENOENT)
++				if (errno != ENOENT) {
++					if (iter->pedantic)
++						goto error_out;
+ 					warning("error reading path '%s': %s",
+ 						iter->base.path.buf,
+ 						strerror(errno));
++				}
+ 				continue;
+ 			}
+ 
+@@ -159,6 +173,10 @@ int dir_iterator_advance(struct dir_iterator *dir_iterator)
+ 			return ITER_OK;
+ 		}
+ 	}
++
++error_out:
++	dir_iterator_abort(dir_iterator);
++	return ITER_ERROR;
+ }
+ 
+ int dir_iterator_abort(struct dir_iterator *dir_iterator)
+@@ -182,7 +200,7 @@ int dir_iterator_abort(struct dir_iterator *dir_iterator)
+ 	return ITER_DONE;
+ }
+ 
+-struct dir_iterator *dir_iterator_begin(const char *path)
++struct dir_iterator *dir_iterator_begin(const char *path, int pedantic)
+ {
+ 	struct dir_iterator_int *iter = xcalloc(1, sizeof(*iter));
+ 	struct dir_iterator *dir_iterator = &iter->base;
+@@ -195,6 +213,7 @@ struct dir_iterator *dir_iterator_begin(const char *path)
+ 
+ 	ALLOC_GROW(iter->levels, 10, iter->levels_alloc);
+ 
++	iter->pedantic = pedantic;
+ 	iter->levels_nr = 1;
+ 	iter->levels[0].initialized = 0;
+ 
+diff --git a/dir-iterator.h b/dir-iterator.h
+index 970793d07a..50ca8e1a27 100644
+--- a/dir-iterator.h
++++ b/dir-iterator.h
+@@ -19,7 +19,7 @@
+  * A typical iteration looks like this:
+  *
+  *     int ok;
+- *     struct iterator *iter = dir_iterator_begin(path);
++ *     struct iterator *iter = dir_iterator_begin(path, 0);
+  *
+  *     while ((ok = dir_iterator_advance(iter)) == ITER_OK) {
+  *             if (want_to_stop_iteration()) {
+@@ -65,9 +65,15 @@ struct dir_iterator {
+  * The iteration includes all paths under path, not including path
+  * itself and not including "." or ".." entries.
+  *
+- * path is the starting directory. An internal copy will be made.
++ * Parameters are:
++ * - path is the starting directory. An internal copy will be made.
++ * - pedantic is a boolean value. If true, dir-iterator will free
++ *   resources and return ITER_ERROR immediately, in case of an error
++ *   while trying to fetch the next entry in dir_iterator_advance. If
++ *   false, it will just emit a warning and keep looking for the next
++ *   entry.
+  */
+-struct dir_iterator *dir_iterator_begin(const char *path);
++struct dir_iterator *dir_iterator_begin(const char *path, int pedantic);
+ 
+ /*
+  * Advance the iterator to the first or next item and return ITER_OK.
+@@ -76,6 +82,10 @@ struct dir_iterator *dir_iterator_begin(const char *path);
+  * dir_iterator and associated resources and return ITER_ERROR. It is
+  * a bug to use iterator or call this function again after it has
+  * returned ITER_DONE or ITER_ERROR.
++ *
++ * Note that whether dir_iterator_advance will return ITER_ERROR when
++ * failing to fetch the next entry or keep going is defined by the
++ * 'pedantic' option at dir-iterator's initialization.
+  */
+ int dir_iterator_advance(struct dir_iterator *iterator);
+ 
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index dd8abe9185..c3d3b6c454 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -2143,7 +2143,7 @@ static struct ref_iterator *reflog_iterator_begin(struct ref_store *ref_store,
+ 
+ 	base_ref_iterator_init(ref_iterator, &files_reflog_iterator_vtable, 0);
+ 	strbuf_addf(&sb, "%s/logs", gitdir);
+-	iter->dir_iterator = dir_iterator_begin(sb.buf);
++	iter->dir_iterator = dir_iterator_begin(sb.buf, 0);
+ 	iter->ref_store = ref_store;
+ 	strbuf_release(&sb);
+ 
+-- 
+2.21.0.rc2.1.g2d5e20a900.dirty
+

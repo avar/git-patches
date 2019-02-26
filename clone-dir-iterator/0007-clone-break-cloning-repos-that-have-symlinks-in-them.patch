@@ -1,0 +1,103 @@
+From 781acc4c522aba78b76b5198a6c641635770d659 Mon Sep 17 00:00:00 2001
+In-Reply-To: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+References: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 26 Feb 2019 01:13:30 +0100
+Subject: [WIP RFC PATCH 7/7] clone: break cloning repos that have symlinks in
+ them
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Revert back to the lstat() behavior in the dir_iterator interface
+we've had since it was added in 0fe5043dad ("dir_iterator: new API for
+iterating over a directory tree", 2016-06-18).
+
+No reflog test depends on it, so it's unclear if it's needed. Since
+clone now uses this it changes the longstanding behavior of how we
+just so happened to support objects dirs with symlinks in them.
+
+Why? I don't know. Just writing this up as an RFC with tests. Insert
+rationale here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ dir-iterator.c             |  2 +-
+ t/t5604-clone-reference.sh | 45 +++++++-------------------------------
+ 2 files changed, 9 insertions(+), 38 deletions(-)
+
+diff --git a/dir-iterator.c b/dir-iterator.c
+index 6a9c0c4d08..070a656555 100644
+--- a/dir-iterator.c
++++ b/dir-iterator.c
+@@ -149,7 +149,7 @@ int dir_iterator_advance(struct dir_iterator *dir_iterator)
+ 				continue;
+ 
+ 			strbuf_addstr(&iter->base.path, de->d_name);
+-			if (stat(iter->base.path.buf, &iter->base.st) < 0) {
++			if (lstat(iter->base.path.buf, &iter->base.st) < 0) {
+ 				if (errno != ENOENT) {
+ 					if (iter->pedantic)
+ 						goto error_out;
+diff --git a/t/t5604-clone-reference.sh b/t/t5604-clone-reference.sh
+index f1a8e74c44..a4cd12643e 100755
+--- a/t/t5604-clone-reference.sh
++++ b/t/t5604-clone-reference.sh
+@@ -249,45 +249,16 @@ test_expect_success SHA1,SYMLINKS 'setup repo with manually symlinked objects/*'
+ '
+ 
+ test_expect_success SHA1,SYMLINKS 'clone repo with manually symlinked objects/*' '
+-	for option in --local --no-hardlinks --shared --dissociate
++	for option in --local --no-hardlinks --dissociate
+ 	do
+-		git clone $option S S$option || return 1 &&
+-		git -C S$option fsck || return 1
++		test_must_fail git clone $option S S$option 2>err || return 1 &&
++		test_i18ngrep "the remote end hung up" err || return 1
+ 	done &&
+-	find S-* -type l | sort >actual &&
+-	cat >expected <<-EOF &&
+-	S--dissociate/.git/objects/22/3b7836fb19fdf64ba2d3cd6173c6a283141f78
+-	S--local/.git/objects/22/3b7836fb19fdf64ba2d3cd6173c6a283141f78
+-	EOF
+-	test_cmp expected actual &&
+-	find S-* -name "*some*" | sort >actual &&
+-	cat >expected <<-EOF &&
+-	S--dissociate/.git/objects/.some-hidden-dir
+-	S--dissociate/.git/objects/.some-hidden-dir/.some-dot-file
+-	S--dissociate/.git/objects/.some-hidden-dir/some-file
+-	S--dissociate/.git/objects/.some-hidden-file
+-	S--dissociate/.git/objects/some-dir
+-	S--dissociate/.git/objects/some-dir/.some-dot-file
+-	S--dissociate/.git/objects/some-dir/some-file
+-	S--dissociate/.git/objects/some-file
+-	S--local/.git/objects/.some-hidden-dir
+-	S--local/.git/objects/.some-hidden-dir/.some-dot-file
+-	S--local/.git/objects/.some-hidden-dir/some-file
+-	S--local/.git/objects/.some-hidden-file
+-	S--local/.git/objects/some-dir
+-	S--local/.git/objects/some-dir/.some-dot-file
+-	S--local/.git/objects/some-dir/some-file
+-	S--local/.git/objects/some-file
+-	S--no-hardlinks/.git/objects/.some-hidden-dir
+-	S--no-hardlinks/.git/objects/.some-hidden-dir/.some-dot-file
+-	S--no-hardlinks/.git/objects/.some-hidden-dir/some-file
+-	S--no-hardlinks/.git/objects/.some-hidden-file
+-	S--no-hardlinks/.git/objects/some-dir
+-	S--no-hardlinks/.git/objects/some-dir/.some-dot-file
+-	S--no-hardlinks/.git/objects/some-dir/some-file
+-	S--no-hardlinks/.git/objects/some-file
+-	EOF
+-	test_cmp expected actual
++	git clone --shared S S--shared &&
++	find S--shared -type l | sort >actual &&
++	test_must_be_empty actual &&
++	find S--shared -name "*some*" | sort >actual &&
++	test_must_be_empty actual
+ '
+ 
+ test_done
+-- 
+2.21.0.rc2.1.g2d5e20a900.dirty
+

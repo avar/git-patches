@@ -1,0 +1,82 @@
+From ac089f9f32c56f651ec4e175a8d6fc897d1e3765 Mon Sep 17 00:00:00 2001
+In-Reply-To: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+References: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 26 Feb 2019 01:12:39 +0100
+Subject: [WIP RFC PATCH 6/7] clone: stop ignoring dotdirs in --local etc.
+ clone
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This seems to never have been intentional, just a side-effect of how
+the existing code was written.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/clone.c            | 8 +++-----
+ t/t5604-clone-reference.sh | 9 +++++++++
+ 2 files changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index c32e9022b3..515dc91d63 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -446,8 +446,6 @@ static void copy_or_link_directory(struct strbuf *src, struct strbuf *dest,
+ 		}
+ 
+ 		if (S_ISDIR(iter->st.st_mode)) {
+-			if (iter->relative_path[0] == '.')
+-				continue;
+ 			mkdir_if_missing(dest->buf, 0777);
+ 			continue;
+ 		}
+@@ -463,11 +461,11 @@ static void copy_or_link_directory(struct strbuf *src, struct strbuf *dest,
+ 		if (!option_no_hardlinks) {
+ 			if (!link(src->buf, dest->buf))
+ 				continue;
+-			if (option_local > 0 && errno != ENOENT)
+-				warning_errno(_("failed to create link '%s'"), dest->buf);
++			if (option_local > 0)
++				die_errno(_("failed to create link '%s'"), dest->buf);
+ 			option_no_hardlinks = 1;
+ 		}
+-		if (copy_file_with_time(dest->buf, src->buf, 0666) && errno != ENOENT)
++		if (copy_file_with_time(dest->buf, src->buf, 0666))
+ 			die_errno(_("failed to copy file to '%s'"), dest->buf);
+ 	}
+ 
+diff --git a/t/t5604-clone-reference.sh b/t/t5604-clone-reference.sh
+index 6f9c77049e..f1a8e74c44 100755
+--- a/t/t5604-clone-reference.sh
++++ b/t/t5604-clone-reference.sh
+@@ -262,16 +262,25 @@ test_expect_success SHA1,SYMLINKS 'clone repo with manually symlinked objects/*'
+ 	test_cmp expected actual &&
+ 	find S-* -name "*some*" | sort >actual &&
+ 	cat >expected <<-EOF &&
++	S--dissociate/.git/objects/.some-hidden-dir
++	S--dissociate/.git/objects/.some-hidden-dir/.some-dot-file
++	S--dissociate/.git/objects/.some-hidden-dir/some-file
+ 	S--dissociate/.git/objects/.some-hidden-file
+ 	S--dissociate/.git/objects/some-dir
+ 	S--dissociate/.git/objects/some-dir/.some-dot-file
+ 	S--dissociate/.git/objects/some-dir/some-file
+ 	S--dissociate/.git/objects/some-file
++	S--local/.git/objects/.some-hidden-dir
++	S--local/.git/objects/.some-hidden-dir/.some-dot-file
++	S--local/.git/objects/.some-hidden-dir/some-file
+ 	S--local/.git/objects/.some-hidden-file
+ 	S--local/.git/objects/some-dir
+ 	S--local/.git/objects/some-dir/.some-dot-file
+ 	S--local/.git/objects/some-dir/some-file
+ 	S--local/.git/objects/some-file
++	S--no-hardlinks/.git/objects/.some-hidden-dir
++	S--no-hardlinks/.git/objects/.some-hidden-dir/.some-dot-file
++	S--no-hardlinks/.git/objects/.some-hidden-dir/some-file
+ 	S--no-hardlinks/.git/objects/.some-hidden-file
+ 	S--no-hardlinks/.git/objects/some-dir
+ 	S--no-hardlinks/.git/objects/some-dir/.some-dot-file
+-- 
+2.21.0.rc2.1.g2d5e20a900.dirty
+

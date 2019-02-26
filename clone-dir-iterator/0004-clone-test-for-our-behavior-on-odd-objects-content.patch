@@ -1,0 +1,97 @@
+From c09dcf8e3aa9a413f08ae6bffea779aff619fb1c Mon Sep 17 00:00:00 2001
+In-Reply-To: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+References: <CACsJy8Bw-mXLyT7VaKBjYKLe6uSAQqyLG=_AzjDXykYzSQLkcg@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 26 Feb 2019 00:37:00 +0100
+Subject: [WIP RFC PATCH 4/7] clone: test for our behavior on odd objects/*
+ content
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We've implicitly supported .git/objects/* content of symlinks since
+approximately forever, and when we do a copy of the repo we transfer
+those over, but aren't very consistent about other random stuff we
+find depending on if it's a "hidden" file or not.
+
+Let's add a test for that, which shouldn't read as an endorsement of
+what we're doing now, just asserts current behavior.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5604-clone-reference.sh | 60 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 60 insertions(+)
+
+diff --git a/t/t5604-clone-reference.sh b/t/t5604-clone-reference.sh
+index 4320082b1b..6f9c77049e 100755
+--- a/t/t5604-clone-reference.sh
++++ b/t/t5604-clone-reference.sh
+@@ -221,4 +221,64 @@ test_expect_success 'clone, dissociate from alternates' '
+ 	( cd C && git fsck )
+ '
+ 
++test_expect_success SHA1,SYMLINKS 'setup repo with manually symlinked objects/*' '
++	git init S &&
++	(
++		cd S &&
++		test_commit A &&
++		git gc &&
++		test_commit B &&
++		(
++			cd .git/objects &&
++			mv 22/3b7836fb19fdf64ba2d3cd6173c6a283141f78 . &&
++			ln -s ../3b7836fb19fdf64ba2d3cd6173c6a283141f78 22/ &&
++			mv 40 forty &&
++			ln -s forty 40 &&
++			mv pack packs &&
++			ln -s packs pack &&
++			>.some-hidden-file &&
++			>some-file &&
++			mkdir .some-hidden-dir &&
++			>.some-hidden-dir/some-file &&
++			>.some-hidden-dir/.some-dot-file &&
++			mkdir some-dir &&
++			>some-dir/some-file &&
++			>some-dir/.some-dot-file
++		)
++	)
++'
++
++test_expect_success SHA1,SYMLINKS 'clone repo with manually symlinked objects/*' '
++	for option in --local --no-hardlinks --shared --dissociate
++	do
++		git clone $option S S$option || return 1 &&
++		git -C S$option fsck || return 1
++	done &&
++	find S-* -type l | sort >actual &&
++	cat >expected <<-EOF &&
++	S--dissociate/.git/objects/22/3b7836fb19fdf64ba2d3cd6173c6a283141f78
++	S--local/.git/objects/22/3b7836fb19fdf64ba2d3cd6173c6a283141f78
++	EOF
++	test_cmp expected actual &&
++	find S-* -name "*some*" | sort >actual &&
++	cat >expected <<-EOF &&
++	S--dissociate/.git/objects/.some-hidden-file
++	S--dissociate/.git/objects/some-dir
++	S--dissociate/.git/objects/some-dir/.some-dot-file
++	S--dissociate/.git/objects/some-dir/some-file
++	S--dissociate/.git/objects/some-file
++	S--local/.git/objects/.some-hidden-file
++	S--local/.git/objects/some-dir
++	S--local/.git/objects/some-dir/.some-dot-file
++	S--local/.git/objects/some-dir/some-file
++	S--local/.git/objects/some-file
++	S--no-hardlinks/.git/objects/.some-hidden-file
++	S--no-hardlinks/.git/objects/some-dir
++	S--no-hardlinks/.git/objects/some-dir/.some-dot-file
++	S--no-hardlinks/.git/objects/some-dir/some-file
++	S--no-hardlinks/.git/objects/some-file
++	EOF
++	test_cmp expected actual
++'
++
+ test_done
+-- 
+2.21.0.rc2.1.g2d5e20a900.dirty
+
