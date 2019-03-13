@@ -1,0 +1,93 @@
+From 599772f2bd123eee018318c2d0054a27d0190a93 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87imwmbv7l.fsf@evledraar.gmail.com>
+References: <87imwmbv7l.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Mar 2019 23:22:02 +0100
+Subject: [PATCH 4/5] gc: don't run "reflog expire" when keeping reflogs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Don't redundantly run "git reflog expire --all" when gc.reflogExpire
+and gc.reflogExpireUnreachable are set to "never".
+
+I'm being careful to not repeat the issue fixed in
+8ab5aa4bd8 ("parseopt: handle malformed --expire arguments more
+nicely", 2018-04-21). We'll die early if the config variables are set
+to invalid values.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c  | 17 +++++++++++++++++
+ t/t6500-gc.sh | 19 +++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 425d0fa830..91b088dbfe 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -116,6 +116,19 @@ static void process_log_file_on_signal(int signo)
+ 	raise(signo);
+ }
+ 
++static int gc_config_is_timestamp_never(const char *var)
++{
++	const char *value;
++	timestamp_t expire;
++
++	if (!git_config_get_value(var, &value) && value) {
++		if (parse_expiry_date(value, &expire))
++			die(_("failed to parse '%s' value '%s'"), var, value);
++		return expire == 0;
++	}
++	return 0;
++}
++
+ static void gc_config(void)
+ {
+ 	const char *value;
+@@ -127,6 +140,10 @@ static void gc_config(void)
+ 			pack_refs = git_config_bool("gc.packrefs", value);
+ 	}
+ 
++	if (gc_config_is_timestamp_never("gc.reflogexpire") &&
++	    gc_config_is_timestamp_never("gc.reflogexpireunreachable"))
++		prune_reflogs = 0;
++
+ 	git_config_get_int("gc.aggressivewindow", &aggressive_window);
+ 	git_config_get_int("gc.aggressivedepth", &aggressive_depth);
+ 	git_config_get_int("gc.auto", &gc_auto_threshold);
+diff --git a/t/t6500-gc.sh b/t/t6500-gc.sh
+index 4684d06552..7411bf7fec 100755
+--- a/t/t6500-gc.sh
++++ b/t/t6500-gc.sh
+@@ -120,6 +120,25 @@ test_expect_success 'gc --quiet' '
+ 	test_must_be_empty stderr
+ '
+ 
++test_expect_success 'gc.reflogExpire{Unreachable,}=never skips "expire" via "gc"' '
++	test_config gc.reflogExpire never &&
++	test_config gc.reflogExpireUnreachable never &&
++
++	GIT_TRACE=$(pwd)/trace.out git gc &&
++
++	# Check that git-pack-refs is run as a sanity check (done via
++	# gc_before_repack()) but that git-expire is not.
++	grep -E "^trace: (built-in|exec|run_command): git pack-refs --" trace.out &&
++	! grep -E "^trace: (built-in|exec|run_command): git reflog expire --" trace.out
++'
++
++test_expect_success 'one of gc.reflogExpire{Unreachable,}=never does not skip "expire" via "gc"' '
++	>trace.out &&
++	test_config gc.reflogExpire never &&
++	GIT_TRACE=$(pwd)/trace.out git gc &&
++	grep -E "^trace: (built-in|exec|run_command): git reflog expire --" trace.out
++'
++
+ run_and_wait_for_auto_gc () {
+ 	# We read stdout from gc for the side effect of waiting until the
+ 	# background gc process exits, closing its fd 9.  Furthermore, the
+-- 
+2.21.0.360.g471c308f928
+

@@ -1,0 +1,62 @@
+From 1635c7fb223027a94d6ac2844f8de6d0c8f6e69f Mon Sep 17 00:00:00 2001
+In-Reply-To: <87imwmbv7l.fsf@evledraar.gmail.com>
+References: <87imwmbv7l.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Mar 2019 22:26:32 +0100
+Subject: [PATCH 2/5] gc: convert to using the_hash_algo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There's been a lot of changing of the hardcoded "40" values to
+the_hash_algo->hexsz, but we've so far missed this one where we
+hardcoded 38 for the loose object file length.
+
+This is because a SHA-1 like abcde[...] gets turned into
+objects/ab/cde[...]. There's no reason to suppose the same won't be
+the case for SHA-256, and reading between the lines in
+hash-function-transition.txt the format is planned to be the same.
+
+However, we may want to modify this code for the hash function
+transition. There's a potential pathological case here where we'll
+only consider the loose objects for the currently active hash, but
+objects for that hash will share a directory storage with the other
+hash.
+
+Thus we could theoretically have 1k SHA-1 loose objects, and say 1
+million SHA-256 objects, and not notice because we're currently using
+SHA-1.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 8c2312681c..9c2c63276d 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -156,6 +156,8 @@ static int too_many_loose_objects(void)
+ 	int auto_threshold;
+ 	int num_loose = 0;
+ 	int needed = 0;
++	const unsigned hexsz = the_hash_algo->hexsz;
++	const unsigned hexsz_loose = hexsz - 2;
+ 
+ 	dir = opendir(git_path("objects/17"));
+ 	if (!dir)
+@@ -163,8 +165,8 @@ static int too_many_loose_objects(void)
+ 
+ 	auto_threshold = DIV_ROUND_UP(gc_auto_threshold, 256);
+ 	while ((ent = readdir(dir)) != NULL) {
+-		if (strspn(ent->d_name, "0123456789abcdef") != 38 ||
+-		    ent->d_name[38] != '\0')
++		if (strspn(ent->d_name, "0123456789abcdef") != hexsz_loose ||
++		    ent->d_name[hexsz_loose] != '\0')
+ 			continue;
+ 		if (++num_loose > auto_threshold) {
+ 			needed = 1;
+-- 
+2.21.0.360.g471c308f928
+
