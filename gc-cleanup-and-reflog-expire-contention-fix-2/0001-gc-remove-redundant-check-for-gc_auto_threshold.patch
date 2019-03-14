@@ -1,0 +1,49 @@
+From f11699d8e77d7eb235fdcb27884ea66a4c165cad Mon Sep 17 00:00:00 2001
+In-Reply-To: <87imwmbv7l.fsf@evledraar.gmail.com>
+References: <87imwmbv7l.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 10 Oct 2018 19:32:35 +0000
+Subject: [PATCH v2 1/7] gc: remove redundant check for gc_auto_threshold
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Checking gc_auto_threshold in too_many_loose_objects() was added in
+17815501a8 ("git-gc --auto: run "repack -A -d -l" as necessary.",
+2007-09-17) when need_to_gc() itself was also reliant on
+gc_auto_pack_limit before its early return:
+
+    gc_auto_threshold <= 0 && gc_auto_pack_limit <= 0
+
+When that check was simplified to just checking "gc_auto_threshold <=
+0" in b14d255ba8 ("builtin-gc.c: allow disabling all auto-gc'ing by
+assigning 0 to gc.auto", 2008-03-19) this unreachable code should have
+been removed. We only call too_many_loose_objects() from within
+need_to_gc() itself, which will return if this condition holds, and in
+cmd_gc() which will return before ever getting to "auto_gc &&
+too_many_loose_objects()" if "auto_gc && !need_to_gc()" is true
+earlier in the function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 020f725acc..8c2312681c 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -157,9 +157,6 @@ static int too_many_loose_objects(void)
+ 	int num_loose = 0;
+ 	int needed = 0;
+ 
+-	if (gc_auto_threshold <= 0)
+-		return 0;
+-
+ 	dir = opendir(git_path("objects/17"));
+ 	if (!dir)
+ 		return 0;
+-- 
+2.21.0.360.g471c308f928
+
