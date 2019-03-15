@@ -3,7 +3,7 @@ In-Reply-To: <20190314123439.4347-1-avarab@gmail.com>
 References: <20190314123439.4347-1-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
-Date: Fri, 15 Mar 2019 16:57:02 +0100
+Date: Fri, 15 Mar 2019 16:57:12 +0100
 Subject: [PATCH v3 0/8] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -73,9 +73,65 @@ Range-diff:
       diff --git a/builtin/gc.c b/builtin/gc.c
 3:  54e4bce91c3 = 3:  9444a1233af gc: refactor a "call me once" pattern
 4:  82f87db1348 = 4:  60a06ae6185 reflog tests: make use of "test_config" idiom
-5:  c79608dbbb3 < -:  ----------- reflog: exit early if there's no work to do
 -:  ----------- > 5:  52838fdc449 reflog tests: test for the "points nowhere" warning
--:  ----------- > 6:  6063429f108 reflog tests: assert lack of early exit with expiry="never"
+5:  c79608dbbb3 ! 6:  6063429f108 reflog: exit early if there's no work to do
+    @@ -1,32 +1,25 @@
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    -    reflog: exit early if there's no work to do
+    +    reflog tests: assert lack of early exit with expiry="never"
+     
+         When gc.reflogExpire and gc.reflogExpireUnreachable are set to "never"
+         and --stale-fix isn't in effect (covered by the first part of the "if"
+    -    statement being modified here) we can exit early without pointlessly
+    -    looping over all the reflogs.
+    +    statement being modified here) we *could* exit early without
+    +    pointlessly looping over all the reflogs.
+     
+    -    Signed-off-by: Jeff King <peff@peff.net>
+    -    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    However, as an earlier change to add a test for the "points nowhere"
+    +    warning shows even in such a mode we might want to print out a
+    +    warning.
+     
+    - diff --git a/builtin/reflog.c b/builtin/reflog.c
+    - --- a/builtin/reflog.c
+    - +++ b/builtin/reflog.c
+    -@@
+    - 		mark_reachable_objects(&cb.cmd.revs, 0, 0, NULL);
+    - 		if (flags & EXPIRE_REFLOGS_VERBOSE)
+    - 			putchar('\n');
+    -+	} else if (!cb.cmd.expire_total && !cb.cmd.expire_unreachable) {
+    -+		/*
+    -+		 * If we're not expiring anything and not dropping
+    -+		 * stale entries, there's no point in even opening the
+    -+		 * reflogs, since we're guaranteed to do nothing.
+    -+		 */
+    -+		return 0;
+    - 	}
+    - 
+    - 	if (do_all) {
+    +    So while it's conceivable to implement this, I don't think it's worth
+    +    it. It's going to be too easy to inadvertently add some flag that'll
+    +    make the expiry happen anyway, and even with "never" we'd like to see
+    +    all the lines we're going to keep.
+    +
+    +    So let's assert that we're going to loop over all the references even
+    +    when this configuration is in effect.
+    +
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      diff --git a/t/t1410-reflog.sh b/t/t1410-reflog.sh
+      --- a/t/t1410-reflog.sh
+    @@ -37,7 +30,7 @@
+      
+     -	git reflog expire --verbose --all &&
+     +	git reflog expire --verbose --all >output &&
+    -+	test_line_count = 0 output &&
+    ++	test_line_count = 9 output &&
+     +
+      	git reflog refs/heads/master >output &&
+      	test_line_count = 4 output
 6:  c47dedab58d ! 7:  6693d1d84da gc: don't run "reflog expire" when keeping reflogs
     @@ -1,22 +1,38 @@
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
@@ -127,8 +183,67 @@ Range-diff:
      
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
-7:  55dd203a042 < -:  ----------- reflog expire: don't assert the OID when locking refs
--:  ----------- > 8:  e0814569aba reflog expire: don't assert the OID when locking refs
+7:  55dd203a042 ! 8:  e0814569aba reflog expire: don't assert the OID when locking refs
+    @@ -79,6 +79,25 @@
+         really tight loop). That can be resolved by being more generous with
+         higher values of core.filesRefLockTimeout than the 100ms default.
+     
+    +    As noted in the commentary being added here we also need to handle the
+    +    case of references being racily deleted, that can be tested by adding
+    +    this to the above:
+    +
+    +        (
+    +            cd /tmp/git-clone &&
+    +            while git branch topic master && git branch -D topic
+    +            do
+    +                date
+    +            done
+    +        )
+    +
+    +    We could change lock_ref_oid_basic() to always pass down
+    +    RESOLVE_REF_READING to refs_resolve_ref_unsafe() and then
+    +    files_reflog_expire() to detect the "is it deleted?" state. But let's
+    +    not bother, in the event of such a race we're going to redundantly
+    +    create a lock on the deleted reference, and shortly afterwards handle
+    +    that case and others with the refs_reflog_exists() check.
+    +
+         1. https://public-inbox.org/git/54857871.5090805@alum.mit.edu/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    @@ -87,11 +106,32 @@
+      --- a/refs/files-backend.c
+      +++ b/refs/files-backend.c
+     @@
+    + 	 * The reflog file is locked by holding the lock on the
+      	 * reference itself, plus we might need to update the
+      	 * reference if --updateref was specified:
+    ++	 *
+    ++	 * We don't pass down the oid here because we'd like to be
+    ++	 * tolerant to the OID of the ref having changed, and to
+    ++	 * gracefully handle the case where it's been deleted (see oid
+    ++	 * -> mustexist -> RESOLVE_REF_READING in
+    ++	 * lock_ref_oid_basic()) ...
+      	 */
+     -	lock = lock_ref_oid_basic(refs, refname, oid,
+    -+	lock = lock_ref_oid_basic(refs, refname, NULL /* NOT oid! */,
+    ++	lock = lock_ref_oid_basic(refs, refname, NULL,
+      				  NULL, NULL, REF_NO_DEREF,
+      				  &type, &err);
+      	if (!lock) {
+    +@@
+    + 		strbuf_release(&err);
+    + 		return -1;
+    + 	}
+    ++	/*
+    ++	 * When refs are deleted their reflog is deleted before the
+    ++	 * loose ref is deleted. This catches that case, i.e. when
+    ++	 * racing against a ref deletion lock_ref_oid_basic() will
+    ++	 * have acquired a lock on the now-deleted ref, but here's
+    ++	 * where we find out it has no reflog anymore.
+    ++	 */
+    + 	if (!refs_reflog_exists(ref_store, refname)) {
+    + 		unlock_ref(lock);
+    + 		return 0;
 -- 
 2.21.0.360.g471c308f928
 
