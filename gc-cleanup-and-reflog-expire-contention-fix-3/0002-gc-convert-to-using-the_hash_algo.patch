@@ -1,0 +1,84 @@
+From 4bdcf1d0be2f162f749a2088ccbf5179f3cff304 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190314123439.4347-1-avarab@gmail.com>
+References: <20190314123439.4347-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Mar 2019 22:26:32 +0100
+Subject: [PATCH v3 2/8] gc: convert to using the_hash_algo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There's been a lot of changing of the hardcoded "40" values to
+the_hash_algo->hexsz, but we've so far missed this one where we
+hardcoded 38 for the loose object file length.
+
+This is because a SHA-1 like abcde[...] gets turned into
+objects/ab/cde[...]. There's no reason to suppose the same won't be
+the case for SHA-256, and reading between the lines in
+hash-function-transition.txt the format is planned to be the same.
+
+In the future we may want to further modify this code for the hash
+function transition. There's a potential pathological case here where
+we'll only consider the loose objects for the currently active hash,
+but objects for that hash will share a directory storage with the
+other hash.
+
+Thus we could theoretically have e.g. 1k SHA-1 loose objects, and 1
+million SHA-256 objects. Then not notice that we need to pack them
+because we're currently using SHA-1, even though our FS may be
+straining under the stress of such humongous directories.
+
+So assuming that "gc" eventually learns to pack up both SHA-1 and
+SHA-256 objects regardless of what the current the_hash_algo is,
+perhaps this check should be changed to consider all files in
+objects/17/ matching [0-9a-f] 38 or 62 characters in length (i.e. both
+SHA-1 and SHA-256).
+
+But none of that is something we need to worry about now, and
+supporting both 38 and 62 characters depending on "the_hash_algo"
+removes another case of SHA-1 hardcoding.
+
+As noted in [1] I'm making no effort to somehow remove the hardcoding
+for "2" as in "use the first two hexdigits for the directory
+name". There's no indication that that'll ever change, and somehow
+generalizing it here would be a drop in the ocean, so there's no point
+in doing that. It also couldn't be done without coming up with some
+generalized version of the magical "objects/17" directory. See [2] for
+a discussion of that directory.
+
+1. https://public-inbox.org/git/874l84ber7.fsf@evledraar.gmail.com/
+
+2. https://public-inbox.org/git/87k1mta9x5.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 8c2312681ce..733bd7bdf46 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -156,6 +156,7 @@ static int too_many_loose_objects(void)
+ 	int auto_threshold;
+ 	int num_loose = 0;
+ 	int needed = 0;
++	const unsigned hexsz_loose = the_hash_algo->hexsz - 2;
+ 
+ 	dir = opendir(git_path("objects/17"));
+ 	if (!dir)
+@@ -163,8 +164,8 @@ static int too_many_loose_objects(void)
+ 
+ 	auto_threshold = DIV_ROUND_UP(gc_auto_threshold, 256);
+ 	while ((ent = readdir(dir)) != NULL) {
+-		if (strspn(ent->d_name, "0123456789abcdef") != 38 ||
+-		    ent->d_name[38] != '\0')
++		if (strspn(ent->d_name, "0123456789abcdef") != hexsz_loose ||
++		    ent->d_name[hexsz_loose] != '\0')
+ 			continue;
+ 		if (++num_loose > auto_threshold) {
+ 			needed = 1;
+-- 
+2.21.0.360.g471c308f928
+

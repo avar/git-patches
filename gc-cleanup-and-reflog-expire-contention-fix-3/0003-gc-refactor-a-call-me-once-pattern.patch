@@ -1,0 +1,56 @@
+From 9444a1233affe15a6e644aefaa3264dd3ec14255 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190314123439.4347-1-avarab@gmail.com>
+References: <20190314123439.4347-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Mar 2019 22:39:17 +0100
+Subject: [PATCH v3 3/8] gc: refactor a "call me once" pattern
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change an idiom we're using to ensure that gc_before_repack() only
+does work once (see 62aad1849f ("gc --auto: do not lock refs in the
+background", 2014-05-25)) to be more obvious.
+
+Nothing except this function cares about the "pack_refs" and
+"prune_reflogs" variables, so let's not leave the reader wondering if
+they're being zero'd out for later use somewhere else.
+
+Signed-off-by: Jeff King <peff@peff.net>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 733bd7bdf46..ae716a00d4a 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -489,14 +489,20 @@ static int report_last_gc_error(void)
+ 
+ static void gc_before_repack(void)
+ {
++	/*
++	 * We may be called twice, as both the pre- and
++	 * post-daemonized phases will call us, but running these
++	 * commands more than once is pointless and wasteful.
++	 */
++	static int done = 0;
++	if (done++)
++		return;
++
+ 	if (pack_refs && run_command_v_opt(pack_refs_cmd.argv, RUN_GIT_CMD))
+ 		die(FAILED_RUN, pack_refs_cmd.argv[0]);
+ 
+ 	if (prune_reflogs && run_command_v_opt(reflog.argv, RUN_GIT_CMD))
+ 		die(FAILED_RUN, reflog.argv[0]);
+-
+-	pack_refs = 0;
+-	prune_reflogs = 0;
+ }
+ 
+ int cmd_gc(int argc, const char **argv, const char *prefix)
+-- 
+2.21.0.360.g471c308f928
+

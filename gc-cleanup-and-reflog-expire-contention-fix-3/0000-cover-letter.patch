@@ -1,0 +1,134 @@
+From e0814569aba2457f547058c300b69d82107a7ff7 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190314123439.4347-1-avarab@gmail.com>
+References: <20190314123439.4347-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 15 Mar 2019 16:52:50 +0100
+Subject: [PATCH v3 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (8):
+  gc: remove redundant check for gc_auto_threshold
+  gc: convert to using the_hash_algo
+  gc: refactor a "call me once" pattern
+  reflog tests: make use of "test_config" idiom
+  reflog tests: test for the "points nowhere" warning
+  reflog tests: assert lack of early exit with expiry="never"
+  gc: handle & check gc.reflogExpire config
+  reflog expire: don't assert the OID when locking refs
+
+ builtin/gc.c         | 37 +++++++++++++++++++++++++++++--------
+ refs/files-backend.c | 15 ++++++++++++++-
+ t/t1410-reflog.sh    | 25 +++++++++++++++++--------
+ t/t6500-gc.sh        | 19 +++++++++++++++++++
+ 4 files changed, 79 insertions(+), 17 deletions(-)
+
+Range-diff:
+1:  f11699d8e77 = 1:  81694c82130 gc: remove redundant check for gc_auto_threshold
+2:  e18433f9c6b ! 2:  4bdcf1d0be2 gc: convert to using the_hash_algo
+    @@ -17,20 +17,33 @@
+         but objects for that hash will share a directory storage with the
+         other hash.
+     
+    -    Thus we could theoretically have 1k SHA-1 loose objects, and say 1
+    -    million SHA-256 objects, and not notice because we're currently using
+    -    SHA-1.
+    +    Thus we could theoretically have e.g. 1k SHA-1 loose objects, and 1
+    +    million SHA-256 objects. Then not notice that we need to pack them
+    +    because we're currently using SHA-1, even though our FS may be
+    +    straining under the stress of such humongous directories.
+     
+         So assuming that "gc" eventually learns to pack up both SHA-1 and
+    -    SHA-256 objects regardless of what the current the_hash_alg is perhaps
+    -    this check should be changed to consider all files in objects/17/
+    -    matching [0-9a-f] 38 or 62 characters in length (i.e. both SHA-1 and
+    -    SHA-256).
+    +    SHA-256 objects regardless of what the current the_hash_algo is,
+    +    perhaps this check should be changed to consider all files in
+    +    objects/17/ matching [0-9a-f] 38 or 62 characters in length (i.e. both
+    +    SHA-1 and SHA-256).
+     
+         But none of that is something we need to worry about now, and
+         supporting both 38 and 62 characters depending on "the_hash_algo"
+         removes another case of SHA-1 hardcoding.
+     
+    +    As noted in [1] I'm making no effort to somehow remove the hardcoding
+    +    for "2" as in "use the first two hexdigits for the directory
+    +    name". There's no indication that that'll ever change, and somehow
+    +    generalizing it here would be a drop in the ocean, so there's no point
+    +    in doing that. It also couldn't be done without coming up with some
+    +    generalized version of the magical "objects/17" directory. See [2] for
+    +    a discussion of that directory.
+    +
+    +    1. https://public-inbox.org/git/874l84ber7.fsf@evledraar.gmail.com/
+    +
+    +    2. https://public-inbox.org/git/87k1mta9x5.fsf@evledraar.gmail.com/
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      diff --git a/builtin/gc.c b/builtin/gc.c
+3:  54e4bce91c3 = 3:  9444a1233af gc: refactor a "call me once" pattern
+4:  82f87db1348 = 4:  60a06ae6185 reflog tests: make use of "test_config" idiom
+5:  c79608dbbb3 < -:  ----------- reflog: exit early if there's no work to do
+-:  ----------- > 5:  52838fdc449 reflog tests: test for the "points nowhere" warning
+-:  ----------- > 6:  6063429f108 reflog tests: assert lack of early exit with expiry="never"
+6:  c47dedab58d ! 7:  6693d1d84da gc: don't run "reflog expire" when keeping reflogs
+    @@ -1,22 +1,38 @@
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    -    gc: don't run "reflog expire" when keeping reflogs
+    +    gc: handle & check gc.reflogExpire config
+     
+         Don't redundantly run "git reflog expire --all" when gc.reflogExpire
+    -    and gc.reflogExpireUnreachable are set to "never".
+    +    and gc.reflogExpireUnreachable are set to "never", and die immediately
+    +    if those configuration valuer are bad.
+     
+    -    An earlier change taught "git reflog expire" itself to exit early
+    -    under this scenario, so in some sense this isn't strictly
+    -    necessary. Reasons to also do it here:
+    +    As an earlier "assert lack of early exit" change to the tests for "git
+    +    reflog expire" shows, an early check of gc.reflogExpire{Unreachable,}
+    +    isn't wanted in general for "git reflog expire", but it makes sense
+    +    for "gc" because:
+     
+    -     1) Similar to 8ab5aa4bd8 ("parseopt: handle malformed --expire
+    -        arguments more nicely", 2018-04-21). We'll die early if the config
+    -        variables are set to invalid values. We run "pack-refs" before
+    -        "reflog expire", which can take a while, only to then die on an
+    -        invalid gc.reflogExpire{Unreachable,} configuration.
+    +     1) Similarly to 8ab5aa4bd8 ("parseopt: handle malformed --expire
+    +        arguments more nicely", 2018-04-21) we'll now die early if the
+    +        config variables are set to invalid values.
+    +
+    +        We run "pack-refs" before "reflog expire", which can take a while,
+    +        only to then die on an invalid gc.reflogExpire{Unreachable,}
+    +        configuration.
+     
+          2) Not invoking the command at all means it won't show up in trace
+    -        output, which makes what's going on more obvious.
+    +        output, which makes what's going on more obvious when the two are
+    +        set to "never".
+    +
+    +     3) As a later change documents we lock the refs when looping over the
+    +        refs to expire, even in cases where we end up doing nothing due to
+    +        this config.
+    +
+    +        For the reasons noted in the earlier "assert lack of early exit"
+    +        change I don't think it's worth it to bend over backwards in "git
+    +        reflog expire" itself to carefully detect if we'll really do
+    +        nothing given the combination of all its possible options and skip
+    +        that locking, but that's easy to detect here in "gc" where we'll
+    +        only run "reflog expire" in a relatively simple mode.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+7:  55dd203a042 < -:  ----------- reflog expire: don't assert the OID when locking refs
+-:  ----------- > 8:  e0814569aba reflog expire: don't assert the OID when locking refs
+-- 
+2.21.0.360.g471c308f928
+
