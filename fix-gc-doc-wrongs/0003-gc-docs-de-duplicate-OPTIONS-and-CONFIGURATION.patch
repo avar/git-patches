@@ -1,0 +1,123 @@
+From d6f1e001a432971ce9d7cd680e3309fd9ce242ec Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Mar 2019 16:11:26 +0100
+Subject: [PATCH 3/4] gc docs: de-duplicate "OPTIONS" and "CONFIGURATION"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In an earlier commit I started including the "gc.*" documentation from
+git-config(1) in the git-gc(1) documentation. That still left us in a
+state where the "--auto" option and "gc.auto" were redundantly
+discussing the same thing.
+
+Fix that by briefly discussing how the option itself works for
+"--auto", and for the rest referring to the configuration
+documentation.
+
+This revealed existing blind spots in the configuration documentation,
+move over the documentation and reword as appropriate.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/gc.txt | 27 +++++++++++++++++++++++----
+ Documentation/git-gc.txt    | 25 ++++---------------------
+ 2 files changed, 27 insertions(+), 25 deletions(-)
+
+diff --git a/Documentation/config/gc.txt b/Documentation/config/gc.txt
+index a834a801cd6..605e14bc80b 100644
+--- a/Documentation/config/gc.txt
++++ b/Documentation/config/gc.txt
+@@ -19,13 +19,27 @@ gc.auto::
+ 	objects in the repository, `git gc --auto` will pack them.
+ 	Some Porcelain commands use this command to perform a
+ 	light-weight garbage collection from time to time.  The
+-	default value is 6700.  Setting this to 0 disables it.
++	default value is 6700.
+++
++Setting this to 0 disables not only automatic packing based on the
++number of loose objects, but any other heuristic `git gc --auto` will
++otherwise use to determine if there's work to do, such as
++`gc.autoPackLimit`.
+++
++The repacking of loose objects will be performed with `git repack -d
++-l`.
+ 
+ gc.autoPackLimit::
++
+ 	When there are more than this many packs that are not
+ 	marked with `*.keep` file in the repository, `git gc
+ 	--auto` consolidates them into one larger pack.  The
+-	default	value is 50.  Setting this to 0 disables it.
++	default value is 50.  Setting this (or `gc.auto`) to 0
++	disables it. Packs will be consolidated using the `-A` option
++	of `git repack`.
+++
++See the `gc.bigPackThreshold` configuration variable below. When in
++use it'll effect how the auto pack limit works.
+ 
+ gc.autoDetach::
+ 	Make `git gc --auto` return immediately and run in background
+@@ -35,13 +49,18 @@ gc.bigPackThreshold::
+ 	If non-zero, all packs larger than this limit are kept when
+ 	`git gc` is run. This is very similar to `--keep-base-pack`
+ 	except that all packs that meet the threshold are kept, not
+-	just the base pack. Defaults to zero. Common unit suffixes of
+-	'k', 'm', or 'g' are supported.
++	just the base pack. Defaults to zero or a memory heuristic.
++	Common unit suffixes of 'k', 'm', or 'g' are supported.
+ +
+ Note that if the number of kept packs is more than gc.autoPackLimit,
+ this configuration variable is ignored, all packs except the base pack
+ will be repacked. After this the number of packs should go below
+ gc.autoPackLimit and gc.bigPackThreshold should be respected again.
+++
++If the amount of memory is estimated not enough for `git repack` to
++run smoothly and `gc.bigPackThreshold` is not set, the largest pack
++will also be excluded (which is the equivalent of running `git gc`
++with `--keep-base-pack`).
+ 
+ gc.writeCommitGraph::
+ 	If true, then gc will rewrite the commit-graph file when
+diff --git a/Documentation/git-gc.txt b/Documentation/git-gc.txt
+index 9edf4e465b4..154c7c5e652 100644
+--- a/Documentation/git-gc.txt
++++ b/Documentation/git-gc.txt
+@@ -49,29 +49,12 @@ OPTIONS
+ --auto::
+ 	With this option, 'git gc' checks whether any housekeeping is
+ 	required; if not, it exits without performing any work.
+-	Some git commands run `git gc --auto` after performing
+-	operations that could create many loose objects. Housekeeping
+-	is required if there are too many loose objects or too many
+-	packs in the repository.
+ +
+-If the number of loose objects exceeds the value of the `gc.auto`
+-configuration variable, then all loose objects are combined into a
+-single pack using `git repack -d -l`.  Setting the value of `gc.auto`
+-to 0 disables automatic packing of loose objects.
++See the `gc.auto' option in the "CONFIGURATION" below for how this
++heuristic works.
+ +
+-If the number of packs exceeds the value of `gc.autoPackLimit`,
+-then existing packs (except those marked with a `.keep` file
+-or over `gc.bigPackThreshold` limit)
+-are consolidated into a single pack by using the `-A` option of
+-'git repack'.
+-If the amount of memory is estimated not enough for `git repack` to
+-run smoothly and `gc.bigPackThreshold` is not set, the largest
+-pack will also be excluded (this is the equivalent of running `git gc`
+-with `--keep-base-pack`).
+-Setting `gc.autoPackLimit` to 0 disables automatic consolidation of
+-packs.
+-+
+-If houskeeping is required due to many loose objects or packs, all
++Once housekeeping is triggered by exceeding the limits of
++configurations options such as `gc.auto` and `gc.autoPackLimit`, all
+ other housekeeping tasks (e.g. rerere, working trees, reflog...) will
+ be performed as well.
+ 
+-- 
+2.21.0.360.g471c308f928
+
