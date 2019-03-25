@@ -1,0 +1,204 @@
+From e7c801f73b677627ab1650145ebacf06780dda84 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190314214740.23360-1-avarab@gmail.com>
+References: <20190314214740.23360-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 25 Mar 2019 13:06:04 +0100
+Subject: [PATCH v3 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (8):
+  commit-graph tests: split up corrupt_graph_and_verify()
+  commit-graph tests: test a graph that's too small
+  commit-graph: fix segfault on e.g. "git status"
+  commit-graph: don't early exit(1) on e.g. "git status"
+  commit-graph: don't pass filename to load_commit_graph_one_fd_st()
+  commit-graph verify: detect inability to read the graph
+  commit-graph write: don't die if the existing graph is corrupt
+  commit-graph: improve & i18n error messages
+
+ builtin/commit-graph.c  |  23 +++++--
+ commit-graph.c          | 132 +++++++++++++++++++++++++++-------------
+ commit-graph.h          |   4 +-
+ commit.h                |   6 ++
+ t/t5318-commit-graph.sh |  42 +++++++++++--
+ 5 files changed, 153 insertions(+), 54 deletions(-)
+
+Range-diff:
+1:  2f8ba0adf8 = 1:  83ff92a39d commit-graph tests: split up corrupt_graph_and_verify()
+2:  800b17edde = 2:  b9170c35e6 commit-graph tests: test a graph that's too small
+3:  7083ab81c7 ! 3:  daf38a9af7 commit-graph: fix segfault on e.g. "git status"
+    @@ -58,20 +58,10 @@
+      --- a/commit-graph.c
+      +++ b/commit-graph.c
+     @@
+    - 		last_chunk_offset = chunk_offset;
+    - 	}
+    - 
+    -+	if (verify_commit_graph_lite(graph))
+    -+		return NULL;
+    -+
+    - 	return graph;
+    + 	return ret;
+      }
+      
+    -@@
+    - #define GENERATION_ZERO_EXISTS 1
+    - #define GENERATION_NUMBER_EXISTS 2
+    - 
+    -+int verify_commit_graph_lite(struct commit_graph *g)
+    ++static int verify_commit_graph_lite(struct commit_graph *g)
+     +{
+     +	/*
+     +	 * Basic validation shared between parse_commit_graph()
+    @@ -101,9 +91,19 @@
+     +	return 0;
+     +}
+     +
+    - int verify_commit_graph(struct repository *r, struct commit_graph *g)
+    + struct commit_graph *parse_commit_graph(void *graph_map, int fd,
+    + 					size_t graph_size)
+      {
+    - 	uint32_t i, cur_fanout_pos = 0;
+    +@@
+    + 		last_chunk_offset = chunk_offset;
+    + 	}
+    + 
+    ++	if (verify_commit_graph_lite(graph))
+    ++		return NULL;
+    ++
+    + 	return graph;
+    + }
+    + 
+     @@
+      		return 1;
+      	}
+    @@ -122,18 +122,6 @@
+      		return verify_commit_graph_error;
+      
+     
+    - diff --git a/commit-graph.h b/commit-graph.h
+    - --- a/commit-graph.h
+    - +++ b/commit-graph.h
+    -@@
+    - 			struct string_list *commit_hex,
+    - 			int append, int report_progress);
+    - 
+    -+int verify_commit_graph_lite(struct commit_graph *g);
+    - int verify_commit_graph(struct repository *r, struct commit_graph *g);
+    - 
+    - void close_commit_graph(struct repository *);
+    -
+      diff --git a/t/t5318-commit-graph.sh b/t/t5318-commit-graph.sh
+      --- a/t/t5318-commit-graph.sh
+      +++ b/t/t5318-commit-graph.sh
+4:  d00564ae89 ! 4:  3d7d8c4deb commit-graph: don't early exit(1) on e.g. "git status"
+    @@ -29,7 +29,15 @@
+         passed to that function for the the "graph file %s is too small" error
+         message.
+     
+    +    This leaves load_commit_graph_one() unused by everything except the
+    +    internal prepare_commit_graph_one() function, so let's mark it as
+    +    "static". If someone needs it in the future we can remove the "static"
+    +    attribute. I could also rewrite its sole remaining
+    +    user ("prepare_commit_graph_one()") to use
+    +    load_commit_graph_one_fd_st() instead, but let's leave it at this.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    Signed-off-by: Ramsay Jones <ramsay@ramsayjones.plus.com>
+     
+      diff --git a/builtin/commit-graph.c b/builtin/commit-graph.c
+      --- a/builtin/commit-graph.c
+    @@ -131,7 +139,7 @@
+      		close(fd);
+     -		die(_("graph file %s is too small"), graph_file);
+     +		error(_("graph file %s is too small"), graph_file);
+    -+		return 0;
+    ++		return NULL;
+      	}
+      	graph_map = xmmap(NULL, graph_size, PROT_READ, MAP_PRIVATE, fd, 0);
+      	ret = parse_commit_graph(graph_map, fd, graph_size);
+    @@ -143,9 +151,11 @@
+      	}
+      
+      	return ret;
+    +@@
+    + 	return graph;
+      }
+      
+    -+struct commit_graph *load_commit_graph_one(const char *graph_file)
+    ++static struct commit_graph *load_commit_graph_one(const char *graph_file)
+     +{
+     +
+     +	struct stat st;
+    @@ -158,9 +168,9 @@
+     +	return load_commit_graph_one_fd_st(graph_file, fd, &st);
+     +}
+     +
+    - struct commit_graph *parse_commit_graph(void *graph_map, int fd,
+    - 					size_t graph_size)
+    + static void prepare_commit_graph_one(struct repository *r, const char *obj_dir)
+      {
+    + 	char *graph_name;
+     
+      diff --git a/commit-graph.h b/commit-graph.h
+      --- a/commit-graph.h
+    @@ -174,9 +184,10 @@
+      /*
+       * Given a commit struct, try to fill the commit struct info, including:
+     @@
+    + 	const unsigned char *chunk_extra_edges;
+      };
+      
+    - struct commit_graph *load_commit_graph_one(const char *graph_file);
+    +-struct commit_graph *load_commit_graph_one(const char *graph_file);
+     +struct commit_graph *load_commit_graph_one_fd_st(const char *graph_file,
+     +						 int fd, struct stat *st);
+      
+5:  25ee185bf7 ! 5:  15687fb21f commit-graph: don't pass filename to load_commit_graph_one_fd_st()
+    @@ -59,7 +59,7 @@
+      		close(fd);
+     -		error(_("graph file %s is too small"), graph_file);
+     +		error(_("commit-graph file is too small"));
+    - 		return 0;
+    + 		return NULL;
+      	}
+      	graph_map = xmmap(NULL, graph_size, PROT_READ, MAP_PRIVATE, fd, 0);
+     @@
+    @@ -70,15 +70,15 @@
+     +	return load_commit_graph_one_fd_st(fd, &st);
+      }
+      
+    - struct commit_graph *parse_commit_graph(void *graph_map, int fd,
+    + static void prepare_commit_graph_one(struct repository *r, const char *obj_dir)
+     
+      diff --git a/commit-graph.h b/commit-graph.h
+      --- a/commit-graph.h
+      +++ b/commit-graph.h
+     @@
+    + 	const unsigned char *chunk_extra_edges;
+      };
+      
+    - struct commit_graph *load_commit_graph_one(const char *graph_file);
+     -struct commit_graph *load_commit_graph_one_fd_st(const char *graph_file,
+     -						 int fd, struct stat *st);
+     +struct commit_graph *load_commit_graph_one_fd_st(int fd, struct stat *st);
+6:  7619b46987 = 6:  30145c2dca commit-graph verify: detect inability to read the graph
+7:  17ee4fc050 ! 7:  51e3aa651b commit-graph write: don't die if the existing graph is corrupt
+    @@ -57,7 +57,7 @@
+      	int config_value;
+      
+     +	if (git_env_bool(GIT_TEST_COMMIT_GRAPH_DIE_ON_LOAD, 0))
+    -+		die("Dying as requested by the '%s' variable on commit-graph load!",
+    ++		die("dying as requested by the '%s' variable on commit-graph load!",
+     +		    GIT_TEST_COMMIT_GRAPH_DIE_ON_LOAD);
+     +
+      	if (r->objects->commit_graph_attempted)
+8:  29ab2895b7 = 8:  e7c801f73b commit-graph: improve & i18n error messages
+-- 
+2.21.0.360.g471c308f928
+
