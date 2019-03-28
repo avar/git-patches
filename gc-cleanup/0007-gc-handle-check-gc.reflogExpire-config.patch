@@ -1,0 +1,117 @@
+From 48e5c234ae4c8dbdfdc5267fb712f9fe1e0ae124 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190315155959.12390-1-avarab@gmail.com>
+References: <20190315155959.12390-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Mar 2019 23:22:02 +0100
+Subject: [PATCH v4 7/7] gc: handle & check gc.reflogExpire config
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Don't redundantly run "git reflog expire --all" when gc.reflogExpire
+and gc.reflogExpireUnreachable are set to "never", and die immediately
+if those configuration valuer are bad.
+
+As an earlier "assert lack of early exit" change to the tests for "git
+reflog expire" shows, an early check of gc.reflogExpire{Unreachable,}
+isn't wanted in general for "git reflog expire", but it makes sense
+for "gc" because:
+
+ 1) Similarly to 8ab5aa4bd8 ("parseopt: handle malformed --expire
+    arguments more nicely", 2018-04-21) we'll now die early if the
+    config variables are set to invalid values.
+
+    We run "pack-refs" before "reflog expire", which can take a while,
+    only to then die on an invalid gc.reflogExpire{Unreachable,}
+    configuration.
+
+ 2) Not invoking the command at all means it won't show up in trace
+    output, which makes what's going on more obvious when the two are
+    set to "never".
+
+ 3) As a later change documents we lock the refs when looping over the
+    refs to expire, even in cases where we end up doing nothing due to
+    this config.
+
+    For the reasons noted in the earlier "assert lack of early exit"
+    change I don't think it's worth it to bend over backwards in "git
+    reflog expire" itself to carefully detect if we'll really do
+    nothing given the combination of all its possible options and skip
+    that locking, but that's easy to detect here in "gc" where we'll
+    only run "reflog expire" in a relatively simple mode.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c  | 17 +++++++++++++++++
+ t/t6500-gc.sh | 19 +++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index ae716a00d4..8943bcc300 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -116,6 +116,19 @@ static void process_log_file_on_signal(int signo)
+ 	raise(signo);
+ }
+ 
++static int gc_config_is_timestamp_never(const char *var)
++{
++	const char *value;
++	timestamp_t expire;
++
++	if (!git_config_get_value(var, &value) && value) {
++		if (parse_expiry_date(value, &expire))
++			die(_("failed to parse '%s' value '%s'"), var, value);
++		return expire == 0;
++	}
++	return 0;
++}
++
+ static void gc_config(void)
+ {
+ 	const char *value;
+@@ -127,6 +140,10 @@ static void gc_config(void)
+ 			pack_refs = git_config_bool("gc.packrefs", value);
+ 	}
+ 
++	if (gc_config_is_timestamp_never("gc.reflogexpire") &&
++	    gc_config_is_timestamp_never("gc.reflogexpireunreachable"))
++		prune_reflogs = 0;
++
+ 	git_config_get_int("gc.aggressivewindow", &aggressive_window);
+ 	git_config_get_int("gc.aggressivedepth", &aggressive_depth);
+ 	git_config_get_int("gc.auto", &gc_auto_threshold);
+diff --git a/t/t6500-gc.sh b/t/t6500-gc.sh
+index 4684d06552..7411bf7fec 100755
+--- a/t/t6500-gc.sh
++++ b/t/t6500-gc.sh
+@@ -120,6 +120,25 @@ test_expect_success 'gc --quiet' '
+ 	test_must_be_empty stderr
+ '
+ 
++test_expect_success 'gc.reflogExpire{Unreachable,}=never skips "expire" via "gc"' '
++	test_config gc.reflogExpire never &&
++	test_config gc.reflogExpireUnreachable never &&
++
++	GIT_TRACE=$(pwd)/trace.out git gc &&
++
++	# Check that git-pack-refs is run as a sanity check (done via
++	# gc_before_repack()) but that git-expire is not.
++	grep -E "^trace: (built-in|exec|run_command): git pack-refs --" trace.out &&
++	! grep -E "^trace: (built-in|exec|run_command): git reflog expire --" trace.out
++'
++
++test_expect_success 'one of gc.reflogExpire{Unreachable,}=never does not skip "expire" via "gc"' '
++	>trace.out &&
++	test_config gc.reflogExpire never &&
++	GIT_TRACE=$(pwd)/trace.out git gc &&
++	grep -E "^trace: (built-in|exec|run_command): git reflog expire --" trace.out
++'
++
+ run_and_wait_for_auto_gc () {
+ 	# We read stdout from gc for the side effect of waiting until the
+ 	# background gc process exits, closing its fd 9.  Furthermore, the
+-- 
+2.21.0.392.gf8f6787159e
+
