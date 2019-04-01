@@ -1,0 +1,155 @@
+From 0e5cc28016c2eade5c7aa024883d97f40530dc2d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Mar 2019 10:55:04 +0100
+Subject: [PATCH 2/2] praise: make 'blameless' cultural enforcement
+ configurable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The culture shock of having a 'blameless' culture from day one might
+be too much for some, so let's allow for setting
+"blame.culture.enforcement=warning" to allow for easing into the
+default of "error".
+
+Also allow for excluding non-interactive users of "blame". There are
+some automated users who use "blame" but don't use the "--porcelain"
+format (which was already excluded). Those can set
+e.g. "error:interactive" to only emit errors when "blame" is
+interacting with a TTY.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/blame.txt | 12 ++++++++++++
+ builtin/blame.c                | 27 ++++++++++++++++++++++++++-
+ t/t8002-blame.sh               | 28 ++++++++++++++++++++++++++++
+ 3 files changed, 66 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/config/blame.txt b/Documentation/config/blame.txt
+index c85b35de17..13570192cf 100644
+--- a/Documentation/config/blame.txt
++++ b/Documentation/config/blame.txt
+@@ -7,6 +7,18 @@ blame.culture::
+ +
+ Note that the `--porcelain` format for machine consumption is exempt
+ from this enforcement to avoid breaking existing scripts.
+++
++See `blame.culture.enforcement` below for tweaking the error behavior.
++
++blame.culture.enforcement::
++	When `blame.culture=blameless` is set invoking
++	linkgit:git-blame[1] becomes an `error` This variable can also
++	be set to `warning` to only warn, and to either
++	`error:interactive` or `warning:interactive` to only error out
++	or warn if stderr is connected to a TTY.
+++
++This allows for enforcing a blameless culture on interactive users,
++while leaving any automated use alone.
+ 
+ blame.blankBoundary::
+ 	Show blank commit object name for boundary commits in
+diff --git a/builtin/blame.c b/builtin/blame.c
+index 238b19db48..9f62950559 100644
+--- a/builtin/blame.c
++++ b/builtin/blame.c
+@@ -59,6 +59,12 @@ static size_t blame_date_width;
+ 
+ static struct string_list mailmap = STRING_LIST_INIT_NODUP;
+ 
++static enum {
++	BLAME_ENFORCE_ERROR		= 1<<0,
++	BLAME_ENFORCE_WARNING		= 1<<1,
++	BLAME_ENFORCE_INTERACTIVE	= 1<<2
++} blame_culture_enforcement = BLAME_ENFORCE_ERROR;
++
+ #ifndef DEBUG
+ #define DEBUG 0
+ #endif
+@@ -686,6 +692,19 @@ static int git_blame_config(const char *var, const char *value, void *cb)
+ 		blameless_culture = !strcmp(value, "blameless");
+ 		return 0;
+ 	}
++	if (!strcmp(var, "blame.culture.enforcement")) {
++		if (!strcmp(value, "error"))
++			blame_culture_enforcement = BLAME_ENFORCE_ERROR;
++		else if (!strcmp(value, "error:interactive"))
++			blame_culture_enforcement = (BLAME_ENFORCE_ERROR |
++						     BLAME_ENFORCE_INTERACTIVE);
++		else if (!strcmp(value, "warning"))
++			blame_culture_enforcement = BLAME_ENFORCE_WARNING;
++		else if (!strcmp(value, "warning:interactive"))
++			blame_culture_enforcement = (BLAME_ENFORCE_WARNING |
++						     BLAME_ENFORCE_INTERACTIVE);
++		return 0;
++	}
+ 	if (!strcmp(var, "blame.showemail")) {
+ 		int *output_option = cb;
+ 		if (git_config_bool(var, value))
+@@ -897,7 +916,13 @@ int cmd_blame(int argc, const char **argv, const char *prefix)
+ 		blame_date_mode.type = DATE_ISO8601;
+ 	} else if (!cmd_is_praise && blameless_culture &&
+ 		   !(output_option & OUTPUT_PORCELAIN)) {
+-		die(_("must be invoked as 'git praise' with 'blame.culture=blameless' set!"));
++		if (!(blame_culture_enforcement & BLAME_ENFORCE_INTERACTIVE) ||
++		    isatty(2)) {
++			if (blame_culture_enforcement & BLAME_ENFORCE_ERROR)
++				die(_("must be invoked as 'git praise' with 'blame.culture=blameless' set!"));
++			else if (blame_culture_enforcement & BLAME_ENFORCE_WARNING)
++				warning(_("should be invoked as 'git praise' with 'blame.culture=blameless' set!"));
++		}
+ 	} else {
+ 		blame_date_mode = revs.date_mode;
+ 	}
+diff --git a/t/t8002-blame.sh b/t/t8002-blame.sh
+index 2d59b856d1..09ef0bc440 100755
+--- a/t/t8002-blame.sh
++++ b/t/t8002-blame.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git blame'
+ . ./test-lib.sh
++. "$TEST_DIRECTORY/lib-terminal.sh"
+ 
+ PROG='git blame -c'
+ . "$TEST_DIRECTORY"/annotate-tests.sh
+@@ -60,9 +61,36 @@ test_expect_success 'praise' '
+ 
+ test_expect_success 'enforced praise' '
+ 	test_must_fail git -c blame.culture=blameless blame one 2>err &&
++	test_i18ngrep "must be.*git praise" err &&
++	test_must_fail git -c blame.culture=blameless \
++		-c blame.culture.enforcement=error blame one 2>err &&
+ 	test_i18ngrep "must be.*git praise" err
+ '
+ 
++test_expect_success 'recommended praise' '
++	git -c blame.culture=blameless \
++		-c blame.culture.enforcement=warning blame one 2>err &&
++	test_i18ngrep "should be.*git praise" err
++'
++
++test_expect_success TTY 'interactive: praise blame.culture.enforcement=*:interactive' '
++	test_must_fail test_terminal git -c blame.culture=blameless \
++		-c blame.culture.enforcement=error:interactive blame one 2>err &&
++	test_i18ngrep "must be.*git praise" err &&
++	test_terminal git -c blame.culture=blameless \
++		-c blame.culture.enforcement=warning:interactive blame one 2>err &&
++	test_i18ngrep "should be.*git praise" err
++'
++
++test_expect_success TTY 'non-interactive: praise blame.culture.enforcement=*:interactive' '
++	git -c blame.culture=blameless \
++		-c blame.culture.enforcement=error:interactive blame one 2>err &&
++	test_i18ngrep ! "must be.*git praise" err &&
++	git -c blame.culture=blameless \
++		-c blame.culture.enforcement=warning:interactive blame one 2>err &&
++	test_i18ngrep ! "should be.*git praise" err
++'
++
+ test_expect_success 'blame with showemail options' '
+ 	git blame --show-email one >blame1 &&
+ 	find_blame <blame1 >result &&
+-- 
+2.21.0.392.gf8f6787159e
+
