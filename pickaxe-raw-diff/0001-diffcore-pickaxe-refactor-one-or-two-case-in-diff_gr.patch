@@ -1,0 +1,54 @@
+From 09f85f66d33856266854ca038062a66bca4e3c86 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190424102609.GA19697@vmlxhi-102.adit-jv.com>
+References: <20190424102609.GA19697@vmlxhi-102.adit-jv.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 24 Apr 2019 16:57:20 +0200
+Subject: [PATCH 1/2] diffcore-pickaxe: refactor !one or !two case in diff_grep
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the code around processing an added (!one) or deleted (!two)
+file in diff_grep, which is used by the -G option.
+
+This makes a subsequent change where we'd like to munge the "one" or
+"two" "ptr" smaller. While we're at it let's add an assert that "one"
+and "two" can't both be false at the same time, which is always the
+case.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diffcore-pickaxe.c | 16 ++++++++++------
+ 1 file changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/diffcore-pickaxe.c b/diffcore-pickaxe.c
+index a9c6d60df2..3c6416bfe2 100644
+--- a/diffcore-pickaxe.c
++++ b/diffcore-pickaxe.c
+@@ -45,12 +45,16 @@ static int diff_grep(mmfile_t *one, mmfile_t *two,
+ 	xpparam_t xpp;
+ 	xdemitconf_t xecfg;
+ 
+-	if (!one)
+-		return !regexec_buf(regexp, two->ptr, two->size,
+-				    1, &regmatch, 0);
+-	if (!two)
+-		return !regexec_buf(regexp, one->ptr, one->size,
+-				    1, &regmatch, 0);
++	if (!one || !two) {
++		mmfile_t *which = one ? one : two;
++		int ret;
++		char *string = which->ptr;
++		size_t size = which->size;
++		assert(!(!one && !two));
++		ret = !regexec_buf(regexp, string, size,
++				   1, &regmatch, 0);
++		return ret;
++	}
+ 
+ 	/*
+ 	 * We have both sides; need to run textual diff and see if
+-- 
+2.21.0.593.g511ec345e18
+
