@@ -1,0 +1,81 @@
+From 21307f1f2d05efd74d1da0c9e8b74d49bfe8e42f Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190506232309.28538-1-avarab@gmail.com>
+References: <20190506232309.28538-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 May 2019 12:18:07 +0200
+Subject: [PATCH v3 6/6] perf-lib.sh: forbid the use of GIT_TEST_INSTALLED
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in preceding commits setting GIT_TEST_INSTALLED has never
+been supported or documented, and as noted in an earlier t/perf/README
+change to the extent that it's been documented nobody's notices that
+the example hasn't worked since 3c8f12c96c ("test-lib: reorder and
+include GIT-BUILD-OPTIONS a lot earlier", 2012-06-24).
+
+We could directly support GIT_TEST_INSTALLED for invocations without
+the "run" script, such as:
+
+    GIT_TEST_INSTALLED=../../ ./p0000-perf-lib-sanity.sh
+    GIT_TEST_INSTALLED=/home/avar/g/git ./p0000-perf-lib-sanity.sh
+
+But while not having this "error" will "work", it won't write the the
+resulting "test-results/*" files to the right place, and thus a
+subsequent call to aggregate.perl won't work as expected.
+
+Let's just tell the user that they need to use the "run" script,
+which'll correctly deal with this and set the right
+PERF_RESULTS_PREFIX.
+
+If someone's in desperate need of bypassing "run" for whatever reason
+they can trivially do so by setting "PERF_SET_GIT_TEST_INSTALLED", but
+not we won't have people who expect GIT_TEST_INSTALLED to just work
+wondering why their aggregation doesn't work, even though they're
+running the right "git".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/perf-lib.sh | 11 +++++++++++
+ t/perf/run         |  2 ++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/t/perf/perf-lib.sh b/t/perf/perf-lib.sh
+index 9cdccba222..b58a43ea43 100644
+--- a/t/perf/perf-lib.sh
++++ b/t/perf/perf-lib.sh
+@@ -27,6 +27,17 @@ TEST_NO_MALLOC_CHECK=t
+ 
+ . ../test-lib.sh
+ 
++if test -n "$GIT_TEST_INSTALLED" -a -z "$PERF_SET_GIT_TEST_INSTALLED"
++then
++	error "Do not use GIT_TEST_INSTALLED with the perf tests.
++
++Instead use:
++
++    ./run <path-to-git> -- <tests>
++
++See t/perf/README for details."
++fi
++
+ # Variables from test-lib that are normally internal to the tests; we
+ # need to export them for test_perf subshells
+ export TEST_DIRECTORY TRASH_DIRECTORY GIT_BUILD_DIR GIT_TEST_CMP
+diff --git a/t/perf/run b/t/perf/run
+index cd3882b117..c7b86104e1 100755
+--- a/t/perf/run
++++ b/t/perf/run
+@@ -84,6 +84,8 @@ set_git_test_installed () {
+ 		GIT_TEST_INSTALLED=$mydir_abs
+ 	fi
+ 	export GIT_TEST_INSTALLED
++	PERF_SET_GIT_TEST_INSTALLED=true
++	export PERF_SET_GIT_TEST_INSTALLED
+ }
+ 
+ run_dirs_helper () {
+-- 
+2.21.0.593.g511ec345e18
+

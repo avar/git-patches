@@ -1,0 +1,77 @@
+From 64df9157a4b9c89afba961fec305704751ecae23 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190506232309.28538-1-avarab@gmail.com>
+References: <20190506232309.28538-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 May 2019 11:36:17 +0200
+Subject: [PATCH v3 5/6] perf tests: add "bindir" prefix to git tree test
+ results
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the output file names in test-results/ to be
+"test-results/bindir_<munged dir>" rather than just
+"test-results/<munged dir>".
+
+This is for consistency with the "build_" directories we have for
+built revisions, i.e. "test-results/build_<SHA-1>".
+
+There's no user-visible functional changes here, it just makes it
+easier to see at a glance what "test-results" files are of what "type"
+as they're all explicitly grouped together now, and to grep this code
+to find both the run_dirs_helper() implementation and its
+corresponding aggregate.perl code.
+
+Note that we already guarantee that the rest of the
+PERF_RESULTS_PREFIX is an absolute path, and since it'll start with
+e.g. "/" which we munge to "_" we'll up with a readable string like
+"bindir_home_avar[...]".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/aggregate.perl | 4 +++-
+ t/perf/run            | 2 +-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/t/perf/aggregate.perl b/t/perf/aggregate.perl
+index c8f4a78903..b951747e08 100755
+--- a/t/perf/aggregate.perl
++++ b/t/perf/aggregate.perl
+@@ -100,6 +100,7 @@ sub format_size {
+ while (scalar @ARGV) {
+ 	my $arg = $ARGV[0];
+ 	my $dir;
++	my $prefix = '';
+ 	last if -f $arg or $arg eq "--";
+ 	if (! -d $arg) {
+ 		my $rev = Git::command_oneline(qw(rev-parse --verify), $arg);
+@@ -109,10 +110,11 @@ sub format_size {
+ 	} else {
+ 		$dir = realpath($arg);
+ 		$dirnames{$dir} = $dir;
++		$prefix .= 'bindir';
+ 	}
+ 	push @dirs, $dir;
+ 	$dirnames{$dir} ||= $arg;
+-	my $prefix = $dir;
++	$prefix .= $dir;
+ 	$prefix =~ tr/^a-zA-Z0-9/_/c;
+ 	$prefixes{$dir} = $prefix . '.';
+ 	shift @ARGV;
+diff --git a/t/perf/run b/t/perf/run
+index 85b7bd31d5..cd3882b117 100755
+--- a/t/perf/run
++++ b/t/perf/run
+@@ -102,7 +102,7 @@ run_dirs_helper () {
+ 		unset GIT_TEST_INSTALLED
+ 	elif test -d "$mydir"
+ 	then
+-		PERF_RESULTS_PREFIX=$(cd $mydir && printf "%s" "$(pwd)" | tr -c "[a-zA-Z0-9]" "_").
++		PERF_RESULTS_PREFIX=bindir$(cd $mydir && printf "%s" "$(pwd)" | tr -c "[a-zA-Z0-9]" "_").
+ 		set_git_test_installed "$mydir"
+ 	else
+ 		rev=$(git rev-parse --verify "$mydir" 2>/dev/null) ||
+-- 
+2.21.0.593.g511ec345e18
+

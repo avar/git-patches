@@ -1,0 +1,114 @@
+From 21307f1f2d05efd74d1da0c9e8b74d49bfe8e42f Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190506232309.28538-1-avarab@gmail.com>
+References: <20190506232309.28538-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 May 2019 12:51:19 +0200
+Subject: [PATCH v3 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  perf README: correct docs for 3c8f12c96c regression
+  perf aggregate: remove GIT_TEST_INSTALLED from --codespeed
+  perf-lib.sh: make "./run <revisions>" use the correct gits
+  perf-lib.sh: remove GIT_TEST_INSTALLED from perf-lib.sh
+  perf tests: add "bindir" prefix to git tree test results
+  perf-lib.sh: forbid the use of GIT_TEST_INSTALLED
+
+ t/perf/README         |  2 +-
+ t/perf/aggregate.perl | 17 +++++++++--------
+ t/perf/perf-lib.sh    | 18 ++++++++++--------
+ t/perf/run            | 43 +++++++++++++++++++++++++++++++++----------
+ 4 files changed, 53 insertions(+), 27 deletions(-)
+
+Range-diff:
+-:  ---------- > 1:  6684dca042 perf README: correct docs for 3c8f12c96c regression
+-:  ---------- > 2:  c4e903d898 perf aggregate: remove GIT_TEST_INSTALLED from --codespeed
+1:  22a132ed64 ! 3:  9d2d162c64 perf-lib.sh: make "./run <revisions>" use the correct gits
+    @@ -40,9 +40,13 @@
+         this will subtly fail in test-lib.sh. This has always been the case
+         even before 0baf78e7bc, and as documented in t/README the
+         GIT_TEST_INSTALLED variable should be set to an absolute path (needs
+    -    to be set "to the bindir", which is always absolute). Perhaps that
+    -    should be dealt with in the future, but I'm leaving that alone for
+    -    now.
+    +    to be set "to the bindir", which is always absolute), and the "perf"
+    +    framework expects to munge it itself.
+    +
+    +    Perhaps that should be dealt with in the future to allow manually
+    +    setting GIT_TEST_INSTALLED, but as a preceding commit showed the user
+    +    can just use the "run" script, which'll also pick the right output
+    +    directory for the test results as expected by aggregate.perl.
+     
+         1. https://public-inbox.org/git/20190502222409.GA15631@sigill.intra.peff.net/
+     
+2:  f43beb6450 ! 4:  58f1dd3f6f perf-lib.sh: remove GIT_TEST_INSTALLED from perf-lib.sh
+    @@ -26,28 +26,28 @@
+         We'll just do the right thing because PERF_RESULTS_PREFIX will be
+         empty, and test-lib.sh takes care of finding where our git is.
+     
+    -    Refactoring this revealed a few bugs, e.g. while a relative git path
+    -    was supported via e.g.:
+    +    Any refactoring of this code needs to change both the shell code and
+    +    the Perl code in aggregate.perl, because when running e.g.:
+     
+             ./run ../../ -- <test>
+     
+    -    We'd just print out ".." as the header, since we'd always take the
+    -    content after the last slash. Now we'll always resolve the absolute
+    -    path to something we detect to be be a manually supplied bindir, and
+    -    print the full path in the aggregation.
+    +    The "../../" path to a relative bindir needs to be munged to a
+    +    filename containing the results, and critically aggregate.perl does
+    +    not get passed the path to those aggregations, just "../..".
+     
+    -    There was also a long-standing bug in the codespeed output where the
+    -    "environment" for N number of tests would be whatever our
+    -    GIT_TEST_INSTALLED had been set to by the last of those N runs. Let's
+    -    instead just fall back to "uname -r", which is a more sensible
+    -    "environment" than some random build directory path, even for the N=1
+    -    case.
+    +    Let's fix cases where aggregate.perl would print e.g. ".." in its
+    +    report output for this, and "git" for "/home/avar/g/git", i.e. it
+    +    would always pick the last element. Now'll always print the full path
+    +    instead.
+    +
+    +    This also makes the code sturdier, e.g. you can feed "../.."  to
+    +    "./run" and then an absolute path to the aggregate.perl script, as
+    +    long as the absolute path and "../.." resolved to the same directory
+    +    printing the aggregation will work.
+     
+         Also simplify the "[_*]" on the RHS of "tr -c", we're trimming
+         everything to "_", so we don't need that.
+     
+    -    https://public-inbox.org/git/20190502222409.GA15631@sigill.intra.peff.net/
+    -
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      diff --git a/t/perf/aggregate.perl b/t/perf/aggregate.perl
+    @@ -80,16 +80,6 @@
+      	my $prefix = $dir;
+      	$prefix =~ tr/^a-zA-Z0-9/_/c;
+      	$prefixes{$dir} = $prefix . '.';
+    -@@
+    - 		$environment = $reponame;
+    - 	} elsif (exists $ENV{GIT_PERF_REPO_NAME} and $ENV{GIT_PERF_REPO_NAME} ne "") {
+    - 		$environment = $ENV{GIT_PERF_REPO_NAME};
+    --	} elsif (exists $ENV{GIT_TEST_INSTALLED} and $ENV{GIT_TEST_INSTALLED} ne "") {
+    --		$environment = $ENV{GIT_TEST_INSTALLED};
+    --		$environment =~ s|/bin-wrappers$||;
+    - 	} else {
+    - 		$environment = `uname -r`;
+    - 		chomp $environment;
+     
+      diff --git a/t/perf/perf-lib.sh b/t/perf/perf-lib.sh
+      --- a/t/perf/perf-lib.sh
+-:  ---------- > 5:  64df9157a4 perf tests: add "bindir" prefix to git tree test results
+-:  ---------- > 6:  21307f1f2d perf-lib.sh: forbid the use of GIT_TEST_INSTALLED
+-- 
+2.21.0.593.g511ec345e18
+
