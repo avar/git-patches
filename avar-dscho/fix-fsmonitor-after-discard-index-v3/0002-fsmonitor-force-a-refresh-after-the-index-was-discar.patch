@@ -1,0 +1,91 @@
+From 7bf5f9f610ae2489389d75b94d0e799cb0e8a70e Mon Sep 17 00:00:00 2001
+In-Reply-To: <pull.165.v2.git.gitgitgadget@gmail.com>
+References: <pull.165.v2.git.gitgitgadget@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Thu, 14 Mar 2019 21:40:17 +0100
+Subject: [PATCH v3 2/2] fsmonitor: force a refresh after the index was
+ discarded
+
+With this change, the `index_state` struct becomes the new home for the
+flag that says whether the fsmonitor hook has been run, i.e. it is now
+per-index.
+
+It also gets re-set when the index is discarded, fixing the bug
+demonstrated by the "test_expect_failure" test added in the preceding
+commit. In that case fsmonitor-enabled Git would miss updates under
+certain circumstances, see that preceding commit for details.
+
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+---
+ cache.h                     | 3 ++-
+ fsmonitor.c                 | 5 ++---
+ read-cache.c                | 1 +
+ t/t7519-status-fsmonitor.sh | 2 +-
+ 4 files changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/cache.h b/cache.h
+index e928fe9d3b..08607ca7f2 100644
+--- a/cache.h
++++ b/cache.h
+@@ -341,7 +341,8 @@ struct index_state {
+ 		 initialized : 1,
+ 		 drop_cache_tree : 1,
+ 		 updated_workdir : 1,
+-		 updated_skipworktree : 1;
++		 updated_skipworktree : 1,
++		 fsmonitor_has_run_once : 1;
+ 	struct hashmap name_hash;
+ 	struct hashmap dir_hash;
+ 	struct object_id oid;
+diff --git a/fsmonitor.c b/fsmonitor.c
+index 665bd2d425..1dee0aded1 100644
+--- a/fsmonitor.c
++++ b/fsmonitor.c
+@@ -129,7 +129,6 @@ static void fsmonitor_refresh_callback(struct index_state *istate, const char *n
+ 
+ void refresh_fsmonitor(struct index_state *istate)
+ {
+-	static int has_run_once = 0;
+ 	struct strbuf query_result = STRBUF_INIT;
+ 	int query_success = 0;
+ 	size_t bol; /* beginning of line */
+@@ -137,9 +136,9 @@ void refresh_fsmonitor(struct index_state *istate)
+ 	char *buf;
+ 	int i;
+ 
+-	if (!core_fsmonitor || has_run_once)
++	if (!core_fsmonitor || istate->fsmonitor_has_run_once)
+ 		return;
+-	has_run_once = 1;
++	istate->fsmonitor_has_run_once = 1;
+ 
+ 	trace_printf_key(&trace_fsmonitor, "refresh fsmonitor");
+ 	/*
+diff --git a/read-cache.c b/read-cache.c
+index d5a74b1861..c66b5c6b26 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -2323,6 +2323,7 @@ int discard_index(struct index_state *istate)
+ 	free_name_hash(istate);
+ 	cache_tree_free(&(istate->cache_tree));
+ 	istate->initialized = 0;
++	istate->fsmonitor_has_run_once = 0;
+ 	FREE_AND_NULL(istate->cache);
+ 	istate->cache_alloc = 0;
+ 	discard_split_index(istate);
+diff --git a/t/t7519-status-fsmonitor.sh b/t/t7519-status-fsmonitor.sh
+index afd8fa7532..81a375fa0f 100755
+--- a/t/t7519-status-fsmonitor.sh
++++ b/t/t7519-status-fsmonitor.sh
+@@ -346,7 +346,7 @@ test_expect_success UNTRACKED_CACHE 'ignore .git changes when invalidating UNTR'
+ 	test_cmp before after
+ '
+ 
+-test_expect_failure 'discard_index() also discards fsmonitor info' '
++test_expect_success 'discard_index() also discards fsmonitor info' '
+ 	test_config core.fsmonitor "$TEST_DIRECTORY/t7519/fsmonitor-all" &&
+ 	test_might_fail git update-index --refresh &&
+ 	test-tool read-cache --print-and-refresh=tracked 2 >actual &&
+-- 
+2.21.0.593.g511ec345e18
+

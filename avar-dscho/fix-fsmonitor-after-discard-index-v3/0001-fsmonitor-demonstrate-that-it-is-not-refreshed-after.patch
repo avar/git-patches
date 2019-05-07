@@ -1,0 +1,104 @@
+From c31f834b07559c160e018276a794471cdc3a3181 Mon Sep 17 00:00:00 2001
+In-Reply-To: <pull.165.v2.git.gitgitgadget@gmail.com>
+References: <pull.165.v2.git.gitgitgadget@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Thu, 14 Mar 2019 22:19:14 +0100
+Subject: [PATCH v3 1/2] fsmonitor: demonstrate that it is not refreshed after
+ discard_index()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This one is tricky.
+
+When `core.fsmonitor` is set, a `refresh_index()` will not perform a
+full scan of files that might be modified, but will query the fsmonitor
+and refresh only the ones that have been actually touched.
+
+Due to implementation details, the fsmonitor is queried in
+`refresh_cache_ent()`, but of course it only has to be queried once, so
+we set a flag when we did that. But when the index was discarded, we did
+not re-set that flag.
+
+So far, this is only covered by our test suite when running with
+GIT_TEST_FSMONITOR=$PWD/t7519/fsmonitor-all, and only due to the way the
+built-in stash interacts with the recursive merge machinery.
+
+Let's introduce a straight-forward regression test for this.
+
+We simply extend the "read & discard index" loop in `test-tool
+read-cache` to optionally refresh the index, report on a given file's
+status, and then modify that file. Due to the bug described above, only
+the first refresh will actually query the fsmonitor; subsequent loop
+iterations will not.
+
+This problem was reported by Ævar Arnfjörð Bjarmason.
+
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+---
+ t/helper/test-read-cache.c  | 24 +++++++++++++++++++++++-
+ t/t7519-status-fsmonitor.sh |  8 ++++++++
+ 2 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/t/helper/test-read-cache.c b/t/helper/test-read-cache.c
+index d674c88ba0..7e79b555de 100644
+--- a/t/helper/test-read-cache.c
++++ b/t/helper/test-read-cache.c
+@@ -1,14 +1,36 @@
+ #include "test-tool.h"
+ #include "cache.h"
++#include "config.h"
+ 
+ int cmd__read_cache(int argc, const char **argv)
+ {
+-	int i, cnt = 1;
++	int i, cnt = 1, namelen;
++	const char *name = NULL;
++
++	if (argc > 1 && skip_prefix(argv[1], "--print-and-refresh=", &name)) {
++		namelen = strlen(name);
++		argc--;
++		argv++;
++	}
++
+ 	if (argc == 2)
+ 		cnt = strtol(argv[1], NULL, 0);
+ 	setup_git_directory();
++	git_config(git_default_config, NULL);
+ 	for (i = 0; i < cnt; i++) {
+ 		read_cache();
++		if (name) {
++			int pos;
++
++			refresh_index(&the_index, REFRESH_QUIET,
++				      NULL, NULL, NULL);
++			pos = index_name_pos(&the_index, name, namelen);
++			if (pos < 0)
++				die("%s not in index", name);
++			printf("%s is%s up to date\n", name,
++			       ce_uptodate(the_index.cache[pos]) ? "" : " not");
++			write_file(name, "%d\n", i);
++		}
+ 		discard_cache();
+ 	}
+ 	return 0;
+diff --git a/t/t7519-status-fsmonitor.sh b/t/t7519-status-fsmonitor.sh
+index 3e0a61db23..afd8fa7532 100755
+--- a/t/t7519-status-fsmonitor.sh
++++ b/t/t7519-status-fsmonitor.sh
+@@ -346,4 +346,12 @@ test_expect_success UNTRACKED_CACHE 'ignore .git changes when invalidating UNTR'
+ 	test_cmp before after
+ '
+ 
++test_expect_failure 'discard_index() also discards fsmonitor info' '
++	test_config core.fsmonitor "$TEST_DIRECTORY/t7519/fsmonitor-all" &&
++	test_might_fail git update-index --refresh &&
++	test-tool read-cache --print-and-refresh=tracked 2 >actual &&
++	printf "tracked is%s up to date\n" "" " not" >expect &&
++	test_cmp expect actual
++'
++
+ test_done
+-- 
+2.21.0.593.g511ec345e18
+
