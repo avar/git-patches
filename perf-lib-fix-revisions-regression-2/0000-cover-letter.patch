@@ -4,12 +4,106 @@ References: <20190506202451.GA19850@sigill.intra.peff.net>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Tue, 7 May 2019 01:16:01 +0200
-Subject: [PATCH v2 0/2] *** SUBJECT HERE ***
+Subject: [PATCH v2 0/2] perf-lib.sh: fix 0baf78e7bc regression, refactor & fix bugs
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+On Mon, May 06 2019, Jeff King wrote:
+
+> On Mon, May 06, 2019 at 09:16:11PM +0200, Ævar Arnfjörð Bjarmason wrote:
+>
+>> Perhaps there's some better way to fix this, but it seems to me that
+>> the best solution is to just make this behavior less magical. We know
+>> in run_dirs_helper() that we're about to run performance tests on a
+>> given <revision>, so let's just set GIT_TEST_INSTALLED to an absolute
+>> path there, and then make getting logging target from a previously
+>> relative path less magical, we'll just explicitly pass down the
+>> relative path as a variable.
+>> 
+>> This makes e.g. these cases all work:
+>> 
+>>     ./run . $PWD/../../ origin/master origin/next HEAD -- <tests>
+>> 
+>> As well as just a plain one-off:
+>> 
+>>     ./run <tests>
+>
+> Doing this naively would break anybody doing:
+>
+>   GIT_TEST_INSTALLED=some-relative-path ./p1234-foo.sh
+>
+> but I doubt that actually matters in practice (notably this already does
+> not work with non-perf tests, as test-lib.sh does not do any
+> normalization).
+
+Yeah this has never worked and GIT_TEST_INSTALLED has been documented
+to take an absolute path when used with the normal test suite.
+
+I've noted as much in the 1/2 here.
+
+> I don't think your patch does, because it leaves the extra absolutizing
+> in perf-lib.sh. But then it doesn't feel like it's really simplified
+> anything. ;)
+
+Yeah, v1 didn't because I was trying for a minimal regression fix
+without digging us fully out of that GIT_TEST_INSTALLED hole, but as
+2/2 here shows we can fully get rid of it from perf-lib.sh, which I
+think makes things much simpler.
+
+>> diff --git a/t/perf/perf-lib.sh b/t/perf/perf-lib.sh
+>> index 169f92eae3..b15ee1d262 100644
+>> --- a/t/perf/perf-lib.sh
+>> +++ b/t/perf/perf-lib.sh
+>> @@ -32,6 +32,10 @@ TEST_NO_MALLOC_CHECK=t
+>>  if test -z "$GIT_TEST_INSTALLED"; then
+>>  	perf_results_prefix=
+>>  else
+>> +	if test -n "$GIT_PERF_DIR_MYDIR_REL"
+>> +	then
+>> +		GIT_TEST_INSTALLED=$GIT_PERF_DIR_MYDIR_REL
+>> +	fi
+>>  	perf_results_prefix=$(printf "%s" "${GIT_TEST_INSTALLED%/bin-wrappers}" | tr -c "[a-zA-Z0-9]" "[_*]")"."
+>>  	GIT_TEST_INSTALLED=$ABSOLUTE_GIT_TEST_INSTALLED
+>>  fi
+>
+> So we reset GIT_TEST_INSTALLED to the relative path here (ignoring
+> what's in it!), and then afterwards set it to the absolute path. That
+> still seems rather magical. :)
+>
+> What if instead we:
+>
+>   - taught test-lib.sh to make GIT_TEST_INSTALLED absolute (since after
+>     all it is the one who is planning to chdir and wreck the relative
+>     path)
+>
+>   - let callers pass in $GIT_PERF_RESULTS_PREFIX instead of guessing at
+>     it ourselves from the path name. Then the "run" script could quite
+>     reasonably just pass in the tree oid it already has instead of us
+>     trying to decode it. And nobody would care about whether
+>     $GIT_TEST_INSTALLED has been mangled.
+>
+> I thought about going this route for my original patch, but I wanted to
+> fix the regression (which I agree is quite serious and embarrassing) as
+> quickly and simply as possible.
+
+It seems simplest after the changes I've made here to just make a
+relative GIT_TEST_INSTALLED be an error in test-lib.sh, why bend over
+backwards to support it?
+
+Re GIT_PERF_RESULTS_PREFIX: Depending on what you mean we now have
+that in 2/2 as PERF_RESULTS_PREFIX.
+
+But if you mean the user can pass it in that doesn't make sense, since
+we need to pick a different prefix revision we test, so it's a
+many-to-many relationship.
+
+As seen in 2/2 modifying some of the shell & associated Perl code it's
+a bit nasty that we need to duplicate the logic for picking these
+PERF_RESULTS_PREFIXes in the shell code and Perl code. Ideally the
+shell code would pick it, and pass the mapping to the Perl code
+somehow. But that's another "has sucked since forever, future TODO"
+item.
 
 Ævar Arnfjörð Bjarmason (2):
   perf-lib.sh: make "./run <revisions>" use the correct gits
