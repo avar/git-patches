@@ -1,0 +1,114 @@
+From 46660cefe0a302a40de5f5c108aa5f6da0f5e4a2 Mon Sep 17 00:00:00 2001
+In-Reply-To: <cover.1555832783.git.liu.denton@gmail.com>
+References: <cover.1555832783.git.liu.denton@gmail.com>
+From: Denton Liu <liu.denton@gmail.com>
+Date: Wed, 17 Apr 2019 11:01:31 -0700
+Subject: [RFC WIP PATCH v8 07/13] rebase: fast-forward --fork-point in more
+ cases
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Before, when we rebased with a --fork-point invocation where the
+fork-point wasn't empty, we would be setting options.restrict_revision.
+The fast-forward logic would automatically declare that the rebase was
+not fast-forwardable if it was set. However, this was painting with a
+very broad brush.
+
+Refine the logic so that we can fast-forward in the case where the
+restricted revision is equal to the merge base, since we stop rebasing
+at the merge base anyway.
+
+Helped-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Denton Liu <liu.denton@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ builtin/rebase.c               | 10 +++++++---
+ t/t3432-rebase-fast-forward.sh | 20 ++++++++++----------
+ 2 files changed, 17 insertions(+), 13 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index c1000c159d..5f9beda46b 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -879,6 +879,7 @@ static int is_linear_history(struct commit *from, struct commit *to)
+ }
+ 
+ static int can_fast_forward(struct commit *onto, struct commit *upstream,
++			    struct commit *restrict_revision,
+ 			    struct object_id *head_oid, struct object_id *merge_base)
+ {
+ 	struct commit *head = lookup_commit(the_repository, head_oid);
+@@ -898,6 +899,9 @@ static int can_fast_forward(struct commit *onto, struct commit *upstream,
+ 	if (!oideq(merge_base, &onto->object.oid))
+ 		goto done;
+ 
++	if (restrict_revision && !oideq(&restrict_revision->object.oid, merge_base))
++		goto done;
++
+ 	if (!upstream)
+ 		goto done;
+ 
+@@ -1679,9 +1683,9 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 	 * with new commits recreated by replaying their changes. This
+ 	 * optimization must not be done if this is an interactive rebase.
+ 	 */
+-	if (can_fast_forward(options.onto, options.upstream, &options.orig_head,
+-		    &merge_base) &&
+-	    !is_interactive(&options) && !options.restrict_revision) {
++	if (can_fast_forward(options.onto, options.upstream, options.restrict_revision,
++		    &options.orig_head, &merge_base) &&
++	    !is_interactive(&options)) {
+ 		int flag;
+ 
+ 		if (!(options.flags & REBASE_FORCE)) {
+diff --git a/t/t3432-rebase-fast-forward.sh b/t/t3432-rebase-fast-forward.sh
+index 59cd437301..8f4996e476 100755
+--- a/t/t3432-rebase-fast-forward.sh
++++ b/t/t3432-rebase-fast-forward.sh
+@@ -70,32 +70,32 @@ test_rebase_same_head_ () {
+ }
+ 
+ changes='no changes'
+-test_rebase_same_head success work same success work same
++test_rebase_same_head success noop same success work same
+ test_rebase_same_head success noop same success noop-force same master
+ test_rebase_same_head success noop same success noop-force diff --onto B B
+ test_rebase_same_head success noop same success noop-force diff --onto B... B
+ test_rebase_same_head success noop same success noop-force same --onto master... master
+ test_rebase_same_head success noop same success noop-force same --no-fork-point
+-test_rebase_same_head success work same success work same --fork-point master
+-test_rebase_same_head failure noop same success work diff --fork-point --onto B B
+-test_rebase_same_head failure work same success work diff --fork-point --onto B... B
+-test_rebase_same_head success work same success work same --fork-point --onto master... master
++test_rebase_same_head success noop same success work same --fork-point master
++test_rebase_same_head success noop same success work diff --fork-point --onto B B
++test_rebase_same_head success noop same success work diff --fork-point --onto B... B
++test_rebase_same_head success noop same success work same --fork-point --onto master... master
+ 
+ test_expect_success 'add work same  to side' '
+ 	test_commit E
+ '
+ 
+ changes='our changes'
+-test_rebase_same_head success work same success work same
++test_rebase_same_head success noop same success work same
+ test_rebase_same_head success noop same success noop-force same master
+ test_rebase_same_head success noop same success noop-force diff --onto B B
+ test_rebase_same_head success noop same success noop-force diff --onto B... B
+ test_rebase_same_head success noop same success noop-force same --onto master... master
+ test_rebase_same_head success noop same success noop-force same --no-fork-point
+-test_rebase_same_head success work same success work same --fork-point master
+-test_rebase_same_head failure work same success work diff --fork-point --onto B B
+-test_rebase_same_head failure work same success work diff --fork-point --onto B... B
+-test_rebase_same_head success work same success work same --fork-point --onto master... master
++test_rebase_same_head success noop same success work same --fork-point master
++test_rebase_same_head success noop same success work diff --fork-point --onto B B
++test_rebase_same_head success noop same success work diff --fork-point --onto B... B
++test_rebase_same_head success noop same success work same --fork-point --onto master... master
+ 
+ test_expect_success 'add work same  to upstream' '
+ 	git checkout master &&
+-- 
+2.21.0.1020.gf2820cf01a
+

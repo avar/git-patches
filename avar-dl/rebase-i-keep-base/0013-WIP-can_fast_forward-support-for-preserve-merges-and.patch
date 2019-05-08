@@ -1,0 +1,69 @@
+From 20c38b78c730038540c04a58d95ea0d61d7c81a7 Mon Sep 17 00:00:00 2001
+In-Reply-To: <cover.1555832783.git.liu.denton@gmail.com>
+References: <cover.1555832783.git.liu.denton@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 8 May 2019 01:38:52 +0200
+Subject: [RFC WIP PATCH v8 13/13] WIP: can_fast_forward() support for
+ --preserve-merges and --rebase-merges
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This seems to work, needs more tests etc...
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c               | 6 ++++++
+ t/t3432-rebase-fast-forward.sh | 7 +++++--
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index 167d4fcf67..de1c5cacb8 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -892,6 +892,12 @@ static void populate_merge_bases(struct commit *head, struct commit *onto,
+ 
+ static int should_fast_forward(struct rebase_options *opts)
+ {
++	if (!(opts->flags & REBASE_INTERACTIVE_EXPLICIT)) {
++		if (opts->rebase_merges)
++			return 1;
++		if (opts->type == REBASE_PRESERVE_MERGES)
++			return 1;
++	}
+ 	return !is_interactive(opts);
+ }
+ 
+diff --git a/t/t3432-rebase-fast-forward.sh b/t/t3432-rebase-fast-forward.sh
+index e8a9bf42b6..d3e1815057 100755
+--- a/t/t3432-rebase-fast-forward.sh
++++ b/t/t3432-rebase-fast-forward.sh
+@@ -44,12 +44,13 @@ test_rebase_same_head_ () {
+ 	test_expect_$status "git rebase$flag $* with $changes is $what with $cmp HEAD" "
+ 		oldhead=\$(git rev-parse HEAD) &&
+ 		test_when_finished 'git reset --hard \$oldhead' &&
+-		git rebase$flag $* >stdout &&
++		git rebase$flag $* >stdout 2>stderr &&
+ 		if test $what = work
+ 		then
+ 			# Must check this case first, for 'is up to
+ 			# date, rebase forced[...]rewinding head' cases
+-			test_i18ngrep 'rewinding head' stdout
++			test_i18ngrep 'rewinding head' stdout ||
++			test_i18ngrep 'is up to date, rebase forced' stdout
+ 		elif test $what = noop
+ 		then
+ 			test_i18ngrep 'is up to date' stdout &&
+@@ -79,6 +80,8 @@ test_rebase_same_head success noop same success noop-force same --keep-base mast
+ test_rebase_same_head success noop same success noop-force same --keep-base
+ test_rebase_same_head success noop same success noop-force same --no-fork-point
+ test_rebase_same_head success noop same success noop-force same --keep-base --no-fork-point
++test_rebase_same_head success noop same success noop-force same --preserve-merges
++test_rebase_same_head success noop same success noop-force same --rebase-merges
+ test_rebase_same_head success noop same success work same --fork-point master
+ test_rebase_same_head success noop same success work diff --fork-point --onto B B
+ test_rebase_same_head success noop same success work diff --fork-point --onto B... B
+-- 
+2.21.0.1020.gf2820cf01a
+

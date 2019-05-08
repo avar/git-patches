@@ -1,0 +1,109 @@
+From bf13aa8a80651f487c38a75961199398873ca988 Mon Sep 17 00:00:00 2001
+In-Reply-To: <cover.1555832783.git.liu.denton@gmail.com>
+References: <cover.1555832783.git.liu.denton@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 8 May 2019 00:59:09 +0200
+Subject: [RFC WIP PATCH v8 11/13] rebase: eliminate side-effects from
+ can_fast_forward()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The can_fast_forward() function is potentially much more expensive
+than is_interactive() since it e.g. might need to call
+is_linear_history().
+
+So reversing the two looks like an obvious improvement, but doing so
+reveals a previously hidden caveat: We need the can_fast_forward()
+function to populate data used later, namely the "merge_bases"
+variable. This has been the case since it was added in
+9a48a615b4 ("builtin rebase: try to fast forward when possible",
+2018-09-04).
+
+So let's refactor it into two functions. Now we'll always call
+populate_merge_bases(), and then only call can_fast_forward() if
+is_interactive() is false, making this both faster in pathological
+cases, and more importantly easier to follow.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c | 41 +++++++++++++++++++++++++++--------------
+ 1 file changed, 27 insertions(+), 14 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index ae6b9b42b8..cb5d7fcb53 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -878,24 +878,30 @@ static int is_linear_history(struct commit *from, struct commit *to)
+ 	return 1;
+ }
+ 
+-static int can_fast_forward(struct commit *onto, struct commit *upstream,
++static void populate_merge_bases(struct commit *head, struct commit *onto,
++				 struct commit_list *merge_bases,
++				 struct object_id *merge_base)
++{
++	merge_bases = get_merge_bases(onto, head);
++	if (!merge_bases || merge_bases->next) {
++		oidcpy(merge_base, &null_oid);
++		return;
++	}
++	oidcpy(merge_base, &merge_bases->item->object.oid);
++}
++
++static int can_fast_forward(struct commit *head,
++			    struct commit *onto, struct commit *upstream,
+ 			    struct commit *restrict_revision,
+-			    struct object_id *head_oid, struct object_id *merge_base)
++			    struct object_id *head_oid,
++			    struct commit_list *merge_bases,
++			    struct object_id *merge_base)
+ {
+-	struct commit *head = lookup_commit(the_repository, head_oid);
+-	struct commit_list *merge_bases = NULL;
+ 	int res = 0;
+ 
+ 	if (!head)
+ 		goto done;
+ 
+-	merge_bases = get_merge_bases(onto, head);
+-	if (!merge_bases || merge_bases->next) {
+-		oidcpy(merge_base, &null_oid);
+-		goto done;
+-	}
+-
+-	oidcpy(merge_base, &merge_bases->item->object.oid);
+ 	if (!oideq(merge_base, &onto->object.oid))
+ 		goto done;
+ 
+@@ -1154,6 +1160,8 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 		OPT_END(),
+ 	};
+ 	int i;
++	struct commit *head_commit;
++	struct commit_list *merge_bases = NULL;
+ 
+ 	if (argc == 2 && !strcmp(argv[1], "-h"))
+ 		usage_with_options(builtin_rebase_usage,
+@@ -1703,9 +1711,14 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 	 * with new commits recreated by replaying their changes. This
+ 	 * optimization must not be done if this is an interactive rebase.
+ 	 */
+-	if (can_fast_forward(options.onto, options.upstream, options.restrict_revision,
+-		    &options.orig_head, &merge_base) &&
+-	    !is_interactive(&options)) {
++	head_commit = lookup_commit(the_repository, &options.orig_head);
++	if (head_commit)
++		populate_merge_bases(head_commit, options.onto, merge_bases,
++				     &merge_base);
++	if (!is_interactive(&options) &&
++	    can_fast_forward(head_commit, options.onto, options.upstream,
++			     options.restrict_revision, &options.orig_head,
++			     merge_bases, &merge_base)) {
+ 		int flag;
+ 
+ 		if (!(options.flags & REBASE_FORCE)) {
+-- 
+2.21.0.1020.gf2820cf01a
+

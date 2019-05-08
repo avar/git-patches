@@ -1,0 +1,109 @@
+From b06e84c6d68fca513582cb4b8dbf9d67a9369248 Mon Sep 17 00:00:00 2001
+In-Reply-To: <cover.1555832783.git.liu.denton@gmail.com>
+References: <cover.1555832783.git.liu.denton@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Feb 2019 21:12:50 +0100
+Subject: [RFC WIP PATCH v8 10/13] rebase: don't rebase linear topology with
+ --fork-point
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression introduced in 4f21454b55 ("merge-base: handle
+--fork-point without reflog", 2016-10-12).
+
+Before that change having a linear history on top of an upstream
+master would with --fork-point (aka argument-less rebase) tell us
+there was nothing to be done:
+
+    $ git rebase
+    Current branch master is up to date.
+
+After that change "rebase" will always redundantly find that it has
+work to do (it doesn't):
+
+    $ git rebase
+    First, rewinding head to replay your work on top of it...
+    Applying: [...]
+
+Whereas equivalently running:
+
+    $ git rebase @{upstream}
+    $ git rebase $(git merge-base --fork-point @{u})
+
+Gives us the old behavior of doing nothing.
+
+Now, why did we have this regression? Fully digging into it yields an
+interesting combination of causes:
+
+Way back in 1308c17b3e ("Allow rebase to run if upstream is completely
+merged", 2007-07-04) "rebase" learned to not do this redundant work
+when asked to rebase on a commit that was already an ancestor of the
+current commit.
+
+Then in 1e0dacdbdb ("rebase: omit patch-identical commits with
+--fork-point", 2014-07-16) a rebase bug was fixed for a case where the
+history to be rebased was divergent by entirely skipping the 2007-era
+logic if --fork-point was provided.
+
+But here's the critical thing, *only* if the --fork-point was
+divergent. At that time "git merge-base --fork-point A B" would return
+nothing if the two commits weren't divergent.
+
+Then in 4f21454b55 ("merge-base: handle --fork-point without reflog",
+2016-10-12) which introduced the regression being fixed here, a bug
+fix for "git merge-base --fork-point" being run stand-alone by proxy
+broke this use-case git-rebase.sh was relying on, since it was still
+assuming that if we didn't have divergent history we'd have no output.
+
+Finally, when "rebase" was rewritten in C a combination of
+9a48a615b4 ("builtin rebase: try to fast forward when possible",
+2018-09-04), 103148aad8 ("merge-base --fork-point: extract libified
+function", 2018-09-04) and 92d0d74e8d ("builtin rebase: support
+`fork-point` option", 2018-09-04) faithfully re-implemented the
+then-buggy behavior.
+
+So let's fix this. It's easy enough, we just stop explicitly excluding
+--fork-point from the can_fast_forward(...) test we're doing, which as
+discussed above is faithfully ported over from buggy shellscript-era
+logic.
+
+I'm not bothering to fix this in the legacy rebase mode. As discussed
+in 9aea5e9286 ("rebase: fix regression in rebase.useBuiltin=false test
+mode", 2019-02-13) it'll be going away shortly after 2.21.0 lands.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3421-rebase-topology-linear.sh | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/t/t3421-rebase-topology-linear.sh b/t/t3421-rebase-topology-linear.sh
+index b847064f91..1754537789 100755
+--- a/t/t3421-rebase-topology-linear.sh
++++ b/t/t3421-rebase-topology-linear.sh
+@@ -55,6 +55,21 @@ test_run_rebase success -m
+ test_run_rebase success -i
+ test_have_prereq !REBASE_P || test_run_rebase success -p
+ 
++test_run_rebase () {
++	result=$1
++	shift
++	test_expect_$result "rebase $* is no-op if remote upstream is an ancestor" "
++		reset_rebase &&
++		GIT_TEST_REBASE_USE_BUILTIN=true git rebase $* branch-b branch-e &&
++		test_cmp_rev e HEAD
++	"
++}
++test_run_rebase success ''
++test_run_rebase success --fork-point
++test_run_rebase success -m
++test_run_rebase success -i
++test_have_prereq !REBASE_P || test_run_rebase success -p
++
+ test_run_rebase () {
+ 	result=$1
+ 	shift
+-- 
+2.21.0.1020.gf2820cf01a
+

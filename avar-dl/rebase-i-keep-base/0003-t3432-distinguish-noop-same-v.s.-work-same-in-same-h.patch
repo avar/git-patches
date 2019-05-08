@@ -1,0 +1,145 @@
+From 5d057a1240363bc9e2757991bbdc198e45bcd232 Mon Sep 17 00:00:00 2001
+In-Reply-To: <cover.1555832783.git.liu.denton@gmail.com>
+References: <cover.1555832783.git.liu.denton@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 May 2019 22:12:01 +0200
+Subject: [RFC WIP PATCH v8 03/13] t3432: distinguish "noop-same" v.s.
+ "work-same" in "same head" tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change "same head" introduced in the preceding commit to check whether
+the rebase.c code lands in the can_fast_forward() case in, and thus
+prints out an "is up to date" and aborts early.
+
+In some of these cases we make it past that and to "rewinding head",
+then do a rebase, only to find out there's nothing to change so HEAD
+stays at the same OID.
+
+These tests presumed these two cases were the same thing. In terms of
+where HEAD ends up they are, but we're not only interested in rebase
+semantics, but also whether or not we're needlessly doing work when we
+could avoid it entirely.
+
+I'm adding "same" and "diff" here because I'll follow-up and add
+--no-ff tests, where some of those will be "diff"-erent, so add the
+"diff" code already.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3432-rebase-fast-forward.sh | 79 +++++++++++++++++++++-------------
+ 1 file changed, 48 insertions(+), 31 deletions(-)
+
+diff --git a/t/t3432-rebase-fast-forward.sh b/t/t3432-rebase-fast-forward.sh
+index f49af274e0..dd51e28b56 100755
+--- a/t/t3432-rebase-fast-forward.sh
++++ b/t/t3432-rebase-fast-forward.sh
+@@ -18,55 +18,72 @@ test_expect_success setup '
+ test_rebase_same_head () {
+ 	status="$1" &&
+ 	shift &&
+-	test_expect_$status "git rebase $* with $changes is no-op" "
++	what="$1" &&
++	shift &&
++	cmp="$1" &&
++	shift &&
++	test_expect_$status "git rebase $* with $changes is $what" "
+ 		oldhead=\$(git rev-parse HEAD) &&
+ 		test_when_finished 'git reset --hard \$oldhead' &&
+-		git rebase $* &&
++		git rebase $* >stdout &&
++		if test $what = work
++		then
++			test_i18ngrep 'rewinding head' stdout
++		elif test $what = noop
++		then
++			test_i18ngrep 'is up to date' stdout
++		fi &&
+ 		newhead=\$(git rev-parse HEAD) &&
+-		test_cmp_rev \$oldhead \$newhead
++		if test $cmp = same
++		then
++			test_cmp_rev \$oldhead \$newhead
++		elif test $cmp = diff
++		then
++			! test_cmp_rev \$oldhead \$newhead
++		fi
+ 	"
+ }
+ 
+ changes='no changes'
+-test_rebase_same_head success
+-test_rebase_same_head success master
+-test_rebase_same_head success --onto B B
+-test_rebase_same_head success --onto B... B
+-test_rebase_same_head success --onto master... master
+-test_rebase_same_head success --no-fork-point
+-test_rebase_same_head success --fork-point master
+-test_rebase_same_head failure --fork-point --onto B B
+-test_rebase_same_head failure --fork-point --onto B... B
+-test_rebase_same_head success --fork-point --onto master... master
++test_rebase_same_head success work same
++test_rebase_same_head success noop same master
++test_rebase_same_head success noop same --onto B B
++test_rebase_same_head success noop same --onto B... B
++test_rebase_same_head success noop same --onto master... master
++test_rebase_same_head success noop same --no-fork-point
++test_rebase_same_head success work same --fork-point master
++test_rebase_same_head failure noop same --fork-point --onto B B
++test_rebase_same_head failure work same --fork-point --onto B... B
++test_rebase_same_head success work same --fork-point --onto master... master
+ 
+-test_expect_success 'add work to side' '
++test_expect_success 'add work same  to side' '
+ 	test_commit E
+ '
+ 
+ changes='our changes'
+-test_rebase_same_head success
+-test_rebase_same_head success master
+-test_rebase_same_head success --onto B B
+-test_rebase_same_head success --onto B... B
+-test_rebase_same_head success --onto master... master
+-test_rebase_same_head success --no-fork-point
+-test_rebase_same_head success --fork-point master
+-test_rebase_same_head failure --fork-point --onto B B
+-test_rebase_same_head failure --fork-point --onto B... B
+-test_rebase_same_head success --fork-point --onto master... master
++test_rebase_same_head success work same
++test_rebase_same_head success noop same master
++test_rebase_same_head success noop same --onto B B
++test_rebase_same_head success noop same --onto B... B
++test_rebase_same_head success noop same --onto master... master
++test_rebase_same_head success noop same --no-fork-point
++test_rebase_same_head success work same --fork-point master
++test_rebase_same_head failure work same --fork-point --onto B B
++test_rebase_same_head failure work same --fork-point --onto B... B
++test_rebase_same_head success work same --fork-point --onto master... master
+ 
+-test_expect_success 'add work to upstream' '
++test_expect_success 'add work same  to upstream' '
+ 	git checkout master &&
+ 	test_commit F &&
+ 	git checkout side
+ '
+ 
+ changes='our and their changes'
+-test_rebase_same_head success --onto B B
+-test_rebase_same_head success --onto B... B
+-test_rebase_same_head failure --onto master... master
+-test_rebase_same_head failure --fork-point --onto B B
+-test_rebase_same_head failure --fork-point --onto B... B
+-test_rebase_same_head failure --fork-point --onto master... master
++test_rebase_same_head success noop same --onto B B
++test_rebase_same_head success noop same --onto B... B
++test_rebase_same_head failure work same --onto master... master
++test_rebase_same_head failure work same --fork-point --onto B B
++test_rebase_same_head failure work same --fork-point --onto B... B
++test_rebase_same_head failure work same --fork-point --onto master... master
+ 
+ test_done
+-- 
+2.21.0.1020.gf2820cf01a
+

@@ -1,0 +1,65 @@
+From f5a2172398b08c969e9fd8950bde846cf4b9b60b Mon Sep 17 00:00:00 2001
+In-Reply-To: <cover.1555832783.git.liu.denton@gmail.com>
+References: <cover.1555832783.git.liu.denton@gmail.com>
+From: Denton Liu <liu.denton@gmail.com>
+Date: Wed, 17 Apr 2019 11:01:28 -0700
+Subject: [RFC WIP PATCH v8 05/13] rebase: refactor can_fast_forward into goto
+ tower
+
+Before, can_fast_forward was written with an if-else statement. However,
+in the future, we may be adding more termination cases which would lead
+to deeply nested if statements.
+
+Refactor to use a goto tower so that future cases can be easily
+inserted.
+
+Signed-off-by: Denton Liu <liu.denton@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ builtin/rebase.c | 24 +++++++++++++++---------
+ 1 file changed, 15 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index 2e41ad5644..f7008b10af 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -882,21 +882,27 @@ static int can_fast_forward(struct commit *onto, struct object_id *head_oid,
+ 			    struct object_id *merge_base)
+ {
+ 	struct commit *head = lookup_commit(the_repository, head_oid);
+-	struct commit_list *merge_bases;
+-	int res;
++	struct commit_list *merge_bases = NULL;
++	int res = 0;
+ 
+ 	if (!head)
+-		return 0;
++		goto done;
+ 
+ 	merge_bases = get_merge_bases(onto, head);
+-	if (merge_bases && !merge_bases->next) {
+-		oidcpy(merge_base, &merge_bases->item->object.oid);
+-		res = oideq(merge_base, &onto->object.oid);
+-	} else {
++	if (!merge_bases || merge_bases->next) {
+ 		oidcpy(merge_base, &null_oid);
+-		res = 0;
++		goto done;
+ 	}
+-	free_commit_list(merge_bases);
++
++	oidcpy(merge_base, &merge_bases->item->object.oid);
++	if (!oideq(merge_base, &onto->object.oid))
++		goto done;
++
++	res = 1;
++
++done:
++	if (merge_bases)
++		free_commit_list(merge_bases);
+ 	return res && is_linear_history(onto, head);
+ }
+ 
+-- 
+2.21.0.1020.gf2820cf01a
+
