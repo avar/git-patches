@@ -1,0 +1,140 @@
+From 9ac2fbeaf56b595a3511da356f310c0c910726b4 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190508105607.178244-1-gitster@pobox.com>
+References: <20190508105607.178244-1-gitster@pobox.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 May 2019 13:12:24 +0200
+Subject: [PATCH v3 1/3] send-email: move the read_config() function above
+ getopts
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This is in preparation for a later change where we'll read the config
+first before parsing command-line options. As the move detection will
+show no lines (except one line of comment) is changed here, just moved
+around.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 97 ++++++++++++++++++++++-----------------------
+ 1 file changed, 48 insertions(+), 49 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 24859a7bc3..0d87ed2b5d 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -315,6 +315,54 @@ sub signal_handler {
+ $SIG{TERM} = \&signal_handler;
+ $SIG{INT}  = \&signal_handler;
+ 
++# Read our sendemail.* config
++sub read_config {
++	my ($prefix) = @_;
++
++	foreach my $setting (keys %config_bool_settings) {
++		my $target = $config_bool_settings{$setting}->[0];
++		$$target = Git::config_bool(@repo, "$prefix.$setting") unless (defined $$target);
++	}
++
++	foreach my $setting (keys %config_path_settings) {
++		my $target = $config_path_settings{$setting};
++		if (ref($target) eq "ARRAY") {
++			unless (@$target) {
++				my @values = Git::config_path(@repo, "$prefix.$setting");
++				@$target = @values if (@values && defined $values[0]);
++			}
++		}
++		else {
++			$$target = Git::config_path(@repo, "$prefix.$setting") unless (defined $$target);
++		}
++	}
++
++	foreach my $setting (keys %config_settings) {
++		my $target = $config_settings{$setting};
++		next if $setting eq "to" and defined $no_to;
++		next if $setting eq "cc" and defined $no_cc;
++		next if $setting eq "bcc" and defined $no_bcc;
++		if (ref($target) eq "ARRAY") {
++			unless (@$target) {
++				my @values = Git::config(@repo, "$prefix.$setting");
++				@$target = @values if (@values && defined $values[0]);
++			}
++		}
++		else {
++			$$target = Git::config(@repo, "$prefix.$setting") unless (defined $$target);
++		}
++	}
++
++	if (!defined $smtp_encryption) {
++		my $enc = Git::config(@repo, "$prefix.smtpencryption");
++		if (defined $enc) {
++			$smtp_encryption = $enc;
++		} elsif (Git::config_bool(@repo, "$prefix.smtpssl")) {
++			$smtp_encryption = 'ssl';
++		}
++	}
++}
++
+ # Begin by accumulating all the variables (defined above), that we will end up
+ # needing, first, from the command line:
+ 
+@@ -399,55 +447,6 @@ sub signal_handler {
+ 	"(via command-line or configuration option)\n")
+ 	if defined $relogin_delay and not defined $batch_size;
+ 
+-# Now, let's fill any that aren't set in with defaults:
+-
+-sub read_config {
+-	my ($prefix) = @_;
+-
+-	foreach my $setting (keys %config_bool_settings) {
+-		my $target = $config_bool_settings{$setting}->[0];
+-		$$target = Git::config_bool(@repo, "$prefix.$setting") unless (defined $$target);
+-	}
+-
+-	foreach my $setting (keys %config_path_settings) {
+-		my $target = $config_path_settings{$setting};
+-		if (ref($target) eq "ARRAY") {
+-			unless (@$target) {
+-				my @values = Git::config_path(@repo, "$prefix.$setting");
+-				@$target = @values if (@values && defined $values[0]);
+-			}
+-		}
+-		else {
+-			$$target = Git::config_path(@repo, "$prefix.$setting") unless (defined $$target);
+-		}
+-	}
+-
+-	foreach my $setting (keys %config_settings) {
+-		my $target = $config_settings{$setting};
+-		next if $setting eq "to" and defined $no_to;
+-		next if $setting eq "cc" and defined $no_cc;
+-		next if $setting eq "bcc" and defined $no_bcc;
+-		if (ref($target) eq "ARRAY") {
+-			unless (@$target) {
+-				my @values = Git::config(@repo, "$prefix.$setting");
+-				@$target = @values if (@values && defined $values[0]);
+-			}
+-		}
+-		else {
+-			$$target = Git::config(@repo, "$prefix.$setting") unless (defined $$target);
+-		}
+-	}
+-
+-	if (!defined $smtp_encryption) {
+-		my $enc = Git::config(@repo, "$prefix.smtpencryption");
+-		if (defined $enc) {
+-			$smtp_encryption = $enc;
+-		} elsif (Git::config_bool(@repo, "$prefix.smtpssl")) {
+-			$smtp_encryption = 'ssl';
+-		}
+-	}
+-}
+-
+ # read configuration from [sendemail "$identity"], fall back on [sendemail]
+ $identity = Git::config(@repo, "sendemail.identity") unless (defined $identity);
+ read_config("sendemail.$identity") if (defined $identity);
+-- 
+2.21.0.1020.gf2820cf01a
+
