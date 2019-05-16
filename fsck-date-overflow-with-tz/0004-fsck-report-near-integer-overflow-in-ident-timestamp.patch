@@ -1,0 +1,144 @@
+From 16bf3703f9ec9a940183d1b8a503482979e7a24d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 16 May 2019 21:34:14 +0200
+Subject: [RFC/PATCH 4/4] fsck: report near-integer overflow in ident
+ timestamps
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the checks for invalid timestamps to take into account that we
+not only use the timestamp_t value we parse out of it, but add
+whatever we find in the timezone offset to it.
+
+Since we'll accept a timezone offset of +9999 we not only need to
+check if the timestamp itself overflows, but whether it overflows when
+99 hours and 99 minutes are added to it, since we'll shortly be adding
+the parsed timezone offset to a variable stored in a timestamp_t.
+
+Failing to exhaustively check for this means that a prankster can
+craft a commit which fsck (and thus popular git hosting sites) will
+accept, but that git itself will promptly die on when any command
+which parses the commit object is run, such as "log", "show" etc.
+
+This wasn't always the case. When the timestamp overflow check was
+first added in d4b8de0420 ("fsck: report integer overflow in author
+timestamps", 2014-02-24), such a timestamp would cause git to render a
+bogus value of "Thu Jan 1 00:00:00 1970 +0000". That change was first
+released as part of Git version 1.9.1.
+
+Rendering a bogus timestamp is mildly annoying, but no big deal.
+
+However, since 1e65a982da ("date.c: abort if the system time cannot
+handle one of our timestamps", 2017-04-26) first released with Git
+version 2.14.0 (on August 4th, 2017) a timestamp like this will cause
+git to die on any command that tries to parse it. E.g.:
+
+    $ ~/g/git/git --exec-path=$PWD show --no-abbrev --no-decorate; echo $?
+    fatal: Timestamp too large for this system: 9223372036854783007
+    commit 4cfe4cb4e202f64de8745f9f5ea64723939fb7cd
+    128
+
+See https://github.com/avar/Y292277026596 and
+https://gitlab.com/avar/Y292277026596 for a repository containing such
+a commit. Both of those hosting sites render the commit, but both
+return an error of some sort if asked to produce a *.patch file, which
+I suspect is because they're calling git-format-patch under the hood:
+https://github.com/avar/Y292277026596/commit/4cfe4cb.patch &
+https://gitlab.com/avar/Y292277026596/commit/4cfe4cb.patch
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ cache.h         |  1 +
+ date.c          | 13 +++++++++++++
+ fsck.c          |  2 ++
+ t/t1450-fsck.sh | 26 ++++++++++++++++++++++++++
+ 4 files changed, 42 insertions(+)
+
+diff --git a/cache.h b/cache.h
+index fa8ede9a2d..6403851867 100644
+--- a/cache.h
++++ b/cache.h
+@@ -1551,6 +1551,7 @@ timestamp_t approxidate_careful(const char *, int *);
+ timestamp_t approxidate_relative(const char *date, const struct timeval *now);
+ void parse_date_format(const char *format, struct date_mode *mode);
+ int date_overflows(timestamp_t date);
++int date_with_max_tz_overflows(timestamp_t date);
+ 
+ #define IDENT_STRICT	       1
+ #define IDENT_NO_DATE	       2
+diff --git a/date.c b/date.c
+index 8126146c50..80d6081181 100644
+--- a/date.c
++++ b/date.c
+@@ -1333,3 +1333,16 @@ int date_overflows(timestamp_t t)
+ 	sys = t;
+ 	return t != sys || (t < 1) != (sys < 1);
+ }
++
++int date_with_max_tz_overflows(timestamp_t t)
++{
++	/*
++	 * See if a timestamp_t value really close its respective MAX
++	 * value overflows. It's stupid, but we currently allow +9999
++	 * as the maximum timezone offset. Let's make sure t + <that>
++	 * doesn't overflow. See gm_time_t() for such a calculation.
++	 */
++	t += ((99 * 60 * 60) + (99 * 60));
++
++	return date_overflows(t);
++}
+diff --git a/fsck.c b/fsck.c
+index 45f82b2d40..f2fd743db0 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -758,6 +758,8 @@ static int fsck_ident(const char **ident, struct object *obj, struct fsck_option
+ 	date = parse_timestamp(p, &end, 10);
+ 	if (date_overflows(date))
+ 		return report(options, obj, FSCK_MSG_BAD_DATE_OVERFLOW, "invalid author/committer line - date causes integer overflow");
++	if (date_with_max_tz_overflows(date))
++		return report(options, obj, FSCK_MSG_BAD_DATE_OVERFLOW, "invalid author/committer line - date is too close to integer overflow");
+ 	if ((end == p || *end != ' '))
+ 		return report(options, obj, FSCK_MSG_BAD_DATE, "invalid author/committer line - bad date");
+ 	p = end + 1;
+diff --git a/t/t1450-fsck.sh b/t/t1450-fsck.sh
+index 82435d01d2..7423fa6074 100755
+--- a/t/t1450-fsck.sh
++++ b/t/t1450-fsck.sh
+@@ -224,6 +224,32 @@ test_expect_success 'signed integer overflow in timestamps is reported' '
+ 	test_i18ngrep "error in commit $new.*integer overflow" out
+ '
+ 
++test_expect_success 'signed integer overflow with pathological timezone in timestamps is reported' '
++	git cat-file commit HEAD >basis &&
++	sed "s/^\\(author .*>\\) [0-9]* [+-][0-9]*/\\1 9223372036854413468 +9999/" \
++		<basis >bad-timestamp &&
++	new=$(git hash-object -t commit -w --stdin <bad-timestamp) &&
++	test_when_finished "remove_object $new" &&
++	git update-ref refs/heads/bogus "$new" &&
++	test_when_finished "git update-ref -d refs/heads/bogus" &&
++	test_must_fail git fsck 2>out &&
++	cat out &&
++	test_i18ngrep "error in commit $new.*too close to integer overflow" out
++'
++
++test_expect_success 'near-signed integer overflow with pathological timezone in timestamps is OK' '
++	git cat-file commit HEAD >basis &&
++	sed "s/^\\(author .*>\\) [0-9]* [+-][0-9]*/\\1 9223372036854413467 +9999/" \
++		<basis >fishy-timestamp &&
++	new=$(git hash-object -t commit -w --stdin <fishy-timestamp) &&
++	test_when_finished "remove_object $new" &&
++	git update-ref refs/heads/bogus "$new" &&
++	test_when_finished "git update-ref -d refs/heads/bogus" &&
++	git fsck 2>out &&
++	cat out &&
++	git show
++'
++
+ test_expect_success 'commit with NUL in header' '
+ 	git cat-file commit HEAD >basis &&
+ 	sed "s/author ./author Q/" <basis | q_to_nul >commit-NUL-header &&
+-- 
+2.21.0.1020.gf2820cf01a
+
