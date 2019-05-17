@@ -1,0 +1,118 @@
+From 8049a1cea0801ec3ea4db2245f13ac449f21b252 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqqsgtd3fw3.fsf@gitster-ct.c.googlers.com>
+References: <xmqqsgtd3fw3.fsf@gitster-ct.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 17 May 2019 21:24:46 +0200
+Subject: [PATCH 2/5] send-email: fix broken transferEncoding tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+I fixed a bug that had broken the reading of sendmail.transferEncoding
+in 3494dfd3ee ("send-email: do defaults -> config -> getopt in that
+order", 2019-05-09), but the test I added in that commit did nothing
+to assert the bug had been fixed.
+
+That issue originates in 8d81408435 ("git-send-email: add
+--transfer-encoding option", 2014-11-25) which first added the
+"sendemail.transferencoding=8bit".
+
+That test has never done anything meaningful. It tested that the
+"--transfer-encoding=8bit" option would turn on the 8bit
+Transfer-Encoding, but that was the default at the time (and now). As
+checking out 8d81408435 and editing the test to remove that option
+will reveal, supplying it never did anything.
+
+So when I copied it thinking it would work in 3494dfd3ee I copied a
+previously broken test, although I was making sure it did the right
+thing via da-hoc debugger inspection, so the bug was fixed.
+
+So fix the test I added in 3494dfd3ee, as well as the long-standing
+test added in 8d81408435. To test if we're actually setting the
+Transfer-Encoding let's set it to 7bit, not 8bit, as 7bit will error
+out on "email-using-8bit".
+
+This means that we can remove the "sendemail.transferencoding=7bit
+fails on 8bit data" test, since it was redundant, we now have other
+tests that assert that that'll fail.
+
+While I'm at it convert "git config <key> <value>" in the test setup
+to just "-c <key>=<value>" on the command-line. Then we don't need to
+cleanup after these tests, and there's no sense in asserting where
+config values come from in these tests, we can take that as a given.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t9001-send-email.sh | 35 +++++++++++------------------------
+ 1 file changed, 11 insertions(+), 24 deletions(-)
+
+diff --git a/t/t9001-send-email.sh b/t/t9001-send-email.sh
+index 13de44686b..61d484d1a6 100755
+--- a/t/t9001-send-email.sh
++++ b/t/t9001-send-email.sh
+@@ -1437,10 +1437,10 @@ test_expect_success $PREREQ 'setup expect' '
+ 	EOF
+ '
+ 
+-test_expect_success $PREREQ 'sendemail.transferencoding=7bit fails on 8bit data' '
++test_expect_success $PREREQ '--transfer-encoding overrides sendemail.transferEncoding' '
+ 	clean_fake_sendmail &&
+-	git config sendemail.transferEncoding 7bit &&
+-	test_must_fail git send-email \
++	test_must_fail git -c sendemail.transferEncoding=8bit \
++		send-email \
+ 		--transfer-encoding=7bit \
+ 		--smtp-server="$(pwd)/fake.sendmail" \
+ 		email-using-8bit \
+@@ -1449,11 +1449,10 @@ test_expect_success $PREREQ 'sendemail.transferencoding=7bit fails on 8bit data'
+ 	test -z "$(ls msgtxt*)"
+ '
+ 
+-test_expect_success $PREREQ '--transfer-encoding overrides sendemail.transferEncoding' '
++test_expect_success $PREREQ 'sendemail.transferEncoding via config' '
+ 	clean_fake_sendmail &&
+-	git config sendemail.transferEncoding 8bit &&
+-	test_must_fail git send-email \
+-		--transfer-encoding=7bit \
++	test_must_fail git -c sendemail.transferEncoding=7bit \
++		send-email \
+ 		--smtp-server="$(pwd)/fake.sendmail" \
+ 		email-using-8bit \
+ 		2>errors >out &&
+@@ -1461,27 +1460,15 @@ test_expect_success $PREREQ '--transfer-encoding overrides sendemail.transferEnc
+ 	test -z "$(ls msgtxt*)"
+ '
+ 
+-test_expect_success $PREREQ 'sendemail.transferencoding=8bit via config' '
++test_expect_success $PREREQ 'sendemail.transferEncoding via cli' '
+ 	clean_fake_sendmail &&
+-	git -c sendemail.transferencoding=8bit send-email \
+-		--smtp-server="$(pwd)/fake.sendmail" \
+-		email-using-8bit \
+-		2>errors >out &&
+-	sed '1,/^$/d' msgtxt1 >actual &&
+-	sed '1,/^$/d' email-using-8bit >expected &&
+-	test_cmp expected actual
+-'
+-
+-test_expect_success $PREREQ 'sendemail.transferencoding=8bit via cli' '
+-	clean_fake_sendmail &&
+-	git send-email \
+-		--transfer-encoding=8bit \
++	test_must_fail git send-email \
++		--transfer-encoding=7bit \
+ 		--smtp-server="$(pwd)/fake.sendmail" \
+ 		email-using-8bit \
+ 		2>errors >out &&
+-	sed '1,/^$/d' msgtxt1 >actual &&
+-	sed '1,/^$/d' email-using-8bit >expected &&
+-	test_cmp expected actual
++	grep "cannot send message as 7bit" errors &&
++	test -z "$(ls msgtxt*)"
+ '
+ 
+ test_expect_success $PREREQ 'setup expect' '
+-- 
+2.21.0.1020.gf2820cf01a
+
