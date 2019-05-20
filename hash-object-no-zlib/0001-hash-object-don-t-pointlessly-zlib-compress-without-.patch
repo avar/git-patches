@@ -1,0 +1,126 @@
+From 3affc52df0d5d0ce7b640a2dcc6f351f3ee76f2c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 21 May 2019 00:02:15 +0200
+Subject: [PATCH] hash-object: don't pointlessly zlib compress without -w
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When hash-object hashes something the size of core.bigFileThreshold or
+larger (512MB by default) it'll be streamed through
+stream_to_pack().
+
+That added in 568508e765 ("bulk-checkin: replace fast-import based
+implementation", 2011-10-28) would compress the file with zlib, but
+was oblivious as to whether the content would actually be written out
+to disk, which isn't the case unless hash-object is called with the
+"-w" option.
+
+Hashing is much slower if we need to compress the content, so let's
+check if the HASH_WRITE_OBJECT flag has been given.
+
+An accompanying perf test shows how much this improves things. With
+CFLAGS=-O3 and OPENSSL_SHA1=Y the relevant change is (manually
+reformatted to avoid long lines):
+
+    1007.6: 'git hash-object <file>' with threshold=32M
+        -> 1.57(1.55+0.01)   0.09(0.09+0.00) -94.3%
+    1007.7: 'git hash-object --stdin < <file>' with threshold=32M
+        -> 1.57(1.57+0.00)   0.09(0.07+0.01) -94.3%
+    1007.8: 'echo <file> | git hash-object --stdin-paths' threshold=32M
+        -> 1.59(1.56+0.00)   0.09(0.08+0.00) -94.3%
+
+The same tests using "-w" still take that long, since those will need
+to zlib compress the relevant object. With the sha1collisiondetection
+library (our default) there's less of a difference since the hashing
+itself is slower, or respectively:
+
+    1.71(1.65+0.01)   0.19(0.18+0.01) -88.9%
+    1.70(1.66+0.02)   0.19(0.19+0.00) -88.8%
+    1.69(1.66+0.00)   0.19(0.18+0.00) -88.8%
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ bulk-checkin.c              |  3 ++-
+ t/perf/p1007-hash-object.sh | 53 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 55 insertions(+), 1 deletion(-)
+ create mode 100755 t/perf/p1007-hash-object.sh
+
+diff --git a/bulk-checkin.c b/bulk-checkin.c
+index 39ee7d6107..a26126ee76 100644
+--- a/bulk-checkin.c
++++ b/bulk-checkin.c
+@@ -105,8 +105,9 @@ static int stream_to_pack(struct bulk_checkin_state *state,
+ 	int status = Z_OK;
+ 	int write_object = (flags & HASH_WRITE_OBJECT);
+ 	off_t offset = 0;
++	int level = write_object ? pack_compression_level : Z_NO_COMPRESSION;
+ 
+-	git_deflate_init(&s, pack_compression_level);
++	git_deflate_init(&s, level);
+ 
+ 	hdrlen = encode_in_pack_object_header(obuf, sizeof(obuf), type, size);
+ 	s.next_out = obuf + hdrlen;
+diff --git a/t/perf/p1007-hash-object.sh b/t/perf/p1007-hash-object.sh
+new file mode 100755
+index 0000000000..8df6dc59a5
+--- /dev/null
++++ b/t/perf/p1007-hash-object.sh
+@@ -0,0 +1,53 @@
++#!/bin/sh
++
++test_description="Tests performance of hash-object"
++. ./perf-lib.sh
++
++test_perf_fresh_repo
++
++test_lazy_prereq SHA1SUM_AND_SANE_DD_AND_URANDOM '
++	>empty &&
++	sha1sum empty >empty.sha1sum &&
++	grep -q -w da39a3ee5e6b4b0d3255bfef95601890afd80709 empty.sha1sum &&
++	dd if=/dev/urandom of=random.test bs=1024 count=1 &&
++	stat -c %s random.test >random.size &&
++	grep -q -x 1024 random.size
++'
++
++if test_have_prereq !SHA1SUM_AND_SANE_DD_AND_URANDOM
++then
++	skip_all='failed prereq check for sha1sum/dd/stat'
++	test_perf 'dummy p0013 test (skipped all tests)' 'true'
++	test_done
++fi
++
++test_expect_success 'setup 64MB file.random file' '
++	dd if=/dev/urandom of=file.random count=$((64*1024)) bs=1024
++'
++
++test_perf 'sha1sum(1) on file.random (for comparison)' '
++	sha1sum file.random
++'
++
++for threshold in 32M 64M
++do
++	for write in '' ' -w'
++	do
++		for literally in ' --literally -t commit' ''
++		do
++			test_perf "'git hash-object$write$literally <file>' with threshold=$threshold" "
++				git -c core.bigFileThreshold=$threshold hash-object$write$literally file.random
++			"
++
++			test_perf "'git hash-object$write$literally --stdin < <file>' with threshold=$threshold" "
++				git -c core.bigFileThreshold=$threshold hash-object$write$literally --stdin <file.random
++			"
++
++			test_perf "'echo <file> | git hash-object$write$literally --stdin-paths' threshold=$threshold" "
++				echo file.random | git -c core.bigFileThreshold=$threshold hash-object$write$literally --stdin-paths
++			"
++		done
++	done
++done
++
++test_done
+-- 
+2.21.0.1020.gf2820cf01a
+
