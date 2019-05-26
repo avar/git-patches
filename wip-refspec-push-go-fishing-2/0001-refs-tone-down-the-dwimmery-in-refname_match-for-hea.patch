@@ -1,0 +1,173 @@
+From d0bd6ae68d397c62641f6519debf90e8c3576826 Mon Sep 17 00:00:00 2001
+In-Reply-To: <CAHk-=wgzKzAwS=_ySikL1f=Gr62YXL_WXGh82wZKMOvzJ9+2VA@mail.gmail.com>
+References: <CAHk-=wgzKzAwS=_ySikL1f=Gr62YXL_WXGh82wZKMOvzJ9+2VA@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 27 May 2019 00:38:35 +0200
+Subject: [RFC/PATCH] refs: tone down the dwimmery in refname_match() for
+ {heads,tags,remotes}/*
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When a refspec like HEAD:tags/x is pushed where HEAD is a branch,
+we'll push a *branch* that'll be located at "refs/heads/tags/x". This
+is part of the rather straightforward rules I documented in
+2219c09e23 ("push doc: document the DWYM behavior pushing to
+unqualified <dst>", 2018-11-13).
+
+However, if there exists a refs/tags/x on the remote the
+count_refspec_match() logic will, as a result of calling
+refname_match() match the detected branch type of the LHS of the
+refspec to refs/tags/x, because it's in a loop where it tries to match
+"tags/x" to "refs/tags/X', then "refs/tags/tags/x" etc.
+
+This resulted in a case[1] where someone on LKML did:
+
+    git push kvm +HEAD:tags/for-linus
+
+Which would have created a new "tags/for-linus" branch in their "kvm"
+repository, except because they happened to have an existing
+"refs/tags/for-linus" reference we pushed there instead, and replaced
+an annotated tag with a lightweight tag.
+
+Let's tone this down a bit and not match the more general expansions
+if they'd overlap with later expansions.
+
+This patch is a hack, and should not be applied. We probably want to
+fix this for "push", but we use refname_match() all over the place. We
+probably want to start by undoing part of
+54457fe509 ("refname_match(): always use the rules in
+ref_rev_parse_rules", 2014-01-14) and having special rules just for
+push.
+
+Furthermore ref_rev_parse_rules is used elsewhere, should we be doing
+this in other places? I think not if we undo most of 54457fe509 and
+can just have a custom matcher just for count_refspec_match(). That
+one shouldn't need any sort of magic, because elsewhere in the remote
+push DWYM code we try to add implicit refs/{tags,heads}/ prefixes.
+
+As the t/t5150-request-pull.sh change shows this results in a failing
+test where a local "full" branch is being pushed to a remote
+"refs/tags/full". So maybe this is something LKML people actually want
+for some reason.
+
+1. https://lore.kernel.org/lkml/2d55fd2a-afbf-1b7c-ca82-8bffaa18e0d0@redhat.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c                   |  8 +++++++-
+ t/t5150-request-pull.sh  |  2 +-
+ t/t5505-remote.sh        | 17 +++++++++++++++++
+ t/t9101-git-svn-props.sh | 12 ++++++------
+ 4 files changed, 31 insertions(+), 8 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index 92d1f6dbdd..729b921328 100644
+--- a/refs.c
++++ b/refs.c
+@@ -514,9 +514,15 @@ int refname_match(const char *abbrev_name, const char *full_name)
+ 	const int abbrev_name_len = strlen(abbrev_name);
+ 	const int num_rules = NUM_REV_PARSE_RULES;
+ 
+-	for (p = ref_rev_parse_rules; *p; p++)
++	for (p = ref_rev_parse_rules; *p; p++) {
++		if (!strcmp(*p, "refs/%.*s") &&
++		    (starts_with(abbrev_name, "tags/") ||
++		     starts_with(abbrev_name, "heads/") ||
++		     starts_with(abbrev_name, "remotes/")))
++			continue;
+ 		if (!strcmp(full_name, mkpath(*p, abbrev_name_len, abbrev_name)))
+ 			return &ref_rev_parse_rules[num_rules] - p;
++	}
+ 
+ 	return 0;
+ }
+diff --git a/t/t5150-request-pull.sh b/t/t5150-request-pull.sh
+index fca001eb9b..0265871cf4 100755
+--- a/t/t5150-request-pull.sh
++++ b/t/t5150-request-pull.sh
+@@ -212,7 +212,7 @@ test_expect_success 'pull request format' '
+ 		cd local &&
+ 		git checkout initial &&
+ 		git merge --ff-only master &&
+-		git push origin tags/full &&
++		git push origin full:refs/tags/full &&
+ 		git request-pull initial "$downstream_url" tags/full >../request
+ 	) &&
+ 	<request sed -nf fuzz.sed >request.fuzzy &&
+diff --git a/t/t5505-remote.sh b/t/t5505-remote.sh
+index 883b32efa0..52507b9e50 100755
+--- a/t/t5505-remote.sh
++++ b/t/t5505-remote.sh
+@@ -1277,4 +1277,21 @@ test_expect_success 'refs/remotes/* <src> refspec and unqualified <dst> DWIM and
+ 	)
+ '
+ 
++test_expect_success 'HEAD:tags/A and HEAD:tags/B should not be different one of refs/tags/[AB] exists' '
++	git clone "file://$PWD/two" tags-match &&
++	(
++		cd tags-match &&
++		test_commit A &&
++		git rev-parse HEAD >expected &&
++
++		git push origin HEAD:tags/my-not-a-tag &&
++		git -C ../two rev-parse refs/heads/tags/my-not-a-tag >actual &&
++		test_cmp expected actual &&
++
++		git push origin HEAD:tags/my-tag &&
++		git -C ../two rev-parse refs/heads/tags/my-tag >actual &&
++		test_cmp expected actual
++	)
++'
++
+ test_done
+diff --git a/t/t9101-git-svn-props.sh b/t/t9101-git-svn-props.sh
+index c26c4b0927..f9e43f4e97 100755
+--- a/t/t9101-git-svn-props.sh
++++ b/t/t9101-git-svn-props.sh
+@@ -73,11 +73,11 @@ test_expect_success 'fetch revisions from svn' 'git svn fetch'
+ 
+ name='test svn:keywords ignoring'
+ test_expect_success "$name" \
+-	'git checkout -b mybranch remotes/git-svn &&
++	'git checkout -b mybranch refs/remotes/git-svn &&
+ 	echo Hi again >> kw.c &&
+ 	git commit -a -m "test keywords ignoring" &&
+-	git svn set-tree remotes/git-svn..mybranch &&
+-	git pull . remotes/git-svn'
++	git svn set-tree refs/remotes/git-svn..mybranch &&
++	git pull . refs/remotes/git-svn'
+ 
+ expect='/* $Id$ */'
+ got="$(sed -ne 2p kw.c)"
+@@ -95,7 +95,7 @@ test_expect_success "propset CR on crlf files" '
+ 
+ test_expect_success 'fetch and pull latest from svn and checkout a new wc' \
+ 	'git svn fetch &&
+-	 git pull . remotes/git-svn &&
++	 git pull . refs/remotes/git-svn &&
+ 	 svn_cmd co "$svnrepo" new_wc'
+ 
+ for i in crlf ne_crlf lf ne_lf cr ne_cr empty_cr empty_lf empty empty_crlf
+@@ -117,7 +117,7 @@ cd test_wc
+ 	 svn_cmd commit -m "propset CRLF on cr files"'
+ cd ..
+ test_expect_success 'fetch and pull latest from svn' \
+-	'git svn fetch && git pull . remotes/git-svn'
++	'git svn fetch && git pull . refs/remotes/git-svn'
+ 
+ b_cr="$(git hash-object cr)"
+ b_ne_cr="$(git hash-object ne_cr)"
+@@ -168,7 +168,7 @@ cat >create-ignore-index.expect <<\EOF
+ EOF
+ 
+ test_expect_success 'test create-ignore' "
+-	git svn fetch && git pull . remotes/git-svn &&
++	git svn fetch && git pull . refs/remotes/git-svn &&
+ 	git svn create-ignore &&
+ 	cmp ./.gitignore create-ignore.expect &&
+ 	cmp ./deeply/.gitignore create-ignore.expect &&
+-- 
+2.21.0.1020.gf2820cf01a
+
