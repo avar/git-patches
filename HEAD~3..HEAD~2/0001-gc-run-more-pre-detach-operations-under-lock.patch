@@ -87,6 +87,68 @@ Testing for this new behavior is hard.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+This patch is part of a WIP branch I have that's a bit of a mess. It's
+more-gc-detach-under-lock on github.com/avar/git.git. It doesn't apply
+on master because it relies on some previous test work, but for RFC
+purposes I figured it was better to send it stand-alone.
+
+But I think this sort of approach is better than Duy's proposed patch,
+because...
+
+On Wed, Jun 19 2019, Nguyễn Thái Ngọc Duy wrote:
+
+> So let's try to avoid that. We should only need one 'gc' run after all
+> objects and references are added anyway. Add a new option --no-auto-gc
+> that will be used by those n-1 processes. 'gc --auto' will always run on
+> the main fetch process (*).
+>
+> (*) even if we fetch remotes in parallel at some point in future, this
+>     should still be fine because we should "join" all those processes
+>     before this step.
+
+This is what I'm trying to fix in my version of this patch. This is
+only true for yours if you assume that the user is going to be
+invoking "fetch" in a single terminal window, IOW that we have an
+implicit global mutex of one top-level git command at a time.
+
+Wheras mine fixes e.g. the same issue for:
+
+    parallel 'git fetch {}' ::: $(git remote)
+
+Ditto for you running a "git" command and your editor running a
+"fetch" at the same time.
+
+A similar "one terminal" assumption was made when changing the
+auto-detach behavior in your 62aad1849f ("gc --auto: do not lock refs
+in the background", 2014-05-25).
+
+To be clear, I think that (and your patch here) would (mostly) be an
+improvement. I just wonder if we can do better.
+
+I got stuck with this WIP series of mine because while it's mostly
+ready sans the 'Why "mostly" and "usually"' caveats mentioned in my
+commit message, I wondered if we couldn't do much better by:
+
+ a) Do some version of reverting your 62aad1849f, this would entirely
+    get rid of this need for handing off a lock to a child (noted
+    above), but as-is would have e.g. "commit" run into a *.lock.
+
+    Is that mitigated by 4ff0f01cb7 ("refs: retry acquiring reference
+    locks for 100ms", 2017-08-21)? Or could we have "gc" run in some
+    "lock-less" mode where it does all the work of expiring a
+    ref/reflog at a given OID, and if it changed just tries again
+    without needing to *.lock it except for the brief period of
+    changing the already prepared file?
+
+ b) If we couldn't do "a" for whatever reason implement some "locking
+    priority" where a not-gc command could create a file (which "gc"
+    would poll) saying "I want it for real work, release it!", or
+    alternatively "gc" would create "*.locked-by-gc" in addition to
+    "*.lock" files, and if the "*.locked-by-gc" was seen when the
+    100ms retry would kick in, we'd make that say 10 seconds instead
+    of 100 ms.
+
  builtin/gc.c  | 19 ++++++++++++-------
  lockfile.c    |  2 ++
  lockfile.h    |  8 +++++++-
