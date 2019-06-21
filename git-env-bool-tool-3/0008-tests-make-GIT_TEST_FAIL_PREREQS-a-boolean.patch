@@ -1,0 +1,156 @@
+From d1a32debbad616dc65428ab4eebf8c81ef17afa7 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190620210915.11297-1-avarab@gmail.com>
+References: <20190620210915.11297-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 20 Jun 2019 00:11:09 +0200
+Subject: [PATCH v3 8/8] tests: make GIT_TEST_FAIL_PREREQS a boolean
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the GIT_TEST_FAIL_PREREQS variable from being "non-empty?" to
+being a more standard boolean variable. I recently added the variable
+in dfe1a17df9 ("tests: add a special setup where prerequisites fail",
+2019-05-13), having to add another "non-empty?" special-case is what
+prompted me to write the "git env--helper" utility being used here.
+
+Converting this one is a bit tricky since we use it so early and
+frequently in the guts of the test code itself, so let's set a
+GIT_TEST_FAIL_PREREQS_INTERNAL which can be tested with the old "test
+-n" for the purposes of the shell code, and change the user-exposed
+and documented GIT_TEST_FAIL_PREREQS variable to a boolean.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/README                |  2 +-
+ t/t0000-basic.sh        | 10 +++++-----
+ t/test-lib-functions.sh |  4 ++--
+ t/test-lib.sh           | 23 +++++++++++++++++++----
+ 4 files changed, 27 insertions(+), 12 deletions(-)
+
+diff --git a/t/README b/t/README
+index 072c9854d1..60d5b77bcc 100644
+--- a/t/README
++++ b/t/README
+@@ -334,7 +334,7 @@ that cannot be easily covered by a few specific test cases. These
+ could be enabled by running the test suite with correct GIT_TEST_
+ environment set.
+ 
+-GIT_TEST_FAIL_PREREQS<non-empty?> fails all prerequisites. This is
++GIT_TEST_FAIL_PREREQS=<boolean> fails all prerequisites. This is
+ useful for discovering issues with the tests where say a later test
+ implicitly depends on an optional earlier test.
+ 
+diff --git a/t/t0000-basic.sh b/t/t0000-basic.sh
+index 31de7e90f3..e89438e619 100755
+--- a/t/t0000-basic.sh
++++ b/t/t0000-basic.sh
+@@ -726,7 +726,7 @@ donthaveit=yes
+ test_expect_success DONTHAVEIT 'unmet prerequisite causes test to be skipped' '
+ 	donthaveit=no
+ '
+-if test -z "$GIT_TEST_FAIL_PREREQS" -a $haveit$donthaveit != yesyes
++if test -z "$GIT_TEST_FAIL_PREREQS_INTERNAL" -a $haveit$donthaveit != yesyes
+ then
+ 	say "bug in test framework: prerequisite tags do not work reliably"
+ 	exit 1
+@@ -747,7 +747,7 @@ donthaveiteither=yes
+ test_expect_success DONTHAVEIT,HAVEIT 'unmet prerequisites causes test to be skipped' '
+ 	donthaveiteither=no
+ '
+-if test -z "$GIT_TEST_FAIL_PREREQS" -a $haveit$donthaveit$donthaveiteither != yesyesyes
++if test -z "$GIT_TEST_FAIL_PREREQS_INTERNAL" -a $haveit$donthaveit$donthaveiteither != yesyesyes
+ then
+ 	say "bug in test framework: multiple prerequisite tags do not work reliably"
+ 	exit 1
+@@ -763,7 +763,7 @@ test_expect_success !LAZY_TRUE 'missing lazy prereqs skip tests' '
+ 	donthavetrue=no
+ '
+ 
+-if test -z "$GIT_TEST_FAIL_PREREQS" -a "$havetrue$donthavetrue" != yesyes
++if test -z "$GIT_TEST_FAIL_PREREQS_INTERNAL" -a "$havetrue$donthavetrue" != yesyes
+ then
+ 	say 'bug in test framework: lazy prerequisites do not work'
+ 	exit 1
+@@ -779,7 +779,7 @@ test_expect_success LAZY_FALSE 'missing negative lazy prereqs will skip' '
+ 	havefalse=no
+ '
+ 
+-if test -z "$GIT_TEST_FAIL_PREREQS" -a "$nothavefalse$havefalse" != yesyes
++if test -z "$GIT_TEST_FAIL_PREREQS_INTERNAL" -a "$nothavefalse$havefalse" != yesyes
+ then
+ 	say 'bug in test framework: negative lazy prerequisites do not work'
+ 	exit 1
+@@ -790,7 +790,7 @@ test_expect_success 'tests clean up after themselves' '
+ 	test_when_finished clean=yes
+ '
+ 
+-if test -z "$GIT_TEST_FAIL_PREREQS" -a $clean != yes
++if test -z "$GIT_TEST_FAIL_PREREQS_INTERNAL" -a $clean != yes
+ then
+ 	say "bug in test framework: basic cleanup command does not work reliably"
+ 	exit 1
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 527508c350..1cd0655f96 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -309,7 +309,7 @@ test_unset_prereq () {
+ }
+ 
+ test_set_prereq () {
+-	if test -n "$GIT_TEST_FAIL_PREREQS"
++	if test -n "$GIT_TEST_FAIL_PREREQS_INTERNAL"
+ 	then
+ 		case "$1" in
+ 		# The "!" case is handled below with
+@@ -1043,7 +1043,7 @@ perl () {
+ # The error/skip message should be given by $2.
+ #
+ test_skip_or_die () {
+-	if ! git env--helper --mode-bool --variable=$1 --default=0 --exit-code --quiet
++	if ! git env--helper --type=bool --default=false --exit-code $1
+ 	then
+ 		skip_all=$2
+ 		test_done
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index ed5d69dfe5..1af4e50653 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1389,6 +1389,25 @@ yes () {
+ 	done
+ }
+ 
++# The GIT_TEST_FAIL_PREREQS code hooks into test_set_prereq(), and
++# thus needs to be set up really early, and set an internal variable
++# for convenience so the hot test_set_prereq() codepath doesn't need
++# to call "git env--helper". Only do that work if needed by seeing if
++# GIT_TEST_FAIL_PREREQS is set at all.
++GIT_TEST_FAIL_PREREQS_INTERNAL=
++if test -n "$GIT_TEST_FAIL_PREREQS"
++then
++	if git env--helper --type=bool --default=0 --exit-code GIT_TEST_FAIL_PREREQS
++	then
++		GIT_TEST_FAIL_PREREQS_INTERNAL=true
++		test_set_prereq FAIL_PREREQS
++	fi
++else
++	test_lazy_prereq FAIL_PREREQS '
++		git env--helper --type=bool --default=0 --exit-code GIT_TEST_FAIL_PREREQS
++	'
++fi
++
+ # Fix some commands on Windows
+ uname_s=$(uname -s)
+ case $uname_s in
+@@ -1605,7 +1624,3 @@ test_lazy_prereq SHA1 '
+ test_lazy_prereq REBASE_P '
+ 	test -z "$GIT_TEST_SKIP_REBASE_P"
+ '
+-
+-test_lazy_prereq FAIL_PREREQS '
+-	test -n "$GIT_TEST_FAIL_PREREQS"
+-'
+-- 
+2.22.0.455.g172b71a6c5
+
