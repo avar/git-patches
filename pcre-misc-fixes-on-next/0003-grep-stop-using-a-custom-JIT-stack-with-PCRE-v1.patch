@@ -1,0 +1,139 @@
+From bf6ab177c6826bfcd1163964272b0f626679232b Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190724151415.3698-1-avarab@gmail.com>
+References: <20190724151415.3698-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 23 Jul 2019 23:49:40 +0200
+Subject: [PATCH v2 3/8] grep: stop using a custom JIT stack with PCRE v1
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Simplify the PCRE v1 code for the same reasons as for the PCRE v2 code
+in the last commit. Unlike with v2 we actually used the custom stack
+in v1, but let's use PCRE's built-in 32 KB one instead, since
+experience with v2 shows that's enough. Most distros are already using
+v2 as a default, and the underlying sljit code is the same.
+
+Unfortunately we can't just pass a NULL to pcre_jit_exec() as with
+pcre2_jit_match(). Unlike the v2 function it doesn't support
+that. Instead we need to use the fatter pcre_exec() if we'd like the
+same behavior.
+
+This will make things slightly slower than on the fast-path function,
+but it's OK since we care less about v1 performance these days since
+we have and recommend v2. Running a similar performance test as what I
+ran in fbaceaac47 ("grep: add support for the PCRE v1 JIT API",
+2017-05-25) via:
+
+    GIT_PERF_REPEAT_COUNT=30 GIT_PERF_LARGE_REPO=~/g/linux GIT_PERF_MAKE_OPTS='-j8 USE_LIBPCRE1=Y CFLAGS=-O3 LIBPCREDIR=/home/avar/g/pcre/inst' ./run HEAD~ HEAD p7820-grep-engines.sh
+
+Gives us this, just the /perl/ results:
+
+    Test                                            HEAD~             HEAD
+    ---------------------------------------------------------------------------------------
+    7820.3: perl grep 'how.to'                      0.19(0.67+0.52)   0.19(0.65+0.52) +0.0%
+    7820.7: perl grep '^how to'                     0.19(0.78+0.44)   0.19(0.72+0.49) +0.0%
+    7820.11: perl grep '[how] to'                   0.39(2.13+0.43)   0.40(2.10+0.46) +2.6%
+    7820.15: perl grep '(e.t[^ ]*|v.ry) rare'       0.44(2.55+0.37)   0.45(2.47+0.41) +2.3%
+    7820.19: perl grep 'm(ú|u)lt.b(æ|y)te'          0.23(1.06+0.42)   0.22(1.03+0.43) -4.3%
+
+It will also implicitly re-enable UTF-8 validation for PCRE v1. As
+noted in [1] we now have cases as a result where PCRE v1 is more eager
+to error out. Subsequent patches will fix that for v2, and I think
+it's fair to tell v1 users "just upgrade" and not worry about that
+edge case for v1.
+
+1.  https://public-inbox.org/git/CAPUEsphZJ_Uv9o1-yDpjNLA_q-f7gWXz9g1gCY2pYAYN8ri40g@mail.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 28 +++++-----------------------
+ grep.h |  5 -----
+ 2 files changed, 5 insertions(+), 28 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 4b1e917ac5..9c2b259771 100644
+--- a/grep.c
++++ b/grep.c
+@@ -394,12 +394,6 @@ static void compile_pcre1_regexp(struct grep_pat *p, const struct grep_opt *opt)
+ 
+ #ifdef GIT_PCRE1_USE_JIT
+ 	pcre_config(PCRE_CONFIG_JIT, &p->pcre1_jit_on);
+-	if (p->pcre1_jit_on) {
+-		p->pcre1_jit_stack = pcre_jit_stack_alloc(1, 1024 * 1024);
+-		if (!p->pcre1_jit_stack)
+-			die("Couldn't allocate PCRE JIT stack");
+-		pcre_assign_jit_stack(p->pcre1_extra_info, NULL, p->pcre1_jit_stack);
+-	}
+ #endif
+ }
+ 
+@@ -411,18 +405,9 @@ static int pcre1match(struct grep_pat *p, const char *line, const char *eol,
+ 	if (eflags & REG_NOTBOL)
+ 		flags |= PCRE_NOTBOL;
+ 
+-#ifdef GIT_PCRE1_USE_JIT
+-	if (p->pcre1_jit_on) {
+-		ret = pcre_jit_exec(p->pcre1_regexp, p->pcre1_extra_info, line,
+-				    eol - line, 0, flags, ovector,
+-				    ARRAY_SIZE(ovector), p->pcre1_jit_stack);
+-	} else
+-#endif
+-	{
+-		ret = pcre_exec(p->pcre1_regexp, p->pcre1_extra_info, line,
+-				eol - line, 0, flags, ovector,
+-				ARRAY_SIZE(ovector));
+-	}
++	ret = pcre_exec(p->pcre1_regexp, p->pcre1_extra_info, line,
++			eol - line, 0, flags, ovector,
++			ARRAY_SIZE(ovector));
+ 
+ 	if (ret < 0 && ret != PCRE_ERROR_NOMATCH)
+ 		die("pcre_exec failed with error code %d", ret);
+@@ -439,14 +424,11 @@ static void free_pcre1_regexp(struct grep_pat *p)
+ {
+ 	pcre_free(p->pcre1_regexp);
+ #ifdef GIT_PCRE1_USE_JIT
+-	if (p->pcre1_jit_on) {
++	if (p->pcre1_jit_on)
+ 		pcre_free_study(p->pcre1_extra_info);
+-		pcre_jit_stack_free(p->pcre1_jit_stack);
+-	} else
++	else
+ #endif
+-	{
+ 		pcre_free(p->pcre1_extra_info);
+-	}
+ 	pcre_free((void *)p->pcre1_tables);
+ }
+ #else /* !USE_LIBPCRE1 */
+diff --git a/grep.h b/grep.h
+index 4d8e300175..ce2d72571f 100644
+--- a/grep.h
++++ b/grep.h
+@@ -14,13 +14,9 @@
+ #ifndef GIT_PCRE_STUDY_JIT_COMPILE
+ #define GIT_PCRE_STUDY_JIT_COMPILE 0
+ #endif
+-#if PCRE_MAJOR <= 8 && PCRE_MINOR < 20
+-typedef int pcre_jit_stack;
+-#endif
+ #else
+ typedef int pcre;
+ typedef int pcre_extra;
+-typedef int pcre_jit_stack;
+ #endif
+ #ifdef USE_LIBPCRE2
+ #define PCRE2_CODE_UNIT_WIDTH 8
+@@ -85,7 +81,6 @@ struct grep_pat {
+ 	regex_t regexp;
+ 	pcre *pcre1_regexp;
+ 	pcre_extra *pcre1_extra_info;
+-	pcre_jit_stack *pcre1_jit_stack;
+ 	const unsigned char *pcre1_tables;
+ 	int pcre1_jit_on;
+ 	pcre2_code *pcre2_pattern;
+-- 
+2.22.0.455.g172b71a6c5
+

@@ -1,0 +1,63 @@
+From 0022bcf3dcd4d3f522d4b773b359627aeb235241 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190724151415.3698-1-avarab@gmail.com>
+References: <20190724151415.3698-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Jul 2019 16:26:42 +0200
+Subject: [PATCH v2 7/8] grep: do not enter PCRE2_UTF mode on fixed matching
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As discussed in the last commit partially fix a bug introduced in
+b65abcafc7 ("grep: use PCRE v2 for optimized fixed-string search",
+2019-07-01). Because PCRE v2, unlike kwset, validates its UTF-8 input
+we'd die on e.g.:
+
+    fatal: pcre2_match failed with error code -22: UTF-8 error:
+    isolated byte with 0x80 bit set
+
+When grepping a non-ASCII fixed string. This is a more general problem
+that's hard to fix, but we can at least fix the most common case of
+grepping for a fixed string without "-i". I can't think of a reason
+for why we'd turn on PCRE2_UTF when matching byte-for-byte like that.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c                          | 3 ++-
+ t/t7812-grep-icase-non-ascii.sh | 4 ++--
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 5bc0f4f32a..c7c06ae08d 100644
+--- a/grep.c
++++ b/grep.c
+@@ -472,7 +472,8 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 		}
+ 		options |= PCRE2_CASELESS;
+ 	}
+-	if (!opt->ignore_locale && is_utf8_locale() && has_non_ascii(p->pattern))
++	if (!opt->ignore_locale && is_utf8_locale() && has_non_ascii(p->pattern) &&
++	    !(!opt->ignore_case && (p->fixed || p->is_fixed)))
+ 		options |= PCRE2_UTF;
+ 
+ 	p->pcre2_pattern = pcre2_compile((PCRE2_SPTR)p->pattern,
+diff --git a/t/t7812-grep-icase-non-ascii.sh b/t/t7812-grep-icase-non-ascii.sh
+index 96c3572056..531eb59d57 100755
+--- a/t/t7812-grep-icase-non-ascii.sh
++++ b/t/t7812-grep-icase-non-ascii.sh
+@@ -68,9 +68,9 @@ test_expect_success GETTEXT_LOCALE,LIBPCRE2 'PCRE v2: grep ASCII from invalid UT
+ '
+ 
+ test_expect_success GETTEXT_LOCALE,LIBPCRE2 'PCRE v2: grep non-ASCII from invalid UTF-8 data' '
+-	test_might_fail git grep -h "æ" invalid-0x80 >actual &&
++	git grep -h "æ" invalid-0x80 >actual &&
+ 	test_cmp expected actual &&
+-	test_must_fail git grep -h "(*NO_JIT)æ" invalid-0x80 &&
++	git grep -h "(*NO_JIT)æ" invalid-0x80 &&
+ 	test_cmp expected actual
+ '
+ 
+-- 
+2.22.0.455.g172b71a6c5
+

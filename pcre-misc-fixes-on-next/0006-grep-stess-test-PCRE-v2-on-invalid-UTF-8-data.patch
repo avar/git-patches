@@ -1,0 +1,113 @@
+From b4d6a9eb7030c04dfb5a679b0921453c4b9dabe5 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190724151415.3698-1-avarab@gmail.com>
+References: <20190724151415.3698-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Jul 2019 16:17:12 +0200
+Subject: [PATCH v2 6/8] grep: stess test PCRE v2 on invalid UTF-8 data
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since my b65abcafc7 ("grep: use PCRE v2 for optimized fixed-string
+search", 2019-07-01) we've been dying on invalid UTF-8 data when
+grepping for fixed strings if the following are all true:
+
+    * The subject string is non-ASCII (e.g. "ævar")
+    * We're under a is_utf8_locale(), e.g. "en_US.UTF-8", not "C"
+    * We compiled with PCRE v2
+    * That PCRE v2 did not have JIT support
+
+The last of those is why this wasn't caught earlier, per pcre2jit(3):
+
+    "unless PCRE2_NO_UTF_CHECK is set, a UTF subject string is tested
+    for validity. In the interests of speed, these checks do not
+    happen on the JIT fast path, and if invalid data is passed, the
+    result is undefined."
+
+I.e. the subject being matched against our pattern was invalid, but we
+were lucky and getting away with it on the JIT path, but the non-JIT
+one is stricter.
+
+This patch does nothing to fix that, instead we sneak in support for
+fixed patterns starting with "(*NO_JIT)", this disables the PCRE v2
+jit with implicit fixed-string matching for testing, see
+pcre2syntax(3) the syntax.
+
+This is technically a change in behavior, but it's so obscure that I
+figured it was OK. We'd previously consider this an invalid regular
+expression as regcomp() would die on it, now we feed it to the PCRE v2
+fixed-string path. I thought this was better than introducing yet
+another GIT_TEST_* environment variable.
+
+We're also relying on a behavior of PCRE v2 that technically could
+change, but I think the test coverage is worth dipping our toe into
+some somewhat undefined behavior.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c                          | 10 ++++++++++
+ t/t7812-grep-icase-non-ascii.sh | 28 ++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/grep.c b/grep.c
+index 6d60e2e557..5bc0f4f32a 100644
+--- a/grep.c
++++ b/grep.c
+@@ -615,6 +615,16 @@ static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+ 		die(_("given pattern contains NULL byte (via -f <file>). This is only supported with -P under PCRE v2"));
+ 
+ 	p->is_fixed = is_fixed(p->pattern, p->patternlen);
++#ifdef USE_LIBPCRE2
++       if (!p->fixed && !p->is_fixed) {
++	       const char *no_jit = "(*NO_JIT)";
++	       const int no_jit_len = strlen(no_jit);
++	       if (starts_with(p->pattern, no_jit) &&
++		   is_fixed(p->pattern + no_jit_len,
++			    p->patternlen - no_jit_len))
++		       p->is_fixed = 1;
++       }
++#endif
+ 	if (p->fixed || p->is_fixed) {
+ #ifdef USE_LIBPCRE2
+ 		opt->pcre2 = 1;
+diff --git a/t/t7812-grep-icase-non-ascii.sh b/t/t7812-grep-icase-non-ascii.sh
+index 0c685d3598..96c3572056 100755
+--- a/t/t7812-grep-icase-non-ascii.sh
++++ b/t/t7812-grep-icase-non-ascii.sh
+@@ -53,4 +53,32 @@ test_expect_success REGEX_LOCALE 'pickaxe -i on non-ascii' '
+ 	test_cmp expected actual
+ '
+ 
++test_expect_success GETTEXT_LOCALE,LIBPCRE2 'PCRE v2: setup invalid UTF-8 data' '
++	printf "\\200\\n" >invalid-0x80 &&
++	echo "ævar" >expected &&
++	cat expected >>invalid-0x80 &&
++	git add invalid-0x80
++'
++
++test_expect_success GETTEXT_LOCALE,LIBPCRE2 'PCRE v2: grep ASCII from invalid UTF-8 data' '
++	git grep -h "var" invalid-0x80 >actual &&
++	test_cmp expected actual &&
++	git grep -h "(*NO_JIT)var" invalid-0x80 >actual &&
++	test_cmp expected actual
++'
++
++test_expect_success GETTEXT_LOCALE,LIBPCRE2 'PCRE v2: grep non-ASCII from invalid UTF-8 data' '
++	test_might_fail git grep -h "æ" invalid-0x80 >actual &&
++	test_cmp expected actual &&
++	test_must_fail git grep -h "(*NO_JIT)æ" invalid-0x80 &&
++	test_cmp expected actual
++'
++
++test_expect_success GETTEXT_LOCALE,LIBPCRE2 'PCRE v2: grep non-ASCII from invalid UTF-8 data with -i' '
++	test_might_fail git grep -hi "Æ" invalid-0x80 >actual &&
++	test_cmp expected actual &&
++	test_must_fail git grep -hi "(*NO_JIT)Æ" invalid-0x80 &&
++	test_cmp expected actual
++'
++
+ test_done
+-- 
+2.22.0.455.g172b71a6c5
+

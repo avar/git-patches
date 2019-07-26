@@ -1,0 +1,71 @@
+From c742bc843dd2083ac65d81b4ef68108ed5ef3f4c Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190724151415.3698-1-avarab@gmail.com>
+References: <20190724151415.3698-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 23 Jul 2019 12:34:16 +0200
+Subject: [PATCH v2 1/8] grep: remove overly paranoid BUG(...) code
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove code that would trigger if pcre_config() or pcre2_config() was
+so broken that "do we have JIT?" wouldn't return a boolean.
+
+I added this code back in fbaceaac47 ("grep: add support for the PCRE
+v1 JIT API", 2017-05-25) and then as noted in f002532784 ("grep: print
+the pcre2_jit_on value", 2019-07-22) incorrectly copy/pasted some of
+it in 94da9193a6 ("grep: add support for PCRE v2", 2017-06-01).
+
+Let's just remove this code. Being this paranoid about the
+pcre2?_config() function itself being broken is crossing the line into
+unreasonable paranoia.
+
+Reported-by:  Beat Bolli <dev+git@drbeat.li>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 0937c5bfff..95af88cb74 100644
+--- a/grep.c
++++ b/grep.c
+@@ -394,14 +394,11 @@ static void compile_pcre1_regexp(struct grep_pat *p, const struct grep_opt *opt)
+ 
+ #ifdef GIT_PCRE1_USE_JIT
+ 	pcre_config(PCRE_CONFIG_JIT, &p->pcre1_jit_on);
+-	if (p->pcre1_jit_on == 1) {
++	if (p->pcre1_jit_on) {
+ 		p->pcre1_jit_stack = pcre_jit_stack_alloc(1, 1024 * 1024);
+ 		if (!p->pcre1_jit_stack)
+ 			die("Couldn't allocate PCRE JIT stack");
+ 		pcre_assign_jit_stack(p->pcre1_extra_info, NULL, p->pcre1_jit_stack);
+-	} else if (p->pcre1_jit_on != 0) {
+-		BUG("The pcre1_jit_on variable should be 0 or 1, not %d",
+-		    p->pcre1_jit_on);
+ 	}
+ #endif
+ }
+@@ -510,7 +507,7 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 	}
+ 
+ 	pcre2_config(PCRE2_CONFIG_JIT, &p->pcre2_jit_on);
+-	if (p->pcre2_jit_on == 1) {
++	if (p->pcre2_jit_on) {
+ 		jitret = pcre2_jit_compile(p->pcre2_pattern, PCRE2_JIT_COMPLETE);
+ 		if (jitret)
+ 			die("Couldn't JIT the PCRE2 pattern '%s', got '%d'\n", p->pattern, jitret);
+@@ -545,9 +542,6 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 		if (!p->pcre2_match_context)
+ 			die("Couldn't allocate PCRE2 match context");
+ 		pcre2_jit_stack_assign(p->pcre2_match_context, NULL, p->pcre2_jit_stack);
+-	} else if (p->pcre2_jit_on != 0) {
+-		BUG("The pcre2_jit_on variable should be 0 or 1, not %d",
+-		    p->pcre2_jit_on);
+ 	}
+ }
+ 
+-- 
+2.22.0.455.g172b71a6c5
+
