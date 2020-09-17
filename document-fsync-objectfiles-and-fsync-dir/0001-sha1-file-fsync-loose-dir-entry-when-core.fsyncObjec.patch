@@ -1,0 +1,85 @@
+From ec2d60f9e34525ce5baadd6e2b0b59aa24a93a3a Mon Sep 17 00:00:00 2001
+In-Reply-To: <87sgbghdbp.fsf@evledraar.gmail.com>
+References: <87sgbghdbp.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 17 Sep 2020 13:14:11 +0200
+Subject: [RFC PATCH 1/2] sha1-file: fsync() loose dir entry when
+ core.fsyncObjectFiles
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the behavior of core.fsyncObjectFiles to also sync the
+directory entry. I don't have a case where this broke, just going by
+paranoia and the fsync(2) manual page's guarantees about its behavior.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sha1-file.c | 19 ++++++++++++++-----
+ 1 file changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/sha1-file.c b/sha1-file.c
+index dd65bd5c68..d286346921 100644
+--- a/sha1-file.c
++++ b/sha1-file.c
+@@ -1784,10 +1784,14 @@ int hash_object_file(const struct git_hash_algo *algo, const void *buf,
+ }
+ 
+ /* Finalize a file on disk, and close it. */
+-static void close_loose_object(int fd)
++static void close_loose_object(int fd, const struct strbuf *dirname)
+ {
+-	if (fsync_object_files)
++	int dirfd;
++	if (fsync_object_files) {
+ 		fsync_or_die(fd, "loose object file");
++		dirfd = xopen(dirname->buf, O_RDONLY);
++		fsync_or_die(dirfd, "loose object directory");
++	}
+ 	if (close(fd) != 0)
+ 		die_errno(_("error when closing loose object file"));
+ }
+@@ -1808,12 +1812,15 @@ static inline int directory_size(const char *filename)
+  * We want to avoid cross-directory filename renames, because those
+  * can have problems on various filesystems (FAT, NFS, Coda).
+  */
+-static int create_tmpfile(struct strbuf *tmp, const char *filename)
++static int create_tmpfile(struct strbuf *tmp,
++			  const char *filename,
++			  struct strbuf *dirname)
+ {
+ 	int fd, dirlen = directory_size(filename);
+ 
+ 	strbuf_reset(tmp);
+ 	strbuf_add(tmp, filename, dirlen);
++	strbuf_add(dirname, filename, dirlen);
+ 	strbuf_addstr(tmp, "tmp_obj_XXXXXX");
+ 	fd = git_mkstemp_mode(tmp->buf, 0444);
+ 	if (fd < 0 && dirlen && errno == ENOENT) {
+@@ -1848,10 +1855,11 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
+ 	struct object_id parano_oid;
+ 	static struct strbuf tmp_file = STRBUF_INIT;
+ 	static struct strbuf filename = STRBUF_INIT;
++	static struct strbuf dirname = STRBUF_INIT;
+ 
+ 	loose_object_path(the_repository, &filename, oid);
+ 
+-	fd = create_tmpfile(&tmp_file, filename.buf);
++	fd = create_tmpfile(&tmp_file, filename.buf, &dirname);
+ 	if (fd < 0) {
+ 		if (errno == EACCES)
+ 			return error(_("insufficient permission for adding an object to repository database %s"), get_object_directory());
+@@ -1897,7 +1905,8 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
+ 		die(_("confused by unstable object source data for %s"),
+ 		    oid_to_hex(oid));
+ 
+-	close_loose_object(fd);
++	close_loose_object(fd, &dirname);
++	strbuf_release(&dirname);
+ 
+ 	if (mtime) {
+ 		struct utimbuf utb;
+-- 
+2.28.0.297.g1956fa8f8d
+
