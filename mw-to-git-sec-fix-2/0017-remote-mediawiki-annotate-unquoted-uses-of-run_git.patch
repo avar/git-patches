@@ -1,0 +1,79 @@
+From 2ad06f733447db30aff66841d128d555f9b4bdc8 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20200916102918.29805-1-avarab@gmail.com>
+References: <20200916102918.29805-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 16 Sep 2020 01:29:59 +0200
+Subject: [PATCH v2 17/18] remote-mediawiki: annotate unquoted uses of
+ run_git()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Explicitly annotate the invocations of run_git() which don't use
+quoted arguments. I'm not converting these to run_git_quoted() because
+these invocations pipe stderr to /dev/null, which the Perl open() API
+doesn't support.
+
+We could do a quoted version of this with IPC::Open3, but I don't
+think it's worth it to go through that here. Let's instead just mark
+these sites, and comment on why it's OK to use the variables we're
+using.
+
+This eliminates the last uses of run_git(), so we can remove the alias
+for it introduced in an earlier commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ contrib/mw-to-git/git-remote-mediawiki.perl | 19 +++++++++++++------
+ 1 file changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/contrib/mw-to-git/git-remote-mediawiki.perl b/contrib/mw-to-git/git-remote-mediawiki.perl
+index bbf68ddc46..d21c18df7b 100755
+--- a/contrib/mw-to-git/git-remote-mediawiki.perl
++++ b/contrib/mw-to-git/git-remote-mediawiki.perl
+@@ -395,8 +395,6 @@ sub run_git_unquoted {
+     _run_git(["git $_[0]"], $_[1]);
+ }
+ 
+-BEGIN { *run_git = \&run_git_unquoted }
+-
+ sub get_all_mediafiles {
+ 	my $pages = shift;
+ 	# Attach list of all pages for media files from the API,
+@@ -522,8 +520,11 @@ sub download_mw_mediafile {
+ }
+ 
+ sub get_last_local_revision {
+-	# Get note regarding last mediawiki revision
+-	my $note = run_git("notes --ref=${remotename}/mediawiki show refs/mediawiki/${remotename}/master 2>/dev/null");
++	# Get note regarding last mediawiki revision.
++	#
++	# It's OK to use run_git_unquoted() here because $remotename is
++	# supplied by the local git itself.
++	my $note = run_git_unquoted("notes --ref=${remotename}/mediawiki show refs/mediawiki/${remotename}/master 2>/dev/null");
+ 	my @note_info = split(/ /, $note);
+ 
+ 	my $lastrevision_number;
+@@ -1188,10 +1189,16 @@ sub mw_push_revision {
+ 	my $mw_revision = $last_remote_revid;
+ 
+ 	# Get sha1 of commit pointed by local HEAD
+-	my $HEAD_sha1 = run_git("rev-parse ${local} 2>/dev/null");
++	#
++	# It's OK to use run_git_unquoted() because $local is supplied
++	# by the local git itself.
++	my $HEAD_sha1 = run_git_unquoted("rev-parse ${local} 2>/dev/null");
+ 	chomp($HEAD_sha1);
+ 	# Get sha1 of commit pointed by remotes/$remotename/master
+-	my $remoteorigin_sha1 = run_git("rev-parse refs/remotes/${remotename}/master 2>/dev/null");
++	#
++	# It's OK to use run_git_unquoted() here because $remotename is
++	# supplied by the local git itself.
++	my $remoteorigin_sha1 = run_git_unquoted("rev-parse refs/remotes/${remotename}/master 2>/dev/null");
+ 	chomp($remoteorigin_sha1);
+ 
+ 	if ($last_local_revid > 0 &&
+-- 
+2.28.0.297.g1956fa8f8d
+
