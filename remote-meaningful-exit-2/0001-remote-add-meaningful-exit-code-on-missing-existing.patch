@@ -1,0 +1,294 @@
+From 4e44aed049bf585f6ff3ae9f7ff97ea9beed90a1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 26 Oct 2020 15:26:51 +0100
+Subject: [PATCH v2] remote: add meaningful exit code on missing/existing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the exit code for the likes of "git remote add/rename" to exit
+with 2 if the remote in question doesn't exist, and 3 if it
+does. Before we'd just die() and exit with the general 128 exit code.
+
+This changes the output message from e.g.:
+
+    fatal: remote origin already exists.
+
+To:
+
+    error: remote origin already exists.
+
+Which I believe is a feature, since we generally use "fatal" for the
+generic errors, and "error" for the more specific ones with a custom
+exit code, but this part of the change may break code that already
+relies on stderr parsing (not that we ever supported that...).
+
+The motivation for this is a discussion around some code in GitLab's
+gitaly which wanted to check this, and had to parse stderr to do so:
+https://gitlab.com/gitlab-org/gitaly/-/merge_requests/2695
+
+It's worth noting as an aside that a method of checking this that
+doesn't rely on that is to check with "git config" whether the value
+in question does or doesn't exist. That introduces a TOCTOU race
+condition, but on the other hand this code (e.g. "git remote add")
+already has a TOCTOU race.
+
+We go through the config.lock for the actual setting of the config,
+but the pseudocode logic is:
+
+    read_config();
+    check_config_and_arg_sanity();
+    save_config();
+
+So e.g. if a sleep() is added right after the remote_is_configured()
+check in add() we'll clobber remote.NAME.url, and add another (usually
+duplicate) remote.NAME.fetch entry (and other values, depending on
+invocation).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff:
+ -:  ---------- >  1:  5c1b391307 git-gui: fix mixed tabs and spaces; prefer tabs
+ -:  ---------- >  2:  e13da2db28 l10n: git.pot: v2.29.0 round 1 (124 new, 42 removed)
+ -:  ---------- >  3:  008a5d481e l10n: Update Catalan translation
+ -:  ---------- >  4:  ae372f11d4 l10n: tr: v2.29.0 round 1
+ -:  ---------- >  5:  2cd6e1d552 t5534: split stdout and stderr redirection
+ -:  ---------- >  6:  c02efc1363 git-gui: improve dark mode support
+ -:  ---------- >  7:  17c13069b4 GitHub workflow: automatically follow minor updates of setup-msbuild
+ -:  ---------- >  8:  fcedb379fd compat/mingw.h: drop extern from function declaration
+ -:  ---------- >  9:  cea69151a4 index-pack: restore "resolving deltas" progress meter
+ -:  ---------- > 10:  bebe171947 index-pack: drop type_cas mutex
+ -:  ---------- > 11:  283aa916c6 l10n: it.po: update the Italian translation for Git 2.29.0 round 1
+ -:  ---------- > 12:  8dadc33bfb l10n: fr: v2.29.0 rnd 1
+ -:  ---------- > 13:  ec6a8f9705 index-pack: make get_base_data() comment clearer
+ -:  ---------- > 14:  722fc37491 help: do not expect built-in commands to be hardlinked
+ -:  ---------- > 15:  8474f26581 Makefile: ASCII-sort += lists
+ -:  ---------- > 16:  a15ad5d1bc t1415: avoid using `main` as ref name
+ -:  ---------- > 17:  538228ed23 tests: avoid using the branch name `main`
+ -:  ---------- > 18:  7d78d5fc1a ci: skip GitHub workflow runs for already-tested commits/trees
+ -:  ---------- > 19:  4463ce75b7 ci: do not skip tagged revisions in GitHub workflows
+ -:  ---------- > 20:  df49a806ab git-bisect-lk2009: make continuation of list indented
+ -:  ---------- > 21:  49fbf9ed71 doc: use linkgit macro where needed.
+ -:  ---------- > 22:  89eed6fa99 doc: git-remote fix ups
+ -:  ---------- > 23:  9f443f5531 doc: fix the bnf like style of some commands
+ -:  ---------- > 24:  d4a392452e Git 2.29-rc1
+ -:  ---------- > 25:  1fd0dd7224 l10n: git.pot: v2.29.0 round 2 (1 new, 1 removed)
+ -:  ---------- > 26:  8a62da92e5 l10n: fr: v2.29.0 rnd 2
+ -:  ---------- > 27:  bc66326381 l10n: zh_TW.po: v2.29.0 round 2 (2 untranslated)
+ -:  ---------- > 28:  fbc6b82f0a l10n: tr: v2.29.0 round 2
+ -:  ---------- > 29:  4f03210134 l10n: it.po: update the Italian translation
+ -:  ---------- > 30:  db7ca47599 l10n: sv.po: Update Swedish translation (5013t0f0u)
+ -:  ---------- > 31:  9a1497faca l10n: bg.po: Updated Bulgarian translation (5013t)
+ -:  ---------- > 32:  f055b51f19 l10n: Portuguese translation team has changed. Wohoo!
+ -:  ---------- > 33:  c8774d0670 l10n: pt_PT: make on po/pt_PT.po
+ -:  ---------- > 34:  8d41d1045c l10n: vi(5013t): Updated translation for v2.29.0 rd2
+ -:  ---------- > 35:  0cc3679465 l10n: de.po: Update German translation for Git 2.29.0
+ -:  ---------- > 36:  a5fa49ff0a Git 2.29-rc2
+ -:  ---------- > 37:  b297e03c63 git-gui: blame: prevent tool tips from sticking around after Command-Tab
+ -:  ---------- > 38:  d9488fea41 l10n: zh_CN: for git v2.29.0 l10n round 1 and 2
+ -:  ---------- > 39:  69986e19ff Git 2.29
+ -:  ---------- > 40:  3e0a5dc9af filter-branch doc: fix filter-repo typo
+ -:  ---------- > 41:  907e6379d0 SKIP_DASHED_BUILT_INS: do not skip the bin/ programs
+ -:  ---------- > 42:  b927c80531 Git 2.29.1
+ -:  ---------- > 43:  56706dba33 t3436: check --committer-date-is-author-date result more carefully
+ -:  ---------- > 44:  16b0bb99ea am: fix broken email with --committer-date-is-author-date
+ -:  ---------- > 45:  5f35edd9d7 rebase: fix broken email with --committer-date-is-author-date
+ -:  ---------- > 46:  1d1c4a8759 other small fixes for 2.29.2
+ 1:  26037f6294 ! 47:  4e44aed049 remote: add meaningful exit code on missing/existing
+    @@ Commit message
+             save_config();
+     
+         So e.g. if a sleep() is added right after the remote_is_configured()
+    -    check in add() we'll clobber rermote.NAME.url, and add
+    -    another (usually duplicate) remote.NAME.fetch entry (and other values,
+    -    depending on invocation).
+    +    check in add() we'll clobber remote.NAME.url, and add another (usually
+    +    duplicate) remote.NAME.fetch entry (and other values, depending on
+    +    invocation).
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ Documentation/git-remote.txt: The remote configuration is achieved using the `re
+     +
+     +On success, the exit status is `0`.
+     +
+    -+When subcommands such as 'add', 'rename' and 'remove' can't find the
+    -+remote in question the exit status is `2`, when the remote already
+    -+exists the exit status is `3`.
+    ++When subcommands such as 'add', 'rename', and 'remove' can't find the
+    ++remote in question, the exit status is `2`. When the remote already
+    ++exists, the exit status is `3`.
+     +
+     +On any other error, the exit status may be any other non-zero value.
+     +
+
+ Documentation/git-remote.txt | 11 ++++++++++
+ builtin/remote.c             | 42 ++++++++++++++++++++++++------------
+ t/t5505-remote.sh            | 16 +++++++-------
+ 3 files changed, 47 insertions(+), 22 deletions(-)
+
+diff --git a/Documentation/git-remote.txt b/Documentation/git-remote.txt
+index ea73386c81..31c29c9b31 100644
+--- a/Documentation/git-remote.txt
++++ b/Documentation/git-remote.txt
+@@ -203,6 +203,17 @@ The remote configuration is achieved using the `remote.origin.url` and
+ `remote.origin.fetch` configuration variables.  (See
+ linkgit:git-config[1]).
+ 
++EXIT STATUS
++-----------
++
++On success, the exit status is `0`.
++
++When subcommands such as 'add', 'rename', and 'remove' can't find the
++remote in question, the exit status is `2`. When the remote already
++exists, the exit status is `3`.
++
++On any other error, the exit status may be any other non-zero value.
++
+ EXAMPLES
+ --------
+ 
+diff --git a/builtin/remote.c b/builtin/remote.c
+index 64b4b551eb..c1828ca7d2 100644
+--- a/builtin/remote.c
++++ b/builtin/remote.c
+@@ -191,8 +191,10 @@ static int add(int argc, const char **argv)
+ 	url = argv[1];
+ 
+ 	remote = remote_get(name);
+-	if (remote_is_configured(remote, 1))
+-		die(_("remote %s already exists."), name);
++	if (remote_is_configured(remote, 1)) {
++		error(_("remote %s already exists."), name);
++		exit(3);
++	}
+ 
+ 	strbuf_addf(&buf2, "refs/heads/test:refs/remotes/%s/test", name);
+ 	if (!valid_fetch_refspec(buf2.buf))
+@@ -686,15 +688,19 @@ static int mv(int argc, const char **argv)
+ 	rename.remote_branches = &remote_branches;
+ 
+ 	oldremote = remote_get(rename.old_name);
+-	if (!remote_is_configured(oldremote, 1))
+-		die(_("No such remote: '%s'"), rename.old_name);
++	if (!remote_is_configured(oldremote, 1)) {
++		error(_("No such remote: '%s'"), rename.old_name);
++		exit(2);
++	}
+ 
+ 	if (!strcmp(rename.old_name, rename.new_name) && oldremote->origin != REMOTE_CONFIG)
+ 		return migrate_file(oldremote);
+ 
+ 	newremote = remote_get(rename.new_name);
+-	if (remote_is_configured(newremote, 1))
+-		die(_("remote %s already exists."), rename.new_name);
++	if (remote_is_configured(newremote, 1)) {
++		error(_("remote %s already exists."), rename.new_name);
++		exit(3);
++	}
+ 
+ 	strbuf_addf(&buf, "refs/heads/test:refs/remotes/%s/test", rename.new_name);
+ 	if (!valid_fetch_refspec(buf.buf))
+@@ -829,8 +835,10 @@ static int rm(int argc, const char **argv)
+ 		usage_with_options(builtin_remote_rm_usage, options);
+ 
+ 	remote = remote_get(argv[1]);
+-	if (!remote_is_configured(remote, 1))
+-		die(_("No such remote: '%s'"), argv[1]);
++	if (!remote_is_configured(remote, 1)) {
++		error(_("No such remote: '%s'"), argv[1]);
++		exit(2);
++	}
+ 
+ 	known_remotes.to_delete = remote;
+ 	for_each_remote(add_known_remote, &known_remotes);
+@@ -1511,8 +1519,10 @@ static int set_remote_branches(const char *remotename, const char **branches,
+ 	strbuf_addf(&key, "remote.%s.fetch", remotename);
+ 
+ 	remote = remote_get(remotename);
+-	if (!remote_is_configured(remote, 1))
+-		die(_("No such remote '%s'"), remotename);
++	if (!remote_is_configured(remote, 1)) {
++		error(_("No such remote '%s'"), remotename);
++		exit(2);
++	}
+ 
+ 	if (!add_mode && remove_all_fetch_refspecs(key.buf)) {
+ 		strbuf_release(&key);
+@@ -1565,8 +1575,10 @@ static int get_url(int argc, const char **argv)
+ 	remotename = argv[0];
+ 
+ 	remote = remote_get(remotename);
+-	if (!remote_is_configured(remote, 1))
+-		die(_("No such remote '%s'"), remotename);
++	if (!remote_is_configured(remote, 1)) {
++		error(_("No such remote '%s'"), remotename);
++		exit(2);
++	}
+ 
+ 	url_nr = 0;
+ 	if (push_mode) {
+@@ -1633,8 +1645,10 @@ static int set_url(int argc, const char **argv)
+ 		oldurl = newurl;
+ 
+ 	remote = remote_get(remotename);
+-	if (!remote_is_configured(remote, 1))
+-		die(_("No such remote '%s'"), remotename);
++	if (!remote_is_configured(remote, 1)) {
++		error(_("No such remote '%s'"), remotename);
++		exit(2);
++	}
+ 
+ 	if (push_mode) {
+ 		strbuf_addf(&name_buf, "remote.%s.pushurl", remotename);
+diff --git a/t/t5505-remote.sh b/t/t5505-remote.sh
+index 8d62edd98b..c99659d39e 100755
+--- a/t/t5505-remote.sh
++++ b/t/t5505-remote.sh
+@@ -145,8 +145,8 @@ test_expect_success 'remove remote protects local branches' '
+ test_expect_success 'remove errors out early when deleting non-existent branch' '
+ 	(
+ 		cd test &&
+-		echo "fatal: No such remote: '\''foo'\''" >expect &&
+-		test_must_fail git remote rm foo 2>actual &&
++		echo "error: No such remote: '\''foo'\''" >expect &&
++		test_expect_code 2 git remote rm foo 2>actual &&
+ 		test_i18ncmp expect actual
+ 	)
+ '
+@@ -173,24 +173,24 @@ test_expect_success 'remove remote with a branch without configured merge' '
+ test_expect_success 'rename errors out early when deleting non-existent branch' '
+ 	(
+ 		cd test &&
+-		echo "fatal: No such remote: '\''foo'\''" >expect &&
+-		test_must_fail git remote rename foo bar 2>actual &&
++		echo "error: No such remote: '\''foo'\''" >expect &&
++		test_expect_code 2 git remote rename foo bar 2>actual &&
+ 		test_i18ncmp expect actual
+ 	)
+ '
+ 
+ test_expect_success 'add existing foreign_vcs remote' '
+ 	test_config remote.foo.vcs bar &&
+-	echo "fatal: remote foo already exists." >expect &&
+-	test_must_fail git remote add foo bar 2>actual &&
++	echo "error: remote foo already exists." >expect &&
++	test_expect_code 3 git remote add foo bar 2>actual &&
+ 	test_i18ncmp expect actual
+ '
+ 
+ test_expect_success 'add existing foreign_vcs remote' '
+ 	test_config remote.foo.vcs bar &&
+ 	test_config remote.bar.vcs bar &&
+-	echo "fatal: remote bar already exists." >expect &&
+-	test_must_fail git remote rename foo bar 2>actual &&
++	echo "error: remote bar already exists." >expect &&
++	test_expect_code 3 git remote rename foo bar 2>actual &&
+ 	test_i18ncmp expect actual
+ '
+ 
+-- 
+2.28.0.297.g1956fa8f8d
+
