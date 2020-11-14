@@ -1,0 +1,68 @@
+From 937dfaef9b41d93812286fcfaa787210d3f0333f Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201112203155.3342586-1-gitster@pobox.com>
+References: <20201112203155.3342586-1-gitster@pobox.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 14 Nov 2020 12:32:20 +0100
+Subject: [PATCH v3 1/3] submodule: use "fetch" logic instead of custom remote
+ discovery
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replace the use of the get_default_remote() function here moved here
+with an invocation of "git fetch"
+
+The "fetch" command already has logic to discover the remote for the
+current branch, but before it learned to accept a custom refspec and
+use its idea of the default remote it wasn't possible to get rid of
+the equivalent of a "get_default_remote" invocation.
+
+I thought[1] there wasn't a way to do that, but as it turns out the
+recently added --stdin option to "fetch" can be used for this
+purpose. See 2b713c272c ("fetch: allow refspecs specified through
+stdin", 2020-08-17) for the change that added it.
+
+Let's use it, and while we're at it simplify the fetch_in_submodule()
+function. It wasn't necessary to pass "$@" to "fetch" since we'd only
+ever provide one SHA-1 in the previous "*" codepath as an argument (in
+addition to "--depth=N"). Rewrite the function to more narrowly
+reflect its use-case.
+
+1. https://lore.kernel.org/git/877dqqhd3s.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-submodule.sh | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/git-submodule.sh b/git-submodule.sh
+index 7ce52872b7..d39fd226d8 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -416,13 +416,15 @@ is_tip_reachable () (
+ fetch_in_submodule () (
+ 	sanitize_submodule_env &&
+ 	cd "$1" &&
+-	case "$2" in
+-	'')
+-		git fetch ;;
+-	*)
+-		shift
+-		git fetch $(get_default_remote) "$@" ;;
+-	esac
++	if test $# -eq 3
++	then
++		echo "$3" | git fetch --stdin "$2"
++	elif test "$2" -ne ""
++	then
++		git fetch "$2"
++	else
++		git fetch
++	fi
+ )
+ 
+ #
+-- 
+2.29.2.222.g5d2a92d10f8
+
