@@ -1,0 +1,119 @@
+From ec8c505a189562a493c3d39edcf6633207671353 Mon Sep 17 00:00:00 2001
+In-Reply-To: <pull.762.v2.git.1605629547.gitgitgadget@gmail.com>
+References: <pull.762.v2.git.1605629547.gitgitgadget@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 18 Nov 2020 10:52:10 +0100
+Subject: [PATCH v2] tests: run tests omitted by PREPARE_FOR_MAIN_BRANCH
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reinstate the test coverage lost due to PREPARE_FOR_MAIN_BRANCH. The
+remaining impact of that prerequisite was mainly missing coverage from
+submodule fetches being lost[1], e.g. impacting my in-flight
+ab/retire-parse-remote. Now the prerequisite is effectively a
+noop. This goes on top of [2].
+
+I'm not removing the PREPARE_FOR_MAIN_BRANCH prerequisite to keep this
+change small, instead it's now effectively a noop. It can be removed
+in some later change.
+
+The coverage in t9902-completion.sh was restored by partially
+reverting[3]. After that we were left with one test in a mixed
+state. It setup "master" but tested for "mai", change it back to "mas"
+pending a more complete refactoring of that test.
+
+This change only conflicts between next..seen by clashing with Peter
+Kaestle's in-flights submodule fix[4]. Fixing the result is trivial,
+simply:
+
+    - compare_refs_in_dir A origin/master B origin/master
+    + compare_refs_in_dir A origin/main B origin/main
+
+Resolving that trivial conflict seems worth it to me to get back 100%
+submodule coverage sooner than later.
+
+1. 66713e84e7 ("tests: prepare aligned mentions of the default branch name", 2020-10-23)
+2. https://public-inbox.org/git/pull.762.v2.git.1605629547.gitgitgadget@gmail.com/
+3. 8164360fc8 ("t9902: prepare a test for the upcoming default branch name", 2020-10-23)
+4. https://public-inbox.org/git/1605196853-37359-1-git-send-email-peter.kaestle@nokia.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5526-fetch-submodules.sh | 6 +++---
+ t/t9902-completion.sh       | 4 ++--
+ t/test-lib.sh               | 9 +++------
+ 3 files changed, 8 insertions(+), 11 deletions(-)
+
+diff --git a/t/t5526-fetch-submodules.sh b/t/t5526-fetch-submodules.sh
+index dd8e423d25..f45ba02b8a 100755
+--- a/t/t5526-fetch-submodules.sh
++++ b/t/t5526-fetch-submodules.sh
+@@ -481,7 +481,7 @@ test_expect_success PREPARE_FOR_MAIN_BRANCH "don't fetch submodule when newly re
+ 	test_i18ncmp expect.err actual.err &&
+ 	(
+ 		cd submodule &&
+-		git checkout -q master
++		git checkout -q main
+ 	)
+ '
+ 
+@@ -663,9 +663,9 @@ test_expect_success 'fetch new submodule commits on-demand without .gitmodules e
+ 	git config -f .gitmodules --remove-section submodule.sub1 &&
+ 	git add .gitmodules &&
+ 	git commit -m "delete gitmodules file" &&
+-	git checkout -B master &&
++	git checkout -B main &&
+ 	git -C downstream fetch &&
+-	git -C downstream checkout origin/master &&
++	git -C downstream checkout origin/main &&
+ 
+ 	C=$(git -C submodule commit-tree -m "yet another change outside refs/heads" HEAD^{tree}) &&
+ 	git -C submodule update-ref refs/changes/7 $C &&
+diff --git a/t/t9902-completion.sh b/t/t9902-completion.sh
+index 5c01c75d40..f2cb4860a2 100755
+--- a/t/t9902-completion.sh
++++ b/t/t9902-completion.sh
+@@ -1060,8 +1060,8 @@ test_expect_success PREPARE_FOR_MAIN_BRANCH '__git_refs - for-each-ref format sp
+ 	evil-%%-%42-%(refname)..master
+ 	EOF
+ 	(
+-		cur="evil-%%-%42-%(refname)..mai" &&
+-		__git_refs "" "" "evil-%%-%42-%(refname).." mai >"$actual"
++		cur="evil-%%-%42-%(refname)..mas" &&
++		__git_refs "" "" "evil-%%-%42-%(refname).." mas >"$actual"
+ 	) &&
+ 	test_cmp expected "$actual"
+ '
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index d39bdf04ce..53e39c931e 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -257,7 +257,7 @@ case "$TRASH_DIRECTORY" in
+ esac
+ 
+ case "$TEST_NUMBER" in
+-3404|4013|5310|5526|6300|7064|7817|9902)
++3404|4013|5310|6300|7064|7817)
+ 	# Avoid conflicts with patch series that are cooking at the same time
+ 	# as the patch series changing the default of `init.defaultBranch`.
+ 	GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=master
+@@ -1725,12 +1725,9 @@ test_lazy_prereq REBASE_P '
+ 	test -z "$GIT_TEST_SKIP_REBASE_P"
+ '
+ 
+-# Special-purpose prereq for transitioning to a new default branch name:
+-# Some tests need more than just a mindless (case-preserving) s/master/main/g
+-# replacement. The non-trivial adjustments are guarded behind this
+-# prerequisite, acting kind of as a feature flag
++# Obsolete, do not use, removed soon!
+ test_lazy_prereq PREPARE_FOR_MAIN_BRANCH '
+-	test "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME" = main
++	test "$TEST_NAME" = "t5526-fetch-submodules"
+ '
+ 
+ # Ensure that no test accidentally triggers a Git command
+-- 
+2.29.2.222.g5d2a92d10f8
+
