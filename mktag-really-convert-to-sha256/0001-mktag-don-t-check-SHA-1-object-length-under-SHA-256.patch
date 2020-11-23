@@ -1,0 +1,214 @@
+From 8579dbfa863b730b2aa686ab0581a1f82cde82d6 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20190826014344.16008-11-sandals@crustytoothpaste.net>
+References: <20190826014344.16008-11-sandals@crustytoothpaste.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 23 Nov 2020 12:24:11 +0100
+Subject: [PATCH] mktag: don't check SHA-1 object length under SHA-256
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the hardcoded minimum tag length size to vary based on whether
+we're operating in the SHA-1 or SHA-256 mode, and update the "mktag"
+documentation, tests and code comments to reflect that this command
+can take either SHA-1 or SHA-256 input.
+
+Let's make the code more self-documenting by verbosely inlining what a
+minimum tag looks like. The fixed-string strlen() will be optimized
+away by any modern compiler. This also future-proofs us for any future
+hash function transition.
+
+Then change the tests amended in acb49d1cc8b (t3800: make hash-size
+independent, 2019-08-18) even more for SHA-256. Some of the tests were
+failing for the wrong reasons. E.g. yes <some sha-1 length garbage> is
+an invalid SHA-1, but we should test <some sha256 length garbage> when
+under SHA-256. For testing an invalid non-hexadecimal object ID let's
+use ROT13.
+
+For the "object line label check" test the "139e9b339..." SHA-1 didn't
+exist, but what's actually being tested there is getting "xxxxxx"
+instead of "object", so let's provide a valid SHA there
+instead. There's no need to make or hardcode a nonexisting object ID.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-mktag.txt |  2 +-
+ builtin/mktag.c             | 26 +++++++++++++-------
+ t/t3800-mktag.sh            | 47 ++++++++++++++++++++++++++-----------
+ 3 files changed, 52 insertions(+), 23 deletions(-)
+
+diff --git a/Documentation/git-mktag.txt b/Documentation/git-mktag.txt
+index fa6a7561236..bbcc0a086bf 100644
+--- a/Documentation/git-mktag.txt
++++ b/Documentation/git-mktag.txt
+@@ -23,7 +23,7 @@ Tag Format
+ A tag signature file, to be fed to this command's standard input,
+ has a very simple fixed format: four lines of
+ 
+-  object <sha1>
++  object <sha>
+   type <typename>
+   tag <tagname>
+   tagger <tagger>
+diff --git a/builtin/mktag.c b/builtin/mktag.c
+index 4982d3a93ef..3fa17243e34 100644
+--- a/builtin/mktag.c
++++ b/builtin/mktag.c
+@@ -5,13 +5,15 @@
+ 
+ /*
+  * A signature file has a very simple fixed format: four lines
+- * of "object <sha1>" + "type <typename>" + "tag <tagname>" +
++ * of "object <sha>" + "type <typename>" + "tag <tagname>" +
+  * "tagger <committer>", followed by a blank line, a free-form tag
+  * message and a signature block that git itself doesn't care about,
+  * but that can be verified with gpg or similar.
+  *
+- * The first four lines are guaranteed to be at least 83 bytes:
+- * "object <sha1>\n" is 48 bytes, "type tag\n" at 9 bytes is the
++ * The first four lines are guaranteed to be either 83 or 107 bytes;
++ * depending on whether we're referencing a SHA-1 or SHA-256 tag.
++ *
++ * "object <sha1>\n" is 48 or a 72 bytes, "type tag\n" at 9 bytes is the
+  * shortest possible type-line, "tag .\n" at 6 bytes is the shortest
+  * single-character-tag line, and "tagger . <> 0 +0000\n" at 20 bytes is
+  * the shortest possible tagger-line.
+@@ -46,9 +48,17 @@ static int verify_tag(char *buffer, unsigned long size)
+ 	struct object_id oid;
+ 	const char *object, *type_line, *tag_line, *tagger_line, *lb, *rb, *p;
+ 	size_t len;
+-
+-	if (size < 84)
+-		return error("wanna fool me ? you obviously got the size wrong !");
++	int minimum_size =
++		/* Minimum possible input, see t/t3800-mktag.sh */
++		strlen("object ") + the_hash_algo->hexsz + strlen("\n") +
++		strlen("type tag\n") +
++		strlen("tag x\n") +
++		strlen("tagger . <> 0 +0000\n") +
++		strlen("\n");
++
++	if (size < minimum_size)
++		return error("got %"PRIuMAX" bytes of input, need at least %d bytes",
++			     size, minimum_size);
+ 
+ 	buffer[size] = 0;
+ 
+@@ -58,7 +68,7 @@ static int verify_tag(char *buffer, unsigned long size)
+ 		return error("char%d: does not start with \"object \"", 0);
+ 
+ 	if (parse_oid_hex(object + 7, &oid, &p))
+-		return error("char%d: could not get SHA1 hash", 7);
++		return error("char%d: expected object ID, got garbage", 7);
+ 
+ 	/* Verify type line */
+ 	type_line = p + 1;
+@@ -166,7 +176,7 @@ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ 	}
+ 
+ 	/* Verify it for some basic sanity: it needs to start with
+-	   "object <sha1>\ntype\ntagger " */
++	   "object <sha>\ntype\ntagger " */
+ 	if (verify_tag(buf.buf, buf.len) < 0)
+ 		die("invalid tag signature file");
+ 
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index d696aa4e52e..93a19bb8df9 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -26,24 +26,42 @@ test_expect_success 'setup' '
+ 	echo Hello >A &&
+ 	git update-index --add A &&
+ 	git commit -m "Initial commit" &&
+-	head=$(git rev-parse --verify HEAD)
++	head=$(git rev-parse --verify HEAD) &&
++
++	git tag -m"some tag" annotated &&
++	annotated=$(git rev-parse --verify annotated)
+ '
+ 
+ ############################################################
+ #  1. length check
+-
+-cat >tag.sig <<EOF
+-too short for a tag
+-EOF
+-
+-check_verify_failure 'Tag object length check' \
+-	'^error: .*size wrong.*$'
++for objType in t ta tag
++do
++	cat >tag.sig <<-EOF
++	object $annotated
++	type $objType
++	tag x
++	tagger . <> 0 +0000
++
++	EOF
++	len=$(wc -c tag.sig)
++
++	if test $objType = "tag"
++	then
++		test_expect_success "Tag object length check $len passed" '
++			git mktag <tag.sig >.git/refs/tags/x 2>message &&
++			git rev-parse refs/tags/x
++		'
++	else
++		check_verify_failure "Tag object length check on length $len" \
++			'^error: got .* bytes of input, need at least'
++	fi
++done
+ 
+ ############################################################
+ #  2. object line label check
+ 
+ cat >tag.sig <<EOF
+-xxxxxx 139e9b33986b1c2670fff52c5067603117b3e895
++xxxxxx $head
+ type tag
+ tag mytag
+ tagger . <> 0 +0000
+@@ -53,17 +71,18 @@ EOF
+ check_verify_failure '"object" line label check' '^error: char0: .*"object "$'
+ 
+ ############################################################
+-#  3. object line SHA1 check
++#  3. object line SHA check
+ 
++invalid_sha=$(echo $head | tr A-Za-z N-ZA-Mn-za-m)
+ cat >tag.sig <<EOF
+-object zz9e9b33986b1c2670fff52c5067603117b3e895
++object $invalid_sha
+ type tag
+ tag mytag
+ tagger . <> 0 +0000
+ 
+ EOF
+ 
+-check_verify_failure '"object" line SHA1 check' '^error: char7: .*SHA1 hash$'
++check_verify_failure '"object" line object check' '^error: char7: .*expected object ID, got garbage'
+ 
+ ############################################################
+ #  4. type line label check
+@@ -125,7 +144,7 @@ check_verify_failure '"type" line type-name length check' \
+ 	'^error: char.*: type too long$'
+ 
+ ############################################################
+-#  9. verify object (SHA1/type) check
++#  9. verify object (SHA/type) check
+ 
+ cat >tag.sig <<EOF
+ object $(test_oid deadbeef)
+@@ -135,7 +154,7 @@ tagger . <> 0 +0000
+ 
+ EOF
+ 
+-check_verify_failure 'verify object (SHA1/type) check' \
++check_verify_failure 'verify object (SHA/type) check' \
+ 	'^error: char7: could not verify object.*$'
+ 
+ ############################################################
+-- 
+2.29.2.222.g5d2a92d10f8
+
