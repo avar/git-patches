@@ -1,0 +1,117 @@
+From dab44d32359862aa44572f07daa08eda6e64c3fa Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201126012854.399-1-avarab@gmail.com>
+References: <20201126012854.399-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 25 Nov 2020 23:24:19 +0100
+Subject: [PATCH v2 08/10] fsck: add new "extra" checks for "mktag"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add optional "extra" checks to fsck, these are needed to eventually
+replace the custom not-quite-fsck code in mktag.c.
+
+The mktag checks differ from fsck_tag() in several ways, one of those
+is that fsck doesn't know how to refuse an object with custom headers,
+and isn't strict about header and body newline separation.
+
+Teach it how to optionally report these. I thought the best way to do
+that given the current structure of the code was to add a new "extra"
+category in addition to error/warn/info. Under --strict the "info"
+becomes a "warn" and "warn" becomes "error". Existing users of
+fsck's (and others, e.g. index-pack) --strict option rely on this.
+
+By adding an "extra" category and only reporting it based on a flag in
+fsck_options callers can opt-in to these "extra" messages, which
+they'll then need to deal with in their own "error_func".
+
+No tests are being added for this new functionality, they're added in
+a subsequent commit where we teach "mktag" to use this new validation
+mode.
+
+I'm not changing fsck_commit() to validate commit objects like this
+either, we could do that, but unlike in the tag case that code
+wouldn't be used anywhere. If someone wants to write a "mkcommit" they
+which behaves like "mktag" they can borrow or refactor this logic for
+use in fsck_commit().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fsck.c | 32 +++++++++++++++++++++++++++++++-
+ fsck.h |  2 ++
+ 2 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/fsck.c b/fsck.c
+index f82e2fe9e3..3c25df2244 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -80,7 +80,10 @@ static struct oidset gitmodules_done = OIDSET_INIT;
+ 	/* infos (reported as warnings, but ignored by default) */ \
+ 	FUNC(GITMODULES_PARSE, INFO) \
+ 	FUNC(BAD_TAG_NAME, INFO) \
+-	FUNC(MISSING_TAGGER_ENTRY, INFO)
++	FUNC(MISSING_TAGGER_ENTRY, INFO) \
++	/* extra (only reported when requested) */ \
++	FUNC(EXTRA_HEADER_ENTRY, EXTRA) \
++	FUNC(EXTRA_HEADER_BODY_NEWLINE, EXTRA)
+ 
+ #define MSG_ID(id, msg_type) FSCK_MSG_##id,
+ enum fsck_msg_id {
+@@ -975,6 +978,33 @@ static int fsck_tag(const struct object_id *oid, const char *buffer,
+ 	else
+ 		ret = fsck_ident(&buffer, oid, OBJ_TAG, options);
+ 
++	if (options->extra && *buffer) {
++		if (!starts_with(buffer, "\n")) {
++			/*
++			 * The verify_headers() check will allow
++			 * e.g. "[...]tagger <tagger>\nsome
++			 * garbage\n\nmessage" to pass, thinking "some
++			 * garbage" could be a custom
++			 * header. E.g. "mktag" doesn't want any
++			 * unknown headers.
++			 */
++			ret = report(options, oid, OBJ_TAG, FSCK_MSG_EXTRA_HEADER_ENTRY, "invalid format - extra header(s) after 'tagger'");
++			if (ret)
++				goto done;
++		}
++		if (starts_with(buffer, "\n\n")) {
++			/*
++			 * Some callers such as "mktag" want to
++			 * disallow "[...]tagger
++			 * <tagger>\n\n\nmessage", only allowing a
++			 * single newline for separation.
++			 */
++			ret = report(options, oid, OBJ_TAG, FSCK_MSG_EXTRA_HEADER_BODY_NEWLINE, "invalid format - headers separated body by more than one newline");
++			if (ret)
++				goto done;
++		}
++	}
++
+ done:
+ 	strbuf_release(&sb);
+ 	return ret;
+diff --git a/fsck.h b/fsck.h
+index 69cf715e79..110efc65fd 100644
+--- a/fsck.h
++++ b/fsck.h
+@@ -6,6 +6,7 @@
+ #define FSCK_ERROR 1
+ #define FSCK_WARN 2
+ #define FSCK_IGNORE 3
++#define FSCK_EXTRA 4
+ 
+ struct fsck_options;
+ struct object;
+@@ -40,6 +41,7 @@ struct fsck_options {
+ 	unsigned strict:1;
+ 	int *msg_type;
+ 	struct oidset skiplist;
++	unsigned extra:1;
+ 	kh_oid_map_t *object_names;
+ };
+ 
+-- 
+2.29.2.222.g5d2a92d10f8
+
