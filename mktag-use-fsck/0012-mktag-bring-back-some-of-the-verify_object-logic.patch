@@ -1,0 +1,124 @@
+From 0e840246a8ae135695fa7b5ee232d66ee477ee87 Mon Sep 17 00:00:00 2001
+In-Reply-To: <X7wq3ba3QoxjyyrQ@coredump.intra.peff.net>
+References: <X7wq3ba3QoxjyyrQ@coredump.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 26 Nov 2020 02:14:44 +0100
+Subject: [RFC/PATCH 12/12] mktag: bring back some of the verify_object() logic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When working on this series I saw too late that I'd removed the mktag
+check for validating the object the tag points to. The fsck_tag() code
+doesn't do this because it's meant for the context of fsck, where
+we're validating reachability anyway.
+
+We'd need to either refactor fsck_tag() so that it can pass us back
+its "tagged_oid" and the "type_from_string_gently()" value it throws
+away to get rid of the re-parsing of stdin here, or just duplicate the
+logic as I'm doing here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/mktag.c  | 48 ++++++++++++++++++++++++++++++++++++++++++++++++
+ t/t3800-mktag.sh |  4 ++--
+ 2 files changed, 50 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/mktag.c b/builtin/mktag.c
+index e9a0954dcb..f1f1cf04ff 100644
+--- a/builtin/mktag.c
++++ b/builtin/mktag.c
+@@ -1,5 +1,6 @@
+ #include "builtin.h"
+ #include "tag.h"
++#include "replace-object.h"
+ #include "object-store.h"
+ #include "fsck.h"
+ 
+@@ -25,6 +26,50 @@ static int mktag_fsck_error_func(struct fsck_options *o,
+ 	}
+ }
+ 
++static int verify_object_in_tag(const char *stdin)
++{
++	struct object_id oid;
++	char *eol;
++	const char *p;
++	int expected_type_id;
++	const char *expected_type;
++	int ret = -1;
++	enum object_type type;
++	unsigned long size;
++	void *buffer;
++	const struct object_id *repl;
++
++	if (!skip_prefix(stdin, "object ", &stdin))
++		goto bug;
++	if (parse_oid_hex(stdin, &oid, &p) || *p != '\n')
++		goto bug;
++	stdin = p + 1;
++	if (!skip_prefix(stdin, "type ", &stdin))
++		goto bug;
++	eol = strchr(stdin, '\n');
++	expected_type_id = type_from_string_gently(stdin, eol - stdin, 1);
++	if (expected_type_id < 0)
++		goto bug;
++	expected_type = type_name(expected_type_id);
++
++	buffer = read_object_file(&oid, &type, &size);
++	repl = lookup_replace_object(the_repository, &oid);
++
++	if (buffer) {
++		if (type == type_from_string(expected_type)) {
++			ret = check_object_signature(the_repository, repl,
++						     buffer, size,
++						     expected_type);
++		}
++		free(buffer);
++	}
++	goto ok;
++bug:
++	BUG("fsck_object() should have ensured a sane tag format already!");
++ok:
++	return ret;
++}
++
+ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ {
+ 	struct object obj;
+@@ -49,6 +94,9 @@ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ 	if (fsck_object(&obj, buf.buf, buf.len, &fsck_options))
+ 		die("tag on stdin did not pass our strict fsck check");
+ 
++	if (verify_object_in_tag(buf.buf))
++		die("tag on stdin did not refer to a valid object");
++
+ 	if (write_object_file(buf.buf, buf.len, tag_type, &result) < 0)
+ 		die("unable to write annotated tag object");
+ 
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index bc57ee85c9..74cd2eb141 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -137,7 +137,7 @@ tagger . <> 0 +0000
+ EOF
+ 
+ check_verify_failure 'verify object (SHA1/type) check' \
+-	'^error: char7: could not verify object.*$'
++	'^fatal: tag on stdin did not refer to a valid object'
+ 
+ cat >tag.sig <<EOF
+ object $head
+@@ -148,7 +148,7 @@ tagger . <> 0 +0000
+ EOF
+ 
+ check_verify_failure 'verify object (SHA1/type) check' \
+-	'^fatal: invalid object type'
++	'^error: badType:'
+ 
+ cat >tag.sig <<EOF
+ object $(test_oid deadbeef)
+-- 
+2.29.2.222.g5d2a92d10f8
+
