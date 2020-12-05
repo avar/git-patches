@@ -1,0 +1,101 @@
+From e9ca1e8d88c7a8c1ce5d5ba4fa959ebd16b16d4e Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201025212652.3003036-1-anders@0x63.nu>
+References: <20201025212652.3003036-1-anders@0x63.nu>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 5 Dec 2020 02:03:48 +0100
+Subject: [PATCH 4/5] pretty-format %(trailers): fix broken standalone
+ "valueonly"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix %(trailers:valueonly) being a noop due to on overly eager
+optimization. When new trailer options were added they needed to be
+listed at the start of the format_trailer_info() function. E.g. as was
+done in 250bea0c165 (pretty: allow showing specific trailers,
+2019-01-28).
+
+When d9b936db522 (pretty: add support for "valueonly" option in
+%(trailers), 2019-01-28) was added this was omitted by mistake. Thus
+%(trailers:valueonly) was a noop, instead of showing only trailer
+value. This wasn't caught because the tests for it always combined it
+with other options.
+
+Let's fix the bug, and switch away from this pattern requiring us to
+remember to add new flags to the start of the function. Instead as
+soon as we see the ":" in "%(trailers:" we skip the fast path. That
+over-matches for "%(trailers:)", but I think that's OK.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ pretty.c                      |  2 ++
+ t/t4205-log-pretty-formats.sh | 11 +++++++++++
+ trailer.c                     |  3 +--
+ trailer.h                     |  1 +
+ 4 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/pretty.c b/pretty.c
+index 590f37489f6..d989a6ae712 100644
+--- a/pretty.c
++++ b/pretty.c
+@@ -1426,6 +1426,8 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
+ 		opts.no_divider = 1;
+ 
+ 		if (*arg == ':') {
++			/* over-matches on %(trailers:), but that's OK */
++			opts.have_options = 1;
+ 			arg++;
+ 			for (;;) {
+ 				const char *argval;
+diff --git a/t/t4205-log-pretty-formats.sh b/t/t4205-log-pretty-formats.sh
+index 5dd080c19b2..e1100082b34 100755
+--- a/t/t4205-log-pretty-formats.sh
++++ b/t/t4205-log-pretty-formats.sh
+@@ -737,6 +737,17 @@ test_expect_success '%(trailers:key=foo,valueonly) shows only value' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success '%(trailers:valueonly) shows only values' '
++	git log --no-walk --pretty="format:%(trailers:valueonly)" >actual &&
++	test_write_lines \
++		"A U Thor <author@example.com>" \
++		"A U Thor <author@example.com>" \
++		"[ v2 updated patch description ]" \
++		"A U Thor" \
++		"  <author@example.com>" >expect &&
++	test_cmp expect actual
++'
++
+ test_expect_success '%(trailers:key=foo,keyonly,valueonly) shows nothing' '
+ 	git log --no-walk --pretty="format:%(trailers:key=Acked-by,keyonly,valueonly)" >actual &&
+ 	echo >expect &&
+diff --git a/trailer.c b/trailer.c
+index 40f31e4dfc2..da95e1f3c66 100644
+--- a/trailer.c
++++ b/trailer.c
+@@ -1206,8 +1206,7 @@ static void format_trailer_info(struct strbuf *out,
+ 	size_t origlen = out->len;
+ 	size_t i;
+ 
+-	/* If we want the whole block untouched, we can take the fast path. */
+-	if (!opts->only_trailers && !opts->unfold && !opts->filter && !opts->separator) {
++	if (!opts->have_options) {
+ 		strbuf_add(out, info->trailer_start,
+ 			   info->trailer_end - info->trailer_start);
+ 		return;
+diff --git a/trailer.h b/trailer.h
+index d4507b4ef2a..e348c970ce7 100644
+--- a/trailer.h
++++ b/trailer.h
+@@ -65,6 +65,7 @@ struct new_trailer_item {
+ };
+ 
+ struct process_trailer_options {
++	int have_options;
+ 	int in_place;
+ 	int trim_empty;
+ 	int only_trailers;
+-- 
+2.29.2.222.g5d2a92d10f8
+
