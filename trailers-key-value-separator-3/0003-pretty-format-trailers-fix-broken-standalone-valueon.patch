@@ -1,0 +1,119 @@
+From c2c5513942f0b8a14ff10fb206e314dd095d2115 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201206002449.31452-1-avarab@gmail.com>
+References: <20201206002449.31452-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 5 Dec 2020 02:03:48 +0100
+Subject: [PATCH v3 3/5] pretty-format %(trailers): fix broken standalone
+ "valueonly"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix %(trailers:valueonly) being a noop due to on overly eager
+optimization in format_trailer_info() which skips custom formatting if
+no custom options are given.
+
+When "valueonly" was added in d9b936db522 (pretty: add support for
+"valueonly" option in %(trailers), 2019-01-28) we forgot to add it to
+the list of options that optimization checks for. See e.g. the
+addition of "key" in 250bea0c165 (pretty: allow showing specific
+trailers, 2019-01-28) for a similar change where this wasn't missed.
+
+Thus the "valueonly" option in "%(trailers:valueonly)" was a noop and
+the output was equivalent to that of a plain "%(trailers)". This
+wasn't caught because the tests for it always combined it with other
+options.
+
+Fix the bug by adding !opts->value_only to the list. I initially
+attempted to make this more future-proof by setting a flag if we got
+to ":" in "%(trailers:" in format_commit_one() in pretty.c. However,
+"%(trailers:" is also parsed in trailers_atom_parser() in
+ref-filter.c.
+
+There is an outstanding patch[1] unify those two, and such a fix, or
+other future-proofing, such as changing "process_trailer_options"
+flags into a bitfield, would conflict with that effort. Let's instead
+do the bare minimum here as this aspect of trailers is being actively
+worked on by another series.
+
+Let's also test for a plain "valueonly" without any other options, as
+well as "separator". All the other existing options on the pretty.c
+path had tests where they were the only option provided. I'm also
+keeping a sanity test for "%(trailers:)" being the same as
+"%(trailers)". There's no reason to suspect it wouldn't be in the
+current implementation, but let's keep it in the interest of black box
+testing.
+
+1. https://lore.kernel.org/git/pull.726.git.1599335291.gitgitgadget@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4205-log-pretty-formats.sh | 28 ++++++++++++++++++++++++++++
+ trailer.c                     |  3 ++-
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/t/t4205-log-pretty-formats.sh b/t/t4205-log-pretty-formats.sh
+index 5e5452212d2..cb09a13249e 100755
+--- a/t/t4205-log-pretty-formats.sh
++++ b/t/t4205-log-pretty-formats.sh
+@@ -605,6 +605,12 @@ test_expect_success 'pretty format %(trailers) shows trailers' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'pretty format %(trailers:) enables no options' '
++	git log --no-walk --pretty="%(trailers:)" >actual &&
++	# "expect" the same as the test above
++	test_cmp expect actual
++'
++
+ test_expect_success '%(trailers:only) shows only "key: value" trailers' '
+ 	git log --no-walk --pretty="%(trailers:only)" >actual &&
+ 	{
+@@ -715,7 +721,29 @@ test_expect_success '%(trailers:key=foo,valueonly) shows only value' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success '%(trailers:valueonly) shows only values' '
++	git log --no-walk --pretty="format:%(trailers:valueonly)" >actual &&
++	test_write_lines \
++		"A U Thor <author@example.com>" \
++		"A U Thor <author@example.com>" \
++		"[ v2 updated patch description ]" \
++		"A U Thor" \
++		"  <author@example.com>" >expect &&
++	test_cmp expect actual
++'
++
+ test_expect_success 'pretty format %(trailers:separator) changes separator' '
++	git log --no-walk --pretty=format:"X%(trailers:separator=%x00)X" >actual &&
++	(
++		printf "XSigned-off-by: A U Thor <author@example.com>\0" &&
++		printf "Acked-by: A U Thor <author@example.com>\0" &&
++		printf "[ v2 updated patch description ]\0" &&
++		printf "Signed-off-by: A U Thor\n  <author@example.com>X"
++	) >expect &&
++	test_cmp expect actual
++'
++
++test_expect_success 'pretty format %(trailers:separator=X,unfold) changes separator' '
+ 	git log --no-walk --pretty=format:"X%(trailers:separator=%x00,unfold)X" >actual &&
+ 	(
+ 		printf "XSigned-off-by: A U Thor <author@example.com>\0" &&
+diff --git a/trailer.c b/trailer.c
+index 3f7391d793c..d2d01015b1d 100644
+--- a/trailer.c
++++ b/trailer.c
+@@ -1131,7 +1131,8 @@ static void format_trailer_info(struct strbuf *out,
+ 	size_t i;
+ 
+ 	/* If we want the whole block untouched, we can take the fast path. */
+-	if (!opts->only_trailers && !opts->unfold && !opts->filter && !opts->separator) {
++	if (!opts->only_trailers && !opts->unfold && !opts->filter &&
++	    !opts->separator && !opts->value_only) {
+ 		strbuf_add(out, info->trailer_start,
+ 			   info->trailer_end - info->trailer_start);
+ 		return;
+-- 
+2.29.2.222.g5d2a92d10f8
+
