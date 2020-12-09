@@ -1,0 +1,335 @@
+From 11139ec2b8d44c64486993584412df4e48c0e5ee Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201126222257.5629-1-avarab@gmail.com>
+References: <20201126222257.5629-1-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 9 Dec 2020 20:56:08 +0100
+Subject: [PATCH v3 00/10] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (10):
+  mktag doc: say <hash> not <sha1>
+  mktag: use default strbuf_read() hint
+  mktag: remove redundant braces in one-line body "if"
+  mktag tests: don't needlessly use a subshell
+  mktag tests: remove needless SHA-1 hardcoding
+  mktag tests: improve verify_object() test coverage
+  mktag: use fsck instead of custom verify_tag()
+  mktag doc: update to explain why to use this
+  fsck: make fsck_config() re-usable
+  mktag: allow turning off fsck.extraHeaderEntry
+
+ Documentation/git-hash-object.txt |   4 +
+ Documentation/git-mktag.txt       |  34 ++++-
+ builtin/fsck.c                    |  20 +--
+ builtin/mktag.c                   | 204 +++++++++---------------------
+ fsck.c                            |  57 ++++++++-
+ fsck.h                            |  16 +++
+ t/t1006-cat-file.sh               |   2 +-
+ t/t3800-mktag.sh                  | 132 ++++++++++++++-----
+ 8 files changed, 261 insertions(+), 208 deletions(-)
+
+Range-diff:
+ 1:  f46abb37df9 =  1:  aee3f52a478 mktag doc: say <hash> not <sha1>
+ 2:  1b4d9a53302 =  2:  6e98557709a mktag: use default strbuf_read() hint
+ 3:  83f4af6013e <  -:  ----------- mktag: reword write_object_file() error
+ 4:  bca1484ed96 =  3:  8e5fe08f155 mktag: remove redundant braces in one-line body "if"
+ 5:  ac7c4097c90 =  4:  1f06b9c0cf9 mktag tests: don't needlessly use a subshell
+ 6:  5e076659e45 !  5:  5d1cb73ca35 mktag tests: remove needless SHA-1 hardcoding
+    @@ t/t3800-mktag.sh: EOF
+      
+      ############################################################
+     -#  3. object line SHA1 check
+    -+#  3. object line SHA check
+    ++#  3. object line hash check
+      
+      cat >tag.sig <<EOF
+     -object zz9e9b33986b1c2670fff52c5067603117b3e895
+ 7:  a048c3e6401 !  6:  cf86f4ca37d mktag tests: improve verify_object() test coverage
+    @@ t/t3800-mktag.sh: check_verify_failure '"type" line type-name length check' \
+      
+      ############################################################
+     -#  9. verify object (SHA1/type) check
+    -+#  9. verify object (SHA/type) check
+    ++#  9. verify object (hash/type) check
+      
+      cat >tag.sig <<EOF
+      object $(test_oid deadbeef)
+    @@ t/t3800-mktag.sh: check_verify_failure '"type" line type-name length check' \
+     +
+     +EOF
+     +
+    -+check_verify_failure 'verify object (SHA/type) check -- correct type, nonexisting object' \
+    ++check_verify_failure 'verify object (hash/type) check -- correct type, nonexisting object' \
+     +	'^error: char7: could not verify object.*$'
+     +
+     +cat >tag.sig <<EOF
+    @@ t/t3800-mktag.sh: check_verify_failure '"type" line type-name length check' \
+      EOF
+      
+     -check_verify_failure 'verify object (SHA1/type) check' \
+    -+check_verify_failure 'verify object (SHA/type) check -- made-up type, nonexisting object' \
+    ++check_verify_failure 'verify object (hash/type) check -- made-up type, nonexisting object' \
+     +	'^fatal: invalid object type'
+     +
+     +cat >tag.sig <<EOF
+    @@ t/t3800-mktag.sh: check_verify_failure '"type" line type-name length check' \
+     +
+     +EOF
+     +
+    -+check_verify_failure 'verify object (SHA/type) check -- incorrect type, valid object' \
+    ++check_verify_failure 'verify object (hash/type) check -- incorrect type, valid object' \
+      	'^error: char7: could not verify object.*$'
+      
+     +cat >tag.sig <<EOF
+    @@ t/t3800-mktag.sh: check_verify_failure '"type" line type-name length check' \
+     +
+     +EOF
+     +
+    -+check_verify_failure 'verify object (SHA/type) check -- incorrect type, valid object' \
+    ++check_verify_failure 'verify object (hash/type) check -- incorrect type, valid object' \
+     +	'^error: char7: could not verify object'
+     +
+      ############################################################
+ 8:  dab44d32359 <  -:  ----------- fsck: add new "extra" checks for "mktag"
+ 9:  8ff853caeea !  7:  5812ee53c97 mktag: use fsck instead of custom verify_tag()
+    @@ Commit message
+         back to the same commit[1]. Let's unify them so we're not maintaining
+         two sets functions to verify that a tag is OK.
+     
+    -    Moving to fsck_tag() required teaching it to optionally use some
+    -    validations that only the old mktag code could perform. That was done
+    -    in an earlier commit, the "extraHeaderEntry" and
+    -    "extraHeaderBodyNewline" tests being added here make use of that
+    -    logic.
+    +    The behavior of fsck_tag() and the old "mktag" code being removed here
+    +    is different in few aspects.
+     
+    -    There was other "mktag" validation logic that I think makes sense to
+    -    just remove. Namely:
+    +    I think it makes sense to remove some of those checks, namely:
+     
+          A. fsck only cares that the timezone matches [-+][0-9]{4}. The mktag
+             code disallowed values larger than 1400.
+    @@ Commit message
+          C. Like B, but "mktag" disallowed spaces in the <email> part, fsck
+             allows it.
+     
+    -    We didn't only lose obscure validation logic, we also gained some:
+    +    In some ways fsck_tag() is stricter than "mktag" was, namely:
+     
+          D. fsck disallows zero-padded dates, but mktag didn't care. So
+             e.g. the timestamp "0000000000 +0000" produces an error now. A
+             test in "t1006-cat-file.sh" relied on this, it's been changed to
+             use "hash-object" (without fsck) instead.
+     
+    +    There was one check I deemed worth keeping by porting it over to
+    +    fsck_tag():
+    +
+    +     E. "mktag" did not allow any custom headers, and by extension (as an
+    +        empty commit is allowed) also forbade an extra stray trailing
+    +        newline after the headers it knew about.
+    +
+    +        Add a new check in the "ignore" category to fsck and use it. This
+    +        somewhat abuses the facility added in efaba7cc77f (fsck:
+    +        optionally ignore specific fsck issues completely, 2015-06-22).
+    +
+    +        This is somewhat of hack, but probably the least invasive change
+    +        we can make here. The fsck command will shuffle these categories
+    +        around, e.g. under --strict the "info" becomes a "warn" and "warn"
+    +        becomes "error". Existing users of fsck's (and others,
+    +        e.g. index-pack) --strict option rely on this.
+    +
+    +        So we need to put something into a category that'll be ignored by
+    +        all existing users of the API. Pretending that
+    +        fsck.extraHeaderEntry=error ("ignore" by default) was set serves
+    +        to do this for us.
+    +
+         1. ec4465adb38 (Add "tag" objects that can be used to sign other
+            objects., 2005-04-25)
+     
+    @@ builtin/mktag.c
+     +	switch (msg_type) {
+     +	case FSCK_WARN:
+     +	case FSCK_ERROR:
+    -+	case FSCK_EXTRA:
+     +		/*
+     +		 * We treat both warnings and errors as errors, things
+     +		 * like missing "tagger" lines are "only" warnings
+    @@ builtin/mktag.c: int cmd_mktag(int argc, const char **argv, const char *prefix)
+     -	   "object <sha1>\ntype\ntagger " */
+     -	if (verify_tag(buf.buf, buf.len) < 0)
+     -		die("invalid tag signature file");
+    -+	fsck_options.extra = 1;
+     +	fsck_options.error_func = mktag_fsck_error_func;
+    ++	fsck_set_msg_type(&fsck_options, "extraheaderentry", "warn");
+     +	if (fsck_tag_standalone(NULL, buf.buf, buf.len, &fsck_options,
+     +				&tagged_oid, &tagged_type))
+     +		die("tag on stdin did not pass our strict fsck check");
+    @@ builtin/mktag.c: int cmd_mktag(int argc, const char **argv, const char *prefix)
+     +		die("tag on stdin did not refer to a valid object");
+      
+      	if (write_object_file(buf.buf, buf.len, tag_type, &result) < 0)
+    - 		die("unable to write annotated tag object");
+    + 		die("unable to write tag file");
+     
+      ## fsck.c ##
+    +@@ fsck.c: static struct oidset gitmodules_done = OIDSET_INIT;
+    + 	/* infos (reported as warnings, but ignored by default) */ \
+    + 	FUNC(GITMODULES_PARSE, INFO) \
+    + 	FUNC(BAD_TAG_NAME, INFO) \
+    +-	FUNC(MISSING_TAGGER_ENTRY, INFO)
+    ++	FUNC(MISSING_TAGGER_ENTRY, INFO) \
+    ++	/* ignored (elevated when requested) */ \
+    ++	FUNC(EXTRA_HEADER_ENTRY, IGNORE)
+    + 
+    + #define MSG_ID(id, msg_type) FSCK_MSG_##id,
+    + enum fsck_msg_id {
+     @@ fsck.c: static int fsck_tag(const struct object_id *oid, const char *buffer,
+      		    unsigned long size, struct fsck_options *options)
+      {
+    @@ fsck.c: static int fsck_tag(const struct object_id *oid, const char *buffer,
+      		ret = report(options, oid, OBJ_TAG, FSCK_MSG_BAD_TYPE, "invalid 'type' value");
+      	if (ret)
+      		goto done;
+    +@@ fsck.c: static int fsck_tag(const struct object_id *oid, const char *buffer,
+    + 	else
+    + 		ret = fsck_ident(&buffer, oid, OBJ_TAG, options);
+    + 
+    ++	if (!starts_with(buffer, "\n")) {
+    ++		/*
+    ++		 * The verify_headers() check will allow
+    ++		 * e.g. "[...]tagger <tagger>\nsome
+    ++		 * garbage\n\nmessage" to pass, thinking "some
+    ++		 * garbage" could be a custom header. E.g. "mktag"
+    ++		 * doesn't want any unknown headers.
+    ++		 */
+    ++		ret = report(options, oid, OBJ_TAG, FSCK_MSG_EXTRA_HEADER_ENTRY, "invalid format - extra header(s) after 'tagger'");
+    ++		if (ret)
+    ++			goto done;
+    ++	}
+    ++
+    + done:
+    + 	strbuf_release(&sb);
+    + 	return ret;
+     
+      ## fsck.h ##
+     @@ fsck.h: int fsck_walk(struct object *obj, void *data, struct fsck_options *options);
+    @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+     +check_verify_failure '"object" line label check' '^error:.* missingObject:'
+      
+      ############################################################
+    - #  3. object line SHA check
+    + #  3. object line hash check
+     @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+      
+      EOF
+    @@ t/t3800-mktag.sh: tag mytag
+     +	'^error:.* badType:'
+      
+      ############################################################
+    - #  9. verify object (SHA/type) check
+    + #  9. verify object (hash/type) check
+     @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+      EOF
+      
+    - check_verify_failure 'verify object (SHA/type) check -- correct type, nonexisting object' \
+    + check_verify_failure 'verify object (hash/type) check -- correct type, nonexisting object' \
+     -	'^error: char7: could not verify object.*$'
+     +	'^fatal: could not read tagged object'
+      
+    @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+     @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+      EOF
+      
+    - check_verify_failure 'verify object (SHA/type) check -- made-up type, nonexisting object' \
+    + check_verify_failure 'verify object (hash/type) check -- made-up type, nonexisting object' \
+     -	'^fatal: invalid object type'
+     +	'^error:.* badType:'
+      
+    @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+     @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+      EOF
+      
+    - check_verify_failure 'verify object (SHA/type) check -- incorrect type, valid object' \
+    + check_verify_failure 'verify object (hash/type) check -- incorrect type, valid object' \
+     -	'^error: char7: could not verify object.*$'
+     +	'^error:.* badType:'
+      
+    @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+     @@ t/t3800-mktag.sh: tagger . <> 0 +0000
+      EOF
+      
+    - check_verify_failure 'verify object (SHA/type) check -- incorrect type, valid object' \
+    + check_verify_failure 'verify object (hash/type) check -- incorrect type, valid object' \
+     -	'^error: char7: could not verify object'
+     +	'^fatal: object.*tagged as.*tree.*but is.*commit'
+      
+    @@ t/t3800-mktag.sh: this line should not be here
+     +tagger T A Gger <tagger@example.com> 1206478233 -0500
+     +
+     +
+    -+this line should be one line up
+    ++this line comes after an extra newline
+     +EOF
+     +
+    -+check_verify_failure 'detect invalid header entry' \
+    -+	'^error:.* extraHeaderBodyNewline:'
+    ++test_expect_success \
+    ++    'allow extra newlines at start of body' \
+    ++    'git mktag <tag.sig >.git/refs/tags/mytag 2>message'
+      
+      ############################################################
+      # 24. create valid tag
+10:  e38feefd3f8 !  8:  fa04664f7f1 mktag doc: update to explain why to use this
+    @@ Documentation/git-mktag.txt: SYNOPSIS
+     +Reads a tag contents on standard input and creates a tag object. The
+     +output is the new tag's <object> identifier.
+     +
+    -+This command accepts a subset of what linkgit:git-hash-object[1] would
+    -+accept with `-t tag --stdin`. I.e. both of these work:
+    ++This command is mostly equivalent to linkgit:git-hash-object[1]
+    ++invoked with `-t tag -w --stdin`. I.e. both of these will create and
+    ++write a tag found in `my-tag`:
+     +
+     +    git mktag <my-tag
+    -+    git hash-object -t tag --stdin <my-tag
+    ++    git hash-object -t tag -w --stdin <my-tag
+     +
+    -+The difference between the two is that mktag does the equivalent of a
+    -+linkgit:git-fsck(1) check on its input, and furthermore disallows some
+    -+thing linkgit:git-hash-object[1] would pass, e.g. extra headers in the
+    -+object before the message.
+    ++The difference is that mktag will die before writing the tag if the
+    ++tag doesn't pass a linkgit:git-fsck[1] check.
+    ++
+    ++The "fsck" check done mktag is is stricter than what
+    ++linkgit:git-fsck[1] would run by default in that all `fsck.<msg-id>`
+    ++messages are promoted from warnings to errors (so e.g. a missing
+    ++"tagger" line is an error). Extra headers in the object are also an
+    ++error under mktag, but ignored by linkgit:git-fsck[1].
+      
+      Tag Format
+      ----------
+    @@ Documentation/git-mktag.txt: exists, is separated by a blank line from the heade
+      message part may contain a signature that Git itself doesn't
+      care about, but that can be verified with gpg.
+      
+    -+HISTORY
+    -+-------
+    -+
+    -+In versions of Git before v2.30.0 the "mktag" command's validation
+    -+logic was subtly different than that of linkgit:git-fsck[1]. It is now
+    -+a strict superset of linkgit:git-fsck[1]'s validation logic.
+    -+
+     +SEE ALSO
+     +--------
+     +linkgit:git-hash-object[1],
+ -:  ----------- >  9:  30eff9170fb fsck: make fsck_config() re-usable
+ -:  ----------- > 10:  11139ec2b8d mktag: allow turning off fsck.extraHeaderEntry
+-- 
+2.29.2.222.g5d2a92d10f8
+

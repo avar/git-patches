@@ -1,0 +1,121 @@
+From 11139ec2b8d44c64486993584412df4e48c0e5ee Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201126222257.5629-1-avarab@gmail.com>
+References: <20201126222257.5629-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 9 Dec 2020 20:00:02 +0100
+Subject: [PATCH v3 10/10] mktag: allow turning off fsck.extraHeaderEntry
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In earlier commits mktag learned to use the fsck machinery, at which
+point we needed to add fsck.extraHeaderEntry so it could be as strict
+about extra headers as it's been ever since it was implemented.
+
+But it's not nice to need to switch away from "mktag" to "hash-object"
++ manual "fsck" just because you'd like to have an extra header. So
+let's support turning it off by getting "fsck.*" variables from the
+config.
+
+Pedantically speaking it's still not possible to make "mktag" behave
+just like "hash-object -t tag" does, since we're unconditionally going
+to check the referenced object in verify_object_in_tag(), which is our
+own check, and not one that exists in fsck.c.
+
+But the spirit of "this works like fsck" is preserved, in that if you
+created such a tag with "hash-object" and did a full "fsck" on the
+repository it would also error out about that invalid object, it just
+wouldn't emit the same message as fsck does.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-mktag.txt |  9 +++++++--
+ builtin/mktag.c             | 11 ++++++++++-
+ t/t3800-mktag.sh            | 14 ++++++++++++++
+ 3 files changed, 31 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/git-mktag.txt b/Documentation/git-mktag.txt
+index b164ab563bd..e1506dde561 100644
+--- a/Documentation/git-mktag.txt
++++ b/Documentation/git-mktag.txt
+@@ -30,8 +30,13 @@ tag doesn't pass a linkgit:git-fsck[1] check.
+ The "fsck" check done mktag is is stricter than what
+ linkgit:git-fsck[1] would run by default in that all `fsck.<msg-id>`
+ messages are promoted from warnings to errors (so e.g. a missing
+-"tagger" line is an error). Extra headers in the object are also an
+-error under mktag, but ignored by linkgit:git-fsck[1].
++"tagger" line is an error).
++
++Extra headers in the object are also an error under mktag, but ignored
++by linkgit:git-fsck[1]. This extra check can be turned off by setting
++the appropriate `fsck.<msg-id>` varible:
++
++    git -c fsck.extraHeaderEntry=ignore mktag <my-tag-with-headers
+ 
+ Tag Format
+ ----------
+diff --git a/builtin/mktag.c b/builtin/mktag.c
+index 5765cde0032..c1398ccf133 100644
+--- a/builtin/mktag.c
++++ b/builtin/mktag.c
+@@ -3,6 +3,14 @@
+ #include "replace-object.h"
+ #include "object-store.h"
+ #include "fsck.h"
++#include "config.h"
++
++static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
++
++static int mktag_config(const char *var, const char *value, void *cb)
++{
++	return fsck_config_internal(var, value, cb, &fsck_options);
++}
+ 
+ static int mktag_fsck_error_func(struct fsck_options *o,
+ 				 const struct object_id *oid,
+@@ -53,7 +61,6 @@ static int verify_object_in_tag(struct object_id *tagged_oid, int *tagged_type)
+ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ {
+ 	struct strbuf buf = STRBUF_INIT;
+-	struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
+ 	struct object_id tagged_oid;
+ 	int tagged_type;
+ 	struct object_id result;
+@@ -66,6 +73,8 @@ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ 
+ 	fsck_options.error_func = mktag_fsck_error_func;
+ 	fsck_set_msg_type(&fsck_options, "extraheaderentry", "warn");
++	/* config might set fsck.extraHeaderEntry=* again */
++	git_config(mktag_config, NULL);
+ 	if (fsck_tag_standalone(NULL, buf.buf, buf.len, &fsck_options,
+ 				&tagged_oid, &tagged_type))
+ 		die("tag on stdin did not pass our strict fsck check");
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 19b3c1bca9c..59082e06277 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -375,6 +375,20 @@ EOF
+ check_verify_failure 'detect invalid header entry' \
+ 	'^error:.* extraHeaderEntry:'
+ 
++test_expect_success 'invalid header entry config & fsck' '
++	test_must_fail git mktag <tag.sig &&
++	test_must_fail git -c fsck.extraHeaderEntry=error mktag <tag.sig &&
++	test_must_fail git -c fsck.extraHeaderEntry=warn mktag <tag.sig &&
++	git -c fsck.extraHeaderEntry=ignore mktag <tag.sig &&
++	git fsck &&
++	env GIT_TEST_GETTEXT_POISON=false \
++		git -c fsck.extraHeaderEntry=warn fsck 2>err &&
++	grep "warning .*extraHeaderEntry:" err &&
++	test_must_fail env GIT_TEST_GETTEXT_POISON=false \
++		git -c fsck.extraHeaderEntry=error 2>err fsck &&
++	grep "error .* extraHeaderEntry:" err
++'
++
+ cat >tag.sig <<EOF
+ object $head
+ type commit
+-- 
+2.29.2.222.g5d2a92d10f8
+
