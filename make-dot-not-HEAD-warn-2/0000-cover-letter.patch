@@ -1,0 +1,153 @@
+From 0573da1d3811182fa64e74a0ca67bfada0bcf6f8 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201210125321.19456-2-avarab@gmail.com>
+References: <20201210125321.19456-2-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 14 Dec 2020 14:20:07 +0100
+Subject: [PATCH v2 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  refs: move is_pseudoref_syntax() earlier in the file
+  refs: warn on non-pseudoref looking .git/<file> refs
+
+ Documentation/config/core.txt | 11 ++++++++
+ cache.h                       |  1 +
+ config.c                      |  5 ++++
+ environment.c                 |  1 +
+ refs.c                        | 50 ++++++++++++++++++++++-------------
+ t/t1430-bad-ref-name.sh       | 41 ++++++++++++++++++++++++++++
+ 6 files changed, 90 insertions(+), 19 deletions(-)
+
+Range-diff:
+-:  ----------- > 1:  e86e55f2828 refs: move is_pseudoref_syntax() earlier in the file
+1:  cad73aba664 ! 2:  0573da1d381 refs: warn on non-pseudoref looking .git/<file> refs
+    @@ Commit message
+     
+         The refs parsing machinery will first try to parse arbitrary
+         .git/<name> for a given <name>, before moving onto refs/<name>,
+    -    refs/tags/<name> etc. See "ref_rev_parse_rules" in refs.c, but
+    -    e.g. "for-each-ref" and other things that list references ignore these
+    -    ancient-style refs.
+    +    refs/tags/<name> etc. See "ref_rev_parse_rules" in refs.c. Things that
+    +    list references such as "for-each-ref" ignore these on the assumption
+    +    that they're pseudorefs such as "HEAD".
+     
+         Thus if you end up in a repository that contains e.g. .git/master the
+         likes of "checkout" can emit seemingly nonsensical error
+    @@ Commit message
+         .git/MERGE_HEAD and other non-pseudoref looking refs at the top-level.
+     
+         Let's help the user in this case by doing a very loose check for
+    -    whether the ref name looks like a pseudoref such as "HEAD" (i.e. only
+    -    has upper case, dashes, underbars), and if not issue a warning:
+    +    whether the ref name looks like a special pseudoref such as
+    +    "HEAD" (i.e. only has upper case, dashes, underbars), and if not issue
+    +    a warning:
+     
+             $ git rev-parse master
+             warning: matched ref .git/master doesn't look like a pseudoref
+    @@ Commit message
+         instead of "warning" passes with this approach.
+     
+         Our own test suite makes use of a few refs in .git/ that aren't
+    -    produced by git itself, e.g. "FOO", "TESTSYMREFTWO" etc, external
+    +    produced by git itself, e.g. "FOO", "TESTSYMREFTWO" etc. External
+         tools probably rely on this as well, so I don't think it's viable to
+    -    e.g. have a whitelist of "HEAD", "MERGE_HEAD" etc. As an aside that
+    -    list is quite large, I counted 12 names used in the C code before I
+    -    abandoned that approach.
+    +    e.g. have a whitelist of them. That list is quite large just fr
+    +    git.git, I counted 12 names used in the C code before I abandoned that
+    +    approach.
+     
+         This approach of checking the case of e.g. "master" is not an issue on
+         case-insensitive filesystems, since we're not checking against the
+    @@ Commit message
+         without warning on that system. Now we'll warn about that.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    Modified-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Documentation/config/core.txt ##
+     @@ Documentation/config/core.txt: core.warnAmbiguousRefs::
+    @@ Documentation/config/core.txt: core.warnAmbiguousRefs::
+     ++
+     +These references are ignored by linkgit:for-each-ref[1], but resolved
+     +by linkgit:git-show[1], linkgit:git-rev-parse[1] etc. So it can be
+    -+confusing to have e.g. an errant `.git/master` being confused with
+    -+`.git/refs/heads/master`.
+    ++confusing to have e.g. an errant `.git/mybranch` being confused with
+    ++`.git/refs/heads/mybranch`.
+     +
+      core.compression::
+      	An integer -1..9, indicating a default compression level.
+    @@ refs.c: int expand_ref(struct repository *repo, const char *str, int len,
+      					    this_result, &flag);
+      		if (r) {
+     +			if (warn_non_pseudo_refs &&
+    -+			    !starts_with(fullref.buf, "refs/") &&
+    -+			    !starts_with(r, "refs/") &&
+     +			    !strchr(r, '/') &&
+     +			    !is_any_pseudoref_syntax(r) &&
+    -+			    !warned_on_non_pseudo_ref++) {
+    -+				/*
+    -+				 * TRANSLATORS: The 1st argument is
+    -+				 * e.g. "master", and the 2nd can be
+    -+				 * e.g. "master~10".
+    -+				 */
+    -+				warning(_("matched ref name .git/%s doesn't look like a pseudoref"), r);
+    -+			}
+    ++			    !warned_on_non_pseudo_ref++)
+    ++				warning(_(".git/%s doesn't look like a pseudoref"), r);
+      			if (!refs_found++)
+      				*ref = xstrdup(r);
+      			if (!warn_ambiguous_refs)
+    @@ t/t1430-bad-ref-name.sh: test_expect_success 'branch -m can rename refs/heads/-d
+      
+     +test_expect_success 'warn on non-pseudoref syntax refs in .git/' '
+     +	test_when_finished "
+    -+		rm -f .git/mybranch &&
+    -+		rm -rf .git/a-dir &&
+    -+		rm -rf .git/MY-BRANCH_NAME &&
+    -+		rm -rf .git/MY-branch_NAME
+    ++		rm -rf .git/mybranch \
+    ++			.git/a-dir \
+    ++			.git/MY-BRANCH_NAME \
+    ++			.git/MY-branch_NAME
+     +	" &&
+     +
+     +	# Setup
+    -+	git rev-parse master >expect &&
+    ++	git rev-parse HEAD >expect &&
+    ++	mkdir .git/a-dir &&
+     +
+     +	# We ignore anything with slashes
+    -+	mkdir .git/a-dir &&
+     +	cp expect .git/a-dir/mybranch &&
+     +	git rev-parse a-dir/mybranch >hash 2>err &&
+     +	test_must_be_empty err &&
+    @@ t/t1430-bad-ref-name.sh: test_expect_success 'branch -m can rename refs/heads/-d
+     +
+     +	# We do not ignore lower-case
+     +	cp expect .git/mybranch &&
+    -+	git rev-parse mybranch >hash 2>err &&
+    ++	env GIT_TEST_GETTEXT_POISON=false \
+    ++		git rev-parse mybranch >hash 2>err &&
+     +	test_cmp expect hash &&
+    -+	GIT_TEST_GETTEXT_POISON=false grep "like a pseudoref" err &&
+    ++	grep "like a pseudoref" err &&
+     +	git -c core.warnNonPseudoRefs=false rev-parse mybranch >hash 2>err &&
+     +	test_cmp expect hash &&
+    -+	test_must_be_empty err &&
+    -+	rm .git/mybranch
+    ++	test_must_be_empty err
+     +'
+     +
+      test_done
+-- 
+2.29.2.222.g5d2a92d10f8
+
