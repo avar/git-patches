@@ -1,0 +1,93 @@
+From 7fc0b81df7db07be6cf3c74b45ffd94a46334e06 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201209200140.29425-1-avarab@gmail.com>
+References: <20201209200140.29425-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Dec 2020 21:34:38 +0100
+Subject: [PATCH v4 19/20] mktag: mark strings for translation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Mark the errors mktag might emit for translation. This is a plumbing
+command, but the errors it emits are intended to be human-readable.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/mktag.c  | 16 ++++++++--------
+ t/t3800-mktag.sh |  3 ++-
+ 2 files changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/mktag.c b/builtin/mktag.c
+index 18b8492f4d..9b04b61c2b 100644
+--- a/builtin/mktag.c
++++ b/builtin/mktag.c
+@@ -31,10 +31,10 @@ static int mktag_fsck_error_func(struct fsck_options *o,
+ 		 * like missing "tagger" lines are "only" warnings
+ 		 * under fsck, we've always considered them an error.
+ 		 */
+-		fprintf_ln(stderr, "error: tag input does not pass fsck: %s", message);
++		fprintf_ln(stderr, _("error: tag input does not pass fsck: %s"), message);
+ 		return 1;
+ 	default:
+-		BUG("%d (FSCK_IGNORE?) should never trigger this callback",
++		BUG(_("%d (FSCK_IGNORE?) should never trigger this callback"),
+ 		    msg_type);
+ 	}
+ }
+@@ -49,10 +49,10 @@ static int verify_object_in_tag(struct object_id *tagged_oid, int *tagged_type)
+ 
+ 	buffer = read_object_file(tagged_oid, &type, &size);
+ 	if (!buffer)
+-		die("could not read tagged object '%s'",
++		die(_("could not read tagged object '%s'"),
+ 		    oid_to_hex(tagged_oid));
+ 	if (type != *tagged_type)
+-		die("object '%s' tagged as '%s', but is a '%s' type",
++		die(_("object '%s' tagged as '%s', but is a '%s' type"),
+ 		    oid_to_hex(tagged_oid),
+ 		    type_name(*tagged_type), type_name(type));
+ 
+@@ -79,7 +79,7 @@ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ 			     builtin_mktag_usage, 0);
+ 
+ 	if (strbuf_read(&buf, 0, 0) < 0)
+-		die_errno("could not read from stdin");
++		die_errno(_("could not read from stdin"));
+ 
+ 	fsck_options.error_func = mktag_fsck_error_func;
+ 	fsck_set_msg_type(&fsck_options, "extraheaderentry", "warn");
+@@ -87,13 +87,13 @@ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ 	git_config(mktag_config, NULL);
+ 	if (fsck_tag_standalone(NULL, buf.buf, buf.len, &fsck_options,
+ 				&tagged_oid, &tagged_type))
+-		die("tag on stdin did not pass our strict fsck check");
++		die(_("tag on stdin did not pass our strict fsck check"));
+ 
+ 	if (verify_object_in_tag(&tagged_oid, &tagged_type))
+-		die("tag on stdin did not refer to a valid object");
++		die(_("tag on stdin did not refer to a valid object"));
+ 
+ 	if (write_object_file(buf.buf, buf.len, tag_type, &result) < 0)
+-		die("unable to write tag file");
++		die(_("unable to write tag file"));
+ 
+ 	strbuf_release(&buf);
+ 	puts(oid_to_hex(&result));
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 177ab1682d..2e8b718379 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -14,7 +14,8 @@ test_description='git mktag: tag object verify test'
+ check_verify_failure () {
+ 	expect="$2"
+ 	test_expect_success "$1" '
+-		test_must_fail git mktag <tag.sig 2>message &&
++		test_must_fail env GIT_TEST_GETTEXT_POISON=false \
++			git mktag <tag.sig 2>message &&
+ 		grep "$expect" message
+ 	'
+ }
+-- 
+2.29.2.222.g5d2a92d10f8
+

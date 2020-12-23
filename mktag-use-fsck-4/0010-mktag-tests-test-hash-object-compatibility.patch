@@ -1,0 +1,91 @@
+From 56c6b562fd5c3096d945b12248b7b0a2c5652981 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201209200140.29425-1-avarab@gmail.com>
+References: <20201209200140.29425-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Dec 2020 19:11:29 +0100
+Subject: [PATCH v4 10/20] mktag tests: test "hash-object" compatibility
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change all the successful "mktag" tests to test that "hash-object"
+produces the same hash for the input, and that fsck passes for
+both.
+
+This tests e.g. that "mktag" doesn't trim its input or otherwise munge
+it in a way that "hash-object" doesn't.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3800-mktag.sh | 26 +++++++++++++++-----------
+ 1 file changed, 15 insertions(+), 11 deletions(-)
+
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index f339321be8..c6826762d9 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -19,6 +19,16 @@ check_verify_failure () {
+ 	'
+ }
+ 
++test_expect_mktag_success() {
++	test_expect_success "$1" '
++		git hash-object -t tag -w --stdin <tag.sig >expected &&
++		git fsck --strict &&
++		git mktag <tag.sig >hash &&
++		git fsck --strict &&
++		test_cmp expected hash
++	'
++}
++
+ ###########################################################
+ # first create a commit, so we have a valid object/type
+ # for the tag.
+@@ -255,9 +265,7 @@ tagger T A Gger <> 0 +0000
+ 
+ EOF
+ 
+-test_expect_success \
+-    'allow empty tag email' \
+-    'git mktag <tag.sig'
++test_expect_mktag_success 'allow empty tag email'
+ 
+ ############################################################
+ # 16. disallow spaces in tag email
+@@ -382,9 +390,7 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ this line comes after an extra newline
+ EOF
+ 
+-test_expect_success 'allow extra newlines at start of body' '
+-	git mktag <tag.sig
+-'
++test_expect_mktag_success 'allow extra newlines at start of body'
+ 
+ cat >tag.sig <<EOF
+ object $head
+@@ -394,9 +400,7 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ 
+ EOF
+ 
+-test_expect_success 'allow extra newlines at end of headers' '
+-	git mktag <tag.sig
+-'
++test_expect_mktag_success 'allow extra newlines at end of headers'
+ 
+ space=' '
+ cat >tag.sig <<EOF
+@@ -431,8 +435,8 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ 
+ EOF
+ 
+-test_expect_success 'create valid tag' '
+-	git mktag <tag.sig >hash &&
++test_expect_mktag_success 'create valid tag object'
++test_expect_success 'create valid tag name' '
+ 	git update-ref refs/tags/mytag $(cat hash) $(test_oid zero)
+ '
+ 
+-- 
+2.29.2.222.g5d2a92d10f8
+

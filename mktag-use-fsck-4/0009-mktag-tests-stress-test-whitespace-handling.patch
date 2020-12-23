@@ -1,0 +1,87 @@
+From dd6b012b0c6b2d30bbd7b3e155b3da81ae17c515 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201209200140.29425-1-avarab@gmail.com>
+References: <20201209200140.29425-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Dec 2020 13:23:27 +0100
+Subject: [PATCH v4 09/20] mktag tests: stress test whitespace handling
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests for various whitespace edge cases around the header/body
+boundary, such as two newlines separating the header and body, a space
+at the end of the "tagger" line before the header etc.
+
+Add a test showing that we insist that an empty body must be preceded
+by an empty line. This test for a long-standing regression which goes
+against the command's documented behavior. It'll be addressed in a
+follow-up change.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3800-mktag.sh | 48 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 48 insertions(+)
+
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index b6dcdbebe6..f339321be8 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -372,6 +372,54 @@ EOF
+ check_verify_failure 'detect invalid header entry' \
+ 	'^error: char.*: trailing garbage in tag header$'
+ 
++cat >tag.sig <<EOF
++object $head
++type commit
++tag mytag
++tagger T A Gger <tagger@example.com> 1206478233 -0500
++
++
++this line comes after an extra newline
++EOF
++
++test_expect_success 'allow extra newlines at start of body' '
++	git mktag <tag.sig
++'
++
++cat >tag.sig <<EOF
++object $head
++type commit
++tag mytag
++tagger T A Gger <tagger@example.com> 1206478233 -0500
++
++EOF
++
++test_expect_success 'allow extra newlines at end of headers' '
++	git mktag <tag.sig
++'
++
++space=' '
++cat >tag.sig <<EOF
++object $head
++type commit
++tag mytag
++tagger T A Gger <tagger@example.com> 1206478233 -0500$space
++
++EOF
++
++check_verify_failure 'extra whitespace at end of headers' \
++	'^error: char.*: malformed tag timezone$'
++
++cat >tag.sig <<EOF
++object $head
++type commit
++tag mytag
++tagger T A Gger <tagger@example.com> 1206478233 -0500
++EOF
++
++check_verify_failure 'disallow no header / body newline separator' \
++	'^error: char.*: trailing garbage in tag header$'
++
+ ############################################################
+ # 24. create valid tag
+ 
+-- 
+2.29.2.222.g5d2a92d10f8
+

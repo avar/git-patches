@@ -1,0 +1,198 @@
+From 6fa443d528c4984d222b6ac43d197b46d996bce8 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201209200140.29425-1-avarab@gmail.com>
+References: <20201209200140.29425-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Dec 2020 22:37:05 +0100
+Subject: [PATCH v4 20/20] mktag: add a --no-strict option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Now that mktag has been migrated to use the fsck machinery to check
+its input, it makes sense to teach it to run in the equivalent of "git
+fsck"'s default mode, instead of hardcoding "git fsck --strict". Let's
+do that and support the "--no-strict" option.
+
+Since this is a new option we don't need to cater to parse-option.c's
+default of automatically supporting --strict. So let's use
+PARSE_OPT_NONEG, using a new trivial helper macro.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-mktag.txt |  7 +++++++
+ builtin/mktag.c             |  9 +++++++++
+ parse-options.h             |  1 +
+ t/t3800-mktag.sh            | 35 ++++++++++++++++++++++++-----------
+ 4 files changed, 41 insertions(+), 11 deletions(-)
+
+diff --git a/Documentation/git-mktag.txt b/Documentation/git-mktag.txt
+index d04657b219..05e49b6787 100644
+--- a/Documentation/git-mktag.txt
++++ b/Documentation/git-mktag.txt
+@@ -11,6 +11,13 @@ SYNOPSIS
+ [verse]
+ 'git mktag'
+ 
++OPTIONS
++-------
++
++--no-strict::
++	By default mktag turns on the equivalent of
++	linkgit:git-fsck[1] `--strict` mode. This disables it.
++
+ DESCRIPTION
+ -----------
+ 
+diff --git a/builtin/mktag.c b/builtin/mktag.c
+index 9b04b61c2b..a6a4612247 100644
+--- a/builtin/mktag.c
++++ b/builtin/mktag.c
+@@ -10,6 +10,7 @@ static char const * const builtin_mktag_usage[] = {
+ 	N_("git mktag"),
+ 	NULL
+ };
++static int option_no_strict;
+ 
+ static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
+ 
+@@ -25,6 +26,12 @@ static int mktag_fsck_error_func(struct fsck_options *o,
+ {
+ 	switch (msg_type) {
+ 	case FSCK_WARN:
++		if (option_no_strict) {
++			fprintf_ln(stderr, _("warning: tag input does not pass fsck: %s"), message);
++			return 0;
++
++		}
++		/* fallthrough */
+ 	case FSCK_ERROR:
+ 		/*
+ 		 * We treat both warnings and errors as errors, things
+@@ -67,6 +74,8 @@ static int verify_object_in_tag(struct object_id *tagged_oid, int *tagged_type)
+ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ {
+ 	static struct option builtin_mktag_options[] = {
++		OPT_NO_BOOL(0, "no-strict", &option_no_strict,
++			    N_("don't do strict fsck checks")),
+ 		OPT_END(),
+ 	};
+ 	struct strbuf buf = STRBUF_INIT;
+diff --git a/parse-options.h b/parse-options.h
+index 7030d8f3da..90d6a817d7 100644
+--- a/parse-options.h
++++ b/parse-options.h
+@@ -166,6 +166,7 @@ struct option {
+ #define OPT_COUNTUP(s, l, v, h)     OPT_COUNTUP_F(s, l, v, h, 0)
+ #define OPT_SET_INT(s, l, v, h, i)  OPT_SET_INT_F(s, l, v, h, i, 0)
+ #define OPT_BOOL(s, l, v, h)        OPT_BOOL_F(s, l, v, h, 0)
++#define OPT_NO_BOOL(s, l, v, h)     OPT_BOOL_F(s, l, v, h, PARSE_OPT_NONEG)
+ #define OPT_HIDDEN_BOOL(s, l, v, h) { OPTION_SET_INT, (s), (l), (v), NULL, \
+ 				      (h), PARSE_OPT_NOARG | PARSE_OPT_HIDDEN, NULL, 1}
+ #define OPT_CMDMODE(s, l, v, h, i)  { OPTION_SET_INT, (s), (l), (v), NULL, \
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 2e8b718379..b436ae1e44 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -12,12 +12,16 @@ test_description='git mktag: tag object verify test'
+ # given in the expect.pat file.
+ 
+ check_verify_failure () {
+-	expect="$2"
+-	test_expect_success "$1" '
++	test_expect_success "$1" "
+ 		test_must_fail env GIT_TEST_GETTEXT_POISON=false \
+ 			git mktag <tag.sig 2>message &&
+-		grep "$expect" message
+-	'
++		grep '$2' message &&
++		if test '$3' != '--no-strict'
++		then
++			test_must_fail git mktag --no-strict <tag.sig 2>message.no-strict &&
++			grep '$2' message.no-strict
++		fi
++	"
+ }
+ 
+ test_expect_mktag_success() {
+@@ -49,7 +53,8 @@ test_expect_success 'basic usage' '
+ 	EOF
+ 	git mktag <tag.sig &&
+ 	git mktag --end-of-options <tag.sig &&
+-	test_expect_code 129 git mktag --unknown-option
++	test_expect_code 129 git mktag --unknown-option &&
++	test_expect_code 129 git mktag --strict
+ '
+ 
+ ############################################################
+@@ -60,7 +65,7 @@ too short for a tag
+ EOF
+ 
+ check_verify_failure 'Tag object length check' \
+-	'^error:.* missingObject:'
++	'^error:.* missingObject:' 'strict'
+ 
+ ############################################################
+ #  2. object line label check
+@@ -206,7 +211,7 @@ tagger . <> 0 +0000
+ EOF
+ 
+ check_verify_failure 'verify tag-name check' \
+-	'^error:.* badTagName:'
++	'^error:.* badTagName:' '--no-strict'
+ 
+ ############################################################
+ # 11. tagger line label check #1
+@@ -220,7 +225,7 @@ This is filler
+ EOF
+ 
+ check_verify_failure '"tagger" line label check #1' \
+-	'^error:.* missingTaggerEntry:'
++	'^error:.* missingTaggerEntry:' '--no-strict'
+ 
+ ############################################################
+ # 12. tagger line label check #2
+@@ -235,7 +240,7 @@ This is filler
+ EOF
+ 
+ check_verify_failure '"tagger" line label check #2' \
+-	'^error:.* missingTaggerEntry:'
++	'^error:.* missingTaggerEntry:' '--no-strict'
+ 
+ ############################################################
+ # 13. allow missing tag author name like fsck
+@@ -264,7 +269,7 @@ tagger T A Gger <
+ EOF
+ 
+ check_verify_failure 'disallow malformed tagger' \
+-	'^error:.* badEmail:'
++	'^error:.* badEmail:' '--no-strict'
+ 
+ ############################################################
+ # 15. allow empty tag email
+@@ -388,13 +393,21 @@ this line should not be here
+ EOF
+ 
+ check_verify_failure 'detect invalid header entry' \
+-	'^error:.* extraHeaderEntry:'
++	'^error:.* extraHeaderEntry:' '--no-strict'
+ 
+ test_expect_success 'invalid header entry config & fsck' '
+ 	test_must_fail git mktag <tag.sig &&
++	git mktag --no-strict <tag.sig &&
++
+ 	test_must_fail git -c fsck.extraHeaderEntry=error mktag <tag.sig &&
++	test_must_fail git -c fsck.extraHeaderEntry=error mktag --no-strict <tag.sig &&
++
+ 	test_must_fail git -c fsck.extraHeaderEntry=warn mktag <tag.sig &&
++	git -c fsck.extraHeaderEntry=warn mktag --no-strict <tag.sig &&
++
+ 	git -c fsck.extraHeaderEntry=ignore mktag <tag.sig &&
++	git -c fsck.extraHeaderEntry=ignore mktag --no-strict <tag.sig &&
++
+ 	git fsck &&
+ 	env GIT_TEST_GETTEXT_POISON=false \
+ 		git -c fsck.extraHeaderEntry=warn fsck 2>err &&
+-- 
+2.29.2.222.g5d2a92d10f8
+

@@ -1,0 +1,81 @@
+From 32698e1d005ef348701d55a3fdebcf5fd7181884 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201209200140.29425-1-avarab@gmail.com>
+References: <20201209200140.29425-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Dec 2020 18:32:11 +0100
+Subject: [PATCH v4 17/20] mktag: allow omitting the header/body \n separator
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change mktag's acceptance rules to accept an empty body without an
+empty line after the header again. This fixes an ancient unintended
+dregression in "mktag".
+
+When "mktag" was introduced in ec4465adb3 (Add "tag" objects that can
+be used to sign other objects., 2005-04-25) the input checks were much
+looser. When it was documented it 6cfec03680 (mktag: minimally update
+the description., 2007-06-10) it was clearly intended for this \n to
+be optional:
+
+    The message, when [it] exists, is separated by a blank line from
+    the header.
+
+But then in e0aaf781f6 (mktag.c: improve verification of tagger field
+and tests, 2008-03-27) this was made an error, seemingly by
+accident. It was just a result of the general header checks, and all
+the tests after that patch have a trailing empty line (but did not
+before).
+
+Let's allow this again, and tweak the test semantics changed in
+e0aaf781f6 to remove the redundant empty line. New tests added in
+previous commits of mine already added an explicit test for allowing
+the empty line between header and body.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fsck.c           | 2 ++
+ t/t3800-mktag.sh | 6 +++---
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/fsck.c b/fsck.c
+index 9067a290a2..29c1eaca4c 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -987,6 +987,8 @@ int fsck_tag_standalone(const struct object_id *oid, const char *buffer,
+ 	}
+ 	else
+ 		ret = fsck_ident(&buffer, oid, OBJ_TAG, options);
++	if (!*buffer)
++		goto done;
+ 
+ 	if (!starts_with(buffer, "\n")) {
+ 		/*
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 1019b42378..9383f7795b 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -432,8 +432,9 @@ tag mytag
+ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ EOF
+ 
+-check_verify_failure 'disallow no header / body newline separator' \
+-	'^error:.* extraHeaderEntry:'
++test_expect_success 'allow no header / body newline separator' '
++	git mktag <tag.sig
++'
+ 
+ ############################################################
+ # 24. create valid tag
+@@ -443,7 +444,6 @@ object $head
+ type commit
+ tag mytag
+ tagger T A Gger <tagger@example.com> 1206478233 -0500
+-
+ EOF
+ 
+ test_expect_mktag_success 'create valid tag object'
+-- 
+2.29.2.222.g5d2a92d10f8
+
