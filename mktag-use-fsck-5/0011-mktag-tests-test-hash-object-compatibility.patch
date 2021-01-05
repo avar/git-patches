@@ -1,0 +1,99 @@
+From 83d7ca86b8fafadf962a7f86fa7dd6f9b96d32fc Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201223013606.7972-1-avarab@gmail.com>
+References: <20201223013606.7972-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Dec 2020 19:11:29 +0100
+Subject: [PATCH v5 11/23] mktag tests: test "hash-object" compatibility
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change all the successful "mktag" tests to test that "hash-object"
+produces the same hash for the input, and that fsck passes for
+both.
+
+This tests e.g. that "mktag" doesn't trim its input or otherwise munge
+it in a way that "hash-object" doesn't.
+
+Since we're doing an "fsck --strict" here at the end let's incorporate
+the creation of the "mytag" name into this test, removing the
+special-case at the end of the file.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3800-mktag.sh | 31 +++++++++++++++++--------------
+ 1 file changed, 17 insertions(+), 14 deletions(-)
+
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 661b62f0912..47380292223 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -19,6 +19,19 @@ check_verify_failure () {
+ 	'
+ }
+ 
++test_expect_mktag_success() {
++	test_expect_success "$1" '
++		git hash-object -t tag -w --stdin <tag.sig >expected &&
++		git fsck --strict &&
++
++		git mktag <tag.sig >hash &&
++		test_cmp expected hash &&
++		test_when_finished "git update-ref -d refs/tags/mytag $(cat hash)" &&
++		git update-ref refs/tags/mytag $(cat hash) $(test_oid zero) &&
++		git fsck --strict	
++	'
++}
++
+ ###########################################################
+ # first create a commit, so we have a valid object/type
+ # for the tag.
+@@ -220,9 +233,7 @@ tagger T A Gger <> 0 +0000
+ 
+ EOF
+ 
+-test_expect_success \
+-    'allow empty tag email' \
+-    'git mktag <tag.sig'
++test_expect_mktag_success 'allow empty tag email'
+ 
+ ############################################################
+ # 16. disallow spaces in tag email
+@@ -347,9 +358,7 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ this line comes after an extra newline
+ EOF
+ 
+-test_expect_success 'allow extra newlines at start of body' '
+-	git mktag <tag.sig
+-'
++test_expect_mktag_success 'allow extra newlines at start of body'
+ 
+ cat >tag.sig <<EOF
+ object $head
+@@ -359,9 +368,7 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ 
+ EOF
+ 
+-test_expect_success 'require a blank line before an empty body (1)' '
+-	git mktag <tag.sig
+-'
++test_expect_mktag_success 'require a blank line before an empty body (1)'
+ 
+ cat >tag.sig <<EOF
+ object $head
+@@ -384,10 +391,6 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ 
+ EOF
+ 
+-test_expect_success 'create valid tag' '
+-	git mktag <tag.sig >hash &&
+-	git update-ref refs/tags/mytag $(cat hash) $(test_oid zero) &&
+-	git fsck --strict
+-'
++test_expect_mktag_success 'create valid tag object'
+ 
+ test_done
+-- 
+2.29.2.222.g5d2a92d10f8
+

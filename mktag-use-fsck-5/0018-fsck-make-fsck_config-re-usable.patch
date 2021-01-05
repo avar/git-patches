@@ -1,0 +1,122 @@
+From 4c3fbb7ed581cfde06695903d12d11f3e3bf866f Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201223013606.7972-1-avarab@gmail.com>
+References: <20201223013606.7972-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 9 Dec 2020 19:58:13 +0100
+Subject: [PATCH v5 18/23] fsck: make fsck_config() re-usable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the fsck_config() function from builtin/fsck.c to fsck.[ch]. This
+allows for re-using it in other tools that expose fsck logic and want
+to support its configuration variables.
+
+A logical continuation of this change would be to use a common
+function for all of {fetch,receive}.fsck.* and fsck.*. See
+5d477a334a6 (fsck (receive-pack): allow demoting errors to warnings,
+2015-06-22) and my own 1362df0d413 (fetch: implement fetch.fsck.*,
+2018-07-27) for the relevant code.
+
+However, those routines want to not parse the fsck.skipList into OIDs,
+but rather pass them along with the --strict option to another
+process. It would be possible to refactor that whole thing so we
+support e.g. a "fetch." prefix, then just keep track of the skiplist
+as a filename instead of parsing it, and learn to spew that all out
+from our internal structures into something we can append to the
+--strict option.
+
+But instead I'm planning to re-use this in "mktag", which'll just
+re-use these "fsck.*" variables as-is.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/fsck.c | 20 +-------------------
+ fsck.c         | 25 +++++++++++++++++++++++++
+ fsck.h         |  7 +++++++
+ 3 files changed, 33 insertions(+), 19 deletions(-)
+
+diff --git a/builtin/fsck.c b/builtin/fsck.c
+index fbf26cafcfd..821e7798c70 100644
+--- a/builtin/fsck.c
++++ b/builtin/fsck.c
+@@ -73,25 +73,7 @@ static const char *printable_type(const struct object_id *oid,
+ 
+ static int fsck_config(const char *var, const char *value, void *cb)
+ {
+-	if (strcmp(var, "fsck.skiplist") == 0) {
+-		const char *path;
+-		struct strbuf sb = STRBUF_INIT;
+-
+-		if (git_config_pathname(&path, var, value))
+-			return 1;
+-		strbuf_addf(&sb, "skiplist=%s", path);
+-		free((char *)path);
+-		fsck_set_msg_types(&fsck_obj_options, sb.buf);
+-		strbuf_release(&sb);
+-		return 0;
+-	}
+-
+-	if (skip_prefix(var, "fsck.", &var)) {
+-		fsck_set_msg_type(&fsck_obj_options, var, value);
+-		return 0;
+-	}
+-
+-	return git_default_config(var, value, cb);
++	return fsck_config_internal(var, value, cb, &fsck_obj_options);
+ }
+ 
+ static int objerror(struct object *obj, const char *err)
+diff --git a/fsck.c b/fsck.c
+index bed5e20e03b..9067a290a2e 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -1310,3 +1310,28 @@ int fsck_finish(struct fsck_options *options)
+ 	oidset_clear(&gitmodules_done);
+ 	return ret;
+ }
++
++int fsck_config_internal(const char *var, const char *value, void *cb,
++			 struct fsck_options *options)
++{
++	if (strcmp(var, "fsck.skiplist") == 0) {
++		const char *path;
++		struct strbuf sb = STRBUF_INIT;
++
++		if (git_config_pathname(&path, var, value))
++			return 1;
++		strbuf_addf(&sb, "skiplist=%s", path);
++		free((char *)path);
++		fsck_set_msg_types(options, sb.buf);
++		strbuf_release(&sb);
++		return 0;
++	}
++
++	if (skip_prefix(var, "fsck.", &var)) {
++		fsck_set_msg_type(options, var, value);
++		return 0;
++	}
++
++	return git_default_config(var, value, cb);
++}
++
+diff --git a/fsck.h b/fsck.h
+index 29ee4c45e87..423c467feb7 100644
+--- a/fsck.h
++++ b/fsck.h
+@@ -103,4 +103,11 @@ void fsck_put_object_name(struct fsck_options *options,
+ const char *fsck_describe_object(struct fsck_options *options,
+ 				 const struct object_id *oid);
+ 
++/*
++ * git_config() callback for use by fsck-y tools that want to support
++ * fsck.<msg> fsck.skipList etc.
++ */
++int fsck_config_internal(const char *var, const char *value, void *cb,
++			 struct fsck_options *options);
++
+ #endif
+-- 
+2.29.2.222.g5d2a92d10f8
+

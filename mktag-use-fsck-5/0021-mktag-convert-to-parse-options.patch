@@ -1,0 +1,95 @@
+From 3c991dda02be3fcf8430f972f4d8f31dc976803e Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201223013606.7972-1-avarab@gmail.com>
+References: <20201223013606.7972-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Dec 2020 19:33:47 +0100
+Subject: [PATCH v5 21/23] mktag: convert to parse-options
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Convert the "mktag" command to use parse-options.h instead of its own
+ad-hoc argc handling. This doesn't matter much in practice since it
+doesn't support any options, but removes another special-case in our
+codebase, and makes it easier to add options to it in the future.
+
+It does marginally improve the situation for programs that want to
+execute git commands in a consistent manner and e.g. always use
+--end-of-options. E.g. "gitaly" does that, and has a blacklist of
+built-ins that don't support --end-of-options. This is one less
+special case for it and other similar programs to support.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/mktag.c  | 14 ++++++++++++--
+ t/t3800-mktag.sh | 12 ++++++++++++
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/mktag.c b/builtin/mktag.c
+index 373926d7e0c..18b8492f4d4 100644
+--- a/builtin/mktag.c
++++ b/builtin/mktag.c
+@@ -1,10 +1,16 @@
+ #include "builtin.h"
++#include "parse-options.h"
+ #include "tag.h"
+ #include "replace-object.h"
+ #include "object-store.h"
+ #include "fsck.h"
+ #include "config.h"
+ 
++static char const * const builtin_mktag_usage[] = {
++	N_("git mktag"),
++	NULL
++};
++
+ static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
+ 
+ static int mktag_config(const char *var, const char *value, void *cb)
+@@ -60,13 +66,17 @@ static int verify_object_in_tag(struct object_id *tagged_oid, int *tagged_type)
+ 
+ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ {
++	static struct option builtin_mktag_options[] = {
++		OPT_END(),
++	};
+ 	struct strbuf buf = STRBUF_INIT;
+ 	struct object_id tagged_oid;
+ 	int tagged_type;
+ 	struct object_id result;
+ 
+-	if (argc != 1)
+-		usage("git mktag");
++	argc = parse_options(argc, argv, NULL,
++			     builtin_mktag_options,
++			     builtin_mktag_usage, 0);
+ 
+ 	if (strbuf_read(&buf, 0, 0) < 0)
+ 		die_errno("could not read from stdin");
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 601b064e97a..0ddd0f01cc7 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -45,6 +45,18 @@ test_expect_success 'setup' '
+ 	blob=$(git rev-parse --verify HEAD:B.t)
+ '
+ 
++test_expect_success 'basic usage' '
++	cat >tag.sig <<-EOF &&
++	object $head
++	type commit
++	tag mytag
++	tagger T A Gger <tagger@example.com> 1206478233 -0500
++	EOF
++	git mktag <tag.sig &&
++	git mktag --end-of-options <tag.sig &&
++	test_expect_code 129 git mktag --unknown-option
++'
++
+ ############################################################
+ #  1. length check
+ 
+-- 
+2.29.2.222.g5d2a92d10f8
+
