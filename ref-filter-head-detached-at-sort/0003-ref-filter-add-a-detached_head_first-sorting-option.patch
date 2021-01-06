@@ -1,0 +1,100 @@
+From 11e6f274d2d43fbc934fe1e6251337042ba12b41 Mon Sep 17 00:00:00 2001
+In-Reply-To: <9bd85516f91c3e2fdefdafd51df71f75603e51f6.1560895672.git.matvore@google.com>
+References: <9bd85516f91c3e2fdefdafd51df71f75603e51f6.1560895672.git.matvore@google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 6 Jan 2021 10:14:25 +0100
+Subject: [PATCH 3/5] ref-filter: add a "detached_head_first" sorting option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a "detached_head_first" sorting option for eventual use by the
+"git branch" command. When listing branches we want to list the
+detached HEAD "ref" at the start of the list. As shown in
+28438e84e04 (ref-filter: sort detached HEAD lines firstly, 2019-06-18)
+this currently relies on "(" sorting before any other refname by
+strcmp().
+
+This boxes translators into using ASCII parentheses, a subsequent
+commit will amend get_head_description() to get rid of this
+limitation.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ref-filter.c | 23 ++++++++++++++++++++++-
+ ref-filter.h |  3 +++
+ 2 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/ref-filter.c b/ref-filter.c
+index aa260bfd099..94ab3f86a53 100644
+--- a/ref-filter.c
++++ b/ref-filter.c
+@@ -2350,6 +2350,16 @@ int filter_refs(struct ref_array *array, struct ref_filter *filter, unsigned int
+ 	return ret;
+ }
+ 
++static int compare_detached_head(struct ref_array_item *a, struct ref_array_item *b)
++{
++	if (a->kind & FILTER_REFS_DETACHED_HEAD)
++		return -1;
++	else if (b->kind & FILTER_REFS_DETACHED_HEAD)
++		return 1;
++	BUG("compare_detached_head() is guarded by an xor on [ab]->kind & FILTER_REFS_DETACHED_HEAD");
++	return 0;
++}
++
+ static int cmp_ref_sorting(struct ref_sorting *s, struct ref_array_item *a, struct ref_array_item *b)
+ {
+ 	struct atom_value *va, *vb;
+@@ -2364,7 +2374,12 @@ static int cmp_ref_sorting(struct ref_sorting *s, struct ref_array_item *a, stru
+ 		die("%s", err.buf);
+ 	strbuf_release(&err);
+ 	cmp_fn = s->ignore_case ? strcasecmp : strcmp;
+-	if (s->version)
++	if (s->detached_head_first &&
++	    ((a->kind & FILTER_REFS_DETACHED_HEAD)
++	     ^
++	     (b->kind & FILTER_REFS_DETACHED_HEAD))) {
++		cmp = compare_detached_head(a, b);
++	} else if (s->version)
+ 		cmp = versioncmp(va->s, vb->s);
+ 	else if (cmp_type == FIELD_STR)
+ 		cmp = cmp_fn(va->s, vb->s);
+@@ -2403,6 +2418,12 @@ void ref_sorting_icase_all(struct ref_sorting *sorting, int flag)
+ 		sorting->ignore_case = !!flag;
+ }
+ 
++void ref_sorting_detached_head_first_all(struct ref_sorting *sorting, int flag)
++{
++	for (; sorting; sorting = sorting->next)
++		sorting->detached_head_first = !!flag;
++}
++
+ void ref_array_sort(struct ref_sorting *sorting, struct ref_array *array)
+ {
+ 	QSORT_S(array->items, array->nr, compare_refs, sorting);
+diff --git a/ref-filter.h b/ref-filter.h
+index feaef4a8fde..3b92e0f2696 100644
+--- a/ref-filter.h
++++ b/ref-filter.h
+@@ -30,6 +30,7 @@ struct ref_sorting {
+ 	int atom; /* index into used_atom array (internal) */
+ 	unsigned reverse : 1,
+ 		ignore_case : 1,
++		detached_head_first : 1,
+ 		version : 1;
+ };
+ 
+@@ -111,6 +112,8 @@ int verify_ref_format(struct ref_format *format);
+ void ref_array_sort(struct ref_sorting *sort, struct ref_array *array);
+ /*  Set the ignore_case flag for all elements of a sorting list */
+ void ref_sorting_icase_all(struct ref_sorting *sorting, int flag);
++/*  Set the detached_head_first flag for all elements of a sorting list */
++void ref_sorting_detached_head_first_all(struct ref_sorting *sorting, int flag);
+ /*  Based on the given format and quote_style, fill the strbuf */
+ int format_ref_array_item(struct ref_array_item *info,
+ 			  const struct ref_format *format,
+-- 
+2.29.2.222.g5d2a92d10f8
+
