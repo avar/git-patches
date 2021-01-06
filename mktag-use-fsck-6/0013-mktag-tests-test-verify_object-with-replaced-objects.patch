@@ -1,0 +1,84 @@
+From ca1567866b038414e0c0ddaf88605fbfd73301a2 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqq4kjuygw7.fsf@gitster.c.googlers.com>
+References: <xmqq4kjuygw7.fsf@gitster.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 5 Jan 2021 16:01:49 +0100
+Subject: [PATCH v6 13/23] mktag tests: test verify_object() with replaced
+ objects
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests to demonstrate what "mktag" does in the face of replaced
+objects.
+
+There was an existing test for replaced objects fed to "mktag" added
+in cc400f50112 (mktag: call "check_sha1_signature" with the
+replacement sha1, 2009-01-23), but that one only tests a
+commit->commit mapping. Not a mapping to a different type as like
+we're also testing for here. We could remove the "mktag" test in
+t6050-replace.sh now if the created tag wasn't being used by a
+subsequent "fsck" test.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3800-mktag.sh | 35 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index ced540035d4..fbaf648491f 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -38,7 +38,11 @@ test_expect_mktag_success() {
+ # for the tag.
+ test_expect_success 'setup' '
+ 	test_commit A &&
+-	head=$(git rev-parse --verify HEAD)
++	test_commit B &&
++	head=$(git rev-parse --verify HEAD) &&
++	head_parent=$(git rev-parse --verify HEAD~) &&
++	tree=$(git rev-parse HEAD^{tree}) &&
++	blob=$(git rev-parse --verify HEAD:B.t)
+ '
+ 
+ ############################################################
+@@ -180,6 +184,35 @@ tagger . <> 0 +0000
+ 
+ EOF
+ 
++check_verify_failure 'verify object (hash/type) check -- mismatched type, valid object' \
++	'^error: char7: could not verify object'
++
++############################################################
++#  9.5. verify object (hash/type) check -- replacement
++
++test_expect_success 'setup replacement of commit -> commit and tree -> blob' '
++	git replace $head_parent $head &&
++	git replace -f $tree $blob
++'
++
++cat >tag.sig <<EOF
++object $head_parent
++type commit
++tag mytag
++tagger . <> 0 +0000
++
++EOF
++
++test_expect_mktag_success 'tag to a commit replaced by another commit'
++
++cat >tag.sig <<EOF
++object $tree
++type tree
++tag mytag
++tagger . <> 0 +0000
++
++EOF
++
+ check_verify_failure 'verify object (hash/type) check -- mismatched type, valid object' \
+ 	'^error: char7: could not verify object'
+ 
+-- 
+2.29.2.222.g5d2a92d10f8
+

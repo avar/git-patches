@@ -1,0 +1,109 @@
+From 6cbf9176c35b8c5243df3c580fe133d4cec2e829 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqq4kjuygw7.fsf@gitster.c.googlers.com>
+References: <xmqq4kjuygw7.fsf@gitster.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 26 Nov 2020 01:43:40 +0100
+Subject: [PATCH v6 12/23] mktag tests: improve verify_object() test coverage
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The verify_object() function in "mktag.c" is tasked with ensuring that
+our tag refers to a valid object.
+
+The existing test for this might fail because it was also testing that
+"type taggg" didn't refer to a valid object type (it should be "type
+tag"), or because we referred to a valid object but got the type
+wrong.
+
+Let's split these tests up, so we're testing all combinations of a
+non-existing object and in invalid/wrong "type" lines.
+
+We need to provide GIT_TEST_GETTEXT_POISON=false here because the
+"invalid object type" error is emitted by
+parse_loose_header_extended(), which has that message already marked
+for translation. Another option would be to use test_i18ngrep, but I
+prefer always running the test, not skipping it under gettext poison
+testing.
+
+I'm not testing this in combination with "git replace". That'll be
+done in a subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3800-mktag.sh | 40 +++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 47380292223..ced540035d4 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -14,7 +14,8 @@ test_description='git mktag: tag object verify test'
+ check_verify_failure () {
+ 	expect="$2"
+ 	test_expect_success "$1" '
+-		test_must_fail git mktag <tag.sig 2>message &&
++		test_must_fail env GIT_TEST_GETTEXT_POISON=false \
++			git mktag <tag.sig 2>message &&
+ 		grep "$expect" message
+ 	'
+ }
+@@ -136,19 +137,52 @@ check_verify_failure '"type" line type-name length check' \
+ 	'^error: char.*: type too long$'
+ 
+ ############################################################
+-#  9. verify object (SHA1/type) check
++#  9. verify object (hash/type) check
+ 
+ cat >tag.sig <<EOF
+ object $(test_oid deadbeef)
++type tag
++tag mytag
++tagger . <> 0 +0000
++
++EOF
++
++check_verify_failure 'verify object (hash/type) check -- correct type, nonexisting object' \
++	'^error: char7: could not verify object.*$'
++
++cat >tag.sig <<EOF
++object $head
+ type tagggg
+ tag mytag
+ tagger . <> 0 +0000
+ 
+ EOF
+ 
+-check_verify_failure 'verify object (SHA1/type) check' \
++check_verify_failure 'verify object (hash/type) check -- made-up type, valid object' \
++	'^fatal: invalid object type'
++
++cat >tag.sig <<EOF
++object $(test_oid deadbeef)
++type tagggg
++tag mytag
++tagger . <> 0 +0000
++
++EOF
++
++check_verify_failure 'verify object (hash/type) check -- made-up type, nonexisting object' \
+ 	'^error: char7: could not verify object.*$'
+ 
++cat >tag.sig <<EOF
++object $head
++type tree
++tag mytag
++tagger . <> 0 +0000
++
++EOF
++
++check_verify_failure 'verify object (hash/type) check -- mismatched type, valid object' \
++	'^error: char7: could not verify object'
++
+ ############################################################
+ # 10. verify tag-name check
+ 
+-- 
+2.29.2.222.g5d2a92d10f8
+

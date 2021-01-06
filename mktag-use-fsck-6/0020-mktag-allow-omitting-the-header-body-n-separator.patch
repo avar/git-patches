@@ -1,0 +1,88 @@
+From 32922a42dda6a37fa3c883698382c155c636e978 Mon Sep 17 00:00:00 2001
+In-Reply-To: <xmqq4kjuygw7.fsf@gitster.c.googlers.com>
+References: <xmqq4kjuygw7.fsf@gitster.c.googlers.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Dec 2020 18:32:11 +0100
+Subject: [PATCH v6 20/23] mktag: allow omitting the header/body \n separator
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change mktag's acceptance rules to accept an empty body without an
+empty line after the header again. This fixes an ancient unintended
+dregression in "mktag".
+
+When "mktag" was introduced in ec4465adb3 (Add "tag" objects that can
+be used to sign other objects., 2005-04-25) the input checks were much
+looser. When it was documented it 6cfec03680 (mktag: minimally update
+the description., 2007-06-10) it was clearly intended for this \n to
+be optional:
+
+    The message, when [it] exists, is separated by a blank line from
+    the header.
+
+But then in e0aaf781f6 (mktag.c: improve verification of tagger field
+and tests, 2008-03-27) this was made an error, seemingly by
+accident. It was just a result of the general header checks, and all
+the tests after that patch have a trailing empty line (but did not
+before).
+
+Let's allow this again, and tweak the test semantics changed in
+e0aaf781f6 to remove the redundant empty line. New tests added in
+previous commits of mine already added an explicit test for allowing
+the empty line between header and body.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fsck.c           | 2 ++
+ t/t3800-mktag.sh | 6 ++----
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/fsck.c b/fsck.c
+index 9067a290a2e..29c1eaca4cf 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -987,6 +987,8 @@ int fsck_tag_standalone(const struct object_id *oid, const char *buffer,
+ 	}
+ 	else
+ 		ret = fsck_ident(&buffer, oid, OBJ_TAG, options);
++	if (!*buffer)
++		goto done;
+ 
+ 	if (!starts_with(buffer, "\n")) {
+ 		/*
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index dccf4503235..601b064e97a 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -446,7 +446,7 @@ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ 
+ EOF
+ 
+-test_expect_mktag_success 'require a blank line before an empty body (1)'
++test_expect_mktag_success 'allow a blank line before an empty body (1)'
+ 
+ cat >tag.sig <<EOF
+ object $head
+@@ -455,8 +455,7 @@ tag mytag
+ tagger T A Gger <tagger@example.com> 1206478233 -0500
+ EOF
+ 
+-check_verify_failure 'require a blank line before an empty body (2)' \
+-	'^error:.* extraHeaderEntry:'
++test_expect_mktag_success 'allow no blank line before an empty body (2)'
+ 
+ ############################################################
+ # 24. create valid tag
+@@ -466,7 +465,6 @@ object $head
+ type commit
+ tag mytag
+ tagger T A Gger <tagger@example.com> 1206478233 -0500
+-
+ EOF
+ 
+ test_expect_mktag_success 'create valid tag object'
+-- 
+2.29.2.222.g5d2a92d10f8
+
