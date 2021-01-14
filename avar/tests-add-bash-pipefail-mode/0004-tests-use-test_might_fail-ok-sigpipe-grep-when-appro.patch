@@ -1,0 +1,79 @@
+From 0e77779947d778d2612d7121aff59e59a4669a89 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20191115040909.GA21654@sigill.intra.peff.net>
+References: <20191115040909.GA21654@sigill.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 14 Jan 2021 18:03:56 +0100
+Subject: [PATCH 4/6] tests: use "test_might_fail ok=sigpipe grep" when
+ appropriate
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change tests where the "grep" might exit with non-zero to use our new
+"test_might_fail ok=sigpipe" wrapper. A subsequent commit will show
+how useful this is in combination with "set -o pipefail".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0090-cache-tree.sh              | 2 +-
+ t/t5703-upload-pack-ref-in-want.sh | 2 +-
+ t/t9151-svn-mergeinfo.sh           | 6 +++---
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/t/t0090-cache-tree.sh b/t/t0090-cache-tree.sh
+index 5a633690bf..2e69ab138b 100755
+--- a/t/t0090-cache-tree.sh
++++ b/t/t0090-cache-tree.sh
+@@ -22,7 +22,7 @@ generate_expected_cache_tree_rec () {
+ 	# ls-files might have foo/bar, foo/bar/baz, and foo/bar/quux
+ 	# We want to count only foo because it's the only direct child
+ 	git ls-files >files &&
+-	subtrees=$(grep / files|cut -d / -f 1|uniq) &&
++	subtrees=$(test_might_fail ok=sigpipe grep / files |cut -d / -f 1|uniq) &&
+ 	subtree_count=$(echo "$subtrees"|awk -v c=0 '$1 != "" {++c} END {print c}') &&
+ 	entries=$(wc -l <files) &&
+ 	printf "SHA $dir (%d entries, %d subtrees)\n" "$entries" "$subtree_count" &&
+diff --git a/t/t5703-upload-pack-ref-in-want.sh b/t/t5703-upload-pack-ref-in-want.sh
+index eab966985b..44238b7409 100755
+--- a/t/t5703-upload-pack-ref-in-want.sh
++++ b/t/t5703-upload-pack-ref-in-want.sh
+@@ -16,7 +16,7 @@ get_actual_commits () {
+ 	test-tool pkt-line unpack-sideband <out >o.pack &&
+ 	git index-pack o.pack &&
+ 	git verify-pack -v o.idx >objs &&
+-	grep commit objs | cut -d" " -f1 | sort >actual_commits
++	test_might_fail ok=sigpipe grep commit objs | cut -d" " -f1 | sort >actual_commits
+ }
+ 
+ check_output () {
+diff --git a/t/t9151-svn-mergeinfo.sh b/t/t9151-svn-mergeinfo.sh
+index 4f6c06ecb2..dc8491c14a 100755
+--- a/t/t9151-svn-mergeinfo.sh
++++ b/t/t9151-svn-mergeinfo.sh
+@@ -18,19 +18,19 @@ test_expect_success 'load svn dump' "
+ 
+ test_expect_success 'all svn merges became git merge commits' '
+ 	unmarked=$(git rev-list --parents --all --grep=Merge |
+-		grep -v " .* " | cut -f1 -d" ") &&
++		test_might_fail ok=sigpipe grep -v " .* " | cut -f1 -d" ") &&
+ 	[ -z "$unmarked" ]
+ 	'
+ 
+ test_expect_success 'cherry picks did not become git merge commits' '
+ 	bad_cherries=$(git rev-list --parents --all --grep=Cherry |
+-		grep " .* " | cut -f1 -d" ") &&
++		test_might_fail ok=sigpipe grep grep " .* " | cut -f1 -d" ") &&
+ 	[ -z "$bad_cherries" ]
+ 	'
+ 
+ test_expect_success 'svn non-merge merge commits did not become git merge commits' '
+ 	bad_non_merges=$(git rev-list --parents --all --grep=non-merge |
+-		grep " .* " | cut -f1 -d" ") &&
++		test_might_fail ok=sigpipe grep grep " .* " | cut -f1 -d" ") &&
+ 	[ -z "$bad_non_merges" ]
+ 	'
+ 
+-- 
+2.29.2.222.g5d2a92d10f8
+

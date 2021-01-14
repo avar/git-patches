@@ -1,0 +1,93 @@
+From f7eaceeb3eeded19aed95bdd715091925b162c14 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20191115040909.GA21654@sigill.intra.peff.net>
+References: <20191115040909.GA21654@sigill.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 14 Jan 2021 18:00:09 +0100
+Subject: [PATCH 3/6] test_lib: allow test_{must,might}_fail to accept non-git
+ on "sigpipe"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As the documentation here notes you usually do not want to do:
+
+    test_might_fail grep ...
+
+But instead:
+
+    ! grep ...
+
+However, as a future commit will show it's handy to be able to do:
+
+    some | test_might_fail ok=sigpipe grep | commands | here
+
+To allow "grep" to fail in the middle of a pipe, if we're in a mode
+such as a "set -o pipefail" that knows how to accept check intra-pipe
+failures.
+
+To test this in t0000-basic.sh we don't actually need to have
+test_{might,must}_fail in the middle of a pipe, it'll just that it
+accepts e.g. "grep" when we provide ok=sigpipe.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0000-basic.sh        | 13 +++++++++++++
+ t/test-lib-functions.sh | 12 ++++++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/t/t0000-basic.sh b/t/t0000-basic.sh
+index fd6cb8d5d3..930cf9d1b7 100755
+--- a/t/t0000-basic.sh
++++ b/t/t0000-basic.sh
+@@ -1337,4 +1337,17 @@ test_expect_success 'test_might_fail supports an ok=* option like test_must_fail
+ 	test_might_fail ok=success git version
+ '
+ 
++test_expect_success 'test_{must,might}_fail accept non-git on "sigpipe"' '
++	! test_must_fail grep blob <badobjects 2>err &&
++	grep "only.*git.*is allowed" err &&
++	! test_might_fail grep blob <badobjects &&
++	grep "only.*git.*is allowed" err &&
++
++	! test_must_fail ok=sigpipe grep . badobjects 2>err &&
++	test_must_be_empty err &&
++	test_might_fail ok=sigpipe grep . badobjects >out 2>err &&
++	test_must_be_empty err &&
++	test_cmp badobjects out
++'
++
+ test_done
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index e01761f7ba..f10bd6170a 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -828,6 +828,7 @@ test_must_fail_acceptable () {
+ 		return 0
+ 		;;
+ 	*)
++		list_contains "$_test_ok" sigpipe && return 0
+ 		return 1
+ 		;;
+ 	esac
+@@ -863,6 +864,17 @@ test_must_fail_acceptable () {
+ # Instead use '!':
+ #
+ #    ! grep pattern output
++#
++# An exception to this is if ok=* contains "sigpipe". Then you might
++# want to use this in a test to ignore e.g. "grep" failing due to not
++# finding anything in a multi-pipe command:
++#
++#    test_must_fail ok=success,sigpipe grep [...] | [...]
++#
++# Or, more succinctly with the test_might_fail wrapper function:
++#
++#    test_might_fail ok=sigpipe grep [...] | [...]
++#
+ 
+ test_must_fail () {
+ 	case "$1" in
+-- 
+2.29.2.222.g5d2a92d10f8
+
