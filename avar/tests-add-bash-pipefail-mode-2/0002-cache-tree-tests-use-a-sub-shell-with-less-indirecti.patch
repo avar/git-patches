@@ -1,0 +1,59 @@
+From 828d25533c905be6b397d4120a6f522e7b15a99d Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210114233515.31298-1-avarab@gmail.com>
+References: <20210114233515.31298-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 16 Jan 2021 13:25:15 +0100
+Subject: [PATCH v2 02/11] cache-tree tests: use a sub-shell with less
+ indirection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change a "cd xyz && work && cd .." pattern introduced in
+9c4d6c0297 (cache-tree: Write updated cache-tree after commit,
+2014-07-13) to use a sub-shell instead with less indirection.
+
+We did actually recover correctly if we failed in this function since
+we were wrapped in a subshell one function call up. Let's just use the
+sub-shell at the point where we want to change the directory
+instead. This also allows us to get rid of the wrapper function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0090-cache-tree.sh | 15 +++++----------
+ 1 file changed, 5 insertions(+), 10 deletions(-)
+
+diff --git a/t/t0090-cache-tree.sh b/t/t0090-cache-tree.sh
+index 354b7f15f7..2e3efeb80e 100755
+--- a/t/t0090-cache-tree.sh
++++ b/t/t0090-cache-tree.sh
+@@ -27,20 +27,15 @@ generate_expected_cache_tree_rec () {
+ 	printf "SHA $dir (%d entries, %d subtrees)\n" "$entries" "$subtree_count" &&
+ 	for subtree in $subtrees
+ 	do
+-		cd "$subtree"
+-		generate_expected_cache_tree_rec "$dir$subtree" || return 1
+-		cd ..
++		(
++			cd "$subtree"
++			generate_expected_cache_tree_rec "$dir$subtree" || return 1
++		)
+ 	done
+ }
+ 
+-generate_expected_cache_tree () {
+-	(
+-		generate_expected_cache_tree_rec
+-	)
+-}
+-
+ test_cache_tree () {
+-	generate_expected_cache_tree >expect &&
++	generate_expected_cache_tree_rec >expect &&
+ 	cmp_cache_tree expect
+ }
+ 
+-- 
+2.29.2.222.g5d2a92d10f8
+
