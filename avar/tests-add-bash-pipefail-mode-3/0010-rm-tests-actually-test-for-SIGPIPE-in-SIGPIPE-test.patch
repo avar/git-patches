@@ -1,0 +1,82 @@
+From b526b3cb24fcc45954abca0df7a32755c65a3f16 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87sg6s6lrs.fsf@evledraar.gmail.com>
+References: <87sg6s6lrs.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 16 Jan 2021 15:47:39 +0100
+Subject: [PATCH v3 10/10] rm tests: actually test for SIGPIPE in SIGPIPE test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change a test initially added in 50cd31c652 (t3600: comment on
+inducing SIGPIPE in `git rm`, 2019-11-27) to explicitly test for
+SIGPIPE using a pattern initially established in 7559a1be8a (unblock
+and unignore SIGPIPE, 2014-09-18).
+
+The problem with using that pattern is that it requires us to skip the
+test on MINGW[1]. If we kept the test with its initial semantics[2]
+we'd get coverage there, at the cost of not checking whether we
+actually had SIGPIPE outside of MinGW.
+
+Arguably we should just remove this test. Between the test added in
+7559a1be8a and the change made in 12e0437f23 (common-main: call
+restore_sigpipe_to_default(), 2016-07-01) it's a bit arbitrary to only
+check this for "git rm".
+
+But in lieu of having wider test coverage for other "git" subcommands
+let's refactor this to explicitly test for SIGPIPE outside of MinGW,
+and then just that we remove the ".git/index.lock" (as before) on all
+platforms.
+
+1. https://lore.kernel.org/git/xmqq1rec5ckf.fsf@gitster.c.googlers.com/
+2. 0693f9ddad (Make sure lockfiles are unlocked when dying on SIGPIPE,
+   2008-12-18)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3600-rm.sh | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/t/t3600-rm.sh b/t/t3600-rm.sh
+index efec8d13b6..185e39c390 100755
+--- a/t/t3600-rm.sh
++++ b/t/t3600-rm.sh
+@@ -240,7 +240,7 @@ test_expect_success 'refresh index before checking if it is up-to-date' '
+ 	test_path_is_missing frotz/nitfol
+ '
+ 
+-test_expect_success 'choking "git rm" should not let it die with cruft' '
++choke_git_rm_setup() {
+ 	git reset -q --hard &&
+ 	test_when_finished "rm -f .git/index.lock && git reset -q --hard" &&
+ 	i=0 &&
+@@ -249,12 +249,24 @@ test_expect_success 'choking "git rm" should not let it die with cruft' '
+ 	do
+ 		echo "100644 $hash 0	some-file-$i"
+ 		i=$(( $i + 1 ))
+-	done | git update-index --index-info &&
++	done | git update-index --index-info
++}
++
++test_expect_success 'choking "git rm" should not let it die with cruft (induce SIGPIPE)' '
++	choke_git_rm_setup &&
+ 	# git command is intentionally placed upstream of pipe to induce SIGPIPE
+ 	git rm -n "some-file-*" | : &&
+ 	test_path_is_missing .git/index.lock
+ '
+ 
++
++test_expect_success !MINGW 'choking "git rm" should not let it die with cruft (induce and check SIGPIPE)' '
++	choke_git_rm_setup &&
++	OUT=$( ((trap "" PIPE; git rm -n "some-file-*"; echo $? 1>&3) | :) 3>&1 ) &&
++	test_match_signal 13 "$OUT" &&
++	test_path_is_missing .git/index.lock
++'
++
+ test_expect_success 'Resolving by removal is not a warning-worthy event' '
+ 	git reset -q --hard &&
+ 	test_when_finished "rm -f .git/index.lock msg && git reset -q --hard" &&
+-- 
+2.29.2.222.g5d2a92d10f8
+
