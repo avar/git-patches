@@ -2,7 +2,7 @@ From 04c87c04d75bd918e618f6bb77b22f301fe9424a Mon Sep 17 00:00:00 2001
 In-Reply-To: <20210124114855.13036-1-avarab@gmail.com>
 References: <20210124114855.13036-1-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Sun, 24 Jan 2021 18:24:29 +0100
+Date: Sun, 24 Jan 2021 18:25:31 +0100
 Subject: [PATCH v5 0/2] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -26,7 +26,34 @@ Content-Transfer-Encoding: 8bit
 
 Range-diff:
 -:  ---------- > 1:  699bb6b324 grep/pcre2 tests: don't rely on invalid UTF-8 data test
--:  ---------- > 2:  04c87c04d7 grep/pcre2: better support invalid UTF-8 haystacks
+1:  e4807d6879 ! 2:  04c87c04d7 grep/pcre2: better support invalid UTF-8 haystacks
+    @@ grep.c: static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_
+     -		options |= PCRE2_UTF;
+     +		options |= (PCRE2_UTF | PCRE2_MATCH_INVALID_UTF);
+     +
+    -+	if (PCRE2_MATCH_INVALID_UTF &&
+    -+	    options & (PCRE2_UTF | PCRE2_CASELESS) &&
+    -+	    !(PCRE2_MAJOR >= 10 && PCRE2_MAJOR >= 36))
+    -+		/* Work around https://bugs.exim.org/show_bug.cgi?id=2642 fixed in 10.36 */
+    -+		options |= PCRE2_NO_START_OPTIMIZE;
+    ++	/* Work around https://bugs.exim.org/show_bug.cgi?id=2642 fixed in 10.36 */
+    ++	if (PCRE2_MATCH_INVALID_UTF && options & (PCRE2_UTF | PCRE2_CASELESS)) {
+    ++		struct strbuf buf;
+    ++		int len;
+    ++		int err;
+    ++
+    ++		if ((len = pcre2_config(PCRE2_CONFIG_VERSION, NULL)) < 0)
+    ++			BUG("pcre2_config(..., NULL) failed: %d", len);
+    ++		strbuf_init(&buf, len + 1);
+    ++		if ((err = pcre2_config(PCRE2_CONFIG_VERSION, buf.buf)) < 0)
+    ++			BUG("pcre2_config(..., buf.buf) failed: %d", err);
+    ++		if (versioncmp(buf.buf, "10.36") < 0)
+    ++			options |= PCRE2_NO_START_OPTIMIZE;
+    ++		strbuf_release(&buf);
+    ++	}
+      
+      	p->pcre2_pattern = pcre2_compile((PCRE2_SPTR)p->pattern,
+      					 p->patternlen, options, &error, &erroffset,
 -- 
 2.29.2.222.g5d2a92d10f8
 
