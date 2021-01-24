@@ -1,0 +1,62 @@
+From 699bb6b3249622cf67510cd42ac70ccd21de8483 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210124021229.25987-1-avarab@gmail.com>
+References: <20210124021229.25987-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 23 Jan 2021 22:30:35 +0100
+Subject: [PATCH v4 1/2] grep/pcre2 tests: don't rely on invalid UTF-8 data
+ test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in [1] when I originally added this test in [2] the test was
+completely broken as it lacked a redirect[3]. I now think this whole
+thing is overly fragile. Let's only test if we have a segfault here.
+
+Before this the first test's "test_cmp" was pretty meaningless. We
+were only testing if PCREv2 was so broken that it would spew out
+something completely unrelated on stdout, which isn't very plausible.
+
+In the second test we're relying on PCREv2 forever holding to the
+current behavior of the PCRE_UTF8 flag, as opposed to learning some
+optimistic graceful fallback to PCRE2_MATCH_INVALID_UTF in the
+future. If that happens having this test broken under bisecting would
+suck.
+
+A follow-up commit will actually test this case in a meaningful way
+under the PCRE2_MATCH_INVALID_UTF flag. Let's run this one
+unconditionally, and just make sure we don't segfault.
+
+1. e714b898c6 (t7812: expect failure for grep -i with invalid UTF-8
+   data, 2019-11-29)
+2. 8a5999838e (grep: stess test PCRE v2 on invalid UTF-8 data,
+   2019-07-26)
+3. c74b3cbb83 (t7812: add missing redirects, 2019-11-26)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7812-grep-icase-non-ascii.sh | 7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/t/t7812-grep-icase-non-ascii.sh b/t/t7812-grep-icase-non-ascii.sh
+index 03dba6685a..38457c2e4f 100755
+--- a/t/t7812-grep-icase-non-ascii.sh
++++ b/t/t7812-grep-icase-non-ascii.sh
+@@ -76,12 +76,7 @@ test_expect_success GETTEXT_LOCALE,LIBPCRE2 'PCRE v2: grep non-ASCII from invali
+ 
+ test_expect_success GETTEXT_LOCALE,LIBPCRE2 'PCRE v2: grep non-ASCII from invalid UTF-8 data with -i' '
+ 	test_might_fail git grep -hi "Æ" invalid-0x80 >actual &&
+-	if test -s actual
+-	then
+-	    test_cmp expected actual
+-	fi &&
+-	test_must_fail git grep -hi "(*NO_JIT)Æ" invalid-0x80 >actual &&
+-	! test_cmp expected actual
++	test_might_fail git grep -hi "(*NO_JIT)Æ" invalid-0x80 >actual
+ '
+ 
+ test_done
+-- 
+2.29.2.222.g5d2a92d10f8
+
