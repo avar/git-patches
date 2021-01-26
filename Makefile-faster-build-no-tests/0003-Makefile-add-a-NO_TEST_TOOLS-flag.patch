@@ -1,0 +1,77 @@
+From 421ae15fd1a6ef7687d95f295aa4a618c183bffe Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 26 Jan 2021 16:48:02 +0100
+Subject: [PATCH 3/4] Makefile: add a NO_TEST_TOOLS flag
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a NO_TEST_TOOLS flag to build an installable git, but one that
+can't run "make test". This is useful e.g. in CI environments where
+you'd like to run external tests against a built git, but have no
+desire to run git's own tests.
+
+On my 8 core machine this saves me around 1 second out of an otherwise
+11-12 second build time. So it doesn't make all the difference, but
+when you're wanting to run tests against a lot of git versions it adds
+up.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile      | 6 ++++++
+ t/test-lib.sh | 5 +++++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index 4031fb1b22f..cfa7bc58edf 100644
+--- a/Makefile
++++ b/Makefile
+@@ -309,6 +309,9 @@ all::
+ #
+ # Define NO_TCLTK if you do not want Tcl/Tk GUI.
+ #
++# Define NO_TEST_TOOLS if you'd like to skip building the assets
++# required to run the tests. 
++#
+ # Define SANE_TEXT_GREP to "-a" if you use recent versions of GNU grep
+ # and egrep that are pickier when their input contains non-ASCII data.
+ #
+@@ -2732,6 +2735,7 @@ GIT-BUILD-OPTIONS: FORCE
+ 	@echo NO_PERL=\''$(subst ','\'',$(subst ','\'',$(NO_PERL)))'\' >>$@+
+ 	@echo NO_PTHREADS=\''$(subst ','\'',$(subst ','\'',$(NO_PTHREADS)))'\' >>$@+
+ 	@echo NO_PYTHON=\''$(subst ','\'',$(subst ','\'',$(NO_PYTHON)))'\' >>$@+
++	@echo NO_TEST_TOOLS=\''$(subst ','\'',$(subst ','\'',$(NO_TEST_TOOLS)))'\' >>$@+
+ 	@echo NO_UNIX_SOCKETS=\''$(subst ','\'',$(subst ','\'',$(NO_UNIX_SOCKETS)))'\' >>$@+
+ 	@echo PAGER_ENV=\''$(subst ','\'',$(subst ','\'',$(PAGER_ENV)))'\' >>$@+
+ 	@echo DC_SHA1=\''$(subst ','\'',$(subst ','\'',$(DC_SHA1)))'\' >>$@+
+@@ -2787,8 +2791,10 @@ GIT-PYTHON-VARS: FORCE
+             fi
+ endif
+ 
++ifndef NO_TEST_TOOLS
+ test_bindir_programs := $(patsubst %,bin-wrappers/%,$(BINDIR_PROGRAMS_NEED_X) $(BINDIR_PROGRAMS_NO_X) $(TEST_PROGRAMS_NEED_X))
+ TEST_TOOLS = $(TEST_PROGRAMS) $(test_bindir_programs)
++endif
+ 
+ all:: $(TEST_TOOLS)
+ 
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 03c1c0836f1..4029cd18031 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -55,6 +55,11 @@ then
+ 	exit 1
+ fi
+ . "$GIT_BUILD_DIR"/GIT-BUILD-OPTIONS
++if test -n "$NO_TEST_TOOLS"
++then
++	echo >&2 'error: NO_TEST_TOOLS=$NO_TEST_TOOLS set in GIT-BUILD-OPTIONS, cannot run tests!.'
++	exit 1
++fi
+ export PERL_PATH SHELL_PATH
+ 
+ # Disallow the use of abbreviated options in the test suite by default
+-- 
+2.29.2.222.g5d2a92d10f8
+
