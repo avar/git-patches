@@ -1,0 +1,147 @@
+From d5db936bd11839497093b2264259a319ce7e958d Mon Sep 17 00:00:00 2001
+In-Reply-To: <87im7cng42.fsf@evledraar.gmail.com>
+References: <87im7cng42.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 1 Feb 2021 14:02:24 +0100
+Subject: [PATCH 3/3] pager: properly log pager exit code when signalled
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When git invokes a pager that exits with non-zero the common case is
+that we'll already return the correct SIGPIPE failure from git itself,
+but the exit code logged in trace2 has always been incorrectly
+reported[1]. Fix that and log the correct exit code in the logs.
+
+Since this gives us something to test outside of our recently-added
+tests needing a !MINGW prerequisite, let's refactor the test to run on
+MINGW and actually check for SIGPIPE outside of MINGW.
+
+The wait_or_whine() is only called with a true "in_signal" from from
+finish_command_in_signal(), which in turn is only used in pager.c.
+
+I'm not quite sure about that BUG() case. Can we have a true in_signal
+and not have a true WIFEXITED(status)? I haven't been able to think of
+a test case for it.
+
+1. The incorrect logging of the exit code in was seemingly copy/pasted
+   into finish_command_in_signal() in ee4512ed481 (trace2: create new
+   combined trace facility, 2019-02-22)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c    |  8 +++++--
+ t/t7006-pager.sh | 61 +++++++++++++++++++++++++++++++++++++++++-------
+ 2 files changed, 58 insertions(+), 11 deletions(-)
+
+diff --git a/run-command.c b/run-command.c
+index ea4d0fb4b15..10e1c96c2bd 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -551,8 +551,12 @@ static int wait_or_whine(pid_t pid, const char *argv0, int in_signal)
+ 
+ 	while ((waiting = waitpid(pid, &status, 0)) < 0 && errno == EINTR)
+ 		;	/* nothing */
+-	if (in_signal)
+-		return 0;
++	if (in_signal && WIFEXITED(status))
++		return WEXITSTATUS(status);
++	if (in_signal) {
++		BUG("was not expecting waitpid() status %d", status);
++		return -1;
++	}
+ 
+ 	if (waiting < 0) {
+ 		failed_errno = errno;
+diff --git a/t/t7006-pager.sh b/t/t7006-pager.sh
+index c60886f43e6..1424466caf5 100755
+--- a/t/t7006-pager.sh
++++ b/t/t7006-pager.sh
+@@ -656,31 +656,74 @@ test_expect_success TTY 'git tag with auto-columns ' '
+ 	test_cmp expect actual
+ '
+ 
+-test_expect_success TTY,!MINGW 'git returns SIGPIPE on early pager exit' '
++test_expect_success TTY 'git returns SIGPIPE on early pager exit' '
+ 	test_when_finished "rm pager-used" &&
+ 	test_config core.pager ">pager-used; head -n 1; exit 0" &&
++	GIT_TRACE2="$(pwd)/trace.normal" &&
++	export GIT_TRACE2 &&
++	test_when_finished "unset GIT_TRACE2" &&
+ 
+-	OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
+-	test_match_signal 13 "$OUT" &&
++	if test_have_prereq !MINGW
++	then
++		OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
++		test_match_signal 13 "$OUT"
++	else
++		test_terminal git log
++	fi &&
++	grep "child_exit.* code:0 " trace.normal &&
+ 	test_path_is_file pager-used
+ '
+ 
+-test_expect_success TTY,!MINGW 'git returns SIGPIPE on early pager non-zero exit' '
++test_expect_success TTY 'git returns SIGPIPE on early pager non-zero exit' '
+ 	test_when_finished "rm pager-used" &&
+ 	test_config core.pager ">pager-used; head -n 1; exit 1" &&
++	GIT_TRACE2="$(pwd)/trace.normal" &&
++	export GIT_TRACE2 &&
++	test_when_finished "unset GIT_TRACE2" &&
+ 
+-	OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
+-	test_match_signal 13 "$OUT" &&
++	if test_have_prereq !MINGW
++	then
++		OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
++		test_match_signal 13 "$OUT"
++	else
++		test_terminal git log
++	fi &&
++	grep "child_exit.* code:1 " trace.normal &&
+ 	test_path_is_file pager-used
+ '
+ 
+-test_expect_success TTY,!MINGW 'git discards pager non-zero exit' '
++test_expect_success TTY 'git discards pager non-zero exit' '
+ 	test_when_finished "rm pager-used" &&
+ 	test_config core.pager "wc >pager-used; exit 1" &&
++	GIT_TRACE2="$(pwd)/trace.normal" &&
++	export GIT_TRACE2 &&
++	test_when_finished "unset GIT_TRACE2" &&
+ 
+-	OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
+-	test "$OUT" -eq 0 &&
++	if test_have_prereq !MINGW
++	then
++		OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
++		test "$OUT" -eq 0
++	else
++		test_terminal git log
++	fi &&
++	grep "child_exit.* code:1 " trace.normal &&
+ 	test_path_is_file pager-used
+ '
+ 
++test_expect_success TTY 'git logs nonexisting pager invocation' '
++	test_config core.pager "does-not-exist" &&
++	GIT_TRACE2="$(pwd)/trace.normal" &&
++	export GIT_TRACE2 &&
++	test_when_finished "unset GIT_TRACE2" &&
++
++	if test_have_prereq !MINGW
++	then
++		OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
++		test_match_signal 13 "$OUT"
++	else
++		test_terminal git log
++	fi &&
++	grep "child_exit.* code:-1 " trace.normal
++'
++
+ test_done
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

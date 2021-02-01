@@ -1,0 +1,68 @@
+From 6509ae447511e9b75afa73b4b6bf27e4aec6b12c Mon Sep 17 00:00:00 2001
+In-Reply-To: <87im7cng42.fsf@evledraar.gmail.com>
+References: <87im7cng42.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 1 Feb 2021 14:00:11 +0100
+Subject: [PATCH 2/3] pager: refactor wait_for_pager() function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the wait_for_pager() function. Since 507d7804c0b (pager:
+don't use unsafe functions in signal handlers, 2015-09-04) the
+wait_for_pager() and wait_for_pager_atexit() callers diverged on more
+than they shared.
+
+Let's extract the common code into a new close_pager_fds() helper, and
+move the parts unique to the only to callers to those functions.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ pager.c | 18 +++++++-----------
+ 1 file changed, 7 insertions(+), 11 deletions(-)
+
+diff --git a/pager.c b/pager.c
+index ee435de6756..3d37dd7adaa 100644
+--- a/pager.c
++++ b/pager.c
+@@ -11,29 +11,25 @@
+ static struct child_process pager_process = CHILD_PROCESS_INIT;
+ static const char *pager_program;
+ 
+-static void wait_for_pager(int in_signal)
++static void close_pager_fds(void)
+ {
+-	if (!in_signal) {
+-		fflush(stdout);
+-		fflush(stderr);
+-	}
+ 	/* signal EOF to pager */
+ 	close(1);
+ 	close(2);
+-	if (in_signal)
+-		finish_command_in_signal(&pager_process);
+-	else
+-		finish_command(&pager_process);
+ }
+ 
+ static void wait_for_pager_atexit(void)
+ {
+-	wait_for_pager(0);
++	fflush(stdout);
++	fflush(stderr);
++	close_pager_fds();
++	finish_command(&pager_process);
+ }
+ 
+ static void wait_for_pager_signal(int signo)
+ {
+-	wait_for_pager(1);
++	close_pager_fds();
++	finish_command_in_signal(&pager_process);
+ 	sigchain_pop(signo);
+ 	raise(signo);
+ }
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
