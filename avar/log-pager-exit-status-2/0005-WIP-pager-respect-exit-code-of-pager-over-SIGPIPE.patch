@@ -1,0 +1,138 @@
+From 842f42340d08e392d312e6c52f380c2f8c0a15cd Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210201144921.8664-1-avarab@gmail.com>
+References: <20210201144921.8664-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Feb 2021 01:59:52 +0100
+Subject: [PATCH v2 5/5] WIP pager: respect exit code of pager over SIGPIPE
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As discussed on-list starting with [1] I don't think this patch makes
+sense, but this "passes tests", at least on Debian with glibc, and is
+food for thought for those who like the approach of git not
+propagating the pager-induced SIGPIPE in git's own exit code.
+
+The exit() here in wait_for_pager_atexit() isn't portable though[2],
+we could probably use _exit(1) instead, but then we're going to
+abruptly put a stop to further atexit handler processing. We're far
+from the only one, tempfile.c, run-command.c, gc.c etc. all rely on
+it, and that's just the git.git code.
+
+If we drop the "if (code)" condition we can see that our pager exit
+code will override the exit code of other commands in t7006-pager.sh,
+causing numerous tests to fail. Of course if we don't do that all
+tests pass.
+
+But that experiment suggests regressions introduced here that we just
+don't have good test coverage for. I.e. we're running code before the
+atexit() here which expects to exit() with a given status code, and
+we're clobbering it with ours because the pager also happened to fail
+as we were exiting.
+
+So a real implementation of this would, I think, have to at least:
+
+ A. Refactor all use of atexit() to use some git-specific registry,
+    hard assert somehow that we're never going to have atexit() by
+    anything else (a library we use might call it).
+
+ B. Because we used some atexit() wrapper API we'd know if we were in
+    the last atexit() handler, which would need to re-evaluate the
+    decision about the "real" exit code.
+
+ C. We could not call exit() anywhere, but would have to make a
+    git_exit() wrapper. We'd then assign the desired exit code to a
+    global variable, and then only override our "real" non-zero exit
+    code with the pager's non-zero, in cases where the pager also
+    failed.
+
+ D. I haven't found whether calling _exit() in the atexit() handler
+    even has defined behavior, but in any case using it would
+    short-circuit the documented program exit behavior defined in the
+    C standard, of which calling atexit() handlers is just the first
+    step.
+
+1. https://lore.kernel.org/git/8735yhq3lc.fsf@evledraar.gmail.com/
+2. https://pubs.opengroup.org/onlinepubs/009695399/functions/exit.html
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ pager.c          | 10 ++++++++--
+ t/t7006-pager.sh |  8 ++++----
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/pager.c b/pager.c
+index 3d37dd7adaa..2e743bc0b1e 100644
+--- a/pager.c
++++ b/pager.c
+@@ -20,18 +20,24 @@ static void close_pager_fds(void)
+ 
+ static void wait_for_pager_atexit(void)
+ {
++	int code;
+ 	fflush(stdout);
+ 	fflush(stderr);
+ 	close_pager_fds();
+-	finish_command(&pager_process);
++	code = finish_command(&pager_process);
++	if (code)
++		exit(code);
+ }
+ 
+ static void wait_for_pager_signal(int signo)
+ {
++	int code;
+ 	close_pager_fds();
+-	finish_command_in_signal(&pager_process);
++	code = finish_command_in_signal(&pager_process);
+ 	sigchain_pop(signo);
+ 	raise(signo);
++	if (signo == SIGPIPE)
++		exit(code);
+ }
+ 
+ static int core_pager_config(const char *var, const char *value, void *data)
+diff --git a/t/t7006-pager.sh b/t/t7006-pager.sh
+index 0e7cf75435e..69997fa48f2 100755
+--- a/t/t7006-pager.sh
++++ b/t/t7006-pager.sh
+@@ -703,7 +703,7 @@ test_expect_success TTY 'git returns SIGPIPE on early pager non-zero exit' '
+ 	test_path_is_file pager-used
+ '
+ 
+-test_expect_success TTY 'git discards pager non-zero exit without SIGPIPE' '
++test_expect_success TTY 'git respects pager non-zero exit without SIGPIPE' '
+ 	test_when_finished "rm pager-used trace.normal" &&
+ 	test_config core.pager "wc >pager-used; exit 1" &&
+ 	GIT_TRACE2="$(pwd)/trace.normal" &&
+@@ -713,7 +713,7 @@ test_expect_success TTY 'git discards pager non-zero exit without SIGPIPE' '
+ 	if test_have_prereq !MINGW
+ 	then
+ 		OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
+-		test "$OUT" -eq 0
++		test "$OUT" -eq 1
+ 	else
+ 		test_terminal git log
+ 	fi &&
+@@ -724,7 +724,7 @@ test_expect_success TTY 'git discards pager non-zero exit without SIGPIPE' '
+ 	test_path_is_file pager-used
+ '
+ 
+-test_expect_success TTY 'git discards nonexisting pager without SIGPIPE' '
++test_expect_success TTY 'git respects nonexisting pager without SIGPIPE' '
+ 	test_when_finished "rm pager-used trace.normal" &&
+ 	test_config core.pager "wc >pager-used; does-not-exist" &&
+ 	GIT_TRACE2="$(pwd)/trace.normal" &&
+@@ -734,7 +734,7 @@ test_expect_success TTY 'git discards nonexisting pager without SIGPIPE' '
+ 	if test_have_prereq !MINGW
+ 	then
+ 		OUT=$( ((test_terminal git log; echo $? 1>&3) | :) 3>&1 ) &&
+-		test "$OUT" -eq 0
++		test "$OUT" -eq 127
+ 	else
+ 		test_terminal git log
+ 	fi &&
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
