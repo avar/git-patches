@@ -1,0 +1,112 @@
+From 85942b2a75ddffff6ebaada24825d4ac752889cc Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Feb 2021 12:36:24 +0100
+Subject: [PATCH 18/25] perf: add performance test for pickaxe
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test for the -G and -S pickaxe options and related options. This
+test supports being run with GIT_PERF_EXTRA=1 to turn on the full set
+of tests, as well as GIT_TEST_LONG=1 to opt-in a full history walk. By
+default I'm limiting the walk to 500 commits, which seems to hit a
+good spot on git.git of around 0.5s per iteration.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/perf/p4209-pickaxe.sh | 82 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 82 insertions(+)
+ create mode 100755 t/perf/p4209-pickaxe.sh
+
+diff --git a/t/perf/p4209-pickaxe.sh b/t/perf/p4209-pickaxe.sh
+new file mode 100755
+index 0000000000..011a287d3b
+--- /dev/null
++++ b/t/perf/p4209-pickaxe.sh
+@@ -0,0 +1,82 @@
++#!/bin/sh
++
++test_description="Test pickaxe performance"
++
++. ./perf-lib.sh
++
++test_perf_default_repo
++
++# Not --max-count, as that's the number of matching commit, so it's
++# unbounded. We want to limit our revision walk here.
++from_rev_desc=
++from_rev=
++if ! test_have_prereq EXPENSIVE
++then
++	max_count=500
++	from_rev=" $(git rev-list HEAD | head -n $max_count | tail -n 1).."
++	from_rev_desc=" <limit-rev>.."
++fi
++
++for icase in \
++	'' \
++	'-i '
++do
++	# -S (no regex)
++	for pattern in \
++		'a' \
++		'uncommon'\
++		'ö'
++	do
++		for opts in \
++			'-S'
++		do
++			continue
++			test_perf "git log $icase$opts'$pattern'$from_rev_desc" "
++				git log --pretty=format:%H $icase$opts'$pattern'$from_rev
++			"
++		done
++	done
++
++	# -S (regex)
++	for pattern in  \
++		'[þæö]'
++	do
++		for opts in \
++			'--pickaxe-regex -S'
++		do
++			test_perf "git log $icase$opts'$pattern'$from_rev_desc" "
++				git log --pretty=format:%H $icase$opts'$pattern'$from_rev
++			"
++		done
++	done
++
++	# -G
++	for pattern in  \
++		'a' \
++		'uncommon' \
++		'[þæö]'
++	do
++		for opts in \
++			'-G' \
++			'--pickaxe-regex -S'
++		do
++			test_perf "git log $icase$opts'$pattern'$from_rev_desc" "
++				git log --pretty=format:%H $icase$opts'$pattern'$from_rev
++			"
++		done
++
++		# -G extra
++		for opts in \
++			'--text -G' \
++			'--text --pickaxe-all -G' \
++			'--pickaxe-all -G' \
++			'--pickaxe-all --pickaxe-regex -S'
++		do
++			test_perf PERF_EXTRA "git log $icase$opts'$pattern'$from_rev_desc" "
++				git log --pretty=format:%H $icase$opts'$pattern'$from_rev
++			"
++		done
++	done
++done
++
++test_done
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

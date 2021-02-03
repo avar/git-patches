@@ -1,0 +1,71 @@
+From 7ad3f9d3d716ff4491e4e8c705a7765fb38d3b5e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Feb 2021 02:23:08 +0100
+Subject: [PATCH 19/25] pickaxe -G: set -U0 for diff generation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Set the equivalent of -U0 when generating diffs for "git log -G". As
+seen in diffgrep_consume() we ignore any lines that aren't the "+" and
+"-" lines, so the rest of the output wasn't being used.
+
+It turns out that we spent quite a bit of CPU just on this[1]:
+
+    Test                                             HEAD~             HEAD
+    -----------------------------------------------------------------------------------------
+    4209.2: git log -G'a' <limit-rev>..              0.60(0.54+0.06)   0.52(0.46+0.05) -13.3%
+    4209.8: git log -G'uncommon' <limit-rev>..       0.61(0.54+0.07)   0.53(0.47+0.06) -13.1%
+    4209.14: git log -G'[þæö]' <limit-rev>..         0.60(0.55+0.04)   0.56(0.48+0.04) -6.7%
+    4209.21: git log -i -G'a' <limit-rev>..          0.63(0.56+0.03)   0.54(0.48+0.05) -14.3%
+    4209.27: git log -i -G'uncommon' <limit-rev>..   0.61(0.55+0.05)   0.53(0.47+0.06) -13.1%
+    4209.33: git log -i -G'[þæö]' <limit-rev>..      0.61(0.53+0.07)   0.53(0.47+0.05) -13.1%
+
+I also experimented with setting diff.interHunkContext to 10, 100
+etc. As noted above it's useless for -G to have non-"+" and non-"-"
+lines for the matching itself, but there's going to be some sweet spot
+where if we can be handed bigger hunks at a time our matching might be
+faster.
+
+But alas, the results of that were:
+
+    Test                                             HEAD~2            HEAD~                    HEAD
+    ------------------------------------------------------------------------------------------------------------------
+    4209.2: git log -G'a' <limit-rev>..              0.61(0.53+0.07)   0.51(0.46+0.05) -16.4%   0.51(0.46+0.05) -16.4%
+    4209.8: git log -G'uncommon' <limit-rev>..       0.66(0.55+0.05)   0.53(0.48+0.04) -19.7%   0.52(0.49+0.03) -21.2%
+    4209.14: git log -G'[þæö]' <limit-rev>..         0.63(0.54+0.06)   0.51(0.44+0.07) -19.0%   0.52(0.46+0.06) -17.5%
+    4209.21: git log -i -G'a' <limit-rev>..          0.62(0.54+0.07)   0.51(0.46+0.04) -17.7%   0.53(0.45+0.07) -14.5%
+    4209.27: git log -i -G'uncommon' <limit-rev>..   0.62(0.56+0.06)   0.53(0.48+0.05) -14.5%   0.53(0.46+0.07) -14.5%
+    4209.33: git log -i -G'[þæö]' <limit-rev>..      0.63(0.57+0.03)   0.58(0.46+0.06) -7.9%    0.53(0.46+0.06) -15.9%
+
+I.e. maybe it's faster in some cases, but probably slower in general.
+
+Those results are going to be crappy because we're matching a line at
+a time, as opposed to some version of /m matching across the whole
+diff (if possible). So that approach might be worth revisiting in the
+future.
+
+1. GIT_SKIP_TESTS="p4209.[1379] p4209.15 p4209.2[028] p4209.34" GIT_PERF_EXTRA= GIT_PERF_REPO=~/g/git/ GIT_PERF_REPEAT_COUNT=5 GIT_PERF_MAKE_OPTS='-j8 USE_LIBPCRE=Y CFLAGS=-O3 LIBPCREDIR=/home/avar/g/pcre2/inst' ./run HEAD~ HEAD -- p4209-pickaxe.sh
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diffcore-pickaxe.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/diffcore-pickaxe.c b/diffcore-pickaxe.c
+index cb865c8b29..5161c81057 100644
+--- a/diffcore-pickaxe.c
++++ b/diffcore-pickaxe.c
+@@ -60,7 +60,7 @@ static int diff_grep(mmfile_t *one, mmfile_t *two,
+ 	memset(&xecfg, 0, sizeof(xecfg));
+ 	ecbdata.regexp = regexp;
+ 	ecbdata.hit = 0;
+-	xecfg.ctxlen = o->context;
++	xecfg.ctxlen = 0;
+ 	xecfg.interhunkctxlen = o->interhunkcontext;
+ 	if (xdi_diff_outf(one, two, discard_hunk_line, diffgrep_consume,
+ 			  &ecbdata, &xpp, &xecfg))
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

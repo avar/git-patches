@@ -1,0 +1,46 @@
+From 6d93ddf53557e64627ad056817eebf9ea8929476 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Feb 2021 17:01:32 +0100
+Subject: [PATCH 14/25] pickaxe -S: remove redundant "sz" check in while-loop
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+If we walk to the end of the string we just won't match the rest of
+the regex. This removes an optimization for simplicity's sake. In
+subsequent commits we'll alter this code more, and not having to think
+about this condition makes it easier to read.
+
+If we look at the context of what we're doing here the last thing we
+need to be worried about is one extra regex match. The real problem is
+that we keep matching after it's clear that the number of contains()
+for "A" and "B" is different. So we could be much smarter here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diffcore-pickaxe.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/diffcore-pickaxe.c b/diffcore-pickaxe.c
+index 208177bb40..8df76afb6e 100644
+--- a/diffcore-pickaxe.c
++++ b/diffcore-pickaxe.c
+@@ -82,12 +82,11 @@ static unsigned int contains(mmfile_t *mf, regex_t *regexp, kwset_t kws)
+ 		regmatch_t regmatch;
+ 		int flags = 0;
+ 
+-		while (sz &&
+-		       !regexec_buf(regexp, data, sz, 1, &regmatch, flags)) {
++		while (!regexec_buf(regexp, data, sz, 1, &regmatch, flags)) {
+ 			flags |= REG_NOTBOL;
+ 			data += regmatch.rm_eo;
+ 			sz -= regmatch.rm_eo;
+-			if (sz && regmatch.rm_so == regmatch.rm_eo) {
++			if (regmatch.rm_so == regmatch.rm_eo) {
+ 				data++;
+ 				sz--;
+ 			}
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
