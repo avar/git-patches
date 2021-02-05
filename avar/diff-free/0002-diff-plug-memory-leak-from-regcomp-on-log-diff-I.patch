@@ -1,0 +1,53 @@
+From 7192cf01e71a1773f5e9e7c916392037c6d967ba Mon Sep 17 00:00:00 2001
+In-Reply-To: <20201020064809.14297-1-michal@isc.org>
+References: <20201020064809.14297-1-michal@isc.org>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Feb 2021 12:27:48 +0100
+Subject: [PATCH 2/2] diff: plug memory leak from regcomp() on {log,diff} -I
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in 296d4a94e7 (diff: add -I<regex> that ignores
+matching changes, 2020-10-20) by freeing the memory it allocates in
+the newly introduced diff_free(). See the previous commit for details
+on that.
+
+This memory leak was intentionally introduced in 296d4a94e7, see the
+discussion on a previous iteration of it in
+https://lore.kernel.org/git/xmqqeelycajx.fsf@gitster.c.googlers.com/
+
+At that time freeing the memory was somewhat tedious, but since it
+isn't anymore with the newly introduced diff_free() let's use it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/diff.c b/diff.c
+index 3e6f8f0a71..24257759bb 100644
+--- a/diff.c
++++ b/diff.c
+@@ -6450,10 +6450,17 @@ void diff_flush(struct diff_options *options)
+ 
+ void diff_free(struct diff_options *options)
+ {
++	int i;
+ 	if (options->no_free)
+ 		return;
+ 	if (options->fclose_file)
+ 		fclose(options->file);
++
++	for (i = 0; i < options->ignore_regex_nr; i++) {
++		regfree(options->ignore_regex[i]);
++		free(options->ignore_regex[i]);
++	}
++	free(options->ignore_regex);
+ }
+ 	
+ 
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
