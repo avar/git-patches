@@ -1,0 +1,124 @@
+From 0ffc90200f881d16f4d982788e80a44470d99536 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 9 Feb 2021 21:43:21 +0100
+Subject: [PATCH 07/12] test-lib-functions: move function to lib-bitmap.sh
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move a function added to test-lib-functions.sh in ea047a8eb4f (t5310:
+factor out bitmap traversal comparison, 2020-02-14) into a new
+lib-bitmap.sh.
+
+The test-lib-functions.sh file should be for functions that are widely
+used across the test suite, if something's only used by a few tests it
+makes more sense to have it in a lib-*.sh file.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/lib-bitmap.sh                    | 26 ++++++++++++++++++++++++++
+ t/t5310-pack-bitmaps.sh            |  2 ++
+ t/t6113-rev-list-bitmap-filters.sh |  1 +
+ t/test-lib-functions.sh            | 27 ---------------------------
+ 4 files changed, 29 insertions(+), 27 deletions(-)
+ create mode 100644 t/lib-bitmap.sh
+
+diff --git a/t/lib-bitmap.sh b/t/lib-bitmap.sh
+new file mode 100644
+index 00000000000..fe3f98be24f
+--- /dev/null
++++ b/t/lib-bitmap.sh
+@@ -0,0 +1,26 @@
++# Compare a file containing rev-list bitmap traversal output to its non-bitmap
++# counterpart. You can't just use test_cmp for this, because the two produce
++# subtly different output:
++#
++#   - regular output is in traversal order, whereas bitmap is split by type,
++#     with non-packed objects at the end
++#
++#   - regular output has a space and the pathname appended to non-commit
++#     objects; bitmap output omits this
++#
++# This function normalizes and compares the two. The second file should
++# always be the bitmap output.
++test_bitmap_traversal () {
++	if test "$1" = "--no-confirm-bitmaps"
++	then
++		shift
++	elif cmp "$1" "$2"
++	then
++		echo >&2 "identical raw outputs; are you sure bitmaps were used?"
++		return 1
++	fi &&
++	cut -d' ' -f1 "$1" | sort >"$1.normalized" &&
++	sort "$2" >"$2.normalized" &&
++	test_cmp "$1.normalized" "$2.normalized" &&
++	rm -f "$1.normalized" "$2.normalized"
++}
+diff --git a/t/t5310-pack-bitmaps.sh b/t/t5310-pack-bitmaps.sh
+index 5ba76031090..40b9f632441 100755
+--- a/t/t5310-pack-bitmaps.sh
++++ b/t/t5310-pack-bitmaps.sh
+@@ -5,6 +5,8 @@ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=master
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
+ . ./test-lib.sh
++. "$TEST_DIRECTORY"/lib-bundle.sh
++. "$TEST_DIRECTORY"/lib-bitmap.sh
+ 
+ objpath () {
+ 	echo ".git/objects/$(echo "$1" | sed -e 's|\(..\)|\1/|')"
+diff --git a/t/t6113-rev-list-bitmap-filters.sh b/t/t6113-rev-list-bitmap-filters.sh
+index 2b551e6fd0c..3f889949ca1 100755
+--- a/t/t6113-rev-list-bitmap-filters.sh
++++ b/t/t6113-rev-list-bitmap-filters.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='rev-list combining bitmaps and filters'
+ . ./test-lib.sh
++. "$TEST_DIRECTORY"/lib-bitmap.sh
+ 
+ test_expect_success 'set up bitmapped repo' '
+ 	# one commit will have bitmaps, the other will not
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 55d58b4a6ac..f228647c2b8 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -1602,33 +1602,6 @@ test_set_port () {
+ 	eval $var=$port
+ }
+ 
+-# Compare a file containing rev-list bitmap traversal output to its non-bitmap
+-# counterpart. You can't just use test_cmp for this, because the two produce
+-# subtly different output:
+-#
+-#   - regular output is in traversal order, whereas bitmap is split by type,
+-#     with non-packed objects at the end
+-#
+-#   - regular output has a space and the pathname appended to non-commit
+-#     objects; bitmap output omits this
+-#
+-# This function normalizes and compares the two. The second file should
+-# always be the bitmap output.
+-test_bitmap_traversal () {
+-	if test "$1" = "--no-confirm-bitmaps"
+-	then
+-		shift
+-	elif cmp "$1" "$2"
+-	then
+-		echo >&2 "identical raw outputs; are you sure bitmaps were used?"
+-		return 1
+-	fi &&
+-	cut -d' ' -f1 "$1" | sort >"$1.normalized" &&
+-	sort "$2" >"$2.normalized" &&
+-	test_cmp "$1.normalized" "$2.normalized" &&
+-	rm -f "$1.normalized" "$2.normalized"
+-}
+-
+ # Tests for the hidden file attribute on Windows
+ test_path_is_hidden () {
+ 	test_have_prereq MINGW ||
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
