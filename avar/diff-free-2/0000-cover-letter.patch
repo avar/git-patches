@@ -2,7 +2,7 @@ From f571524e6d89778af10b98abfe297e03aa07af51 Mon Sep 17 00:00:00 2001
 In-Reply-To: <YCUFNVj7qlt9wzlX@coredump.intra.peff.net>
 References: <YCUFNVj7qlt9wzlX@coredump.intra.peff.net>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Thu, 11 Feb 2021 11:44:05 +0100
+Date: Thu, 11 Feb 2021 11:45:12 +0100
 Subject: [PATCH v2 0/2] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -275,8 +275,53 @@ Range-diff:
     - 	/*
     - 	 * If we're not going to stdout, then we definitely don't
     - 	 * want color, since we are going to the commit message
-2:  7192cf01e71 < -:  ----------- diff: plug memory leak from regcomp() on {log,diff} -I
--:  ----------- > 2:  f571524e6d8 diff: plug memory leak from regcomp() on {log,diff} -I
+2:  7192cf01e71 ! 2:  f571524e6d8 diff: plug memory leak from regcomp() on {log,diff} -I
+    @@ Commit message
+         At that time freeing the memory was somewhat tedious, but since it
+         isn't anymore with the newly introduced diff_free() let's use it.
+     
+    +    Let's retain the pattern for diff_free_file() and add a
+    +    diff_free_ignore_regex(), even though (unlike "diff_free_file") we
+    +    don't need to call it elsewhere. I think this'll make for more
+    +    readable code than gradually accumulating a giant diff_free()
+    +    function, sharing "int i" across unrelated code etc.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## diff.c ##
+    -@@ diff.c: void diff_flush(struct diff_options *options)
+    +@@ diff.c: static void diff_free_file(struct diff_options *options)
+    + 		fclose(options->file);
+    + }
+      
+    - void diff_free(struct diff_options *options)
+    - {
+    ++static void diff_free_ignore_regex(struct diff_options *options)
+    ++{
+     +	int i;
+    - 	if (options->no_free)
+    - 		return;
+    - 	if (options->fclose_file)
+    - 		fclose(options->file);
+     +
+     +	for (i = 0; i < options->ignore_regex_nr; i++) {
+     +		regfree(options->ignore_regex[i]);
+     +		free(options->ignore_regex[i]);
+     +	}
+     +	free(options->ignore_regex);
+    ++}
+    ++
+    + void diff_free(struct diff_options *options)
+    + {
+    + 	if (options->no_free)
+    + 		return;
+    + 
+    + 	diff_free_file(options);
+    ++	diff_free_ignore_regex(options);
+      }
+    - 	
+      
+    + void diff_flush(struct diff_options *options)
 -- 
 2.30.0.284.gd98b1dd5eaa7
 
