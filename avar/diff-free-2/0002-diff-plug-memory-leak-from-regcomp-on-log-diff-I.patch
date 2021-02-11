@@ -1,0 +1,66 @@
+From f571524e6d89778af10b98abfe297e03aa07af51 Mon Sep 17 00:00:00 2001
+In-Reply-To: <YCUFNVj7qlt9wzlX@coredump.intra.peff.net>
+References: <YCUFNVj7qlt9wzlX@coredump.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Feb 2021 12:27:48 +0100
+Subject: [PATCH v2 2/2] diff: plug memory leak from regcomp() on {log,diff} -I
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in 296d4a94e7 (diff: add -I<regex> that ignores
+matching changes, 2020-10-20) by freeing the memory it allocates in
+the newly introduced diff_free(). See the previous commit for details
+on that.
+
+This memory leak was intentionally introduced in 296d4a94e7, see the
+discussion on a previous iteration of it in
+https://lore.kernel.org/git/xmqqeelycajx.fsf@gitster.c.googlers.com/
+
+At that time freeing the memory was somewhat tedious, but since it
+isn't anymore with the newly introduced diff_free() let's use it.
+
+Let's retain the pattern for diff_free_file() and add a
+diff_free_ignore_regex(), even though (unlike "diff_free_file") we
+don't need to call it elsewhere. I think this'll make for more
+readable code than gradually accumulating a giant diff_free()
+function, sharing "int i" across unrelated code etc.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/diff.c b/diff.c
+index a63c9ecae79..bf2cbf15e77 100644
+--- a/diff.c
++++ b/diff.c
+@@ -6342,12 +6342,24 @@ static void diff_free_file(struct diff_options *options)
+ 		fclose(options->file);
+ }
+ 
++static void diff_free_ignore_regex(struct diff_options *options)
++{
++	int i;
++
++	for (i = 0; i < options->ignore_regex_nr; i++) {
++		regfree(options->ignore_regex[i]);
++		free(options->ignore_regex[i]);
++	}
++	free(options->ignore_regex);
++}
++
+ void diff_free(struct diff_options *options)
+ {
+ 	if (options->no_free)
+ 		return;
+ 
+ 	diff_free_file(options);
++	diff_free_ignore_regex(options);
+ }
+ 
+ void diff_flush(struct diff_options *options)
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
