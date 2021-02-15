@@ -2,7 +2,7 @@ From ae305cbe5b8ac0359fb5d9b5564498aeff3da985 Mon Sep 17 00:00:00 2001
 In-Reply-To: <20210215005236.11313-1-avarab@gmail.com>
 References: <20210215005236.11313-1-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Mon, 15 Feb 2021 16:38:47 +0100
+Date: Mon, 15 Feb 2021 16:39:44 +0100
 Subject: [PATCH v2 00/27] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -333,6 +333,485 @@ Content-Transfer-Encoding: 8bit
  create mode 100755 t/t4018/rust.sh
 
 Range-diff:
+ -:  ---------- >  1:  305fc646d0 userdiff: refactor away the parse_bool() function
+ 1:  7dbe7d638e !  2:  989438c46a userdiff: re-order builtin drivers in alphabetical order
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    userdiff: re-order builtin drivers in alphabetical order
+    +    userdiff style: re-order drivers in alphabetical order
+     
+         Address some old code smell and move around the built-in userdiff
+    -    definitions so they're both in alphabetical order, and now in the same
+    +    drivers so they're both in alphabetical order, and now in the same
+         order they appear in the gitattributes(5) documentation.
+     
+         The two started drifting in be58e70dba (diff: unify external diff and
+ -:  ---------- >  3:  4c48e5532c userdiff style: declare patterns with consistent style
+ -:  ---------- >  4:  f41fa5b316 userdiff style: normalize pascal regex declaration
+ 2:  69532bfb68 =  5:  0875d5205c userdiff: add and use for_each_userdiff_driver()
+ 3:  6ad7a5f608 =  6:  638247d04d userdiff tests: explicitly test "default" pattern
+ 4:  48b8c39380 !  7:  219043a488 userdiff tests: list builtin drivers via test-tool
+    @@ t/helper/test-userdiff.c (new)
+     +#include "cache.h"
+     +#include "userdiff.h"
+     +
+    -+static int userdiff_list_builtin_drivers_cb(struct userdiff_driver *driver,
+    -+					    enum userdiff_driver_type type,
+    -+					    void *priv)
+    ++static int driver_cb(struct userdiff_driver *driver,
+    ++		     enum userdiff_driver_type type, void *priv)
+     +{
+     +	puts(driver->name);
+     +	return 0;
+    @@ t/helper/test-userdiff.c (new)
+     +
+     +static int list_what(enum userdiff_driver_type type)
+     +{
+    -+	return for_each_userdiff_driver(userdiff_list_builtin_drivers_cb, type,
+    -+					NULL);
+    ++	return for_each_userdiff_driver(driver_cb, type, NULL);
+     +}
+     +
+     +int cmd__userdiff(int argc, const char **argv)
+    @@ t/t4018-diff-funcname.sh: test_description='Test custom diff function name patte
+      . ./test-lib.sh
+      
+      test_expect_success 'setup' '
+    -+	test-tool userdiff list-builtin-drivers >builtin-drivers &&
+    -+	test_file_not_empty builtin-drivers &&
+    -+	builtin_drivers=$(cat builtin-drivers) &&
+    ++	builtin_drivers=$(test-tool userdiff list-builtin-drivers) &&
+    ++	test -n "$builtin_drivers" &&
+     +
+      	# a non-trivial custom pattern
+      	git config diff.custom1.funcname "!static
+ 5:  3073d07409 =  8:  eb66160aac userdiff: remove support for "broken" tests
+ 6:  fd93d18351 !  9:  c6c54039e2 userdiff tests: match full hunk headers
+    @@ Commit message
+         towards even better test coverage. I'm structuring these tests in such
+         a way as to benefit from the diff.colorMove detection.
+     
+    +    The "sed -n -e" here was originally a single 's/^.*@@\( \|$\)//p'
+    +    pattern, but the '\( \|$\)' part had portability issues on OSX and
+    +    AIX.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## t/t4018-diff-funcname.sh ##
+    @@ t/t4018-diff-funcname.sh: test_expect_success 'setup hunk header tests' '
+     -		git diff -U1 $i >actual &&
+     -		grep '@@ .* @@.*RIGHT' actual
+     +		git diff -U1 $i >diff &&
+    -+		sed -n -e 's/^.*@@\( \|$\)//p' <diff >ctx &&
+    ++		sed -n -e 's/^.*@@$//p' -e 's/^.*@@ //p' <diff >ctx &&
+     +		test_cmp $i.ctx ctx
+      	"
+      done
+    @@ t/t4018/README
+     -of equal signs.
+     +The text that must appear in the hunk header must contains the word
+     +"RIGHT" by convention. The "LANG-whatever.ctx" file contains what we
+    -+expect to appear in the hunk header. We munged the start of the line
+    -+to "@@ [...] @@" for ease of not having to hardcode the line numbers
+    -+and offsets.
+    ++expect to appear in the hunk header. We munged away the starting "@@
+    ++[...] @@" part of the line for ease of not having to hardcode the line
+    ++numbers and offsets.
+     
+      ## t/t4018/README.ctx (new) ##
+     @@
+ 8:  034ab9f85b ! 10:  1c6ddf96f6 blame tests: don't rely on t/t4018/ directory
+    @@ Commit message
+         with userdiff driver, 2020-11-01) so that the blame tests don't rely
+         on stealing the contents of "t/t4018/fortran-external-function".
+     
+    -    I'm about to refactor that directory, just moving the relevant test
+    -    file here inline is the easiest solution, and I think also the most
+    -    readable.
+    +    I'm about to refactor that directory to delete that file, just moving
+    +    the relevant test file here inline is the easiest solution, and I
+    +    think also the most readable.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+ -:  ---------- > 11:  8a883d8799 blame tests: simplify userdiff driver test
+ 7:  4f8df97207 ! 12:  e56a7a6b5f userdiff tests: rewrite hunk header test infrastructure
+    @@ t/t4018-diff-funcname.sh: test_expect_success 'last regexp must not be negated'
+     +
+     +	test_expect_success "$desc" '
+     +		git diff -U1 "$what" >diff &&
+    -+		sed -n -e "s/^.*@@\( \|$\)//p" <diff >actual &&
+    ++		sed -n -e "s/^.*@@$//p" -e "s/^.*@@ //p" <diff >actual &&
+     +		test_cmp expected actual
+     +	'
+     +}
+    @@ t/t4018-diff-funcname.sh: test_expect_success 'last regexp must not be negated'
+      do
+     -	test_expect_success "hunk header: $i" "
+     -		git diff -U1 $i >diff &&
+    --		sed -n -e 's/^.*@@\( \|$\)//p' <diff >ctx &&
+    +-		sed -n -e 's/^.*@@$//p' -e 's/^.*@@ //p' <diff >ctx &&
+     -		test_cmp $i.ctx ctx
+     -	"
+     +	test="$TEST_DIRECTORY/t4018/$what.sh"
+    @@ t/t4018/README (deleted)
+     -
+     -The text that must appear in the hunk header must contains the word
+     -"RIGHT" by convention. The "LANG-whatever.ctx" file contains what we
+    --expect to appear in the hunk header. We munged the start of the line
+    --to "@@ [...] @@" for ease of not having to hardcode the line numbers
+    --and offsets.
+    +-expect to appear in the hunk header. We munged away the starting "@@
+    +-[...] @@" part of the line for ease of not having to hardcode the line
+    +-numbers and offsets.
+     
+      ## t/t4018/README.ctx (deleted) ##
+     @@
+ -:  ---------- > 13:  84d20a7cd0 userdiff tests: do config teardown in test_diff_funcname()
+ 9:  e48ad2b57f ! 14:  70fc9fa565 userdiff tests: move custom patterns into one test file
+    @@ Commit message
+     
+      ## t/t4018-diff-funcname.sh ##
+     @@ t/t4018-diff-funcname.sh: test_expect_success 'setup' '
+    - 	test_file_not_empty builtin-drivers &&
+    - 	builtin_drivers=$(cat builtin-drivers) &&
+    + 	builtin_drivers=$(test-tool userdiff list-builtin-drivers) &&
+    + 	test -n "$builtin_drivers" &&
+      
+     -	# a non-trivial custom pattern
+     -	git config diff.custom1.funcname "!static
+    @@ t/t4018/custom.sh (new)
+     +	}
+     +}
+     +EOF_TEST
+    -+
+    -+test_expect_success 'custom: teardown' '
+    -+	test_unconfig diff.custom.funcname &&
+    -+	test_unconfig diff.custom.xfuncname
+    -+'
+     
+      ## t/t4018/custom1.sh (deleted) ##
+     @@
+10:  6a4224b512 = 15:  8539d6d464 userdiff tests: remove hack for "RIGHT" token
+ -:  ---------- > 16:  121e5d6dfa userdiff tests: do not do compile tests on "custom" pattern
+12:  9ce7de5698 ! 17:  451b7ae453 userdiff tests + docs: document & test "diff.<driver>.x?funcname"
+    @@ Documentation/config/diff.txt: diff.<driver>.command::
+      	See linkgit:gitattributes[5] for details.
+     ++
+     +When provided as `diff.<driver>.funcname` the regular expression is
+    -+interpreted as a basic regular expression, with
+    ++interpreted as a basic regular expression. With
+     +`diff.<driver>.xfuncname` it's interpreted as an extended regular
+     +expression.
+     ++
+    -+
+     +The `*.funcname` and `*.xfuncname` variables behave as if though they
+     +were one configuration variable for the purposes of what value
+     +eventually gets used. Setting `*.funcname` will override an earlier
+    @@ Documentation/config/diff.txt: diff.<driver>.command::
+     
+      ## t/t4018/custom.sh ##
+     @@ t/t4018/custom.sh: public class Beer
+    + 	}
+      }
+      EOF_TEST
+    - 
+    -+test_expect_success 'custom; setup config precedence' '
+    ++
+    ++test_expect_success 'custom: setup config precedence' '
+     +	git config diff.custom.funcname "foo" &&
+     +	git config diff.custom.xfuncname "bar"
+     +'
+    @@ t/t4018/custom.sh: public class Beer
+     +baz
+     +EOF_TEST
+     +
+    -+test_expect_success 'custom: teardown' '
+    -+	test_unconfig diff.custom.funcname &&
+    -+	test_unconfig diff.custom.xfuncname
+    -+'
+    -+
+    -+test_expect_success 'custom; setup config precedence' '
+    ++test_expect_success 'custom: setup config precedence' '
+     +	git config diff.custom.xfuncname "bar" &&
+     +	git config diff.custom.funcname "foo"
+    -+
+     +'
+     +
+     +test_diff_funcname 'custom: config precedence' \
+    @@ t/t4018/custom.sh: public class Beer
+     +
+     +baz
+     +EOF_TEST
+    -+
+    - test_expect_success 'custom: teardown' '
+    - 	test_unconfig diff.custom.funcname &&
+    - 	test_unconfig diff.custom.xfuncname
+13:  3a9f64b747 ! 18:  5a402bb9bf gitattributes doc: reword discussion of built-in userdiff patterns
+    @@ Commit message
+         "diff.tex.xfuncname" example which now immediately precedes it. This
+         will make a follow-up commit smaller.
+     
+    +    Helped-by: Eric Sunshine <sunshine@sunshineco.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Documentation/gitattributes.txt ##
+    @@ Documentation/gitattributes.txt: backslashes; the pattern above picks a line tha
+     +There are built-in patterns shipped as part of git itself. A more
+     +advanced version of the `tex` pattern discussed above is one of them.
+     +
+    -+For built-in patterns you do not need the "diff.tex.xfuncname"
+    -+discussed above in your configuration file, but if present it'll
+    -+override the built-in pattern.
+    ++For built-in patterns, you do not need `diff.<lang>.xfuncname` in your
+    ++configuration file as discussed above, but if present, it will
+    ++override a built-in pattern.
+     +
+    -+You still need to enable built-in patterns with the the attribute
+    -+mechanism, via `.gitattributes`).
+    ++Nevertheless, you need to enable built-in patterns via .gitattributes`
+    ++for the pattern to take effect.
+     +
+    -+The following built in patterns are available:
+    ++The following built-in patterns are available:
+      
+      - `ada` suitable for source code in the Ada language.
+      
+14:  a3e8d0bfc1 ! 19:  a3badb1a3e gitattributes doc: document multi-line userdiff patterns
+    @@ Documentation/gitattributes.txt: backslashes; the pattern above picks a line tha
+      backslash, and zero or more occurrences of `sub` followed by
+      `section` followed by open brace, to the end of line.
+      
+    -+Multiple patterns can be supplied by seperating them with
+    -+newlines. They will be matched one at a time and are compiled as
+    -+separate patterns, and thus the first capture in each such pattern is
+    -+`$1`, see further discussion of captures below.
+    +-There are built-in patterns shipped as part of git itself. A more
+    +-advanced version of the `tex` pattern discussed above is one of them.
+    ++Multiple patterns can be supplied by listing them one per line
+    ++separated by `\n`. They will be matched one at a time from left to
+    ++right. Do not supply a trailing "\n" for the last pattern. E.g.:
+     +
+    -+Patterns that begin with "!" are negated (to match a literal "!" at
+    -+the start of a line use e.g. "[!]"). A matching negated pattern will
+    -+cause the matching line to be skipped. Use it to blacklist otherwise
+    -+matching non-negated patterns. The last pattern must not be negated,
+    -+we'll error out if that's the case.
+    ++------------------------
+    ++[diff "perl"]
+    ++	xfuncname = "!^=head\n^[^ ]+.*"
+    ++------------------------
+    ++
+    ++Patterns in in a list of multiple that begin with "!" are negated. A
+    ++matching negated pattern will cause the matched line to be
+    ++skipped. Use it to skip a later pattern that would otherwise match. It
+    ++is an error if one or more negated patterns aren't followed by a
+    ++non-negated pattern.
+    ++
+    ++To match a literal "!" at the start of a line, use some other regex
+    ++construct that will match a literal "!" without "!" being the first
+    ++character on that line, such as "[!]".
+     +
+     +If the pattern contains a `$1` capture it will be used instead of the
+     +entire matching line (`$0`) to display the hunk header. This can be
+    @@ Documentation/gitattributes.txt: backslashes; the pattern above picks a line tha
+     +only display the function name as part of a longer function
+     +definition.
+     +
+    - There are built-in patterns shipped as part of git itself. A more
+    - advanced version of the `tex` pattern discussed above is one of them.
+    ++There are built-in patterns shipped as part of git itself, see the
+    ++full listing below.
+    + 
+    + For built-in patterns, you do not need `diff.<lang>.xfuncname` in your
+    +-configuration file as discussed above, but if present, it will
+    +-override a built-in pattern.
+    ++configuration file. If present, it will override a built-in pattern,
+    ++as shown in the `diff.perl.xfuncname` example above.
+      
+    + Nevertheless, you need to enable built-in patterns via .gitattributes`
+    + for the pattern to take effect.
+     
+      ## t/t4018/custom.sh ##
+    -@@ t/t4018/custom.sh: test_expect_success 'custom: teardown' '
+    - 	test_unconfig diff.custom.funcname &&
+    - 	test_unconfig diff.custom.xfuncname
+    - '
+    +@@ t/t4018/custom.sh: ChangeMe
+    + 
+    + baz
+    + EOF_TEST
+     +
+    -+test_expect_success 'custom: negation syntax, ! is magic' '
+    ++test_expect_success 'custom: setup negation syntax, ! is magic' '
+     +	git config diff.custom.xfuncname "!negation
+     +line"
+     +'
+     +
+    -+test_diff_funcname 'custom: config precedence' \
+    ++test_diff_funcname 'custom: negation syntax, ! is magic' \
+     +	8<<\EOF_HUNK 9<<\EOF_TEST
+     +line
+     +EOF_HUNK
+    @@ t/t4018/custom.sh: test_expect_success 'custom: teardown' '
+     +baz
+     +EOF_TEST
+     +
+    -+test_expect_success 'custom: negation syntax, use [!] to override ! magic' '
+    ++test_expect_success 'custom: setup negation syntax, use [!] to override ! magic' '
+     +	git config diff.custom.xfuncname "[!]negation
+     +line"
+     +'
+     +
+    -+test_diff_funcname 'custom: config precedence' \
+    ++test_diff_funcname 'custom: negation syntax, use [!] to override ! magic' \
+     +	8<<\EOF_HUNK 9<<\EOF_TEST
+     +!negation
+     +EOF_HUNK
+    @@ t/t4018/custom.sh: test_expect_success 'custom: teardown' '
+     +baz
+     +EOF_TEST
+     +
+    ++test_expect_success 'custom: setup captures in multiple patterns' '
+    ++	git config diff.custom.xfuncname "!^=head
+    ++^format ([^ ]+)
+    ++^sub ([^;]+)"
+    ++'
+    ++
+    ++test_diff_funcname 'custom: captures in multiple patterns' \
+    ++	8<<\EOF_HUNK 9<<\EOF_TEST
+    ++foo
+    ++EOF_HUNK
+    ++sub foo;
+    ++=head1
+    ++ChangeMe
+    ++
+    ++EOF_TEST
+    +
+    + ## t/t4018/perl.sh ##
+    +@@ t/t4018/perl.sh: sub RIGHT
+    + 	print "ChangeMe\n";
+    + }
+    + EOF_TEST
+    ++
+    ++
+    ++test_expect_success 'custom: setup config overrides built-in patterns' '
+    ++	git config diff.perl.xfuncname "!^=head
+    ++^[^ ]+.*"
+    ++'
+    ++
+    ++test_diff_funcname 'custom: config overrides built-in patterns' \
+    ++	8<<\EOF_HUNK 9<<\EOF_TEST
+    ++sub foo;
+    ++EOF_HUNK
+    ++sub foo;
+    ++=head1
+    ++ChangeMe
+    ++
+    ++EOF_TEST
+15:  b83cf4da91 ! 20:  1b46726e85 userdiff tests: remove "funcname" from custom3 test
+    @@ t/t4018/custom.sh: public class Beer
+      	git config diff.custom.xfuncname "^[ 	]*((public|static).*)$"
+      '
+      
+    -@@ t/t4018/custom.sh: test_diff_funcname 'custom: config precedence' \
+    - line
+    - EOF_HUNK
+    - line
+    -+
+    - !negation
+    - 
+    - ChangeMe
+16:  f286e42540 ! 21:  9a18506aff userdiff tests: factor out test_diff_funcname() logic
+    @@ t/t4018-diff-funcname.sh: test_expect_success 'last regexp must not be negated'
+     +
+     +last_diff_context_line () {
+     +	file=$1
+    -+	sed -n -e "s/^.*@@\( \|$\)//p" <$file
+    ++	sed -n -e "s/^.*@@$//p" -e "s/^.*@@ //p" <$file
+     +}
+     +
+      test_diff_funcname () {
+    @@ t/t4018-diff-funcname.sh: test_diff_funcname () {
+      
+      	test_expect_success "$desc" '
+      		git diff -U1 "$what" >diff &&
+    --		sed -n -e "s/^.*@@\( \|$\)//p" <diff >actual &&
+    +-		sed -n -e "s/^.*@@$//p" -e "s/^.*@@ //p" <diff >actual &&
+     +		last_diff_context_line diff >actual &&
+      		test_cmp expected actual
+    - 	'
+    - }
+    + 	' &&
+    + 
+17:  12635fefd6 ! 22:  24548fb680 userdiff tests: test hunk headers on accumulated files
+    @@ t/t4018-diff-funcname.sh: test_diff_funcname () {
+      		git diff -U1 "$what" >diff &&
+      		last_diff_context_line diff >actual &&
+      		test_cmp expected actual
+    -+	' &&
+    -+
+    + 	' &&
+    + 
+     +	test_expect_success "$desc (accumulated)" '
+     +		git diff -U1 "$what".acc >diff &&
+     +		last_diff_context_line diff >actual.lines &&
+     +		tail -n 1 actual.lines >actual &&
+     +		test_cmp expected actual
+    - 	'
+    - }
+    - 
+    ++	' &&
+    ++
+    + 	test_expect_success "teardown: $desc" '
+    + 		# In case any custom config was set immediately before
+    + 		# the test itself in the test file
+     @@ t/t4018-diff-funcname.sh: do
+      		echo "$what" >arg.what
+      	' &&
+18:  3eef2896ea = 23:  48f00a59d5 userdiff tests: test hunk header selection with -U0
+19:  3061fac48c ! 24:  05a01990c9 userdiff tests: assert empty hunk header context on -U<large>
+    @@ Commit message
+     
+      ## t/t4018-diff-funcname.sh ##
+     @@ t/t4018-diff-funcname.sh: test_diff_funcname () {
+    - 		tail -n 1 actual.lines >actual &&
+      		test_cmp expected actual
+    - 	'
+    -+
+    + 	' &&
+    + 
+     +	test_expect_success "$desc -U9001 (accumulated)" '
+     +		git diff -U9001 "$what".acc >diff &&
+     +		last_diff_context_line diff >actual.lines &&
+     +		tail -n 1 actual.lines >actual &&
+     +		echo >blank &&
+     +		test_cmp blank actual
+    -+	'
+    - }
+    - 
+    - for what in $diffpatterns
+    ++	' &&
+    ++
+    + 	test_expect_success "teardown: $desc" '
+    + 		# In case any custom config was set immediately before
+    + 		# the test itself in the test file
+11:  0901623546 ! 25:  3d2f42d704 userdiff: match "package" in diff=golang
+    @@ t/t4018/golang.sh
+      func (t *Test) RIGHT(a Type) (Type, error) {
+     
+      ## userdiff.c ##
+    -@@ userdiff.c: IPATTERN("fortran",
+    - IPATTERN("fountain", "^((\\.[^.]|(int|ext|est|int\\.?/ext|i/e)[. ]).*)$",
+    +@@ userdiff.c: IPATTERN("fountain",
+    + 	 /* -- */
+      	 "[^ \t-]+"),
+      PATTERNS("golang",
+     +	 /* Packages */
+ -:  ---------- > 26:  2e6baf5a63 userdiff tests: add basic tests for ada
+ -:  ---------- > 27:  ae305cbe5b userdiff tests: add basic test for ruby
 -- 
 2.30.0.284.gd98b1dd5eaa7
 
