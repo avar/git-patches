@@ -1,0 +1,104 @@
+From 451b7ae453d6a3976c1cf33806ceef70e82aaf23 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210215005236.11313-1-avarab@gmail.com>
+References: <20210215005236.11313-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 Feb 2021 23:01:43 +0100
+Subject: [PATCH v2 17/27] userdiff tests + docs: document & test
+ "diff.<driver>.x?funcname"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add the missing documentation for "diff.<driver>.funcname" and test
+for how it and "diff.<driver>.xfuncname" interact.
+
+Between the introduction of the "diff.<driver>.xfuncname" form in
+45d9414fa5 (diff.*.xfuncname which uses "extended" regex's for hunk
+header selection, 2008-09-18) and when this documentation was written
+in 90b94c26f7 (Documentation: Add diff.<driver>.* to config,
+2011-04-07) we forgot to document the existence of
+"diff.<driver>.funcname".
+
+Let's make a mention of it here, we could also partially revert the
+former commit and discuss the more verbose form in gitattributes(5),
+but let's stop short of that. It makes sense to guide users towards
+ERE over BRE whenever possible.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/diff.txt | 11 +++++++++++
+ t/t4018/custom.sh             | 34 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 45 insertions(+)
+
+diff --git a/Documentation/config/diff.txt b/Documentation/config/diff.txt
+index 2d3331f55c..6f39ef1da9 100644
+--- a/Documentation/config/diff.txt
++++ b/Documentation/config/diff.txt
+@@ -153,10 +153,21 @@ diff.<driver>.command::
+ 	The custom diff driver command.  See linkgit:gitattributes[5]
+ 	for details.
+ 
++diff.<driver>.funcname::
+ diff.<driver>.xfuncname::
+ 	The regular expression that the diff driver should use to
+ 	recognize the hunk header.  A built-in pattern may also be used.
+ 	See linkgit:gitattributes[5] for details.
+++
++When provided as `diff.<driver>.funcname` the regular expression is
++interpreted as a basic regular expression. With
++`diff.<driver>.xfuncname` it's interpreted as an extended regular
++expression.
+++
++The `*.funcname` and `*.xfuncname` variables behave as if though they
++were one configuration variable for the purposes of what value
++eventually gets used. Setting `*.funcname` will override an earlier
++`*.xfuncname` and vice-versa.
+ 
+ diff.<driver>.binary::
+ 	Set this option to true to make the diff driver treat files as
+diff --git a/t/t4018/custom.sh b/t/t4018/custom.sh
+index b208a771d2..72d38dad68 100755
+--- a/t/t4018/custom.sh
++++ b/t/t4018/custom.sh
+@@ -77,3 +77,37 @@ public class Beer
+ 	}
+ }
+ EOF_TEST
++
++test_expect_success 'custom: setup config precedence' '
++	git config diff.custom.funcname "foo" &&
++	git config diff.custom.xfuncname "bar"
++'
++
++test_diff_funcname 'custom: config precedence' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++bar
++EOF_HUNK
++foo
++bar
++
++ChangeMe
++
++baz
++EOF_TEST
++
++test_expect_success 'custom: setup config precedence' '
++	git config diff.custom.xfuncname "bar" &&
++	git config diff.custom.funcname "foo"
++'
++
++test_diff_funcname 'custom: config precedence' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++foo
++EOF_HUNK
++foo
++bar
++
++ChangeMe
++
++baz
++EOF_TEST
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
