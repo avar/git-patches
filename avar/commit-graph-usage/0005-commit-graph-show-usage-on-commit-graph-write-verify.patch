@@ -1,0 +1,72 @@
+From e8481a0932a1b4ec0c87a6540fb3cb6792a51d65 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87r1lhb6z7.fsf@evledraar.gmail.com>
+References: <87r1lhb6z7.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 15 Feb 2021 19:35:05 +0100
+Subject: [PATCH 5/5] commit-graph: show usage on "commit-graph [write|verify]
+ garbage"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the parse_options() invocation in the commit-graph code to make
+sense. We're calling it twice, once for common options parsing, and
+then for the sub-commands.
+
+But we never checked if we had something leftover in argc in "write"
+or "verify", as a result we'd silently accept garbage in these
+subcommands. Let's not do that.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/commit-graph.c  | 10 ++++++++--
+ t/t5318-commit-graph.sh |  4 +++-
+ 2 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/commit-graph.c b/builtin/commit-graph.c
+index 66fbdb7cb1..cb57771026 100644
+--- a/builtin/commit-graph.c
++++ b/builtin/commit-graph.c
+@@ -104,7 +104,10 @@ static int graph_verify(int argc, const char **argv)
+ 	opts.progress = isatty(2);
+ 	argc = parse_options(argc, argv, NULL,
+ 			     options,
+-			     builtin_commit_graph_verify_usage, 0);
++			     builtin_commit_graph_verify_usage,
++			     PARSE_OPT_KEEP_UNKNOWN);
++	if (argc)
++		usage_with_options(builtin_commit_graph_verify_usage, options);
+ 
+ 	if (!opts.obj_dir)
+ 		opts.obj_dir = get_object_directory();
+@@ -261,7 +264,10 @@ static int graph_write(int argc, const char **argv)
+ 
+ 	argc = parse_options(argc, argv, NULL,
+ 			     options,
+-			     builtin_commit_graph_write_usage, 0);
++			     builtin_commit_graph_write_usage,
++			     PARSE_OPT_KEEP_UNKNOWN);
++	if (argc)
++		usage_with_options(builtin_commit_graph_write_usage, options);
+ 
+ 	if (opts.reachable + opts.stdin_packs + opts.stdin_commits > 1)
+ 		die(_("use at most one of --reachable, --stdin-commits, or --stdin-packs"));
+diff --git a/t/t5318-commit-graph.sh b/t/t5318-commit-graph.sh
+index 567e68bd93..3f1c6dbc8f 100755
+--- a/t/t5318-commit-graph.sh
++++ b/t/t5318-commit-graph.sh
+@@ -7,7 +7,9 @@ GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS=0
+ 
+ test_expect_success 'usage' '
+ 	test_expect_code 129 git commit-graph -h 2>err &&
+-	! grep error: err
++	! grep error: err &&
++	test_expect_code 129 git commit-graph write blah &&
++	test_expect_code 129 git commit-graph write verify
+ '
+ 
+ test_expect_success 'setup full repo' '
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
