@@ -1,0 +1,122 @@
+From 12635fefd64e4e641df95e280bbe6cb4f228edb1 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87tuqebj6m.fsf@evledraar.gmail.com>
+References: <87tuqebj6m.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 Feb 2021 20:21:18 +0100
+Subject: [PATCH 18/20] userdiff tests: test hunk headers on accumulated files
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The existing tests in "t/t4018/" are unrealistic in that they're all
+setting up small few-line isolated test cases with one thing we could
+match as a hunk header, right above the one change in the file.
+
+Expand those tests by accumulating changes within the same file type
+in the "test_diff_funcname" function. So e.g. for "bash" we'll end up
+a "bash.acc" file with 15 s/ChangeMe/IWasChanged/ changes.
+
+This stress tests whether the hunk header selection will "jump across"
+to an earlier change because the match for that is greedier.
+
+As it turns out we had one false positive in "t/t4018/cpp.sh" and
+"t4018/matlab.sh" because of how the tests were structured, we must
+always give the "ChangeMe" line at least one line of separation from
+the header, since it was at the end of those tests we'd select the
+"wrong" header. Let's adjust the spacing to compensate.
+
+So in the end we found nothing of interest here, regardless, I think
+it is useful to continue to test in this mode. It's likely to aid in
+finding bugs in combinations of our positive and negative matching as
+we add more built-in patterns.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4018-diff-funcname.sh | 19 +++++++++++++++++++
+ t/t4018/cpp.sh           |  1 +
+ t/t4018/matlab.sh        |  3 +++
+ 3 files changed, 23 insertions(+)
+
+diff --git a/t/t4018-diff-funcname.sh b/t/t4018-diff-funcname.sh
+index 7a830ec57f..0d75d93c69 100755
+--- a/t/t4018-diff-funcname.sh
++++ b/t/t4018-diff-funcname.sh
+@@ -71,10 +71,24 @@ test_diff_funcname () {
+ 		do_change_me "$what"
+ 	' &&
+ 
++	test_expect_success "setup: $desc (accumulated)" '
++		cat arg.test >>arg.tests &&
++		cp arg.tests "$what".acc &&
++		git add "$what".acc &&
++		do_change_me "$what".acc
++	' &&
++
+ 	test_expect_success "$desc" '
+ 		git diff -U1 "$what" >diff &&
+ 		last_diff_context_line diff >actual &&
+ 		test_cmp expected actual
++	' &&
++
++	test_expect_success "$desc (accumulated)" '
++		git diff -U1 "$what".acc >diff &&
++		last_diff_context_line diff >actual.lines &&
++		tail -n 1 actual.lines >actual &&
++		test_cmp expected actual
+ 	'
+ }
+ 
+@@ -92,6 +106,11 @@ do
+ 		echo "$what" >arg.what
+ 	' &&
+ 
++	test_expect_success "setup: hunk header for $what (accumulated)" '
++		>arg.tests &&
++		echo "$what.acc diff=$what" >>.gitattributes
++	' &&
++
+ 	. "$test"
+ done
+ 
+diff --git a/t/t4018/cpp.sh b/t/t4018/cpp.sh
+index 185d40d5ef..e0ab749316 100755
+--- a/t/t4018/cpp.sh
++++ b/t/t4018/cpp.sh
+@@ -206,6 +206,7 @@ void wrong()
+ struct RIGHT_iterator_tag {};
+ 
+ int ChangeMe;
++
+ EOF_TEST
+ 
+ test_diff_funcname 'cpp: template function definition' \
+diff --git a/t/t4018/matlab.sh b/t/t4018/matlab.sh
+index f62289148e..fba410e6f5 100755
+--- a/t/t4018/matlab.sh
++++ b/t/t4018/matlab.sh
+@@ -31,6 +31,7 @@ EOF_HUNK
+ %%% RIGHT section
+ # this is octave script
+ ChangeMe = 1;
++
+ EOF_TEST
+ 
+ test_diff_funcname 'matlab: octave section 2' \
+@@ -40,6 +41,7 @@ EOF_HUNK
+ ## RIGHT section
+ # this is octave script
+ ChangeMe = 1;
++
+ EOF_TEST
+ 
+ test_diff_funcname 'matlab: section' \
+@@ -49,4 +51,5 @@ EOF_HUNK
+ %% RIGHT section
+ % this is understood by both matlab and octave
+ ChangeMe = 1;
++
+ EOF_TEST
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

@@ -1,0 +1,136 @@
+From 69532bfb68d639765c437f15c3760eaf3f297508 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87tuqebj6m.fsf@evledraar.gmail.com>
+References: <87tuqebj6m.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 Feb 2021 18:12:15 +0100
+Subject: [PATCH 03/20] userdiff: add and use for_each_userdiff_driver()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the userdiff_find_by_namelen() function so that a new
+for_each_userdiff_driver() API function does most of the work.
+
+This will be useful for the same reason we've got other for_each_*()
+API functions as part of various APIs, and will be used in a follow-up
+commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ userdiff.c | 61 +++++++++++++++++++++++++++++++++++++++++++-----------
+ userdiff.h | 15 ++++++++++++++
+ 2 files changed, 64 insertions(+), 12 deletions(-)
+
+diff --git a/userdiff.c b/userdiff.c
+index c92cbcc054..92b5a97e12 100644
+--- a/userdiff.c
++++ b/userdiff.c
+@@ -250,20 +250,32 @@ static struct userdiff_driver driver_false = {
+ 	{ NULL, 0 }
+ };
+ 
+-static struct userdiff_driver *userdiff_find_by_namelen(const char *k, size_t len)
++struct for_each_userdiff_driver_cb {
++	const char *k;
++	size_t len;
++	struct userdiff_driver *driver;
++};
++
++static int userdiff_find_by_namelen_cb(struct userdiff_driver *driver,
++				       enum userdiff_driver_type type, void *priv)
+ {
+-	int i;
+-	for (i = 0; i < ndrivers; i++) {
+-		struct userdiff_driver *drv = drivers + i;
+-		if (!strncmp(drv->name, k, len) && !drv->name[len])
+-			return drv;
+-	}
+-	for (i = 0; i < ARRAY_SIZE(builtin_drivers); i++) {
+-		struct userdiff_driver *drv = builtin_drivers + i;
+-		if (!strncmp(drv->name, k, len) && !drv->name[len])
+-			return drv;
++	struct for_each_userdiff_driver_cb *cb_data = priv;
++
++	if (!strncmp(driver->name, cb_data->k, cb_data->len) &&
++	    !driver->name[cb_data->len]) {
++		cb_data->driver = driver;
++		return -1; /* found it! */
+ 	}
+-	return NULL;
++	return 0;
++}
++
++static struct userdiff_driver *userdiff_find_by_namelen(const char *k, size_t len)
++{
++	struct for_each_userdiff_driver_cb udcbdata = { .k = k, .len = len, .driver = NULL };
++
++	for_each_userdiff_driver(userdiff_find_by_namelen_cb,
++				 USERDIFF_DRIVER_TYPE_UNSPECIFIED, &udcbdata);
++	return udcbdata.driver;
+ }
+ 
+ static int parse_funcname(struct userdiff_funcname *f, const char *k,
+@@ -364,3 +376,28 @@ struct userdiff_driver *userdiff_get_textconv(struct repository *r,
+ 
+ 	return driver;
+ }
++
++int for_each_userdiff_driver(each_userdiff_driver_fn fn,
++			     enum userdiff_driver_type type, void *cb_data)
++{
++	int i, ret;
++	if (type & (USERDIFF_DRIVER_TYPE_UNSPECIFIED | USERDIFF_DRIVER_TYPE_CUSTOM)) {
++
++		for (i = 0; i < ndrivers; i++) {
++			struct userdiff_driver *drv = drivers + i;
++			ret = fn(drv, USERDIFF_DRIVER_TYPE_CUSTOM, cb_data);
++			if (ret)
++				return ret;
++		}
++	}
++	if (type & (USERDIFF_DRIVER_TYPE_UNSPECIFIED | USERDIFF_DRIVER_TYPE_BUILTIN)) {
++
++		for (i = 0; i < ARRAY_SIZE(builtin_drivers); i++) {
++			struct userdiff_driver *drv = builtin_drivers + i;
++			ret = fn(drv, USERDIFF_DRIVER_TYPE_BUILTIN, cb_data);
++			if (ret)
++				return ret;
++		}
++	}
++	return 0;
++}
+diff --git a/userdiff.h b/userdiff.h
+index 203057e13e..fe14014a77 100644
+--- a/userdiff.h
++++ b/userdiff.h
+@@ -21,6 +21,13 @@ struct userdiff_driver {
+ 	struct notes_cache *textconv_cache;
+ 	int textconv_want_cache;
+ };
++enum userdiff_driver_type {
++	USERDIFF_DRIVER_TYPE_UNSPECIFIED = 1<<0,
++	USERDIFF_DRIVER_TYPE_BUILTIN = 1<<1,
++	USERDIFF_DRIVER_TYPE_CUSTOM = 1<<2,
++};
++typedef int (*each_userdiff_driver_fn)(struct userdiff_driver *,
++				       enum userdiff_driver_type, void *);
+ 
+ int userdiff_config(const char *k, const char *v);
+ struct userdiff_driver *userdiff_find_by_name(const char *name);
+@@ -34,4 +41,12 @@ struct userdiff_driver *userdiff_find_by_path(struct index_state *istate,
+ struct userdiff_driver *userdiff_get_textconv(struct repository *r,
+ 					      struct userdiff_driver *driver);
+ 
++/*
++ * Iterate over each driver of type userdiff_driver_type, or
++ * USERDIFF_DRIVER_TYPE_UNSPECIFIED for all of them. Return non-zero
++ * to exit from the loop.
++ */
++int for_each_userdiff_driver(each_userdiff_driver_fn,
++			     enum userdiff_driver_type, void *);
++
+ #endif /* USERDIFF */
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

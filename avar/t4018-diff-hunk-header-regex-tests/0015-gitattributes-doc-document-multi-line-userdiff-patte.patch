@@ -1,0 +1,103 @@
+From a3e8d0bfc14e29c21ac57b01cce9dc845445b9a2 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87tuqebj6m.fsf@evledraar.gmail.com>
+References: <87tuqebj6m.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 15 Feb 2021 01:17:50 +0100
+Subject: [PATCH 15/20] gitattributes doc: document multi-line userdiff
+ patterns
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Document the multi-line userdiff patterns and how their matching and
+the negation syntax works.
+
+These patterns have been supported since f258475a6e (Per-path
+attribute based hunk header selection., 2007-07-06), and have had
+their current semantics ever since 3d8dccd74a (diff: fix "multiple
+regexp" semantics to find hunk header comment, 2008-09-20).
+
+But we had no documentation for them, let's fix that, and also add
+tests showing how some of the things being discussed here work.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/gitattributes.txt | 17 ++++++++++++++++
+ t/t4018/custom.sh               | 35 +++++++++++++++++++++++++++++++++
+ 2 files changed, 52 insertions(+)
+
+diff --git a/Documentation/gitattributes.txt b/Documentation/gitattributes.txt
+index 90992e2136..225c17b90d 100644
+--- a/Documentation/gitattributes.txt
++++ b/Documentation/gitattributes.txt
+@@ -794,6 +794,23 @@ backslashes; the pattern above picks a line that begins with a
+ backslash, and zero or more occurrences of `sub` followed by
+ `section` followed by open brace, to the end of line.
+ 
++Multiple patterns can be supplied by seperating them with
++newlines. They will be matched one at a time and are compiled as
++separate patterns, and thus the first capture in each such pattern is
++`$1`, see further discussion of captures below.
++
++Patterns that begin with "!" are negated (to match a literal "!" at
++the start of a line use e.g. "[!]"). A matching negated pattern will
++cause the matching line to be skipped. Use it to blacklist otherwise
++matching non-negated patterns. The last pattern must not be negated,
++we'll error out if that's the case.
++
++If the pattern contains a `$1` capture it will be used instead of the
++entire matching line (`$0`) to display the hunk header. This can be
++used e.g. to strip whitespace from the beginning of the line, or to
++only display the function name as part of a longer function
++definition.
++
+ There are built-in patterns shipped as part of git itself. A more
+ advanced version of the `tex` pattern discussed above is one of them.
+ 
+diff --git a/t/t4018/custom.sh b/t/t4018/custom.sh
+index b68d96a8af..cccf468c3a 100755
+--- a/t/t4018/custom.sh
++++ b/t/t4018/custom.sh
+@@ -122,3 +122,38 @@ test_expect_success 'custom: teardown' '
+ 	test_unconfig diff.custom.funcname &&
+ 	test_unconfig diff.custom.xfuncname
+ '
++
++test_expect_success 'custom: negation syntax, ! is magic' '
++	git config diff.custom.xfuncname "!negation
++line"
++'
++
++test_diff_funcname 'custom: config precedence' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++line
++EOF_HUNK
++line
++!negation
++
++ChangeMe
++
++baz
++EOF_TEST
++
++test_expect_success 'custom: negation syntax, use [!] to override ! magic' '
++	git config diff.custom.xfuncname "[!]negation
++line"
++'
++
++test_diff_funcname 'custom: config precedence' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++!negation
++EOF_HUNK
++line
++!negation
++
++ChangeMe
++
++baz
++EOF_TEST
++
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

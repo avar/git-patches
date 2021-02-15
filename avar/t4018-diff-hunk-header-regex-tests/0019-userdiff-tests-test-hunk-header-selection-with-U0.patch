@@ -1,0 +1,72 @@
+From 3eef2896ea852f9b390cdc12df1eea8b98e52c17 Mon Sep 17 00:00:00 2001
+In-Reply-To: <87tuqebj6m.fsf@evledraar.gmail.com>
+References: <87tuqebj6m.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 Feb 2021 21:08:08 +0100
+Subject: [PATCH 19/20] userdiff tests: test hunk header selection with -U0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The userdiff tests have used a custom -U1 context since
+f12c66b9bb (userdiff/perl: anchor "sub" and "package" patterns on the
+left, 2011-05-21). Changing it to -U0 doesn't change the results for
+any of the tests, except one.
+
+Let's test for this case explicitly. I.e. that we go "beyond" the
+selected context to find our hunk header. In many cases the desired
+hunk header is part of the diff itself under -U1.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4018-diff-funcname.sh | 13 +++++++++++++
+ t/t4018/custom.sh        |  1 +
+ 2 files changed, 14 insertions(+)
+
+diff --git a/t/t4018-diff-funcname.sh b/t/t4018-diff-funcname.sh
+index 0d75d93c69..94026b8296 100755
+--- a/t/t4018-diff-funcname.sh
++++ b/t/t4018-diff-funcname.sh
+@@ -63,6 +63,7 @@ test_diff_funcname () {
+ 	cat <&8 >arg.header &&
+ 	cat <&9 >arg.test &&
+ 	what=$(cat arg.what) &&
++	arg_diff_U0=$2 &&
+ 
+ 	test_expect_success "setup: $desc" '
+ 		cp arg.test "$what" &&
+@@ -84,6 +85,18 @@ test_diff_funcname () {
+ 		test_cmp expected actual
+ 	' &&
+ 
++	test_expect_success "$desc -U0" '
++		git diff -U0 "$what" >diff &&
++		last_diff_context_line diff >actual &&
++		if test -n "$arg_diff_U0"
++		then
++			echo "$arg_diff_U0" >new-expected &&
++			test_cmp new-expected actual
++		else
++			test_cmp expected actual
++		fi
++	' &&
++
+ 	test_expect_success "$desc (accumulated)" '
+ 		git diff -U1 "$what".acc >diff &&
+ 		last_diff_context_line diff >actual.lines &&
+diff --git a/t/t4018/custom.sh b/t/t4018/custom.sh
+index 81a68aa332..605e2d33ae 100755
+--- a/t/t4018/custom.sh
++++ b/t/t4018/custom.sh
+@@ -10,6 +10,7 @@ test_expect_success 'custom: setup non-trivial custom' '
+ '
+ 
+ test_diff_funcname 'custom: non-trivial custom pattern' \
++	'System.out.print(x + " bottles of beer on the wall "' \
+ 	8<<\EOF_HUNK 9<<\EOF_TEST
+ int special, RIGHT;
+ EOF_HUNK
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

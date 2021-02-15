@@ -1,0 +1,246 @@
+From e48ad2b57f170d64f15b1dda101ecebcb361d4ca Mon Sep 17 00:00:00 2001
+In-Reply-To: <87tuqebj6m.fsf@evledraar.gmail.com>
+References: <87tuqebj6m.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 Feb 2021 23:17:15 +0100
+Subject: [PATCH 10/20] userdiff tests: move custom patterns into one test file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In a preceding commit the test infrastructure got rewritten so
+"t/t4018/" are now normal test files which can do things like set
+config, so let's make it responsible for setting up and tearing down
+the config for its tests.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4018-diff-funcname.sh | 16 +-------
+ t/t4018/custom.sh        | 84 ++++++++++++++++++++++++++++++++++++++++
+ t/t4018/custom1.sh       | 27 -------------
+ t/t4018/custom2.sh       | 18 ---------
+ t/t4018/custom3.sh       | 27 -------------
+ 5 files changed, 85 insertions(+), 87 deletions(-)
+ create mode 100755 t/t4018/custom.sh
+ delete mode 100755 t/t4018/custom1.sh
+ delete mode 100755 t/t4018/custom2.sh
+ delete mode 100755 t/t4018/custom3.sh
+
+diff --git a/t/t4018-diff-funcname.sh b/t/t4018-diff-funcname.sh
+index 3ff34c13d7..3e4c07e42b 100755
+--- a/t/t4018-diff-funcname.sh
++++ b/t/t4018-diff-funcname.sh
+@@ -12,18 +12,6 @@ test_expect_success 'setup' '
+ 	test_file_not_empty builtin-drivers &&
+ 	builtin_drivers=$(cat builtin-drivers) &&
+ 
+-	# a non-trivial custom pattern
+-	git config diff.custom1.funcname "!static
+-!String
+-[^ 	].*s.*" &&
+-
+-	# a custom pattern which matches to end of line
+-	git config diff.custom2.funcname "......Beer\$" &&
+-
+-	# alternation in pattern
+-	git config diff.custom3.funcname "Beer$" &&
+-	git config diff.custom3.xfuncname "^[ 	]*((public|static).*)$" &&
+-
+ 	# for regexp compilation tests
+ 	echo A >A.java &&
+ 	echo B >B.java
+@@ -31,9 +19,7 @@ test_expect_success 'setup' '
+ 
+ diffpatterns="
+ 	$builtin_drivers
+-	custom1
+-	custom2
+-	custom3
++	custom
+ "
+ 
+ for p in $diffpatterns
+diff --git a/t/t4018/custom.sh b/t/t4018/custom.sh
+new file mode 100755
+index 0000000000..69f1f7339f
+--- /dev/null
++++ b/t/t4018/custom.sh
+@@ -0,0 +1,84 @@
++#!/bin/sh
++#
++# See ../t4018-diff-funcname.sh's test_diff_funcname()
++#
++
++test_expect_success 'custom: setup non-trivial custom' '
++	git config diff.custom.funcname "!static
++!String
++[^ 	].*s.*"
++'
++
++test_diff_funcname 'custom: non-trivial custom pattern' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++int special, RIGHT;
++EOF_HUNK
++public class Beer
++{
++	int special, RIGHT;
++	public static void main(String args[])
++	{
++		String s=" ";
++		for(int x = 99; x > 0; x--)
++		{
++			System.out.print(x + " bottles of beer on the wall "
++				+ x + " bottles of beer\n" // ChangeMe
++				+ "Take one down, pass it around, " + (x - 1)
++				+ " bottles of beer on the wall.\n");
++		}
++		System.out.print("Go to the store, buy some more,\n"
++			+ "99 bottles of beer on the wall.\n");
++	}
++}
++EOF_TEST
++
++test_expect_success 'custom: setup match to end of line' '
++	git config diff.custom.funcname "......Beer\$"
++'
++
++test_diff_funcname 'custom: match to end of line' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++RIGHT_Beer
++EOF_HUNK
++public class RIGHT_Beer
++{
++	int special;
++	public static void main(String args[])
++	{
++		System.out.print("ChangeMe");
++	}
++}
++EOF_TEST
++
++test_expect_success 'custom: setup alternation in pattern' '
++	git config diff.custom.funcname "Beer$" &&
++	git config diff.custom.xfuncname "^[ 	]*((public|static).*)$"
++'
++
++test_diff_funcname 'custom: alternation in pattern' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++public static void main(String RIGHT[])
++EOF_HUNK
++public class Beer
++{
++	int special;
++	public static void main(String RIGHT[])
++	{
++		String s=" ";
++		for(int x = 99; x > 0; x--)
++		{
++			System.out.print(x + " bottles of beer on the wall "
++				+ x + " bottles of beer\n" // ChangeMe
++				+ "Take one down, pass it around, " + (x - 1)
++				+ " bottles of beer on the wall.\n");
++		}
++		System.out.print("Go to the store, buy some more,\n"
++			+ "99 bottles of beer on the wall.\n");
++	}
++}
++EOF_TEST
++
++test_expect_success 'custom: teardown' '
++	test_unconfig diff.custom.funcname &&
++	test_unconfig diff.custom.xfuncname
++'
+diff --git a/t/t4018/custom1.sh b/t/t4018/custom1.sh
+deleted file mode 100755
+index f8bbccadb4..0000000000
+--- a/t/t4018/custom1.sh
++++ /dev/null
+@@ -1,27 +0,0 @@
+-#!/bin/sh
+-#
+-# See ../t4018-diff-funcname.sh's test_diff_funcname()
+-#
+-
+-test_diff_funcname 'custom1: pattern' \
+-	8<<\EOF_HUNK 9<<\EOF_TEST
+-int special, RIGHT;
+-EOF_HUNK
+-public class Beer
+-{
+-	int special, RIGHT;
+-	public static void main(String args[])
+-	{
+-		String s=" ";
+-		for(int x = 99; x > 0; x--)
+-		{
+-			System.out.print(x + " bottles of beer on the wall "
+-				+ x + " bottles of beer\n" // ChangeMe
+-				+ "Take one down, pass it around, " + (x - 1)
+-				+ " bottles of beer on the wall.\n");
+-		}
+-		System.out.print("Go to the store, buy some more,\n"
+-			+ "99 bottles of beer on the wall.\n");
+-	}
+-}
+-EOF_TEST
+diff --git a/t/t4018/custom2.sh b/t/t4018/custom2.sh
+deleted file mode 100755
+index c68421f788..0000000000
+--- a/t/t4018/custom2.sh
++++ /dev/null
+@@ -1,18 +0,0 @@
+-#!/bin/sh
+-#
+-# See ../t4018-diff-funcname.sh's test_diff_funcname()
+-#
+-
+-test_diff_funcname 'custom2: match to end of line' \
+-	8<<\EOF_HUNK 9<<\EOF_TEST
+-RIGHT_Beer
+-EOF_HUNK
+-public class RIGHT_Beer
+-{
+-	int special;
+-	public static void main(String args[])
+-	{
+-		System.out.print("ChangeMe");
+-	}
+-}
+-EOF_TEST
+diff --git a/t/t4018/custom3.sh b/t/t4018/custom3.sh
+deleted file mode 100755
+index 07c5c134ff..0000000000
+--- a/t/t4018/custom3.sh
++++ /dev/null
+@@ -1,27 +0,0 @@
+-#!/bin/sh
+-#
+-# See ../t4018-diff-funcname.sh's test_diff_funcname()
+-#
+-
+-test_diff_funcname 'custom3: alternation in pattern' \
+-	8<<\EOF_HUNK 9<<\EOF_TEST
+-public static void main(String RIGHT[])
+-EOF_HUNK
+-public class Beer
+-{
+-	int special;
+-	public static void main(String RIGHT[])
+-	{
+-		String s=" ";
+-		for(int x = 99; x > 0; x--)
+-		{
+-			System.out.print(x + " bottles of beer on the wall "
+-				+ x + " bottles of beer\n" // ChangeMe
+-				+ "Take one down, pass it around, " + (x - 1)
+-				+ " bottles of beer on the wall.\n");
+-		}
+-		System.out.print("Go to the store, buy some more,\n"
+-			+ "99 bottles of beer on the wall.\n");
+-	}
+-}
+-EOF_TEST
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
