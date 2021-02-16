@@ -1,0 +1,80 @@
+From 05fc57e54e10609a47d940c2483010eb7033869c Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210203032811.14979-1-avarab@gmail.com>
+References: <20210203032811.14979-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 4 Feb 2021 13:02:49 +0100
+Subject: [PATCH v2 15/22] pickaxe: assert that we must have a needle under -G
+ or -S
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Assert early in diffcore_pickaxe() that we've got a needle to work
+with under -G and -S.
+
+This code is redundant to the check -G and -S get from
+parse-options.c's get_arg(), which I'm adding a test for.
+
+This check dates back to e1b161161d (diffcore-pickaxe: fix infinite
+loop on zero-length needle, 2007-01-25) when "git log -S" could send
+this code into an infinite loop.
+
+It was then later refactored in 8fa4b09fb1 (pickaxe: hoist empty
+needle check, 2012-10-28) into its current form, but it seemingly
+wasn't noticed that in the meantime a move to the parse-options.c API
+in dea007fb4c (diff: parse separate options like -S foo, 2010-08-05)
+had made it redundant.
+
+Let's retain some of the paranoia here with a BUG(), but there's no
+need to be checking this in the pickaxe_match() inner loop.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diffcore-pickaxe.c     | 5 ++---
+ t/t4209-log-pickaxe.sh | 6 ++++++
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/diffcore-pickaxe.c b/diffcore-pickaxe.c
+index cff46f9f8f7..dd1b5c72332 100644
+--- a/diffcore-pickaxe.c
++++ b/diffcore-pickaxe.c
+@@ -132,9 +132,6 @@ static int pickaxe_match(struct diff_filepair *p, struct diff_options *o,
+ 			 oidset_contains(o->objfind, &p->two->oid));
+ 	}
+ 
+-	if (!o->pickaxe[0])
+-		return 0;
+-
+ 	if (o->flags.allow_textconv) {
+ 		textconv_one = get_textconv(o->repo, p->one);
+ 		textconv_two = get_textconv(o->repo, p->two);
+@@ -230,6 +227,8 @@ void diffcore_pickaxe(struct diff_options *o)
+ 	kwset_t kws = NULL;
+ 	pickaxe_fn fn;
+ 
++	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND && !needle)
++		BUG("should have needle under -G or -S");
+ 	if (opts & (DIFF_PICKAXE_REGEX | DIFF_PICKAXE_KIND_G)) {
+ 		int cflags = REG_EXTENDED | REG_NEWLINE;
+ 		if (o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE)
+diff --git a/t/t4209-log-pickaxe.sh b/t/t4209-log-pickaxe.sh
+index bcaca7e882c..4b65b89e7a5 100755
+--- a/t/t4209-log-pickaxe.sh
++++ b/t/t4209-log-pickaxe.sh
+@@ -56,6 +56,12 @@ test_expect_success setup '
+ '
+ 
+ test_expect_success 'usage' '
++	test_expect_code 129 git log -S 2>err &&
++	test_i18ngrep "switch.*requires a value" err &&
++
++	test_expect_code 129 git log -G 2>err &&
++	test_i18ngrep "switch.*requires a value" err &&
++
+ 	test_expect_code 128 git log -Gregex -Sstring 2>err &&
+ 	test_i18ngrep "mutually exclusive" err &&
+ 
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

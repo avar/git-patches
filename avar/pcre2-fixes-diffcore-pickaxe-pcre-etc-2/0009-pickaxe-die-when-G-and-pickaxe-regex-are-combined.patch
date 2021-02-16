@@ -1,0 +1,79 @@
+From bd0c3b7e3b099effe2b44e829005ee4a1643e7f0 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210203032811.14979-1-avarab@gmail.com>
+References: <20210203032811.14979-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Feb 2021 17:00:56 +0100
+Subject: [PATCH v2 09/22] pickaxe: die when -G and --pickaxe-regex are
+ combined
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the -G and --pickaxe-regex options are combined we simply ignore
+the --pickaxe-regex option. Let's die instead as suggested by our
+documentation, since -G is always a regex.
+
+When --pickaxe-regex was added in d01d8c6782 (Support for pickaxe
+matching regular expressions, 2006-03-29) only the -S option
+existed. Then when -G was added in f506b8e8b5 (git log/diff: add
+-G<regexp> that greps in the patch text, 2010-08-23) neither the
+documentation for --pickaxe-regex was updater accordingly, nor was
+something like this assertion added.
+
+Since 5bc3f0b567 (diffcore-pickaxe doc: document -S and -G properly,
+2013-05-31) we've claimed that --pickaxe-regex should only be used
+with -S, but have silently toileted combining it with -G, let's die
+instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c                 | 3 +++
+ diff.h                 | 2 ++
+ t/t4209-log-pickaxe.sh | 3 +++
+ 3 files changed, 8 insertions(+)
+
+diff --git a/diff.c b/diff.c
+index bf2cbf15e77..96da1fe6167 100644
+--- a/diff.c
++++ b/diff.c
+@@ -4630,6 +4630,9 @@ void diff_setup_done(struct diff_options *options)
+ 	if (HAS_MULTI_BITS(options->pickaxe_opts & DIFF_PICKAXE_KINDS_MASK))
+ 		die(_("-G, -S and --find-object are mutually exclusive"));
+ 
++	if (HAS_MULTI_BITS(options->pickaxe_opts & DIFF_PICKAXE_KINDS_G_REGEX_MASK))
++		die(_("-G and --pickaxe-regex are mutually exclusive, use --pickaxe-regex with -S"));
++
+ 	/*
+ 	 * Most of the time we can say "there are changes"
+ 	 * only by checking if there are changed paths, but
+diff --git a/diff.h b/diff.h
+index 527fb56d851..668d496d7a5 100644
+--- a/diff.h
++++ b/diff.h
+@@ -535,6 +535,8 @@ int git_config_rename(const char *var, const char *value);
+ #define DIFF_PICKAXE_KINDS_MASK (DIFF_PICKAXE_KIND_S | \
+ 				 DIFF_PICKAXE_KIND_G | \
+ 				 DIFF_PICKAXE_KIND_OBJFIND)
++#define DIFF_PICKAXE_KINDS_G_REGEX_MASK (DIFF_PICKAXE_KIND_G | \
++					 DIFF_PICKAXE_REGEX)
+ 
+ #define DIFF_PICKAXE_IGNORE_CASE	32
+ 
+diff --git a/t/t4209-log-pickaxe.sh b/t/t4209-log-pickaxe.sh
+index 5ad4fad964c..46dc5f14b3b 100755
+--- a/t/t4209-log-pickaxe.sh
++++ b/t/t4209-log-pickaxe.sh
+@@ -59,6 +59,9 @@ test_expect_success 'usage' '
+ 	test_expect_code 128 git log -Gregex -Sstring 2>err &&
+ 	test_i18ngrep "mutually exclusive" err &&
+ 
++	test_expect_code 128 git log -Gregex --pickaxe-regex 2>err &&
++	test_i18ngrep "mutually exclusive" err &&
++
+ 	test_expect_code 128 git log -Gregex --find-object=HEAD 2>err &&
+ 	test_i18ngrep "mutually exclusive" err &&
+ 
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

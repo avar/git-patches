@@ -1,0 +1,85 @@
+From cddb1f75f6c43820d98bdc0dae6773046252f8c4 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210203032811.14979-1-avarab@gmail.com>
+References: <20210203032811.14979-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 Feb 2021 01:01:19 +0100
+Subject: [PATCH v2 02/22] test-lib-functions: document and test test_commit
+ --no-tag
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In 76b8b8d05c (test-lib functions: document arguments to test_commit,
+2021-01-12) I added missing documentation to test_commit, but in less
+than a month later in 3803a3a099 (t: add --no-tag option to
+test_commit, 2021-02-09) we got another undocumented option.
+
+Let's fix that, and while we're at it expand on my
+e7884b353b (test-lib-functions: assert correct parameter count,
+2021-02-12) and assert that you shouldn't be passing the optional
+"<tag>" argument under "test_commit --no-tag".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0000-basic.sh        | 19 +++++++++++++++++++
+ t/test-lib-functions.sh |  8 +++++++-
+ 2 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/t/t0000-basic.sh b/t/t0000-basic.sh
+index a6e570d674a..6ee98fd0695 100755
+--- a/t/t0000-basic.sh
++++ b/t/t0000-basic.sh
+@@ -1324,4 +1324,23 @@ test_expect_success 'test_must_fail rejects a non-git command with env' '
+ 	grep -F "test_must_fail: only '"'"'git'"'"' is allowed" err
+ '
+ 
++test_expect_success 'test_commit --no-tag fails with a <tag> argument' '
++	run_sub_test_lib_test_err \
++		test_commit-bug "test_commit-bug with --no-tag" <<-\EOF &&
++	test_expect_success "setup #1" "test_commit message1 file1 contents1"
++	test_expect_success "setup #2" "test_commit message2 file2 contents2 tag2"
++	test_expect_success "setup #3" "test_commit --no-tag message3 file3 contents3"
++	test_expect_success "setup #4" "test_commit --no-tag message4 file4 contents4 tag4"
++	test_done
++	EOF
++	check_sub_test_lib_test_err test_commit-bug \
++		<<-\EOF_OUT 3<<-\EOF_ERR
++	ok 1 - setup #1
++	ok 2 - setup #2
++	ok 3 - setup #3
++	EOF_OUT
++	error: bug in the test script: expect no <tag> parameter with --no-tag
++	EOF_ERR
++'
++
+ test_done
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 6348e8d7339..1eb75d0d733 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -178,6 +178,9 @@ debug () {
+ #	Invoke "git commit" with --signoff
+ #   --author <author>
+ #	Invoke "git commit" with --author <author>
++#   --no-tag
++#	Do not tag the resulting commit, if supplied giving the
++#	optional "<tag>" argument is an error.
+ #
+ # This will commit a file with the given contents and the given commit
+ # message, and tag the resulting commit with the given tag name.
+@@ -242,7 +245,10 @@ test_commit () {
+ 	git ${indir:+ -C "$indir"} commit \
+ 	    ${author:+ --author "$author"} \
+ 	    $signoff -m "$1" &&
+-	if test -z "$no_tag"
++	if test -n "$no_tag" -a $# -eq 4
++	then
++		BUG "expect no <tag> parameter with --no-tag"
++	elif test -z "$no_tag"
+ 	then
+ 		git ${indir:+ -C "$indir"} tag "${4:-$1}"
+ 	fi
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

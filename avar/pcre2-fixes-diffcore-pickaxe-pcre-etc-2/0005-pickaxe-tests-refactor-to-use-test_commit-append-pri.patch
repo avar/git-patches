@@ -1,0 +1,85 @@
+From 2a814e8d53a91fb74e8a9f4af6ec99df3868168a Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210203032811.14979-1-avarab@gmail.com>
+References: <20210203032811.14979-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Feb 2021 18:31:15 +0100
+Subject: [PATCH v2 05/22] pickaxe tests: refactor to use test_commit --append
+ --printf
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor existing tests added in e0e7cb8080c (log -G: ignore binary
+files, 2018-12-14) to use the --append option I added in
+3373518cc8b (test-lib functions: add an --append option to
+test_commit, 2021-01-12) and the --printf option added in a preceding
+commit.
+
+See also f5d79bf7dd6 (tests: refactor a few tests to use "test_commit
+--append", 2021-01-12) for prior similar refactoring.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4209-log-pickaxe.sh | 30 ++++++++++++++----------------
+ 1 file changed, 14 insertions(+), 16 deletions(-)
+
+diff --git a/t/t4209-log-pickaxe.sh b/t/t4209-log-pickaxe.sh
+index 5d06f5f45ea..298b25265f4 100755
+--- a/t/t4209-log-pickaxe.sh
++++ b/t/t4209-log-pickaxe.sh
+@@ -107,37 +107,35 @@ test_expect_success 'log -S --no-textconv (missing textconv tool)' '
+ '
+ 
+ test_expect_success 'setup log -[GS] binary & --text' '
+-	git checkout --orphan GS-binary-and-text &&
+-	git read-tree --empty &&
+-	printf "a\na\0a\n" >data.bin &&
+-	git add data.bin &&
+-	git commit -m "create binary file" data.bin &&
+-	printf "a\na\0a\n" >>data.bin &&
+-	git commit -m "modify binary file" data.bin &&
+-	git rm data.bin &&
+-	git commit -m "delete binary file" data.bin &&
+-	git log >full-log
++	test_create_repo GS-bin-txt &&
++	test_commit -C GS-bin-txt --append --printf A data.bin "a\na\0a\n" &&
++	test_commit -C GS-bin-txt --append --printf B data.bin "a\na\0a\n" &&
++	test_commit -C GS-bin-txt C data.bin "" &&
++	git -C GS-bin-txt log >full-log
+ '
+ 
+ test_expect_success 'log -G ignores binary files' '
+-	git log -Ga >log &&
++	git -C GS-bin-txt log -Ga >log &&
+ 	test_must_be_empty log
+ '
+ 
+ test_expect_success 'log -G looks into binary files with -a' '
+-	git log -a -Ga >log &&
++	git -C GS-bin-txt log -a -Ga >log &&
+ 	test_cmp log full-log
+ '
+ 
+ test_expect_success 'log -G looks into binary files with textconv filter' '
+-	test_when_finished "rm .gitattributes" &&
+-	echo "* diff=bin" >.gitattributes &&
+-	git -c diff.bin.textconv=cat log -Ga >log &&
++	test_when_finished "rm GS-bin-txt/.gitattributes" &&
++	(
++		cd GS-bin-txt &&
++		echo "* diff=bin" >.gitattributes &&
++		git -c diff.bin.textconv=cat log -Ga >../log
++	) &&
+ 	test_cmp log full-log
+ '
+ 
+ test_expect_success 'log -S looks into binary files' '
+-	git log -Sa >log &&
++	git -C GS-bin-txt log -Sa >log &&
+ 	test_cmp log full-log
+ '
+ 
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
