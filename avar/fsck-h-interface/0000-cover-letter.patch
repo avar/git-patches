@@ -3,12 +3,28 @@ In-Reply-To: <87blcja2ha.fsf@evledraar.gmail.com>
 References: <87blcja2ha.fsf@evledraar.gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Wed, 17 Feb 2021 20:35:35 +0100
-Subject: [PATCH 00/14] *** SUBJECT HERE ***
+Subject: [PATCH 00/14] fsck: API improvements
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+Jonathan Tan pointed out that the fsck error_func doesn't pass you the
+ID of the fsck failure in [1]. This series improves the API so it
+does, and moves the gitmodules_{found,done} variables into the
+fsck_options struct.
+
+The result is that instead of the "print_dangling_gitmodules" member
+in that series we can just implement that with the diff at the end of
+this cover letter (goes on top of a merge of this series & "seen"),
+and without any changes to fsck_finish().
+
+This conflicts with other in-flight fsck changes but the conflict is
+rather trivial. Jeff King has another concurrent series to add a
+couple of new fsck checks, those need to be moved to fsck.h, and
+there's another trivial conflict in 2 hunks due to the
+gitmodules_{found,done} move.
+
+1. https://lore.kernel.org/git/87blcja2ha.fsf@evledraar.gmail.com/
 
 Ævar Arnfjörð Bjarmason (14):
   fsck.h: indent arguments to of fsck_set_msg_type
@@ -35,5 +51,94 @@ Content-Transfer-Encoding: 8bit
  6 files changed, 152 insertions(+), 126 deletions(-)
 
 -- 
+
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index 82f381f854..22dfcfc5de 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -1713,6 +1713,20 @@ static void show_pack_info(int stat_only)
+ 	}
+ }
+ 
++static int index_pack_fsck_error_func(struct fsck_options *o,
++				      const struct object_id *oid,
++				      enum object_type object_type,
++				      enum fsck_msg_type msg_type,
++				      enum fsck_msg_id msg_id,
++				      const char *message)
++{
++	if (msg_id == FSCK_MSG_GITMODULES_MISSING) {
++		puts(oid_to_hex(oid));
++		return 0;
++	}
++	return fsck_error_function(o, oid, object_type, msg_type, msg_id, message);
++}
++
+ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ {
+ 	int i, fix_thin_pack = 0, verify = 0, stat_only = 0, rev_index;
+@@ -1934,10 +1948,8 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 		close(input_fd);
+ 
+ 	if (do_fsck_object) {
+-		struct fsck_options fo = FSCK_OPTIONS_STRICT;
+-
+-		fo.print_dangling_gitmodules = 1;
+-		if (fsck_finish(&fo))
++		fsck_options.error_func = index_pack_fsck_error_func;
++		if (fsck_finish(&fsck_options))
+ 			die(_("fsck error in pack objects"));
+ 	}
+ 
+diff --git a/fetch-pack.c b/fetch-pack.c
+index 0a337a04f1..9fc2ce86e4 100644
+--- a/fetch-pack.c
++++ b/fetch-pack.c
+@@ -40,6 +40,7 @@ static struct shallow_lock shallow_lock;
+ static const char *alternate_shallow_file;
+ static struct strbuf fsck_msg_types = STRBUF_INIT;
+ static struct string_list uri_protocols = STRING_LIST_INIT_DUP;
++static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
+ 
+ /* Remember to update object flag allocation in object.h */
+ #define COMPLETE	(1U << 0)
+@@ -993,19 +994,34 @@ static int cmp_ref_by_name(const void *a_, const void *b_)
+ 	return strcmp(a->name, b->name);
+ }
+ 
++static int fetch_pack_fsck_error_func(struct fsck_options *o,
++				      const struct object_id *oid,
++				      enum object_type object_type,
++				      enum fsck_msg_type msg_type,
++				      enum fsck_msg_id msg_id,
++				      const char *message)
++{
++	if (msg_id == FSCK_MSG_GITMODULES_MISSING) {
++		puts(oid_to_hex(oid));
++		return 0;
++	}
++	return fsck_error_function(o, oid, object_type, msg_type, msg_id, message);
++}
++
+ static void fsck_gitmodules_oids(struct oidset *gitmodules_oids)
+ {
+ 	struct oidset_iter iter;
+ 	const struct object_id *oid;
+-	struct fsck_options fo = FSCK_OPTIONS_STRICT;
+ 
+ 	if (!oidset_size(gitmodules_oids))
+ 		return;
+ 
+ 	oidset_iter_init(gitmodules_oids, &iter);
+ 	while ((oid = oidset_iter_next(&iter)))
+-		register_found_gitmodules(oid);
+-	if (fsck_finish(&fo))
++		oidset_insert(&fsck_options.gitmodules_found, oid);
++
++	fsck_options.error_func = fetch_pack_fsck_error_func;
++	if (fsck_finish(&fsck_options))
+ 		die("fsck failed");
+ }
+ 
 2.30.0.284.gd98b1dd5eaa7
 
