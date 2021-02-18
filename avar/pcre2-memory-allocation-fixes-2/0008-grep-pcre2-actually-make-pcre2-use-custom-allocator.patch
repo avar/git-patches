@@ -1,0 +1,108 @@
+From bf58d597a4b5986edb26309dd0f97e2809ccb5be Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210204210556.25242-1-avarab@gmail.com>
+References: <20210204210556.25242-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 25 Jan 2021 23:03:13 +0100
+Subject: [PATCH v2 08/10] grep/pcre2: actually make pcre2 use custom allocator
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Continue work started in 513f2b0bbd4 (grep: make PCRE2 aware of custom
+allocator, 2019-10-16) and make PCREv2 use our pcre2_{malloc,free}().
+functions for allocation. We'll now use it for all PCREv2 allocations.
+
+The reason 513f2b0bbd4 worked as a bugfix for the USE_NED_ALLOCATOR
+issue is because it targeted the allocation freed via free(), as
+opposed to by a pcre2_*free() function. I.e. the pcre2_maketables()
+and pcre2_maketables_free() pair.
+
+For most of the rest we continued allocating with stock malloc()
+inside PCREv2 itself, but didn't segfault because we'd use its
+corresponding free().
+
+In a preceding commit of mine I changed the free() to
+pcre2_maketables_free() on versions of PCREv2 10.34 and newer. So as
+far as fixing the segfault goes we could revert 513f2b0bbd4. But then
+we wouldn't use the desired allocator, let's just use it instead.
+
+Before this patch we'd on e.g.:
+
+    grep --threads=1 -iP æ.*var.*xyz
+
+Only use pcre2_{malloc,free}() for 2 malloc() calls and 2
+corresponding free() calls. Now it's 12 calls to each. This can be
+observed with the GREP_PCRE2_DEBUG_MALLOC debug mode.
+
+Reading the history of how this bug got introduced it wasn't present
+in Johannes's original patch[1] to fix the issue.
+
+My reading of that thread is that the approach the follow-up patches
+to Johannes's original pursued were based on misunderstanding of how
+the PCREv2 API works. In particular this part of [2]:
+
+    "most of the time (like when using UTF-8) the chartable (and
+    therefore the global context) is not needed (even when using
+    alternate allocators)"
+
+That's simply not how PCREv2 memory allocation works. It's easy to see
+how the misunderstanding came about. It's because (as noted above) the
+issue was noticed because of our use of free() in our own grep.c for
+freeing the memory allocated by pcre2_maketables().
+
+Thus the misunderstanding that PCREv2's compile context is something
+only needed for pcre2_maketables(), and e.g. an aborted earlier
+attempt[3] to only set it up when we ourselves called
+pcre2_maketables().
+
+That's not what PCREv2's compile context is. To quote PCREv2's
+documentation:
+
+    "This context just contains pointers to (and data for) external
+    memory management functions that are called from several places in
+    the PCRE2 library."
+
+Thus the failed attempts to go down the route of only creating the
+general context in cases where we ourselves call pcre2_maketables(),
+before finally settling on the approach 513f2b0bbd4 took of always
+creating it, but then mostly not using it.
+
+Instead we should always create it, and then pass the general context
+to those functions that accept it, so that they'll consistently use
+our preferred memory allocation functions.
+
+1. https://lore.kernel.org/git/3397e6797f872aedd18c6d795f4976e1c579514b.1565005867.git.gitgitgadget@gmail.com/
+2. https://lore.kernel.org/git/CAPUEsphMh_ZqcH3M7PXC9jHTfEdQN3mhTAK2JDkdvKBp53YBoA@mail.gmail.com/
+3. https://lore.kernel.org/git/20190806085014.47776-3-carenas@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index c63dbff4b24..0116ff5f09f 100644
+--- a/grep.c
++++ b/grep.c
+@@ -390,7 +390,7 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 			if (!pcre2_global_context)
+ 				BUG("pcre2_global_context uninitialized");
+ 			p->pcre2_tables = pcre2_maketables(pcre2_global_context);
+-			p->pcre2_compile_context = pcre2_compile_context_create(NULL);
++			p->pcre2_compile_context = pcre2_compile_context_create(pcre2_global_context);
+ 			pcre2_set_character_tables(p->pcre2_compile_context,
+ 							p->pcre2_tables);
+ 		}
+@@ -411,7 +411,7 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 					 p->pcre2_compile_context);
+ 
+ 	if (p->pcre2_pattern) {
+-		p->pcre2_match_data = pcre2_match_data_create_from_pattern(p->pcre2_pattern, NULL);
++		p->pcre2_match_data = pcre2_match_data_create_from_pattern(p->pcre2_pattern, pcre2_global_context);
+ 		if (!p->pcre2_match_data)
+ 			die("Couldn't allocate PCRE2 match data");
+ 	} else {
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

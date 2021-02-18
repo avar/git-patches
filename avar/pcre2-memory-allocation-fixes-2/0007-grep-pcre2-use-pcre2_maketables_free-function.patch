@@ -1,0 +1,69 @@
+From 6a4552c6d4e969ffac7cc16eb5a33ce852d662bd Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210204210556.25242-1-avarab@gmail.com>
+References: <20210204210556.25242-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 25 Jan 2021 20:05:03 +0100
+Subject: [PATCH v2 07/10] grep/pcre2: use pcre2_maketables_free() function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make use of the pcre2_maketables_free() function to free the memory
+allocated by pcre2_maketables().
+
+At first sight it's strange that 10da030ab75 (grep: avoid leak of
+chartables in PCRE2, 2019-10-16) which added the free() call here
+doesn't make use of the pcre2_free() the author introduced in the
+preceding commit in 513f2b0bbd4 (grep: make PCRE2 aware of custom
+allocator, 2019-10-16).
+
+The reason is that at the time the function didn't exist. It was first
+introduced in PCREv2 version 10.34, released on 2019-11-21.
+
+Let's make use of it behind a macro. I don't think this matters for
+anything to do with custom allocators, but it makes our use of PCREv2
+more discoverable.
+
+At some distant point in the future we'll be able to drop the version
+guard, as nobody will be running a version older than 10.34.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 4 ++++
+ grep.h | 3 +++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/grep.c b/grep.c
+index e58044474dc..c63dbff4b24 100644
+--- a/grep.c
++++ b/grep.c
+@@ -490,7 +490,11 @@ static void free_pcre2_pattern(struct grep_pat *p)
+ 	pcre2_compile_context_free(p->pcre2_compile_context);
+ 	pcre2_code_free(p->pcre2_pattern);
+ 	pcre2_match_data_free(p->pcre2_match_data);
++#ifdef GIT_PCRE2_VERSION_10_34_OR_HIGHER
++	pcre2_maketables_free(pcre2_global_context, p->pcre2_tables);
++#else
+ 	free((void *)p->pcre2_tables);
++#endif
+ }
+ #else /* !USE_LIBPCRE2 */
+ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt)
+diff --git a/grep.h b/grep.h
+index 54e52042cb9..64666e92049 100644
+--- a/grep.h
++++ b/grep.h
+@@ -7,6 +7,9 @@
+ #if (PCRE2_MAJOR >= 10 && PCRE2_MINOR >= 36) || PCRE2_MAJOR >= 11
+ #define GIT_PCRE2_VERSION_10_36_OR_HIGHER
+ #endif
++#if (PCRE2_MAJOR >= 10 && PCRE2_MINOR >= 34) || PCRE2_MAJOR >= 11
++#define GIT_PCRE2_VERSION_10_34_OR_HIGHER
++#endif
+ #else
+ typedef int pcre2_code;
+ typedef int pcre2_match_data;
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

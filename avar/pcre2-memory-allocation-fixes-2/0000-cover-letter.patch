@@ -1,0 +1,264 @@
+From 688d1b00d5dcd538e19da2fffeef614db8a99995 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210204210556.25242-1-avarab@gmail.com>
+References: <20210204210556.25242-1-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 18 Feb 2021 01:02:11 +0100
+Subject: [PATCH v2 00/10] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (10):
+  grep/pcre2: drop needless assignment + assert() on opt->pcre2
+  grep/pcre2: drop needless assignment to NULL
+  grep/pcre2: correct reference to grep_init() in comment
+  grep/pcre2: prepare to add debugging to pcre2_malloc()
+  grep/pcre2: add GREP_PCRE2_DEBUG_MALLOC debug mode
+  grep/pcre2: use compile-time PCREv2 version test
+  grep/pcre2: use pcre2_maketables_free() function
+  grep/pcre2: actually make pcre2 use custom allocator
+  grep/pcre2: move back to thread-only PCREv2 structures
+  grep/pcre2: move definitions of pcre2_{malloc,free}
+
+ builtin/grep.c |  1 -
+ grep.c         | 99 ++++++++++++++++++++++----------------------------
+ grep.h         |  9 ++++-
+ 3 files changed, 51 insertions(+), 58 deletions(-)
+
+Range-diff:
+ 1:  93c24fba676 <  -:  ----------- Fix mismerge of ds/maintenance-part-4 topic
+ 2:  e30c5ee76cd <  -:  ----------- commit-graph: fix regression when computing Bloom filters
+ 3:  2f9bbb6d91c <  -:  ----------- revision: parse parent in indegree_walk_step()
+ 4:  f90fca638e9 <  -:  ----------- commit-graph: consolidate fill_commit_graph_info
+ 5:  c0ef139843a <  -:  ----------- t6600-test-reach: generalize *_three_modes
+ 6:  72a2bfcaf01 <  -:  ----------- commit-graph: add a slab to store topological levels
+ 7:  d7f92784c65 <  -:  ----------- commit-graph: return 64-bit generation number
+ 8:  c1a09119f68 <  -:  ----------- commit-graph: implement corrected commit date
+ 9:  e8b63005c48 <  -:  ----------- commit-graph: implement generation data chunk
+10:  1fdc383c5c8 <  -:  ----------- commit-graph: use generation v2 only if entire chain does
+11:  8d00d7c3df8 <  -:  ----------- commit-reach: use corrected commit dates in paint_down_to_common()
+12:  5a3b130cad0 <  -:  ----------- doc: add corrected commit date info
+13:  eab0df0e5b9 <  -:  ----------- rebase -i: only write fixup-message when it's needed
+14:  498bb5b82e7 <  -:  ----------- sequencer: factor out code to append squash message
+15:  7cdb9682545 <  -:  ----------- rebase -i: comment out squash!/fixup! subjects from squash message
+16:  ae70e34f234 <  -:  ----------- sequencer: pass todo_item to do_pick_commit()
+17:  71ee81cd9ee <  -:  ----------- sequencer: use const variable for commit message comments
+18:  9e3cebd97cb <  -:  ----------- rebase -i: add fixup [-C | -c] command
+19:  1d410cd8c25 <  -:  ----------- t3437: test script for fixup [-C|-c] options in interactive rebase
+20:  bae5b4aea52 <  -:  ----------- rebase -i: teach --autosquash to work with amend!
+21:  2c0aa2ce2ef <  -:  ----------- doc/git-rebase: add documentation for fixup [-C|-c] options
+22:  c4cc0831694 <  -:  ----------- commit-graph: use repo_parse_commit
+23:  90cb1c47c7c <  -:  ----------- commit-graph: always parse before commit_graph_data_at()
+24:  448a39e65de <  -:  ----------- commit-graph: validate layers for generation data
+25:  9c2c0a82560 <  -:  ----------- commit-graph: compute generations separately
+26:  fde55b09065 <  -:  ----------- commit-graph: be extra careful about mixed generations
+27:  bc50d6c91f4 <  -:  ----------- commit-graph: prepare commit graph
+28:  a11f1e91552 !  1:  40d2e47c540 grep/pcre2: drop needless assignment + assert() on opt->pcre2
+    @@ Commit message
+         There was never a good reason for this, it's just a relic from when I
+         initially wrote the PCREv2 support. We're not going to have confusion
+         about compile_pcre2_pattern() being called when it shouldn't just
+    -    because we forgot to cargo-cult this opt->pcre2 option, and "opt"
+    -    is (mostly) used for the options the user supplied, let's avoid the
+    -    pattern of needlessly assigning to it.
+    +    because we forgot to cargo-cult this opt->pcre2 option.
+     
+    -    With my in-flight removal of PCREv1 [1] ("Remove support for v1 of the
+    -    PCRE library", 2021-01-24) there'll be even less confusion around what
+    -    we call where in these codepaths, which is one more reason to remove
+    -    this.
+    +    Furthermore the "struct grep_opt" is (mostly) used for the options the
+    +    user supplied, let's avoid the pattern of needlessly assigning to it.
+     
+    -    1. https://lore.kernel.org/git/xmqqmtwy29x8.fsf@gitster.c.googlers.com/
+    +    With my recent removal of the PCREv1 backend in 7599730b7e2 (Remove
+    +    support for v1 of the PCRE library, 2021-01-24) there's even less
+    +    confusion around what we call where in these codepaths, which is one
+    +    more reason to remove this.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+29:  db0ef9189e3 !  2:  e02f9b5ab50 grep/pcre2: drop needless assignment to NULL
+    @@ Commit message
+         grep/pcre2: drop needless assignment to NULL
+     
+         Remove a redundant assignment of pcre2_compile_context dating back to
+    -    my 94da9193a6e (grep: add support for PCRE v2, 2017-06-01). In
+    -    create_grep_pat() we xcalloc() the "grep_pat" struct, so there's no
+    +    my 94da9193a6e (grep: add support for PCRE v2, 2017-06-01).
+    +
+    +    In create_grep_pat() we xcalloc() the "grep_pat" struct, so there's no
+         need to NULL out individual members here.
+     
+         I think this was probably something left over from an earlier
+30:  9c5429f4d96 =  3:  2bcb6c53589 grep/pcre2: correct reference to grep_init() in comment
+31:  e5558f5f0f1 !  4:  78477193cd4 grep/pcre2: prepare to add debugging to pcre2_malloc()
+    @@ Commit message
+         grep/pcre2: prepare to add debugging to pcre2_malloc()
+     
+         Change pcre2_malloc() in a way that'll make it easier for a debugging
+    -    fprintf() to spew out the allocated pointer. This doesn't introduce
+    -    any functional change, it just makes a subsequent commit's diff easier
+    -    to read. Changes code added in 513f2b0bbd4 (grep: make PCRE2 aware of
+    -    custom allocator, 2019-10-16).
+    +    fprintf() to spew out the allocated pointer.
+    +
+    +    This doesn't introduce any functional change, it just makes a
+    +    subsequent commit's diff easier to read. Changes code added in
+    +    513f2b0bbd4 (grep: make PCRE2 aware of custom allocator, 2019-10-16).
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+32:  7968effaa8a !  5:  cbeb521bd65 grep/pcre2: add GREP_PCRE2_DEBUG_MALLOC debug mode
+    @@ Commit message
+         grep/pcre2: add GREP_PCRE2_DEBUG_MALLOC debug mode
+     
+         Add optional printing of PCREv2 allocations to stderr for a developer
+    -    who manually changes the GREP_PCRE2_DEBUG_MALLOC definition to
+    -    "1".
+    +    who manually changes the GREP_PCRE2_DEBUG_MALLOC definition to "1".
+    +
+    +    You need to manually change the definition in the source file similar
+    +    to the DEBUG_MAILMAP, there's no Makefile knob for this.
+     
+         This will be referenced a subsequent commit, and is generally useful
+         to manually see what's going on with PCREv2 allocations while working
+33:  604e183c224 =  6:  788929c3de6 grep/pcre2: use compile-time PCREv2 version test
+34:  f864a9aac4c !  7:  6a4552c6d4e grep/pcre2: use pcre2_maketables_free() function
+    @@ Commit message
+         grep/pcre2: use pcre2_maketables_free() function
+     
+         Make use of the pcre2_maketables_free() function to free the memory
+    -    allocated by pcre2_maketables(). At first sight it's strange that
+    -    10da030ab75 (grep: avoid leak of chartables in PCRE2, 2019-10-16)
+    -    which added the free() call here doesn't make use of the pcre2_free()
+    -    the author introduced in the preceding commit in 513f2b0bbd4 (grep:
+    -    make PCRE2 aware of custom allocator, 2019-10-16).
+    +    allocated by pcre2_maketables().
+    +
+    +    At first sight it's strange that 10da030ab75 (grep: avoid leak of
+    +    chartables in PCRE2, 2019-10-16) which added the free() call here
+    +    doesn't make use of the pcre2_free() the author introduced in the
+    +    preceding commit in 513f2b0bbd4 (grep: make PCRE2 aware of custom
+    +    allocator, 2019-10-16).
+     
+         The reason is that at the time the function didn't exist. It was first
+         introduced in PCREv2 version 10.34, released on 2019-11-21.
+     
+         Let's make use of it behind a macro. I don't think this matters for
+         anything to do with custom allocators, but it makes our use of PCREv2
+    -    more discoverable. At some distant point in the future we'll be able
+    -    to drop the version guard, as nobody will be running a version older
+    -    than 10.34.
+    +    more discoverable.
+    +
+    +    At some distant point in the future we'll be able to drop the version
+    +    guard, as nobody will be running a version older than 10.34.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+35:  cea9e066951 !  8:  bf58d597a4b grep/pcre2: actually make pcre2 use custom allocator
+    @@ Commit message
+         functions for allocation. We'll now use it for all PCREv2 allocations.
+     
+         The reason 513f2b0bbd4 worked as a bugfix for the USE_NED_ALLOCATOR
+    -    issue is because it managed to target pretty much the allocation freed
+    -    via free(), as opposed to by a pcre2_*free() function. I.e. the
+    -    pcre2_maketables() and pcre2_maketables_free() pair. For most of the
+    -    rest we continued allocating with stock malloc() inside PCREv2 itself,
+    -    but didn't segfault because we'd use its corresponding free().
+    +    issue is because it targeted the allocation freed via free(), as
+    +    opposed to by a pcre2_*free() function. I.e. the pcre2_maketables()
+    +    and pcre2_maketables_free() pair.
+    +
+    +    For most of the rest we continued allocating with stock malloc()
+    +    inside PCREv2 itself, but didn't segfault because we'd use its
+    +    corresponding free().
+     
+         In a preceding commit of mine I changed the free() to
+         pcre2_maketables_free() on versions of PCREv2 10.34 and newer. So as
+    @@ Commit message
+             grep --threads=1 -iP æ.*var.*xyz
+     
+         Only use pcre2_{malloc,free}() for 2 malloc() calls and 2
+    -    corresponding free() call. Now it's 12 calls to each. This can be
+    +    corresponding free() calls. Now it's 12 calls to each. This can be
+         observed with the GREP_PCRE2_DEBUG_MALLOC debug mode.
+     
+         Reading the history of how this bug got introduced it wasn't present
+    @@ Commit message
+         Thus the failed attempts to go down the route of only creating the
+         general context in cases where we ourselves call pcre2_maketables(),
+         before finally settling on the approach 513f2b0bbd4 took of always
+    -    creating it.
+    +    creating it, but then mostly not using it.
+     
+         Instead we should always create it, and then pass the general context
+         to those functions that accept it, so that they'll consistently use
+         our preferred memory allocation functions.
+     
+    -    1. https://public-inbox.org/git/3397e6797f872aedd18c6d795f4976e1c579514b.1565005867.git.gitgitgadget@gmail.com/
+    +    1. https://lore.kernel.org/git/3397e6797f872aedd18c6d795f4976e1c579514b.1565005867.git.gitgitgadget@gmail.com/
+         2. https://lore.kernel.org/git/CAPUEsphMh_ZqcH3M7PXC9jHTfEdQN3mhTAK2JDkdvKBp53YBoA@mail.gmail.com/
+         3. https://lore.kernel.org/git/20190806085014.47776-3-carenas@gmail.com/
+     
+36:  99eaa918261 !  9:  129adf872fb grep/pcre2: move back to thread-only PCREv2 structures
+    @@ Commit message
+         grep/pcre2: move back to thread-only PCREv2 structures
+     
+         Change the setup of the "pcre2_general_context" to happen per-thread
+    -    in compile_pcre2_pattern() instead of in grep_init(), as happens with
+    -    all the rest of the pcre2_* members of the grep_pat structure.
+    +    in compile_pcre2_pattern() instead of in grep_init().
+    +
+    +    This change brings it in line with how the rest of the pcre2_* members
+    +    in the grep_pat structure are set up.
+     
+         As noted in the preceding commit the approach 513f2b0bbd4 (grep: make
+         PCRE2 aware of custom allocator, 2019-10-16) took to allocate the
+         pcre2_general_context seems to have been initially based on a
+         misunderstanding of how PCREv2 memory allocation works.
+     
+    -    This approach of creating a global context is just added complexity
+    -    for almost zero gain. On my system it's 24 bytes saved per-thread, for
+    -    context PCREv2 will then go on to some kilobytes for its own
+    -    thread-local state.
+    +    The approach of creating a global context in grep_init() is just added
+    +    complexity for almost zero gain. On my system it's 24 bytes saved
+    +    per-thread. For comparison PCREv2 will then go on to allocate at least
+    +    a kilobyte for its own thread-local state.
+     
+         As noted in 6d423dd542f (grep: don't redundantly compile throwaway
+         patterns under threading, 2017-05-25) the grep code is intentionally
+    @@ Commit message
+         structures globally, while making others thread-local.
+     
+         So let's remove this special case and make all of them thread-local
+    -    for simplicity again.
+    +    again for simplicity. With this change we could move the
+    +    pcre2_{malloc,free} functions around to live closer to their current
+    +    use. I'm not doing that here to keep this change small, that cleanup
+    +    will be done in a follow-up commit.
+     
+         See also the discussion in 94da9193a6 (grep: add support for PCRE v2,
+         2017-06-01) about thread safety, and Johannes's comments[1] to the
+37:  462f12126c8 ! 10:  688d1b00d5d grep/pcre2: move definitions of pcre2_{malloc,free}
+    @@ Commit message
+         grep/pcre2: move definitions of pcre2_{malloc,free}
+     
+         Move the definitions of the pcre2_{malloc,free} functions above the
+    -    compile_pcre2_pattern() function they're used it. Before the preceding
+    -    commit they used to be needed earlier, but now we can move them to be
+    -    adjacent to the other PCREv2 functions.
+    +    compile_pcre2_pattern() function they're used in.
+    +
+    +    Before the preceding commit they used to be needed earlier, but now we
+    +    can move them to be adjacent to the other PCREv2 functions.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

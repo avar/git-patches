@@ -1,0 +1,73 @@
+From 788929c3de6800930ac8f06b41e9c75c07542bad Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210204210556.25242-1-avarab@gmail.com>
+References: <20210204210556.25242-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Feb 2021 04:39:57 +0100
+Subject: [PATCH v2 06/10] grep/pcre2: use compile-time PCREv2 version test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replace a use of pcre2_config(PCRE2_CONFIG_VERSION, ...) which I added
+in 95ca1f987ed (grep/pcre2: better support invalid UTF-8 haystacks,
+2021-01-24) with the same test done at compile-time.
+
+It might be cuter to do this at runtime since we don't have to do the
+"major >= 11 || (major >= 10 && ...)" test. But in the next commit
+we'll add another version comparison that absolutely needs to be done
+at compile-time, so we're better of being consistent across the board.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 18 ++++--------------
+ grep.h |  3 +++
+ 2 files changed, 7 insertions(+), 14 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 7d262a23d88..e58044474dc 100644
+--- a/grep.c
++++ b/grep.c
+@@ -400,21 +400,11 @@ static void compile_pcre2_pattern(struct grep_pat *p, const struct grep_opt *opt
+ 	    !(!opt->ignore_case && (p->fixed || p->is_fixed)))
+ 		options |= (PCRE2_UTF | PCRE2_MATCH_INVALID_UTF);
+ 
++#ifdef GIT_PCRE2_VERSION_10_36_OR_HIGHER
+ 	/* Work around https://bugs.exim.org/show_bug.cgi?id=2642 fixed in 10.36 */
+-	if (PCRE2_MATCH_INVALID_UTF && options & (PCRE2_UTF | PCRE2_CASELESS)) {
+-		struct strbuf buf;
+-		int len;
+-		int err;
+-
+-		if ((len = pcre2_config(PCRE2_CONFIG_VERSION, NULL)) < 0)
+-			BUG("pcre2_config(..., NULL) failed: %d", len);
+-		strbuf_init(&buf, len + 1);
+-		if ((err = pcre2_config(PCRE2_CONFIG_VERSION, buf.buf)) < 0)
+-			BUG("pcre2_config(..., buf.buf) failed: %d", err);
+-		if (versioncmp(buf.buf, "10.36") < 0)
+-			options |= PCRE2_NO_START_OPTIMIZE;
+-		strbuf_release(&buf);
+-	}
++	if (PCRE2_MATCH_INVALID_UTF && options & (PCRE2_UTF | PCRE2_CASELESS))
++		options |= PCRE2_NO_START_OPTIMIZE;
++#endif
+ 
+ 	p->pcre2_pattern = pcre2_compile((PCRE2_SPTR)p->pattern,
+ 					 p->patternlen, options, &error, &erroffset,
+diff --git a/grep.h b/grep.h
+index ae89d6254b3..54e52042cb9 100644
+--- a/grep.h
++++ b/grep.h
+@@ -4,6 +4,9 @@
+ #ifdef USE_LIBPCRE2
+ #define PCRE2_CODE_UNIT_WIDTH 8
+ #include <pcre2.h>
++#if (PCRE2_MAJOR >= 10 && PCRE2_MINOR >= 36) || PCRE2_MAJOR >= 11
++#define GIT_PCRE2_VERSION_10_36_OR_HIGHER
++#endif
+ #else
+ typedef int pcre2_code;
+ typedef int pcre2_match_data;
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
