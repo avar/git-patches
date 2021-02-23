@@ -1,0 +1,152 @@
+From bfedec4e5b4a62f0b1e8d6294eb6bd65dcd3649b Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210201111715.10200-1-avarab@gmail.com>
+References: <20210201111715.10200-1-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 23 Feb 2021 12:36:03 +0100
+Subject: [PATCH v3 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  Makefile: guard against TEST_OBJS in the environment
+  Makefile: split up long OBJECTS line
+  Makefile: sort OBJECTS assignment for subsequent change
+  Makefile: split OBJECTS into OBJECTS and GIT_OBJS
+  Makefile: add {program,xdiff,test,git,fuzz}-objs & objects targets
+  Makefile: build "$(FUZZ_OBJS)" in CI, not under "all"
+
+ Makefile                  | 38 ++++++++++++++++++++++++++++----------
+ ci/run-build-and-tests.sh |  1 +
+ 2 files changed, 29 insertions(+), 10 deletions(-)
+
+Range-diff:
+2:  a50b68fe195 = 1:  cf6d71dcf5a Makefile: guard against TEST_OBJS in the environment
+3:  53656000ebe = 2:  ad7ac896c09 Makefile: split up long OBJECTS line
+4:  d956624baea = 3:  575b2ab8e9c Makefile: sort OBJECTS assignment for subsequent change
+5:  500ace9cfb4 = 4:  7fdaeb3616b Makefile: split OBJECTS into OBJECTS and GIT_OBJS
+6:  8f7ce09e9bd ! 5:  765cf20c58c Makefile: add {program,xdiff,test,git}-objs & objects targets
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    Makefile: add {program,xdiff,test,git}-objs & objects targets
+    +    Makefile: add {program,xdiff,test,git,fuzz}-objs & objects targets
+     
+         Add targets to compile the various *.o files we declared in commonly
+         used *_OBJS variables. This is useful for debugging purposes, to
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Makefile ##
+    +@@ Makefile: ETAGS_TARGET = TAGS
+    + FUZZ_OBJS += fuzz-commit-graph.o
+    + FUZZ_OBJS += fuzz-pack-headers.o
+    + FUZZ_OBJS += fuzz-pack-idx.o
+    ++.PHONY: fuzz-objs
+    ++fuzz-objs: $(FUZZ_OBJS)
+    + 
+    + # Always build fuzz objects even if not testing, to prevent bit-rot.
+    + all:: $(FUZZ_OBJS)
+     @@ Makefile: PROGRAM_OBJS += http-backend.o
+      PROGRAM_OBJS += imap-send.o
+      PROGRAM_OBJS += sh-i18n--envsubst.o
+      PROGRAM_OBJS += shell.o
+    ++.PHONY: program-objs
+     +program-objs: $(PROGRAM_OBJS)
+      
+      # Binary suffix, set to .exe for Windows builds
+    @@ Makefile: XDIFF_OBJS += xdiff/xmerge.o
+      XDIFF_OBJS += xdiff/xpatience.o
+      XDIFF_OBJS += xdiff/xprepare.o
+      XDIFF_OBJS += xdiff/xutils.o
+    ++.PHONY: xdiff-objs
+     +xdiff-objs: $(XDIFF_OBJS)
+      
+      TEST_OBJS := $(patsubst %$X,%.o,$(TEST_PROGRAMS)) $(patsubst %,t/helper/%,$(TEST_BUILTINS_OBJS))
+    ++.PHONY: test-objs
+     +test-objs: $(TEST_OBJS)
+      
+      GIT_OBJS += $(LIB_OBJS)
+      GIT_OBJS += $(BUILTIN_OBJS)
+      GIT_OBJS += common-main.o
+      GIT_OBJS += git.o
+    ++.PHONY: git-objs
+     +git-objs: $(GIT_OBJS)
+      
+      OBJECTS += $(GIT_OBJS)
+    @@ Makefile: OBJECTS += $(FUZZ_OBJS)
+      ifndef NO_CURL
+      	OBJECTS += http.o http-walker.o remote-curl.o
+      endif
+    ++.PHONY: objects
+     +objects: $(OBJECTS)
+      
+      dep_files := $(foreach f,$(OBJECTS),$(dir $f).depend/$(notdir $f).d)
+1:  20ec032b390 ! 6:  bfedec4e5b4 Makefile: remove "all" on "$(FUZZ_OBJS)"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    Makefile: remove "all" on "$(FUZZ_OBJS)"
+    +    Makefile: build "$(FUZZ_OBJS)" in CI, not under "all"
+     
+    -    Adding this as a dependency was intentionally done in
+    +    Adding $(FUZZ_OBJS) as a dependency on "all" was intentionally done in
+         5e472150800 (fuzz: add basic fuzz testing target., 2018-10-12).
+     
+    -    I don't see why we need to prevent bitrot here under "all" for these
+    -    in particular, but not e.g. contrib/credential/**/*.c
+    +    Rather than needlessly build these objects which aren't required for
+    +    the build every time we make "all", let's instead move them to be
+    +    built by the CI jobs.
+     
+    -    In any case, these files are rather trivial and from their commit log
+    -    it seems the fuzz-all target is run by a few people already.
+    +    The goal is to make sure that we don't inadvertently break these, we
+    +    can accomplish that goal by building them in CI, rather than slowing
+    +    down every build of git for everyone everywhere.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Makefile ##
+    -@@ Makefile: FUZZ_OBJS += fuzz-commit-graph.o
+    - FUZZ_OBJS += fuzz-pack-headers.o
+    - FUZZ_OBJS += fuzz-pack-idx.o
+    +@@ Makefile: FUZZ_OBJS += fuzz-pack-idx.o
+    + .PHONY: fuzz-objs
+    + fuzz-objs: $(FUZZ_OBJS)
+      
+     -# Always build fuzz objects even if not testing, to prevent bit-rot.
+     -all:: $(FUZZ_OBJS)
+    @@ Makefile: FUZZ_OBJS += fuzz-commit-graph.o
+      FUZZ_PROGRAMS += $(patsubst %.o,%,$(FUZZ_OBJS))
+      
+      # Empty...
+    -@@ Makefile: $(FUZZ_PROGRAMS): all
+    +@@ Makefile: FUZZ_CXXFLAGS ?= $(CFLAGS)
+    + 
+    + .PHONY: fuzz-all
+    + 
+    +-$(FUZZ_PROGRAMS): all
+    ++$(FUZZ_PROGRAMS): all fuzz-objs
+      	$(QUIET_LINK)$(CXX) $(FUZZ_CXXFLAGS) $(LIB_OBJS) $(BUILTIN_OBJS) \
+      		$(XDIFF_OBJS) $(EXTLIBS) git.o $@.o $(LIB_FUZZING_ENGINE) -o $@
+      
+     -fuzz-all: $(FUZZ_PROGRAMS)
+     +fuzz-all: $(FUZZ_PROGRAMS) $(FUZZ_OBJS)
+    +
+    + ## ci/run-build-and-tests.sh ##
+    +@@ ci/run-build-and-tests.sh: windows*) cmd //c mklink //j t\\.prove "$(cygpath -aw "$cache_dir/.prove")";;
+    + *) ln -s "$cache_dir/.prove" t/.prove;;
+    + esac
+    + 
+    ++make fuzz-objs
+    + make
+    + case "$jobname" in
+    + linux-gcc)
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

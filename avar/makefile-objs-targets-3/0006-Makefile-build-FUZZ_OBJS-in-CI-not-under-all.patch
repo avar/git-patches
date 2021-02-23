@@ -1,0 +1,68 @@
+From bfedec4e5b4a62f0b1e8d6294eb6bd65dcd3649b Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210201111715.10200-1-avarab@gmail.com>
+References: <20210201111715.10200-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 28 Jan 2021 19:10:13 +0100
+Subject: [PATCH v3 6/6] Makefile: build "$(FUZZ_OBJS)" in CI, not under "all"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adding $(FUZZ_OBJS) as a dependency on "all" was intentionally done in
+5e472150800 (fuzz: add basic fuzz testing target., 2018-10-12).
+
+Rather than needlessly build these objects which aren't required for
+the build every time we make "all", let's instead move them to be
+built by the CI jobs.
+
+The goal is to make sure that we don't inadvertently break these, we
+can accomplish that goal by building them in CI, rather than slowing
+down every build of git for everyone everywhere.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile                  | 7 ++-----
+ ci/run-build-and-tests.sh | 1 +
+ 2 files changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 10f7baa74b0..cfad590a194 100644
+--- a/Makefile
++++ b/Makefile
+@@ -665,9 +665,6 @@ FUZZ_OBJS += fuzz-pack-idx.o
+ .PHONY: fuzz-objs
+ fuzz-objs: $(FUZZ_OBJS)
+ 
+-# Always build fuzz objects even if not testing, to prevent bit-rot.
+-all:: $(FUZZ_OBJS)
+-
+ FUZZ_PROGRAMS += $(patsubst %.o,%,$(FUZZ_OBJS))
+ 
+ # Empty...
+@@ -3322,8 +3319,8 @@ FUZZ_CXXFLAGS ?= $(CFLAGS)
+ 
+ .PHONY: fuzz-all
+ 
+-$(FUZZ_PROGRAMS): all
++$(FUZZ_PROGRAMS): all fuzz-objs
+ 	$(QUIET_LINK)$(CXX) $(FUZZ_CXXFLAGS) $(LIB_OBJS) $(BUILTIN_OBJS) \
+ 		$(XDIFF_OBJS) $(EXTLIBS) git.o $@.o $(LIB_FUZZING_ENGINE) -o $@
+ 
+-fuzz-all: $(FUZZ_PROGRAMS)
++fuzz-all: $(FUZZ_PROGRAMS) $(FUZZ_OBJS)
+diff --git a/ci/run-build-and-tests.sh b/ci/run-build-and-tests.sh
+index a66b5e8c75a..85d260476c5 100755
+--- a/ci/run-build-and-tests.sh
++++ b/ci/run-build-and-tests.sh
+@@ -10,6 +10,7 @@ windows*) cmd //c mklink //j t\\.prove "$(cygpath -aw "$cache_dir/.prove")";;
+ *) ln -s "$cache_dir/.prove" t/.prove;;
+ esac
+ 
++make fuzz-objs
+ make
+ case "$jobname" in
+ linux-gcc)
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
