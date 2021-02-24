@@ -1,0 +1,118 @@
+From 27394c6c2a4dd97f26ed89735158a70a4da686da Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210215154427.32693-1-avarab@gmail.com>
+References: <20210215154427.32693-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 24 Feb 2021 20:07:50 +0100
+Subject: [PATCH v3 26/35] userdiff tests: switch to -U0 by default
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the -U1 default in the userdiff tests to -U0. There's no reason
+to use -U1, it just causes confusion and the need to work around the
+test semantics themselves by not having the matching line immediately
+precede the changed line.
+
+The -U1 was initially added in f12c66b9bb8 (userdiff/perl: anchor
+"sub" and "package" patterns on the left, 2011-05-21), seemingly to
+appease a specific test I'd reported as failing with the "perl"
+pattern. This was then documented in bfa7d01413b (t4018: an
+infrastructure to test hunk headers, 2014-03-21).
+
+There's no special logic in xdiff/xemit.c that would depend on -U1
+v.s. -U0 here. So let's use -U0 for simplicity, we're interested in
+what lines match most of the time, not at which line we start the
+search.
+
+A couple of test cases depended on the -U1, most confusingly one of
+the custom.sh test cases.
+
+Let's extend "test_diff_funcname()" to take an argument to "git diff"
+and test "-U1" there, both because rewriting the testcase would be
+painful to understand in the context of reviewing this change, and so
+that we explicitly test that we're using -U0.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4018-diff-funcname.sh | 5 +++--
+ t/t4018/README           | 7 +++----
+ t/t4018/custom.sh        | 1 +
+ t/t4018/perl.sh          | 1 -
+ 4 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/t/t4018-diff-funcname.sh b/t/t4018-diff-funcname.sh
+index a3058fda130..ca23d156666 100755
+--- a/t/t4018-diff-funcname.sh
++++ b/t/t4018-diff-funcname.sh
+@@ -104,7 +104,7 @@ do
+ 	"
+ 
+ 	test_expect_success "hunk header: $i" "
+-		git diff -U1 $i >diff &&
++		git diff -U0 $i >diff &&
+ 		last_diff_context_line diff >ctx &&
+ 		test_cmp t4018/$i.header ctx
+ 	"
+@@ -112,6 +112,7 @@ done
+ 
+ test_diff_funcname () {
+ 	desc=$1
++	diff_opts=${2:--U0} &&
+ 	cat <&8 >arg.header &&
+ 	cat <&9 >arg.test &&
+ 	what=$(cat arg.what) &&
+@@ -124,7 +125,7 @@ test_diff_funcname () {
+ 	' &&
+ 
+ 	test_expect_success "$desc" '
+-		git diff -U1 "$what" >diff &&
++		git diff $diff_opts "$what" >diff &&
+ 		last_diff_context_line diff >actual &&
+ 		test_cmp expected actual
+ 	' &&
+diff --git a/t/t4018/README b/t/t4018/README
+index a3220dd6374..cef7d3c0e17 100644
+--- a/t/t4018/README
++++ b/t/t4018/README
+@@ -5,11 +5,10 @@ How to write test cases
+ There are two ways of writing tests in this directory. In both cases
+ "LANG" is the userdiff driver name, e.g. "perl" or "cpp".
+ 
+-The word "ChangeMe" (exactly this form) should appear at a distance of
+-at least two lines from the line that must appear in the hunk
+-header. See below sections.
++The word "ChangeMe" below the line that must appear in the hunk header
++(we run the diff with -U0). See below sections.
+ 
+-t4018 header: t/README.
++t4018 header: The content of the "EOF_TEST" argument is used as-is, with the
+ "LANG.sh" test cases
+ ====================
+ 
+diff --git a/t/t4018/custom.sh b/t/t4018/custom.sh
+index 127524afda3..97f310c02fb 100755
+--- a/t/t4018/custom.sh
++++ b/t/t4018/custom.sh
+@@ -10,6 +10,7 @@ test_expect_success 'custom: setup non-trivial custom' '
+ '
+ 
+ test_diff_funcname 'custom: non-trivial custom pattern' \
++	'-U1' \
+ 	8<<\EOF_HUNK 9<<\EOF_TEST
+ int special, RIGHT;
+ EOF_HUNK
+diff --git a/t/t4018/perl.sh b/t/t4018/perl.sh
+index ba11241750b..63f373d1a43 100755
+--- a/t/t4018/perl.sh
++++ b/t/t4018/perl.sh
+@@ -89,6 +89,5 @@ sub foo;
+ EOF_HUNK
+ sub foo;
+ =head1
+-
+ ChangeMe
+ EOF_TEST
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

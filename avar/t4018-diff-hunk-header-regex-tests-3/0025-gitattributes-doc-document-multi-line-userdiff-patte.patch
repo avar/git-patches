@@ -1,0 +1,186 @@
+From a39ba8e254549ff89e897ef46440d5689fd72661 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210215154427.32693-1-avarab@gmail.com>
+References: <20210215154427.32693-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 15 Feb 2021 01:17:50 +0100
+Subject: [PATCH v3 25/35] gitattributes doc: document multi-line userdiff
+ patterns
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Document the multi-line userdiff patterns and how their matching and
+the negation syntax works.
+
+These patterns have been supported since f258475a6e (Per-path
+attribute based hunk header selection., 2007-07-06), and have had
+their current semantics ever since 3d8dccd74a (diff: fix "multiple
+regexp" semantics to find hunk header comment, 2008-09-20).
+
+But we had no documentation for them, let's fix that, and also add
+tests showing how some of the things being discussed here work.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/gitattributes.txt | 38 ++++++++++++++++--
+ t/t4018/custom.sh               | 70 +++++++++++++++++++++++++++++++++
+ t/t4018/perl.sh                 | 16 ++++++++
+ 3 files changed, 120 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/gitattributes.txt b/Documentation/gitattributes.txt
+index 62c1147ba97..8082ff1ee73 100644
+--- a/Documentation/gitattributes.txt
++++ b/Documentation/gitattributes.txt
+@@ -794,12 +794,42 @@ backslashes; the pattern above picks a line that begins with a
+ backslash, and zero or more occurrences of `sub` followed by
+ `section` followed by open brace, to the end of line.
+ 
+-There are built-in patterns shipped as part of git itself. A more
+-advanced version of the `tex` pattern discussed above is one of them.
++Multiple patterns can be supplied by listing them one per line
++separated by `\n`. They will be matched one line at a time, e.g.:
++
++------------------------
++[diff "perl"]
++	xfuncname = "!^=head\n^[^ ]+.*"
++------------------------
++
++Patterns in a list of multiple patterns that begin with "!" are
++negated. A matching negated pattern will cause the matched line to be
++skipped. Use it to skip a later pattern that would otherwise match. It
++is an error if one or more negated patterns aren't followed by a
++non-negated pattern.
++
++To match a literal "!" at the start of a line, use some other regex
++construct that will match a literal "!" without "!" being the first
++character on that line, such as "[!]".
++
++If the last pattern in a list of multiple patterns ends with "\n" it
++will be interpreted as an empty pattern, and will match the first
++empty line. It's almost always a logic error to provide a list of
++multiple patterns ending with "\n", but it's permitted in case you
++genuinely want to match an empty line.
++
++If the pattern contains a `$1` capture it will be used instead of the
++entire matching line (`$0`) to display the hunk header. This can be
++used e.g. to strip whitespace from the beginning of the line, or to
++only display the function name as part of a longer function
++definition.
++
++There are built-in patterns shipped as part of git itself, see the
++full listing below.
+ 
+ For built-in patterns, you do not need `diff.<lang>.xfuncname` in your
+-configuration file as discussed above, but if present, it will
+-override a built-in pattern.
++configuration file. If present, it will override a built-in pattern,
++as shown in the `diff.perl.xfuncname` example above.
+ 
+ Nevertheless, you need to enable built-in patterns via .gitattributes`
+ for the pattern to take effect.
+diff --git a/t/t4018/custom.sh b/t/t4018/custom.sh
+index 72d38dad686..127524afda3 100755
+--- a/t/t4018/custom.sh
++++ b/t/t4018/custom.sh
+@@ -111,3 +111,73 @@ ChangeMe
+ 
+ baz
+ EOF_TEST
++
++test_expect_success 'custom: setup negation syntax, ! is magic' '
++	git config diff.custom.xfuncname "!negation
++line"
++'
++
++test_diff_funcname 'custom: negation syntax, ! is magic' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++line
++EOF_HUNK
++line
++!negation
++
++ChangeMe
++
++baz
++EOF_TEST
++
++test_expect_success 'custom: setup negation syntax, use [!] to override ! magic' '
++	git config diff.custom.xfuncname "[!]negation
++line"
++'
++
++test_diff_funcname 'custom: negation syntax, use [!] to override ! magic' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++!negation
++EOF_HUNK
++line
++!negation
++
++ChangeMe
++
++baz
++EOF_TEST
++
++test_expect_success 'custom: setup captures in multiple patterns' '
++	git config diff.custom.xfuncname "!^=head
++^format ([^ ]+)
++^sub ([^;]+)"
++'
++
++test_diff_funcname 'custom: captures in multiple patterns' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++foo
++EOF_HUNK
++sub foo;
++
++=head1
++
++ChangeMe
++
++EOF_TEST
++
++test_expect_success 'custom: multiple patterns ending with \n' '
++	git config diff.custom.xfuncname "!^=head
++^sub ([^;]+)
++"
++'
++
++test_diff_funcname 'custom: multiple patterns ending with \n' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++
++EOF_HUNK
++sub foo;
++
++=head1
++
++ChangeMe
++
++EOF_TEST
+diff --git a/t/t4018/perl.sh b/t/t4018/perl.sh
+index b53b759353b..ba11241750b 100755
+--- a/t/t4018/perl.sh
++++ b/t/t4018/perl.sh
+@@ -76,3 +76,19 @@ sub asub
+ 	print "ChangeMe\n";
+ }
+ EOF_TEST
++
++
++test_expect_success 'custom: setup config overrides built-in patterns' '
++	git config diff.perl.xfuncname "!^=head
++^[^ ]+.*"
++'
++
++test_diff_funcname 'custom: config overrides built-in patterns' \
++	8<<\EOF_HUNK 9<<\EOF_TEST
++sub foo;
++EOF_HUNK
++sub foo;
++=head1
++
++ChangeMe
++EOF_TEST
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

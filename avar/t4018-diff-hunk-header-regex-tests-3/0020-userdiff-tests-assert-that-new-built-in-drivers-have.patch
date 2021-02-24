@@ -1,0 +1,96 @@
+From d3cbfc4354d2f2445df55151a8775fb2df67b9e7 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210215154427.32693-1-avarab@gmail.com>
+References: <20210215154427.32693-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 24 Feb 2021 16:27:09 +0100
+Subject: [PATCH v3 20/35] userdiff tests: assert that new built-in drivers
+ have tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add an assertion to the userdiff test framework to check that
+everything except a narrow whitelist of existing built-in patterns has
+tests.
+
+Since this test framework was added we've added new patterns without
+any tests. Let's make it obvious in the future in the diff for such
+patches that they should have those tests.
+
+For anything with tests we can skip the "does the pattern compile?"
+test, as the actual tests will check that for us.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4018-diff-funcname.sh | 30 +++++++++++++++++++++++++++++-
+ 1 file changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/t/t4018-diff-funcname.sh b/t/t4018-diff-funcname.sh
+index b80546b4d7f..a3058fda130 100755
+--- a/t/t4018-diff-funcname.sh
++++ b/t/t4018-diff-funcname.sh
+@@ -15,6 +15,19 @@ test_expect_success 'setup' '
+ 	sort <builtin-drivers >builtin-drivers.sorted &&
+ 	test_cmp builtin-drivers.sorted builtin-drivers &&
+ 
++	# Do not add anything to this list. New built-in drivers should have
++	# tests
++	cat >drivers-no-tests <<-\EOF &&
++	ada
++	bibtex
++	csharp
++	html
++	objc
++	pascal
++	ruby
++	tex
++	EOF
++
+ 	# for regexp compilation tests
+ 	echo A >A.java &&
+ 	echo B >B.java
+@@ -22,7 +35,12 @@ test_expect_success 'setup' '
+ 
+ for p in $(cat builtin-drivers)
+ do
+-	test_expect_success "builtin $p pattern compiles" '
++	P=$(echo $p | tr 'a-z' 'A-Z')
++	if grep -q $p drivers-no-tests
++	then
++		test_set_prereq NO_TEST_FOR_DRIVER_$P
++	fi
++	test_expect_success NO_TEST_FOR_DRIVER_$P "builtin $p pattern compiles" '
+ 		echo "*.java diff=$p" >.gitattributes &&
+ 		test_expect_code 1 git diff --no-index \
+ 			A.java B.java 2>msg &&
+@@ -119,11 +137,17 @@ test_diff_funcname () {
+ 	'
+ }
+ 
++>drivers-had-no-tests
+ for what in $diffpatterns
+ do
+ 	test="$TEST_DIRECTORY/t4018/$what.sh"
+ 	if ! test -e "$test"
+ 	then
++		git -C t4018 ls-files ':!*.sh' "$what*" >other-tests &&
++		if ! test -s other-tests
++		then
++			echo $what >>drivers-had-no-tests
++		fi
+ 		continue
+ 	fi &&
+ 
+@@ -135,4 +159,8 @@ do
+ 	. "$test"
+ done
+ 
++test_expect_success 'we should not have new built-in drivers without tests' '
++	test_cmp drivers-no-tests drivers-had-no-tests
++'
++
+ test_done
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
