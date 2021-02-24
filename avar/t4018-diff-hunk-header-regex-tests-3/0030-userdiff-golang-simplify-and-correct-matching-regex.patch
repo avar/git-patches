@@ -1,0 +1,74 @@
+From 43ee24e554bcfed9b7d057eba1a9f548167d53e9 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210215154427.32693-1-avarab@gmail.com>
+References: <20210215154427.32693-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 24 Feb 2021 15:25:28 +0100
+Subject: [PATCH v3 30/35] userdiff golang: simplify and correct matching regex
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Simplify the regex for the golang driver added in
+1dbf0c0ad6c (userdiff: add built-in pattern for golang, 2018-03-01) to
+remove redundant constructs.
+
+There's no point in having a regex like this:
+
+    .*(foo)?
+
+When we can just write:
+
+    .*
+
+In the "func" case, since the "(foo?)" match isn't mandatory it won't
+matter for the end result, and in this case we're not using the
+capture pattern. Not that it would matter since it's followed by a
+greedy .*, so we'd only get the empty string.
+
+In the "type" case we would stop at the "{", since it was not preceded
+by a ".*". This was a bug, if we have a comment or something else on
+that line we should include it.
+
+I'm also changing the "func[ \t]*.*" rule to "func[ \t].*" while I'm
+at it. We should always get whitespace after "func", so this narrows
+down our match. Let's do the same in the new "type" rule.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4018/golang | 2 +-
+ userdiff.c     | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/t/t4018/golang b/t/t4018/golang
+index 70bf0d936bb..72a35d66008 100644
+--- a/t/t4018/golang
++++ b/t/t4018/golang
+@@ -46,7 +46,7 @@ type RIGHT struct {
+ }
+ 
+ t4018 description: struct with comment after {
+-t4018 header: type some struct {
++t4018 header: type some struct { // comment
+ type some struct { // comment
+ 	a Type
+ 	b ChangeMe
+diff --git a/userdiff.c b/userdiff.c
+index 55f4f769bd3..698eca5ad35 100644
+--- a/userdiff.c
++++ b/userdiff.c
+@@ -129,9 +129,9 @@ IPATTERN("fountain",
+ 	 "[^ \t-]+"),
+ PATTERNS("golang",
+ 	 /* Functions */
+-	 "^[ \t]*(func[ \t]*.*(\\{[ \t]*)?)\n"
++	 "^[ \t]*(func[ \t].*)\n"
+ 	 /* Structs and interfaces */
+-	 "^[ \t]*(type[ \t].*(struct|interface)[ \t]*(\\{[ \t]*)?)",
++	 "^[ \t]*(type[ \t].*(struct|interface)[ \t].*)",
+ 	 /* -- */
+ 	 "[a-zA-Z_][a-zA-Z0-9_]*"
+ 	 "|[-+0-9.eE]+i?|0[xX]?[0-9a-fA-F]+i?"
+-- 
+2.30.0.284.gd98b1dd5eaa7
+

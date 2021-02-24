@@ -1,0 +1,77 @@
+From 70a2e7ca70b7f52c04d971d14ea2b0d9ffae4c0a Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210215154427.32693-1-avarab@gmail.com>
+References: <20210215154427.32693-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 24 Feb 2021 15:18:06 +0100
+Subject: [PATCH v3 31/35] userdiff golang: don't over-match intented
+ constructs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a bug introduced when the "golang" driver was added in
+1dbf0c0ad6c (userdiff: add built-in pattern for golang, 2018-03-01).
+
+Unlike the default def_ff() driver in xemit.c it would match "type"
+declarations inside functions. Let's make it mandatory that a "func"
+or "type" must be at the beginning of the line with no whitespace to
+get around this.
+
+Go is such a regularly formatted language that I think this can be
+counted on. I think the whitespace matching was probably copy/pasted
+from an earlier userdiff.c pattern.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4018/golang | 20 ++++++++++++++++++++
+ userdiff.c     |  4 ++--
+ 2 files changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/t/t4018/golang b/t/t4018/golang
+index 72a35d66008..252b6049da4 100644
+--- a/t/t4018/golang
++++ b/t/t4018/golang
+@@ -51,3 +51,23 @@ type some struct { // comment
+ 	a Type
+ 	b ChangeMe
+ }
++
++t4018 description: func combined with type
++t4018 header: func myfunc() {
++func myfunc() {
++	type mystruct struct {
++		a Foo
++		b Bar
++	}
++	ChangeMe
++
++t4018 description: anonymous indented func()
++t4018 header: func SomeThing() bool {
++func SomeThing() bool {
++	func() {
++		defer func() {
++			fmt.Println("hello")
++		}()
++	}()
++
++	ChangeMe
+diff --git a/userdiff.c b/userdiff.c
+index 698eca5ad35..704af241e44 100644
+--- a/userdiff.c
++++ b/userdiff.c
+@@ -129,9 +129,9 @@ IPATTERN("fountain",
+ 	 "[^ \t-]+"),
+ PATTERNS("golang",
+ 	 /* Functions */
+-	 "^[ \t]*(func[ \t].*)\n"
++	 "^(func[ \t].*)\n"
+ 	 /* Structs and interfaces */
+-	 "^[ \t]*(type[ \t].*(struct|interface)[ \t].*)",
++	 "^(type[ \t].*[ \t](struct|interface)[ \t].*)",
+ 	 /* -- */
+ 	 "[a-zA-Z_][a-zA-Z0-9_]*"
+ 	 "|[-+0-9.eE]+i?|0[xX]?[0-9a-fA-F]+i?"
+-- 
+2.30.0.284.gd98b1dd5eaa7
+
