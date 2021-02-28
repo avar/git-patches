@@ -1,0 +1,71 @@
+From ac1a658d07fe3a5eec995ebe7b2408d7a4e2dabc Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 27 Feb 2021 12:12:50 +0100
+Subject: [PATCH 03/10] describe tests: always assert empty stderr from
+ "describe"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Invert a test added in 3291fe4072e (Add git-describe test for "verify
+annotated tag names on output", 2008-03-03) to make checking that we
+don't have warnings the rule rather than the exception.
+
+There was only one case where we expected and got a warning. Let's
+test for that case explicitly, and assert no warnings or other stderr
+output for all the rest.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6120-describe.sh | 26 ++++++++++++--------------
+ 1 file changed, 12 insertions(+), 14 deletions(-)
+
+diff --git a/t/t6120-describe.sh b/t/t6120-describe.sh
+index e4fd5d567f..ef70c695be 100755
+--- a/t/t6120-describe.sh
++++ b/t/t6120-describe.sh
+@@ -21,7 +21,8 @@ check_describe () {
+ 	shift
+ 	describe_opts="$@"
+ 	test_expect_success "describe $describe_opts" '
+-		git describe $describe_opts 2>err.actual >raw &&
++		git describe $describe_opts 2>err >raw &&
++		test_must_be_empty err &&
+ 		sed -e "s/-g[0-9a-f]*\$/-gHASH/" <raw >actual &&
+ 		echo $expect >expect &&
+ 		test_cmp expect actual
+@@ -122,20 +123,17 @@ test_expect_success 'describe --contains defaults to HEAD without commit-ish' '
+ '
+ 
+ check_describe tags/A --all A^0
+-test_expect_success 'no warning was displayed for A' '
+-	test_must_be_empty err.actual
+-'
+ 
+-test_expect_success 'rename tag A to Q locally' '
+-	mv .git/refs/tags/A .git/refs/tags/Q
+-'
+-cat - >err.expect <<EOF
+-warning: tag 'Q' is externally known as 'A'
+-EOF
+-check_describe A-8-gHASH HEAD
+-test_expect_success 'warning was displayed for Q' '
+-	test_cmp err.expect err.actual
+-'
++test_expect_success 'renaming tag A to Q locally produces a warning' "
++	mv .git/refs/tags/A .git/refs/tags/Q &&
++	git describe HEAD 2>actual >out &&
++	cat >expected <<-\EOF &&
++	warning: tag 'Q' is externally known as 'A'
++	EOF
++	test_cmp expected actual &&
++	grep -E '^A-8-g[0-9a-f]+$' out
++"
++
+ test_expect_success 'misnamed annotated tag forces long output' '
+ 	description=$(git describe --no-long Q^0) &&
+ 	expr "$description" : "A-0-g[0-9a-f]*$" &&
+-- 
+2.31.0.rc0.116.g45ec00aa00
+

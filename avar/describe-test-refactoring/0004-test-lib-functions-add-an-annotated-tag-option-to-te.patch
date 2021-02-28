@@ -1,0 +1,101 @@
+From 15efc2c6242b7899bb52f398bb83653dc9f05daf Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 27 Feb 2021 12:42:46 +0100
+Subject: [PATCH 04/10] test-lib functions: add an --annotated-tag option to
+ "test_commit"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add an --annotated-tag option to test_commit. The tag will share the
+same message as the commit, and we'll call test_tick before creating
+it (unless --notick) is provided.
+
+There's quite a few tests that could be simplified with this
+construct. I've picked one to convert in this change as a
+demonstration.
+
+The placement of --annotated-tag after "notick" in the case of the
+documentation, and then after "no_tag" in the case of the code is
+slightly inconsistent. It's to evade a merge conflict with two other
+commits adding a --printf option, and another one adding documentation
+for --no-tag.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1403-show-ref.sh     |  6 ++----
+ t/test-lib-functions.sh | 18 +++++++++++++++++-
+ 2 files changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/t/t1403-show-ref.sh b/t/t1403-show-ref.sh
+index 6ce62f878c..7c873033e9 100755
+--- a/t/t1403-show-ref.sh
++++ b/t/t1403-show-ref.sh
+@@ -7,11 +7,9 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+-	test_commit A &&
+-	git tag -f -a -m "annotated A" A &&
++	test_commit --annotated-tag A &&
+ 	git checkout -b side &&
+-	test_commit B &&
+-	git tag -f -a -m "annotated B" B &&
++	test_commit --annotated-tag B &&
+ 	git checkout main &&
+ 	test_commit C &&
+ 	git branch B A^0
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 6348e8d733..c6cdabf53e 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -171,6 +171,10 @@ debug () {
+ #	Run all git commands in directory <dir>
+ #   --notick
+ #	Do not call test_tick before making a commit
++#   --annotated-tag
++#	Create an annotated tag with "-a -m <message>". Calls
++#	test_tick between making the commit and tag unless --notick is
++#	given.
+ #   --append
+ #	Use "echo >>" instead of "echo >" when writing "<contents>" to
+ #	"<file>"
+@@ -191,6 +195,7 @@ test_commit () {
+ 	signoff= &&
+ 	indir= &&
+ 	no_tag= &&
++	annotated_tag= &&
+ 	while test $# != 0
+ 	do
+ 		case "$1" in
+@@ -220,6 +225,9 @@ test_commit () {
+ 		--no-tag)
+ 			no_tag=yes
+ 			;;
++		--annotated-tag)
++			annotated_tag=yes
++			;;
+ 		*)
+ 			break
+ 			;;
+@@ -244,7 +252,15 @@ test_commit () {
+ 	    $signoff -m "$1" &&
+ 	if test -z "$no_tag"
+ 	then
+-		git ${indir:+ -C "$indir"} tag "${4:-$1}"
++		if test -n "$annotated_tag"
++		then
++			if test -z "$notick"
++			then
++				test_tick
++			fi &&
++			test_tick
++		fi &&
++		git ${indir:+ -C "$indir"} tag ${annotated_tag:+ -a -m "$1"} "${4:-$1}"
+ 	fi
+ }
+ 
+-- 
+2.31.0.rc0.116.g45ec00aa00
+
