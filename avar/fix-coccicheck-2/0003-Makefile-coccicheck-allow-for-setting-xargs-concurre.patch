@@ -1,0 +1,83 @@
+From 88eab1af9a07e48634299be2a4804709471be411 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210302205103.12230-1-avarab@gmail.com>
+References: <20210302205103.12230-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Mar 2021 17:23:31 +0100
+Subject: [PATCH v2 3/4] Makefile/coccicheck: allow for setting xargs
+ concurrency
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the SPATCH_BATCH_SIZE facility added in
+960154b9c17 (coccicheck: optionally batch spatch invocations,
+2019-05-06) and bcb4edf7af7 (coccicheck: make batch size of 0 mean
+"unlimited", 2019-05-08) to allow for both setting
+SPATCH_BATCH_SIZE=N, and also to have a more advanced SPATCH_XARGS
+argument.
+
+The reason to replace the "$$limit" is that now you actually see under
+V=1 what argument your program will get invoked with.
+
+The reason for the "9999" limit is that if you e.g. try to define an
+"$(XARGS)" which is conditionally an empty string or not depending on
+this setting then e.g.:
+
+    echo $(FILES) | $(XARGS) $(XARGS_FLAGS) $(SPATCH)
+
+Over multiple lines with "\" will error out. I think just setting it
+to "xargs -n 9999" as a trivial workaround is the best solution here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 26 ++++++++++++++++++++------
+ 1 file changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 798a0517131..9fa715e4037 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1203,6 +1203,25 @@ SPATCH_FLAGS = --no-includes --patch .
+ # Setting it to 0 will feed all files in a single spatch invocation.
+ SPATCH_BATCH_SIZE = 1
+ 
++# For the 'coccicheck' target; SPATCH_XARGS can be used to manually
++# tweak the xargs invocation. By default we invoke "xargs -n 1", and
++# "xargs -n 9999" under SPATCH_BATCH_SIZE=0.
++#
++# Setting SPATCH_XARGS overrides SPATCH_BATCH_SIZE. To get concurrency
++# when targeting a single contrib/coccinelle/%.patch use e.g. "-P" if
++# your xargs(1) supports it:
++#
++#    make contrib/coccinelle/strbuf.cocci.patch SPATCH_XARGS="xargs -P 8 -n 8"
++#
++# Or a combination -jN and "xargs -P":
++#
++#    make -j4 coccicheck SPATCH_XARGS="xargs -P 2 -n 8"
++ifeq (0,$(SPATCH_BATCH_SIZE))
++SPATCH_XARGS = xargs -n 9999
++else
++SPATCH_XARGS = xargs -n $(SPATCH_BATCH_SIZE)
++endif
++
+ include config.mak.uname
+ -include config.mak.autogen
+ -include config.mak
+@@ -2859,12 +2878,7 @@ COCCI_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES),$(FOUND_C_SOURCES))
+ 
+ %.cocci.patch: %.cocci $(COCCI_SOURCES)
+ 	$(QUIET_SPATCH) \
+-	if test $(SPATCH_BATCH_SIZE) = 0; then \
+-		limit=; \
+-	else \
+-		limit='-n $(SPATCH_BATCH_SIZE)'; \
+-	fi; \
+-	if ! echo $(COCCI_SOURCES) | xargs $$limit \
++	if ! echo $(COCCI_SOURCES) | $(SPATCH_XARGS) \
+ 		$(SPATCH) --sp-file $< $(SPATCH_FLAGS) \
+ 		>$@+ 2>$@.log; \
+ 	then \
+-- 
+2.31.0.rc0.126.g04f22c5b82
+
