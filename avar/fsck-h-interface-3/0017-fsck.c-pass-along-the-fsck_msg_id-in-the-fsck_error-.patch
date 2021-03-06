@@ -1,0 +1,131 @@
+From 234e287d0815ddd8998d9aa0080be70d1b252a8b Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210218105840.11989-1-avarab@gmail.com>
+References: <20210218105840.11989-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 17 Feb 2021 16:15:30 +0100
+Subject: [PATCH v3 17/22] fsck.c: pass along the fsck_msg_id in the fsck_error
+ callback
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the fsck_error callback to also pass along the
+fsck_msg_id. Before this change the only way to get the message id was
+to parse it back out of the "message".
+
+Let's pass it down explicitly for the benefit of callers that might
+want to use it, as discussed in [1].
+
+Passing the msg_type is now redundant, as you can always get it back
+from the msg_id, but I'm not changing that convention. It's really
+common to need the msg_type, and the report() function itself (which
+calls "fsck_error") needs to call fsck_msg_type() to discover
+it. Let's not needlessly re-do that work in the user callback.
+
+1. https://lore.kernel.org/git/87blcja2ha.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/fsck.c       | 4 +++-
+ builtin/index-pack.c | 3 ++-
+ builtin/mktag.c      | 1 +
+ fsck.c               | 6 ++++--
+ fsck.h               | 6 ++++--
+ 5 files changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/fsck.c b/builtin/fsck.c
+index d6d745dc702..b71fac4ceca 100644
+--- a/builtin/fsck.c
++++ b/builtin/fsck.c
+@@ -89,7 +89,9 @@ static int objerror(struct object *obj, const char *err)
+ static int fsck_error_func(struct fsck_options *o,
+ 			   const struct object_id *oid,
+ 			   enum object_type object_type,
+-			   enum fsck_msg_type msg_type, const char *message)
++			   enum fsck_msg_type msg_type,
++			   enum fsck_msg_id msg_id,
++			   const char *message)
+ {
+ 	switch (msg_type) {
+ 	case FSCK_WARN:
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index 56b8efaa89b..2b2266a4b7d 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -1717,6 +1717,7 @@ static int print_dangling_gitmodules(struct fsck_options *o,
+ 				     const struct object_id *oid,
+ 				     enum object_type object_type,
+ 				     enum fsck_msg_type msg_type,
++				     enum fsck_msg_id msg_id,
+ 				     const char *message)
+ {
+ 	/*
+@@ -1727,7 +1728,7 @@ static int print_dangling_gitmodules(struct fsck_options *o,
+ 		printf("%s\n", oid_to_hex(oid));
+ 		return 0;
+ 	}
+-	return fsck_error_function(o, oid, object_type, msg_type, message);
++	return fsck_error_function(o, oid, object_type, msg_type, msg_id, message);
+ }
+ 
+ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+diff --git a/builtin/mktag.c b/builtin/mktag.c
+index 1834394a9b6..dc989c356f5 100644
+--- a/builtin/mktag.c
++++ b/builtin/mktag.c
+@@ -23,6 +23,7 @@ static int mktag_fsck_error_func(struct fsck_options *o,
+ 				 const struct object_id *oid,
+ 				 enum object_type object_type,
+ 				 enum fsck_msg_type msg_type,
++				 enum fsck_msg_id msg_id,
+ 				 const char *message)
+ {
+ 	switch (msg_type) {
+diff --git a/fsck.c b/fsck.c
+index 8a66168e516..5a040eb4fd5 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -245,7 +245,7 @@ static int report(struct fsck_options *options,
+ 	va_start(ap, fmt);
+ 	strbuf_vaddf(&sb, fmt, ap);
+ 	result = options->error_func(options, oid, object_type,
+-				     msg_type, sb.buf);
++				     msg_type, msg_id, sb.buf);
+ 	strbuf_release(&sb);
+ 	va_end(ap);
+ 
+@@ -1198,7 +1198,9 @@ int fsck_object(struct object *obj, void *data, unsigned long size,
+ int fsck_error_function(struct fsck_options *o,
+ 			const struct object_id *oid,
+ 			enum object_type object_type,
+-			enum fsck_msg_type msg_type, const char *message)
++			enum fsck_msg_type msg_type,
++			enum fsck_msg_id msg_id,
++			const char *message)
+ {
+ 	if (msg_type == FSCK_WARN) {
+ 		warning("object %s: %s", fsck_describe_object(o, oid), message);
+diff --git a/fsck.h b/fsck.h
+index c3d3b47b88b..33ecf3f3f16 100644
+--- a/fsck.h
++++ b/fsck.h
+@@ -101,11 +101,13 @@ typedef int (*fsck_walk_func)(struct object *obj, enum object_type object_type,
+ /* callback for fsck_object, type is FSCK_ERROR or FSCK_WARN */
+ typedef int (*fsck_error)(struct fsck_options *o,
+ 			  const struct object_id *oid, enum object_type object_type,
+-			  enum fsck_msg_type msg_type, const char *message);
++			  enum fsck_msg_type msg_type, enum fsck_msg_id msg_id,
++			  const char *message);
+ 
+ int fsck_error_function(struct fsck_options *o,
+ 			const struct object_id *oid, enum object_type object_type,
+-			enum fsck_msg_type msg_type, const char *message);
++			enum fsck_msg_type msg_type, enum fsck_msg_id msg_id,
++			const char *message);
+ 
+ struct fsck_options {
+ 	fsck_walk_func walk;
+-- 
+2.31.0.rc0.126.g04f22c5b82
+

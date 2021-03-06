@@ -1,0 +1,162 @@
+From 4224a29d15c1af2b1510b93ba7384a36db6398bb Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210218105840.11989-1-avarab@gmail.com>
+References: <20210218105840.11989-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 17 Feb 2021 20:15:25 +0100
+Subject: [PATCH v3 19/22] fsck.c: move gitmodules_{found,done} into
+ fsck_options
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the gitmodules_{found,done} static variables added in
+159e7b080bf (fsck: detect gitmodules files, 2018-05-02) into the
+fsck_options struct. It makes sense to keep all the context in the
+same place.
+
+This requires changing the recently added register_found_gitmodules()
+function added in 5476e1efde (fetch-pack: print and use dangling
+.gitmodules, 2021-02-22) to take fsck_options. That function will be
+removed in a subsequent commit, but as it'll require the new
+gitmodules_found attribute of "fsck_options" we need this intermediate
+step first.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fetch-pack.c |  2 +-
+ fsck.c       | 23 ++++++++++-------------
+ fsck.h       |  7 ++++++-
+ 3 files changed, 17 insertions(+), 15 deletions(-)
+
+diff --git a/fetch-pack.c b/fetch-pack.c
+index 0cb59acc486..53d7ef00856 100644
+--- a/fetch-pack.c
++++ b/fetch-pack.c
+@@ -998,7 +998,7 @@ static void fsck_gitmodules_oids(struct oidset *gitmodules_oids)
+ 
+ 	oidset_iter_init(gitmodules_oids, &iter);
+ 	while ((oid = oidset_iter_next(&iter)))
+-		register_found_gitmodules(oid);
++		register_found_gitmodules(&fo, oid);
+ 	if (fsck_finish(&fo))
+ 		die("fsck failed");
+ }
+diff --git a/fsck.c b/fsck.c
+index f26f47b2a10..565274a946c 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -19,9 +19,6 @@
+ #include "credential.h"
+ #include "help.h"
+ 
+-static struct oidset gitmodules_found = OIDSET_INIT;
+-static struct oidset gitmodules_done = OIDSET_INIT;
+-
+ #define STR(x) #x
+ #define MSG_ID(id, msg_type) { STR(id), NULL, NULL, FSCK_##msg_type },
+ static struct {
+@@ -624,7 +621,7 @@ static int fsck_tree(const struct object_id *oid,
+ 
+ 		if (is_hfs_dotgitmodules(name) || is_ntfs_dotgitmodules(name)) {
+ 			if (!S_ISLNK(mode))
+-				oidset_insert(&gitmodules_found, oid);
++				oidset_insert(&options->gitmodules_found, oid);
+ 			else
+ 				retval += report(options,
+ 						 oid, OBJ_TREE,
+@@ -638,7 +635,7 @@ static int fsck_tree(const struct object_id *oid,
+ 				has_dotgit |= is_ntfs_dotgit(backslash);
+ 				if (is_ntfs_dotgitmodules(backslash)) {
+ 					if (!S_ISLNK(mode))
+-						oidset_insert(&gitmodules_found, oid);
++						oidset_insert(&options->gitmodules_found, oid);
+ 					else
+ 						retval += report(options, oid, OBJ_TREE,
+ 								 FSCK_MSG_GITMODULES_SYMLINK,
+@@ -1150,9 +1147,9 @@ static int fsck_blob(const struct object_id *oid, const char *buf,
+ 	struct fsck_gitmodules_data data;
+ 	struct config_options config_opts = { 0 };
+ 
+-	if (!oidset_contains(&gitmodules_found, oid))
++	if (!oidset_contains(&options->gitmodules_found, oid))
+ 		return 0;
+-	oidset_insert(&gitmodules_done, oid);
++	oidset_insert(&options->gitmodules_done, oid);
+ 
+ 	if (object_on_skiplist(options, oid))
+ 		return 0;
+@@ -1217,9 +1214,9 @@ int fsck_error_function(struct fsck_options *o,
+ 	return 1;
+ }
+ 
+-void register_found_gitmodules(const struct object_id *oid)
++void register_found_gitmodules(struct fsck_options *options, const struct object_id *oid)
+ {
+-	oidset_insert(&gitmodules_found, oid);
++	oidset_insert(&options->gitmodules_found, oid);
+ }
+ 
+ int fsck_finish(struct fsck_options *options)
+@@ -1228,13 +1225,13 @@ int fsck_finish(struct fsck_options *options)
+ 	struct oidset_iter iter;
+ 	const struct object_id *oid;
+ 
+-	oidset_iter_init(&gitmodules_found, &iter);
++	oidset_iter_init(&options->gitmodules_found, &iter);
+ 	while ((oid = oidset_iter_next(&iter))) {
+ 		enum object_type type;
+ 		unsigned long size;
+ 		char *buf;
+ 
+-		if (oidset_contains(&gitmodules_done, oid))
++		if (oidset_contains(&options->gitmodules_done, oid))
+ 			continue;
+ 
+ 		buf = read_object_file(oid, &type, &size);
+@@ -1259,8 +1256,8 @@ int fsck_finish(struct fsck_options *options)
+ 	}
+ 
+ 
+-	oidset_clear(&gitmodules_found);
+-	oidset_clear(&gitmodules_done);
++	oidset_clear(&options->gitmodules_found);
++	oidset_clear(&options->gitmodules_done);
+ 	return ret;
+ }
+ 
+diff --git a/fsck.h b/fsck.h
+index 6c2fd9c5cc0..bb59ef05b68 100644
+--- a/fsck.h
++++ b/fsck.h
+@@ -118,6 +118,8 @@ struct fsck_options {
+ 	unsigned strict:1;
+ 	enum fsck_msg_type *msg_type;
+ 	struct oidset skiplist;
++	struct oidset gitmodules_found;
++	struct oidset gitmodules_done;
+ 	kh_oid_map_t *object_names;
+ };
+ 
+@@ -125,6 +127,8 @@ struct fsck_options {
+ 	.walk = NULL, \
+ 	.msg_type = NULL, \
+ 	.skiplist = OIDSET_INIT, \
++	.gitmodules_found = OIDSET_INIT, \
++	.gitmodules_done = OIDSET_INIT, \
+ 	.object_names = NULL,
+ #define FSCK_OPTIONS_COMMON_ERROR_FUNC \
+ 	FSCK_OPTIONS_COMMON \
+@@ -149,7 +153,8 @@ int fsck_walk(struct object *obj, void *data, struct fsck_options *options);
+ int fsck_object(struct object *obj, void *data, unsigned long size,
+ 	struct fsck_options *options);
+ 
+-void register_found_gitmodules(const struct object_id *oid);
++void register_found_gitmodules(struct fsck_options *options,
++			       const struct object_id *oid);
+ 
+ /*
+  * fsck a tag, and pass info about it back to the caller. This is
+-- 
+2.31.0.rc0.126.g04f22c5b82
+
