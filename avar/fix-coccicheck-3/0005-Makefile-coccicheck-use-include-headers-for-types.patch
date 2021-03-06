@@ -1,0 +1,80 @@
+From 60649abddbb7b6016ef50bac287fcdea084a762e Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210305170724.23859-5-avarab@gmail.com>
+References: <20210305170724.23859-5-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 6 Mar 2021 19:59:19 +0100
+Subject: [PATCH 5/5] Makefile/coccicheck: use --include-headers-for-types
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the recently added --no-includes out for --all-includes
+--include-headers-for-types.
+
+When I moved from --all-includes to --no-includes I missed that rules
+that use "type T" such as the one added dbc540c7a58 (add QSORT,
+2016-09-29) won't work as intended. See [1] for a report of that.
+
+So let's move back to --all-includes to potentially scour our includes
+for definitions, but supply --include-headers-for-types so we won't
+racily emit duplicate hunks. See [2] for more discussion about that
+issue.
+
+This undoes most of the optimization we gained with --no-includes,
+using a very basic benchmark script [3] I get these results:
+
+ * ~1m50s: --all-includes (before my recent patches)
+   38 files changed, 74 insertions(+), 78 deletions(-)
+ * ~55s:   --no-includes
+   27 files changed, 55 insertions(+), 57 deletions(-)
+ * ~1m35s: --all-includes --include-headers-for-types
+   38 files changed, 74 insertions(+), 78 deletions(-)
+ * ~1m20s: --local-includes --include-headers-for-types
+   36 files changed, 70 insertions(+), 72 deletions(-)
+ * ~1m20s: --local-includes --include-headers-for-types --no-loops
+   36 files changed, 70 insertions(+), 72 deletions(-)
+
+And only the "--all-includes --include-headers-for-types" gets the
+same results as the previous "--all-includes", even with
+"--local-includes" we miss out on some definitions.
+
+1. https://lore.kernel.org/git/3aac381e-2ce9-e35e-498c-9c26df235aed@web.de/
+2. https://lore.kernel.org/git/YENdUMLTM+cerfqJ@coredump.intra.peff.net/
+3.
+   for flags in \
+       '--all-includes' \
+       '--no-includes' \
+       '--all-includes --include-headers-for-types' \
+       '--local-includes --include-headers-for-types' \
+       '--local-includes --include-headers-for-types --no-loops'
+   do
+   	git reset --hard &&
+           git clean -dxfq contrib/
+   	time make -j8 coccicheck SPATCH_FLAGS="$flags --patch ." SPATCH_XARGS="xargs -P 8 -n 16" 2>&1 | grep -v SPATCH
+   	cat contrib/coccinelle/*.patch | git apply
+   	git --no-pager diff --shortstat
+   	git --no-pager diff | git patch-id
+   done
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 8aca96c6921..93b1009fbb1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1199,7 +1199,7 @@ SPARSE_FLAGS ?=
+ SP_EXTRA_FLAGS = -Wno-universal-initializer
+ 
+ # For the 'coccicheck' target
+-SPATCH_FLAGS = --no-includes --patch .
++SPATCH_FLAGS = --all-includes --include-headers-for-types --patch .
+ 
+ # For the 'coccicheck' target; setting SPATCH_BATCH_SIZE higher will
+ # usually result in less CPU usage at the cost of higher peak memory.
+-- 
+2.31.0.rc0.126.g04f22c5b82
+
