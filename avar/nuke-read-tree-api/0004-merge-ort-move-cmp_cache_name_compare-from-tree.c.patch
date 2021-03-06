@@ -1,0 +1,95 @@
+From 33810d3c10c3aa903deb6562e65752c122f9200f Mon Sep 17 00:00:00 2001
+In-Reply-To: <1240014568-3675-1-git-send-email-pclouds@gmail.com>
+References: <1240014568-3675-1-git-send-email-pclouds@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 6 Mar 2021 13:11:38 +0100
+Subject: [PATCH 4/7] merge-ort: move cmp_cache_name_compare() from tree.c
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the cmp_cache_name_compare() function from tree.c. Now that we've
+stopped using it in builtin/ls-files.c the merge-ort.c code is its
+only user, let's just have it own it instead of having this API which
+straddles tree.h and cache-tree.h in tree.c itself.
+
+See these commits for its recent introduction in merge-ort.c::
+
+ - 70912f66de7 (tree: enable cmp_cache_name_compare() to be used
+   elsewhere, 2020-12-13)
+
+ - ef2b3693870 (merge-ort: add implementation of
+   record_conflicted_index_entries(), 2020-12-13)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ merge-ort.c | 10 ++++++++++
+ tree.c      | 11 -----------
+ tree.h      |  2 --
+ 3 files changed, 10 insertions(+), 13 deletions(-)
+
+diff --git a/merge-ort.c b/merge-ort.c
+index 603d30c5217..d7b3ced1bec 100644
+--- a/merge-ort.c
++++ b/merge-ort.c
+@@ -3099,6 +3099,16 @@ static int checkout(struct merge_options *opt,
+ 	return ret;
+ }
+ 
++static int cmp_cache_name_compare(const void *a_, const void *b_)
++{
++	const struct cache_entry *ce1, *ce2;
++
++	ce1 = *((const struct cache_entry **)a_);
++	ce2 = *((const struct cache_entry **)b_);
++	return cache_name_stage_compare(ce1->name, ce1->ce_namelen, ce_stage(ce1),
++				  ce2->name, ce2->ce_namelen, ce_stage(ce2));
++}
++
+ static int record_conflicted_index_entries(struct merge_options *opt,
+ 					   struct index_state *index,
+ 					   struct strmap *paths,
+diff --git a/tree.c b/tree.c
+index a6c12f2745a..c1bde9314d0 100644
+--- a/tree.c
++++ b/tree.c
+@@ -1,5 +1,4 @@
+ #include "cache.h"
+-#include "cache-tree.h"
+ #include "tree.h"
+ #include "object-store.h"
+ #include "blob.h"
+@@ -96,16 +95,6 @@ int read_tree_recursive(struct repository *r,
+ 	return ret;
+ }
+ 
+-int cmp_cache_name_compare(const void *a_, const void *b_)
+-{
+-	const struct cache_entry *ce1, *ce2;
+-
+-	ce1 = *((const struct cache_entry **)a_);
+-	ce2 = *((const struct cache_entry **)b_);
+-	return cache_name_stage_compare(ce1->name, ce1->ce_namelen, ce_stage(ce1),
+-				  ce2->name, ce2->ce_namelen, ce_stage(ce2));
+-}
+-
+ struct tree *lookup_tree(struct repository *r, const struct object_id *oid)
+ {
+ 	struct object *obj = lookup_object(r, oid);
+diff --git a/tree.h b/tree.h
+index 84d66b45538..34549c86c9f 100644
+--- a/tree.h
++++ b/tree.h
+@@ -28,8 +28,6 @@ void free_tree_buffer(struct tree *tree);
+ /* Parses and returns the tree in the given ent, chasing tags and commits. */
+ struct tree *parse_tree_indirect(const struct object_id *oid);
+ 
+-int cmp_cache_name_compare(const void *a_, const void *b_);
+-
+ #define READ_TREE_RECURSIVE 1
+ typedef int (*read_tree_fn_t)(const struct object_id *, struct strbuf *, const char *, unsigned int, int, void *);
+ 
+-- 
+2.31.0.rc0.126.g04f22c5b82
+
