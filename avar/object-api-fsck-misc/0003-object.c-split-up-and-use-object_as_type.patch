@@ -1,0 +1,191 @@
+From b0cf8ce4d279306170a2f1d50bbf0a3083dc5738 Mon Sep 17 00:00:00 2001
+In-Reply-To: <7683fa48644b0958f8e87fbb5db51e362ea40e85.1410509168.git.johannes.schindelin@gmx.de>
+References: <7683fa48644b0958f8e87fbb5db51e362ea40e85.1410509168.git.johannes.schindelin@gmx.de>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 4 Mar 2021 09:24:23 +0100
+Subject: [PATCH 3/3] object.c: split up and use object_as_type()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code that rolled its own "expected obj to be type XYZ but it's
+ABC" error handling to use new *_error() or *_die() versions of the
+object_as_type() function.
+
+This makes the errors in question more readable, since we'll say what
+we got, not just what we expected (sometimes we didn't even say that
+much).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/index-pack.c |  9 +++------
+ commit.c             | 10 ++++------
+ object.c             | 28 +++++++++++++++++++++++++---
+ object.h             |  2 ++
+ tag.c                |  6 +++---
+ tree.c               |  7 ++++---
+ 6 files changed, 41 insertions(+), 21 deletions(-)
+
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index bad57488079..21484ed9a3b 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -217,8 +217,8 @@ static int mark_link(struct object *obj, int type, void *data, struct fsck_optio
+ 	if (!obj)
+ 		return -1;
+ 
+-	if (type != OBJ_ANY && obj->type != type)
+-		die(_("object type mismatch at %s"), oid_to_hex(&obj->oid));
++	if (type != OBJ_ANY)
++		object_is_type_or_die(obj, type);
+ 
+ 	obj->flags |= FLAG_LINK;
+ 	return 0;
+@@ -240,10 +240,7 @@ static unsigned check_object(struct object *obj)
+ 		if (type <= 0)
+ 			die(_("did not receive expected object %s"),
+ 			      oid_to_hex(&obj->oid));
+-		if (type != obj->type)
+-			die(_("object %s: expected type %s, found %s"),
+-			    oid_to_hex(&obj->oid),
+-			    type_name(obj->type), type_name(type));
++		object_is_type_or_die(obj, type);
+ 		obj->flags |= FLAG_CHECKED;
+ 		return 1;
+ 	}
+diff --git a/commit.c b/commit.c
+index 6ccd774841c..9f0a0085c29 100644
+--- a/commit.c
++++ b/commit.c
+@@ -299,9 +299,7 @@ const void *repo_get_commit_buffer(struct repository *r,
+ 		if (!ret)
+ 			die("cannot read commit object %s",
+ 			    oid_to_hex(&commit->object.oid));
+-		if (type != OBJ_COMMIT)
+-			die("expected commit for %s, got %s",
+-			    oid_to_hex(&commit->object.oid), type_name(type));
++		object_is_type_or_die((struct object *)&commit->object, OBJ_COMMIT);
+ 		if (sizep)
+ 			*sizep = size;
+ 	}
+@@ -489,10 +487,10 @@ int repo_parse_commit_internal(struct repository *r,
+ 		return quiet_on_missing ? -1 :
+ 			error("Could not read %s",
+ 			     oid_to_hex(&item->object.oid));
+-	if (type != OBJ_COMMIT) {
++	ret = object_is_type_or_error((struct object *)&item->object, OBJ_COMMIT);
++	if (ret) {
+ 		free(buffer);
+-		return error("Object %s not a commit",
+-			     oid_to_hex(&item->object.oid));
++		return ret;
+ 	}
+ 
+ 	ret = parse_commit_buffer(r, item, buffer, size, 0);
+diff --git a/object.c b/object.c
+index c7586e46727..50de1133a04 100644
+--- a/object.c
++++ b/object.c
+@@ -159,6 +159,29 @@ void *create_object(struct repository *r, const struct object_id *oid, void *o)
+ 	return obj;
+ }
+ 
++static int object_is_type_or(struct object *obj, enum object_type type, int err)
++{
++	if (obj->type == type)
++		return 0;
++	if (err)
++		return error(_("object %s is a %s, not a %s"),
++			     oid_to_hex(&obj->oid), type_name(obj->type),
++			     type_name(type));
++	else
++		die(_("object %s is a %s, not a %s"), oid_to_hex(&obj->oid),
++		    type_name(obj->type), type_name(type));
++}
++
++void object_is_type_or_die(struct object *obj, enum object_type type)
++{
++	object_is_type_or(obj, type, 0);
++}
++
++int object_is_type_or_error(struct object *obj, enum object_type type)
++{
++	return object_is_type_or(obj, type, 1);
++}
++
+ void *object_as_type(struct object *obj, enum object_type type, int quiet)
+ {
+ 	if (obj->type == type)
+@@ -172,9 +195,8 @@ void *object_as_type(struct object *obj, enum object_type type, int quiet)
+ 	}
+ 	else {
+ 		if (!quiet)
+-			error(_("object %s is a %s, not a %s"),
+-			      oid_to_hex(&obj->oid),
+-			      type_name(obj->type), type_name(type));
++			object_is_type_or_error(obj, type);
++
+ 		return NULL;
+ 	}
+ }
+diff --git a/object.h b/object.h
+index ffdc1298300..5e4625ccb5a 100644
+--- a/object.h
++++ b/object.h
+@@ -122,6 +122,8 @@ struct object *lookup_object(struct repository *r, const struct object_id *oid);
+ 
+ void *create_object(struct repository *r, const struct object_id *oid, void *obj);
+ 
++void object_is_type_or_die(struct object *obj, enum object_type type);;
++int object_is_type_or_error(struct object *obj, enum object_type type);
+ void *object_as_type(struct object *obj, enum object_type type, int quiet);
+ 
+ /*
+diff --git a/tag.c b/tag.c
+index 3e18a418414..128d5438515 100644
+--- a/tag.c
++++ b/tag.c
+@@ -219,10 +219,10 @@ int parse_tag(struct tag *item)
+ 	if (!data)
+ 		return error("Could not read %s",
+ 			     oid_to_hex(&item->object.oid));
+-	if (type != OBJ_TAG) {
++	ret = object_is_type_or_error(&item->object, OBJ_TAG);
++	if (ret) {
+ 		free(data);
+-		return error("Object %s not a tag",
+-			     oid_to_hex(&item->object.oid));
++		return ret;
+ 	}
+ 	ret = parse_tag_buffer(the_repository, item, data, size);
+ 	free(data);
+diff --git a/tree.c b/tree.c
+index 4820d66a10c..46d7eaa6d5b 100644
+--- a/tree.c
++++ b/tree.c
+@@ -219,6 +219,7 @@ int parse_tree_gently(struct tree *item, int quiet_on_missing)
+ 	enum object_type type;
+ 	void *buffer;
+ 	unsigned long size;
++	int err;
+ 
+ 	if (item->object.parsed)
+ 		return 0;
+@@ -227,10 +228,10 @@ int parse_tree_gently(struct tree *item, int quiet_on_missing)
+ 		return quiet_on_missing ? -1 :
+ 			error("Could not read %s",
+ 			     oid_to_hex(&item->object.oid));
+-	if (type != OBJ_TREE) {
++	err = object_is_type_or_error(&item->object, type);
++	if (err) {
+ 		free(buffer);
+-		return error("Object %s not a tree",
+-			     oid_to_hex(&item->object.oid));
++		return err;
+ 	}
+ 	return parse_tree_buffer(item, buffer, size);
+ }
+-- 
+2.31.0.rc0.126.g04f22c5b82
+
