@@ -1,0 +1,172 @@
+From 874bcff340c40c13f42178912d202a0f0cccbe1b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 7 Mar 2021 01:30:28 +0100
+Subject: [PATCH 05/16] seems to work for blob
+
+---
+ blob.c                                 | 15 ++++++++-
+ blob.h                                 |  3 ++
+ fsck.c                                 |  2 +-
+ object-file.c                          |  2 ++
+ object-store.h                         |  1 +
+ object.c                               |  2 +-
+ t/t6102-rev-list-unexpected-objects.sh | 43 ++++++++++++++++++++++++++
+ 7 files changed, 65 insertions(+), 3 deletions(-)
+
+diff --git a/blob.c b/blob.c
+index 182718aba9f..da667721fa0 100644
+--- a/blob.c
++++ b/blob.c
+@@ -2,17 +2,30 @@
+ #include "blob.h"
+ #include "repository.h"
+ #include "alloc.h"
++#include "object-store.h"
+ 
+ const char *blob_type = "blob";
+ 
+-struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
++struct blob *lookup_blob_type(struct repository *r,
++			      const struct object_id *oid,
++			      enum object_type type)
+ {
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_object(r, oid, alloc_blob_node(r));
++	if (obj->type != OBJ_NONE &&
++	    obj->type != OBJ_BLOB) {
++		enum object_type blob = OBJ_BLOB;
++		oid_is_type_or_error(oid, obj->type, &blob);
++	}
+ 	return object_as_type(obj, OBJ_BLOB, 0);
+ }
+ 
++struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
++{
++	return lookup_blob_type(r, oid, OBJ_NONE);
++}
++
+ int parse_blob_buffer(struct blob *item, void *buffer, unsigned long size)
+ {
+ 	item->object.parsed = 1;
+diff --git a/blob.h b/blob.h
+index 16648720557..066a2effcbf 100644
+--- a/blob.h
++++ b/blob.h
+@@ -10,6 +10,9 @@ struct blob {
+ };
+ 
+ struct blob *lookup_blob(struct repository *r, const struct object_id *oid);
++struct blob *lookup_blob_type(struct repository *r,
++			      const struct object_id *oid,
++			      enum object_type type);
+ 
+ int parse_blob_buffer(struct blob *item, void *buffer, unsigned long size);
+ 
+diff --git a/fsck.c b/fsck.c
+index 6cc4f9ea892..c8809605c11 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -407,7 +407,7 @@ static int fsck_walk_tree(struct tree *tree, void *data, struct fsck_options *op
+ 			result = options->walk(obj, OBJ_TREE, data, options);
+ 		}
+ 		else if (S_ISREG(entry.mode) || S_ISLNK(entry.mode)) {
+-			obj = (struct object *)lookup_blob(the_repository, &entry.oid);
++			obj = (struct object *)lookup_blob(the_repository, &entry.oid, OBJ_ANY);
+ 			if (name && obj)
+ 				fsck_put_object_name(options, &entry.oid, "%s%s",
+ 						     name, entry.path);
+diff --git a/object-file.c b/object-file.c
+index 42bc579828d..c28da6123cf 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1497,6 +1497,8 @@ static int do_oid_object_info_extended(struct repository *r,
+ 			*(oi->disk_sizep) = 0;
+ 		if (oi->delta_base_oid)
+ 			oidclr(oi->delta_base_oid);
++		if (oi->type)
++			*(oi->type) = co->type;
+ 		if (oi->type_name)
+ 			strbuf_addstr(oi->type_name, type_name(co->type));
+ 		if (oi->contentp)
+diff --git a/object-store.h b/object-store.h
+index 541dab08586..d4d819674ca 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -326,6 +326,7 @@ struct object_info {
+ 	unsigned long *sizep;
+ 	off_t *disk_sizep;
+ 	struct object_id *delta_base_oid;
++	enum object_type *type;
+ 	struct strbuf *type_name;
+ 	void **contentp;
+ 
+diff --git a/object.c b/object.c
+index 496561543b4..1c0af11627b 100644
+--- a/object.c
++++ b/object.c
+@@ -225,7 +225,7 @@ struct object *parse_object_buffer(struct repository *r, const struct object_id
+ 
+ 	obj = NULL;
+ 	if (type == OBJ_BLOB) {
+-		struct blob *blob = lookup_blob(r, oid);
++		struct blob *blob = lookup_blob_type(r, oid, type);
+ 		if (blob) {
+ 			if (parse_blob_buffer(blob, buffer, size))
+ 				return NULL;
+diff --git a/t/t6102-rev-list-unexpected-objects.sh b/t/t6102-rev-list-unexpected-objects.sh
+index 52cde097dd5..6c2d947d322 100755
+--- a/t/t6102-rev-list-unexpected-objects.sh
++++ b/t/t6102-rev-list-unexpected-objects.sh
+@@ -124,4 +124,47 @@ test_expect_success 'traverse unexpected non-blob tag (seen)' '
+ 	test_i18ngrep "not a blob" output
+ '
+ 
++test_expect_success 'setup unexpected non-tag tag' '
++	test_when_finished "git tag -d tag-commit tag-tag" &&
++
++	git tag -a -m"tagged commit" tag-commit $commit &&
++	tag_commit=$(git rev-parse tag-commit) &&
++	git tag -a -m"tagged tag" tag-tag tag-commit &&
++	tag_tag=$(git rev-parse tag-tag) &&
++
++	git cat-file tag tag-tag >good-tag-tag &&
++	git cat-file tag tag-commit >good-commit-tag &&
++
++	sed -e "s/$tag_commit/$commit/" <good-tag-tag >broken-tag-tag-commit &&
++	sed -e "s/$tag_commit/$tree/" <good-tag-tag >broken-tag-tag-tree &&
++	sed -e "s/$tag_commit/$blob/" <good-tag-tag >broken-tag-tag-blob &&
++
++	sed -e "s/$commit/$tag/" <good-commit-tag >broken-commit-tag-tag &&
++	sed -e "s/$commit/$tree/" <good-commit-tag >broken-commit-tag-tree &&
++	sed -e "s/$commit/$blob/" <good-commit-tag >broken-commit-tag-blob &&
++
++	tag_tag_commit=$(git hash-object -w -t tag broken-tag-tag-commit) &&
++	tag_tag_tree=$(git hash-object -w -t tag broken-tag-tag-tree) &&
++	tag_tag_blob=$(git hash-object -w -t tag broken-tag-tag-blob) &&
++
++	commit_tag_tag=$(git hash-object -w -t tag broken-commit-tag-tag) &&
++	commit_tag_tree=$(git hash-object -w -t tag broken-commit-tag-tree) &&
++	commit_tag_blob=$(git hash-object -w -t tag broken-commit-tag-blob)
++'
++
++test_expect_success 'traverse unexpected incorrectly typed tag (to blob)' '
++	test_must_fail git rev-list --objects $tag_tag_blob 2>actual &&
++	echo "fatal: object $blob is a blob, not a tag" >expected &&
++	test_cmp expected actual &&
++
++	test_must_fail git rev-list --objects $commit_tag_blob 2>actual &&
++	echo "fatal: object $blob is a blob, not a commit" >expected &&
++	test_cmp expected actual
++'
++
++test_expect_success 'traverse unexpected non-tag tag (seen)' '
++	test_must_fail git rev-list --objects $blob $commit_tag_blob >output 2>&1 &&
++	test_i18ngrep "is a blob, not a commit" output
++'
++
+ test_done
+-- 
+2.31.0.rc0.126.g04f22c5b82
+
