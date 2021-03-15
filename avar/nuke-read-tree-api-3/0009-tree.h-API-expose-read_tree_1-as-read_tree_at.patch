@@ -1,0 +1,84 @@
+From 570642c86258af1a8e2907c427c236d89a9df594 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210308022138.28166-1-avarab@gmail.com>
+References: <20210308022138.28166-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 16 Mar 2021 00:05:22 +0100
+Subject: [PATCH v3 9/9] tree.h API: expose read_tree_1() as read_tree_at()
+
+Rename the static read_tree_1() function to read_tree_at(). This will
+allow for the old read_tree_recursive() mode of operation where we
+start at a given path instead of "".
+
+See [1] for the discussion of one such future in-tree user, unlike the
+old read_tree_recursive() this function takes a strbuf. Since that's
+what read_tree_1() used internally this should allow us to avoid
+casting and/or reallocations in the future.
+
+1. https://lore.kernel.org/git/xmqqft106sok.fsf@gitster.g/#t
+---
+ tree.c | 16 ++++++++--------
+ tree.h |  6 ++++++
+ 2 files changed, 14 insertions(+), 8 deletions(-)
+
+diff --git a/tree.c b/tree.c
+index f6de250d7ff..6a2a52967e4 100644
+--- a/tree.c
++++ b/tree.c
+@@ -11,10 +11,10 @@
+ 
+ const char *tree_type = "tree";
+ 
+-static int read_tree_1(struct repository *r,
+-		       struct tree *tree, struct strbuf *base,
+-		       const struct pathspec *pathspec,
+-		       read_tree_fn_t fn, void *context)
++int read_tree_at(struct repository *r,
++		 struct tree *tree, struct strbuf *base,
++		 const struct pathspec *pathspec,
++		 read_tree_fn_t fn, void *context)
+ {
+ 	struct tree_desc desc;
+ 	struct name_entry entry;
+@@ -71,9 +71,9 @@ static int read_tree_1(struct repository *r,
+ 		len = tree_entry_len(&entry);
+ 		strbuf_add(base, entry.path, len);
+ 		strbuf_addch(base, '/');
+-		retval = read_tree_1(r, lookup_tree(r, &oid),
+-				     base, pathspec,
+-				     fn, context);
++		retval = read_tree_at(r, lookup_tree(r, &oid),
++				      base, pathspec,
++				      fn, context);
+ 		strbuf_setlen(base, oldlen);
+ 		if (retval)
+ 			return -1;
+@@ -89,7 +89,7 @@ int read_tree(struct repository *r,
+ 	struct strbuf sb = STRBUF_INIT;
+ 	int ret;
+ 
+-	ret = read_tree_1(r, tree, &sb, pathspec, fn, context);
++	ret = read_tree_at(r, tree, &sb, pathspec, fn, context);
+ 	strbuf_release(&sb);
+ 	return ret;
+ }
+diff --git a/tree.h b/tree.h
+index 4fb713774a7..f0b079d2e91 100644
+--- a/tree.h
++++ b/tree.h
+@@ -33,6 +33,12 @@ int cmp_cache_name_compare(const void *a_, const void *b_);
+ #define READ_TREE_RECURSIVE 1
+ typedef int (*read_tree_fn_t)(const struct object_id *, struct strbuf *, const char *, unsigned int, void *);
+ 
++int read_tree_at(struct repository *r,
++		 struct tree *tree,
++		 struct strbuf *at,
++		 const struct pathspec *pathspec,
++		 read_tree_fn_t fn, void *context);
++
+ int read_tree(struct repository *r,
+ 	      struct tree *tree,
+ 	      const struct pathspec *pathspec,
+-- 
+2.31.0.rc2.211.g1d0b8788b3
+

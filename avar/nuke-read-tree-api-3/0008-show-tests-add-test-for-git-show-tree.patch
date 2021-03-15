@@ -1,0 +1,83 @@
+From a63c9b49f13d1d4afea69a5066979b3c7f7d11f6 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210308022138.28166-1-avarab@gmail.com>
+References: <20210308022138.28166-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 15 Mar 2021 23:47:06 +0100
+Subject: [PATCH v3 8/9] show tests: add test for "git show <tree>"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add missing tests for showing a tree with "git show". Let's test for
+showing a tree, two trees, and that doing so doesn't recurse.
+
+The only tests for this code added in 5d7eeee2ac6 (git-show: grok
+blobs, trees and tags, too, 2006-12-14) were the tests in
+t7701-repack-unpack-unreachable.sh added in ccc1297226b (repack:
+modify behavior of -A option to leave unreferenced objects unpacked,
+2008-05-09).
+
+Let's add this common mode of operation to the "show" tests
+themselves. It's more obvious, and the tests in
+t7701-repack-unpack-unreachable.sh happily parse if we start buggily
+emitting trees recursively.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7007-show.sh | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/t/t7007-show.sh b/t/t7007-show.sh
+index 42d3db62468..37ce718b231 100755
+--- a/t/t7007-show.sh
++++ b/t/t7007-show.sh
+@@ -38,6 +38,45 @@ test_expect_success 'showing two commits' '
+ 	test_cmp expect actual.filtered
+ '
+ 
++test_expect_success 'showing a tree' '
++	cat >expected <<-EOF &&
++	tree main1:
++
++	main1.t
++	EOF
++	git show main1: >actual &&
++	test_cmp expected actual
++'
++
++test_expect_success 'showing two trees' '
++	cat >expected <<-EOF &&
++	tree main1:
++
++	main1.t
++
++	tree main2:
++
++	main1.t
++	main2.t
++	EOF
++	git show main1: main2: >actual &&
++	test_cmp expected actual
++'
++
++test_expect_success 'showing a trees is not recursive' '
++	git worktree add not-recursive main1 &&
++	mkdir not-recursive/a &&
++	test_commit -C not-recursive a/file &&
++	cat >expected <<-EOF &&
++	tree a/file:
++
++	a/
++	main1.t
++	EOF
++	git -C not-recursive show a/file: >actual &&
++	test_cmp expected actual
++'
++
+ test_expect_success 'showing a range walks (linear)' '
+ 	cat >expect <<-EOF &&
+ 	commit $(git rev-parse main3)
+-- 
+2.31.0.rc2.211.g1d0b8788b3
+

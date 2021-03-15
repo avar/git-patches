@@ -1,0 +1,81 @@
+From b338f2c01a470b51bfd11e75ec491d08c51f10a1 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210308022138.28166-1-avarab@gmail.com>
+References: <20210308022138.28166-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 8 Mar 2021 01:46:00 +0100
+Subject: [PATCH v3 1/9] ls-files tests: add meaningful --with-tree tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests for "ls-files --with-tree". There was effectively no
+coverage for any normal usage of this command, only the tests added in
+54e1abce90e (Add test case for ls-files --with-tree, 2007-10-03) for
+an obscure bug.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3060-ls-files-with-tree.sh | 41 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/t/t3060-ls-files-with-tree.sh b/t/t3060-ls-files-with-tree.sh
+index 52ed665fcd2..b257c792a46 100755
+--- a/t/t3060-ls-files-with-tree.sh
++++ b/t/t3060-ls-files-with-tree.sh
+@@ -47,6 +47,12 @@ test_expect_success setup '
+ 	git add .
+ '
+ 
++test_expect_success 'usage' '
++	test_expect_code 128 git ls-files --with-tree=HEAD -u &&
++	test_expect_code 128 git ls-files --with-tree=HEAD -s &&
++	test_expect_code 128 git ls-files --recurse-submodules --with-tree=HEAD
++'
++
+ test_expect_success 'git ls-files --with-tree should succeed from subdir' '
+ 	# We have to run from a sub-directory to trigger prune_path
+ 	# Then we finally get to run our --with-tree test
+@@ -60,4 +66,39 @@ test_expect_success \
+     'git ls-files --with-tree should add entries from named tree.' \
+     'test_cmp expected output'
+ 
++test_expect_success 'no duplicates in --with-tree output' '
++	git ls-files --with-tree=HEAD >actual &&
++	sort -u actual >expected &&
++	test_cmp expected actual
++'
++
++test_expect_success 'setup: output in a conflict' '
++	test_create_repo conflict &&
++	test_commit -C conflict BASE file &&
++	test_commit -C conflict A file foo &&
++	git -C conflict reset --hard BASE &&
++	test_commit -C conflict B file bar
++'
++
++test_expect_success 'output in a conflict' '
++	test_must_fail git -C conflict merge A B &&
++	cat >expected <<-\EOF &&
++	file
++	file
++	file
++	file
++	EOF
++	git -C conflict ls-files --with-tree=HEAD >actual &&
++	test_cmp expected actual
++'
++
++test_expect_success 'output with removed .git/index' '
++	cat >expected <<-\EOF &&
++	file
++	EOF
++	rm conflict/.git/index &&
++	git -C conflict ls-files --with-tree=HEAD >actual &&
++	test_cmp expected actual
++'
++
+ test_done
+-- 
+2.31.0.rc2.211.g1d0b8788b3
+
