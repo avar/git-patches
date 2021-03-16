@@ -1,0 +1,62 @@
+From fecfe3d462c19c7522569eae97f8ba3f58277342 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210308150650.18626-1-avarab@gmail.com>
+References: <20210308150650.18626-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 4 Mar 2021 11:13:43 +0100
+Subject: [PATCH v2 04/29] tree-walk.h: add object_type member to name_entry
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Most users of the tree walking API don't care what the specific mode
+of an object in a tree is (e.g. if it's executable), they care if it's
+one of OBJ_{TREE,BLOB,COMMIT}.
+
+Let's add an "object_type" enum to the "name_entry" struct to help
+such callers.
+
+Ideally we'd have some subset of "enum object_type" here with just
+those three entries, so we could rely on the C compiler to
+exhaustively check our "switch" statements, but I don't know how to
+create such a enum subset without re-labeling OBJ_{TREE,BLOB,COMMIT}
+to e.g. "NE_OBJ_*" (an enum is just an int under the hood, so you can
+use such a struct with "OBJ_*", but the compiler will complain...).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ tree-walk.c | 4 +++-
+ tree-walk.h | 2 ++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/tree-walk.c b/tree-walk.c
+index 2d6226d5f18..b210967b73b 100644
+--- a/tree-walk.c
++++ b/tree-walk.c
+@@ -47,7 +47,9 @@ static int decode_tree_entry(struct tree_desc *desc, const char *buf, unsigned l
+ 
+ 	/* Initialize the descriptor entry */
+ 	desc->entry.path = path;
+-	desc->entry.mode = canon_mode(mode);
++	mode = canon_mode(mode);
++	desc->entry.mode = mode;
++	desc->entry.object_type = object_type(mode);
+ 	desc->entry.pathlen = len - 1;
+ 	hashcpy(desc->entry.oid.hash, (const unsigned char *)path + len);
+ 
+diff --git a/tree-walk.h b/tree-walk.h
+index a5058469e9b..9f3825d2773 100644
+--- a/tree-walk.h
++++ b/tree-walk.h
+@@ -17,6 +17,8 @@ struct name_entry {
+ 	const char *path;
+ 	int pathlen;
+ 	unsigned int mode;
++	/* simple 'mode': Only OBJ_{BLOB,TREE,COMMIT} */
++	enum object_type object_type;
+ };
+ 
+ /**
+-- 
+2.31.0.rc2.211.g1d0b8788b3
+

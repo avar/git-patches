@@ -1,0 +1,98 @@
+From 15f7f89accae7cb2fe213c2855badc69edf30237 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210308150650.18626-1-avarab@gmail.com>
+References: <20210308150650.18626-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 8 Mar 2021 12:40:35 +0100
+Subject: [PATCH v2 10/29] archive: get rid of 'stage' parameter
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stop passing the "stage" parameter around in archive.c. This parameter
+existed because the read_tree_recursive() function used to provide it,
+but no longer does. See my in-flight commit to remove it. (tree.h API:
+remove "stage" parameter from read_tree_recursive(), 2021-03-06).
+
+As can be seen in 562e25abea9 (archive: centralize archive entry
+writing, 2008-07-14) and ed22b4173bd (archive: support filtering paths
+with glob, 2014-09-21) it was never used by this code. We simply added
+it as a boilerplate, and then later added it to our own "directory
+"struct.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ archive.c | 8 --------
+ 1 file changed, 8 deletions(-)
+
+diff --git a/archive.c b/archive.c
+index 8ff97751c23..529623167c9 100644
+--- a/archive.c
++++ b/archive.c
+@@ -107,7 +107,6 @@ struct directory {
+ 	struct object_id oid;
+ 	int baselen, len;
+ 	unsigned mode;
+-	int stage;
+ 	char path[FLEX_ARRAY];
+ };
+ 
+@@ -140,7 +139,6 @@ static int check_attr_export_subst(const struct attr_check *check)
+ static int write_archive_entry(const struct object_id *oid, const char *base,
+ 			       int baselen, const char *filename,
+ 			       unsigned mode,
+-			       int stage,
+ 			       void *context)
+ {
+ 	static struct strbuf path = STRBUF_INIT;
+@@ -200,7 +198,6 @@ static int write_archive_entry(const struct object_id *oid, const char *base,
+ static void queue_directory(const unsigned char *sha1,
+ 			    struct strbuf *base, const char *filename,
+ 			    unsigned mode,
+-			    int stage,
+ 			    struct archiver_context *c)
+ {
+ 	struct directory *d;
+@@ -209,7 +206,6 @@ static void queue_directory(const unsigned char *sha1,
+ 	d->up	   = c->bottom;
+ 	d->baselen = base->len;
+ 	d->mode	   = mode;
+-	d->stage   = stage;
+ 	c->bottom  = d;
+ 	d->len = xsnprintf(d->path, len, "%.*s%s/", (int)base->len, base->buf, filename);
+ 	hashcpy(d->oid.hash, sha1);
+@@ -229,7 +225,6 @@ static int write_directory(struct archiver_context *c)
+ 		write_archive_entry(&d->oid, d->path, d->baselen,
+ 				    d->path + d->baselen,
+ 				    d->mode,
+-				    d->stage,
+ 				    c) != READ_TREE_RECURSIVE;
+ 	free(d);
+ 	return ret ? -1 : 0;
+@@ -241,7 +236,6 @@ static int queue_or_write_archive_entry(const struct object_id *oid,
+ 					void *context)
+ {
+ 	struct archiver_context *c = context;
+-	int stage = 0;
+ 
+ 	while (c->bottom &&
+ 	       !(base->len >= c->bottom->len &&
+@@ -265,7 +259,6 @@ static int queue_or_write_archive_entry(const struct object_id *oid,
+ 			return 0;
+ 		queue_directory(oid->hash, base, filename,
+ 				mode,
+-				stage,
+ 				c);
+ 		return READ_TREE_RECURSIVE;
+ 	}
+@@ -274,7 +267,6 @@ static int queue_or_write_archive_entry(const struct object_id *oid,
+ 		return -1;
+ 	return write_archive_entry(oid, base->buf, base->len, filename,
+ 				   mode,
+-				   stage,
+ 				   context);
+ }
+ 
+-- 
+2.31.0.rc2.211.g1d0b8788b3
+
