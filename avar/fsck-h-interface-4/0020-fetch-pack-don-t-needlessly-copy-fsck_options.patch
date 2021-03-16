@@ -1,0 +1,64 @@
+From fd219d318a4766b318b173b4709672d0570459c5 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210306110439.27694-1-avarab@gmail.com>
+References: <20210306110439.27694-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Mar 2021 14:00:26 +0100
+Subject: [PATCH v4 20/22] fetch-pack: don't needlessly copy fsck_options
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the behavior of the .gitmodules validation added in
+5476e1efde (fetch-pack: print and use dangling .gitmodules,
+2021-02-22) so we're using one "fsck_options".
+
+I found that code confusing to read. One might think that not setting
+up the error_func earlier means that we're relying on the "error_func"
+not being set in some code in between the two hunks being modified
+here.
+
+But we're not, all we're doing in the rest of "cmd_index_pack()" is
+further setup by calling fsck_set_msg_types(), and assigning to
+do_fsck_object.
+
+So there was no reason in 5476e1efde to make a shallow copy of the
+fsck_options struct before setting error_func. Let's just do this
+setup at the top of the function, along with the "walk" assignment.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/index-pack.c | 10 +++-------
+ 1 file changed, 3 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index 2b2266a4b7..5ad80b85b4 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -1761,6 +1761,7 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 
+ 	read_replace_refs = 0;
+ 	fsck_options.walk = mark_link;
++	fsck_options.error_func = print_dangling_gitmodules;
+ 
+ 	reset_pack_idx_option(&opts);
+ 	git_config(git_index_pack_config, &opts);
+@@ -1951,13 +1952,8 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 	else
+ 		close(input_fd);
+ 
+-	if (do_fsck_object) {
+-		struct fsck_options fo = fsck_options;
+-
+-		fo.error_func = print_dangling_gitmodules;
+-		if (fsck_finish(&fo))
+-			die(_("fsck error in pack objects"));
+-	}
++	if (do_fsck_object && fsck_finish(&fsck_options))
++		die(_("fsck error in pack objects"));
+ 
+ 	free(objects);
+ 	strbuf_release(&index_name_buf);
+-- 
+2.31.0.260.g719c683c1d
+
