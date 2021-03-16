@@ -1,0 +1,73 @@
+From 187fc2c3e6443566f265d854ff81623b3f5297fb Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210308150650.18626-1-avarab@gmail.com>
+References: <20210308150650.18626-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 4 Mar 2021 10:52:28 +0100
+Subject: [PATCH v2 02/29] notes & match-trees: use name_entry's "pathlen"
+ member
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code that was doing a strlen() on the "path" from a name_entry
+struct to instead use the pathlen given to us by decode_tree_entry().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ match-trees.c | 7 +++----
+ notes.c       | 4 ++--
+ 2 files changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/match-trees.c b/match-trees.c
+index f6c194c1cca..1011357ad0c 100644
+--- a/match-trees.c
++++ b/match-trees.c
+@@ -197,9 +197,10 @@ static int splice_tree(const struct object_id *oid1, const char *prefix,
+ 	while (desc.size) {
+ 		const char *name;
+ 		unsigned short mode;
++		int len = tree_entry_len(&desc.entry);
+ 
+ 		tree_entry_extract(&desc, &name, &mode);
+-		if (strlen(name) == toplen &&
++		if (len == toplen &&
+ 		    !memcmp(name, prefix, toplen)) {
+ 			if (!S_ISDIR(mode))
+ 				die("entry %s in tree %s is not a tree", name,
+@@ -214,9 +215,7 @@ static int splice_tree(const struct object_id *oid1, const char *prefix,
+ 			 *   - to discard the "const"; this is OK because we
+ 			 *     know it points into our non-const "buf"
+ 			 */
+-			rewrite_here = (unsigned char *)(desc.entry.path +
+-							 strlen(desc.entry.path) +
+-							 1);
++			rewrite_here = (unsigned char *)(name + len + 1);
+ 			break;
+ 		}
+ 		update_tree_entry(&desc);
+diff --git a/notes.c b/notes.c
+index d5ac081e76d..0a5b4fa1dbb 100644
+--- a/notes.c
++++ b/notes.c
+@@ -413,7 +413,7 @@ static void load_subtree(struct notes_tree *t, struct leaf_node *subtree,
+ 	while (tree_entry(&desc, &entry)) {
+ 		unsigned char type;
+ 		struct leaf_node *l;
+-		size_t path_len = strlen(entry.path);
++		int path_len = entry.pathlen;
+ 
+ 		if (path_len == 2 * (hashsz - prefix_len)) {
+ 			/* This is potentially the remainder of the SHA-1 */
+@@ -483,7 +483,7 @@ static void load_subtree(struct notes_tree *t, struct leaf_node *subtree,
+ 				strbuf_addch(&non_note_path, *q++);
+ 				strbuf_addch(&non_note_path, '/');
+ 			}
+-			strbuf_addstr(&non_note_path, entry.path);
++			strbuf_add(&non_note_path, entry.path, path_len);
+ 			add_non_note(t, strbuf_detach(&non_note_path, NULL),
+ 				     entry.mode, entry.oid.hash);
+ 		}
+-- 
+2.31.0.rc2.211.g1d0b8788b3
+

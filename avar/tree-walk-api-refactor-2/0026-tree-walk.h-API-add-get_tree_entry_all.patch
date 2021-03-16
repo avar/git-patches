@@ -1,0 +1,100 @@
+From b6ee8410e38e7a842319d39df09cae0cb1e44ca4 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210308150650.18626-1-avarab@gmail.com>
+References: <20210308150650.18626-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 16 Mar 2021 01:21:34 +0100
+Subject: [PATCH v2 26/29] tree-walk.h API: add get_tree_entry_all()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a get_tree_entry_all() function and use it in the one caller who
+cares about both the mode and the object type. Refactor it accordingly
+to make it clear which parts care about the mode, and which about the
+object_type.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/update-index.c | 6 ++++--
+ tree-walk.c            | 9 +--------
+ tree-walk.h            | 4 ++++
+ 3 files changed, 9 insertions(+), 10 deletions(-)
+
+diff --git a/builtin/update-index.c b/builtin/update-index.c
+index 070510d6a88..b489a876392 100644
+--- a/builtin/update-index.c
++++ b/builtin/update-index.c
+@@ -599,16 +599,18 @@ static struct cache_entry *read_one_ent(const char *which,
+ 					struct object_id *ent, const char *path,
+ 					int namelen, int stage)
+ {
++	enum object_type object_type;
+ 	unsigned short mode;
+ 	struct object_id oid;
+ 	struct cache_entry *ce;
+ 
+-	if (get_tree_entry_mode(the_repository, ent, path, &oid, &mode)) {
++	if (get_tree_entry_all(the_repository, ent, path, &oid,
++			       &mode, &object_type)) {
+ 		if (which)
+ 			error("%s: not in %s branch.", path, which);
+ 		return NULL;
+ 	}
+-	if (mode == S_IFDIR) {
++	if (object_type == OBJ_TREE) {
+ 		if (which)
+ 			error("%s: not a blob in %s branch.", path, which);
+ 		return NULL;
+diff --git a/tree-walk.c b/tree-walk.c
+index f4473276c9f..a90dbf87af4 100644
+--- a/tree-walk.c
++++ b/tree-walk.c
+@@ -559,13 +559,6 @@ struct dir_state {
+ 	struct object_id oid;
+ };
+ 
+-static int get_tree_entry_all(struct repository *r,
+-			      const struct object_id *tree_oid,
+-			      const char *name,
+-			      struct object_id *oid,
+-			      unsigned short *mode,
+-			      enum object_type *object_type);
+-
+ static int find_tree_entry(struct repository *r, struct tree_desc *t,
+ 			   const char *name, struct object_id *result,
+ 			   unsigned short *mode,
+@@ -605,7 +598,7 @@ static int find_tree_entry(struct repository *r, struct tree_desc *t,
+ 	return -1;
+ }
+ 
+-static int get_tree_entry_all(struct repository *r,
++int get_tree_entry_all(struct repository *r,
+ 		       const struct object_id *tree_oid,
+ 		       const char *name,
+ 		       struct object_id *oid,
+diff --git a/tree-walk.h b/tree-walk.h
+index a4c54871747..55ef88ef2e5 100644
+--- a/tree-walk.h
++++ b/tree-walk.h
+@@ -195,6 +195,7 @@ struct traverse_info {
+  *
+  * get_tree_entry_mode(): unsigned int mode
+  * get_tree_entry_type(): enum object_type
++ * get_tree_entry_all(): unsigned int mode, enum object_type
+  */
+ int get_tree_entry_mode(struct repository *, const struct object_id *, const char *,
+ 			struct object_id *,
+@@ -202,6 +203,9 @@ int get_tree_entry_mode(struct repository *, const struct object_id *, const cha
+ int get_tree_entry_type(struct repository *, const struct object_id *, const char *,
+ 			struct object_id *,
+ 			enum object_type *);
++int get_tree_entry_all(struct repository *, const struct object_id *, const char *,
++		       struct object_id *,
++		       unsigned short *, enum object_type *);
+ 
+ /**
+  * Generate the full pathname of a tree entry based from the root of the
+-- 
+2.31.0.rc2.211.g1d0b8788b3
+
