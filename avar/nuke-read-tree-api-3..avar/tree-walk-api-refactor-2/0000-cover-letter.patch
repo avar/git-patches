@@ -85,15 +85,54 @@ Content-Transfer-Encoding: 8bit
  40 files changed, 460 insertions(+), 244 deletions(-)
 
 Range-diff:
- 1:  6416da0dee2 <  -:  ----------- ls-files tests: add meaningful --with-tree tests
- 2:  765001b44cd <  -:  ----------- tree.c API: move read_tree() into builtin/ls-files.c
- 3:  a71ffba7d04 <  -:  ----------- ls-files: don't needlessly pass around stage variable
- 4:  e78d1810b89 <  -:  ----------- ls-files: refactor away read_tree()
- 5:  05eecdd7519 <  -:  ----------- tree.h API: remove support for starting at prefix != ""
- 6:  fcecc82e1c8 <  -:  ----------- tree.h API: remove "stage" parameter from read_tree_recursive()
- 7:  e5df57c3440 =  1:  f9bbc30f69f diff.c: remove redundant canon_mode() call
- 8:  8c2500bbf35 =  2:  187fc2c3e64 notes & match-trees: use name_entry's "pathlen" member
- 9:  3d98e0c132f !  3:  311637c5583 cache.h: add a comment to object_type()
+ 1:  6416da0dee2 =  1:  b338f2c01a4 ls-files tests: add meaningful --with-tree tests
+ 2:  765001b44cd !  2:  4578b83944c tree.c API: move read_tree() into builtin/ls-files.c
+    @@ builtin/ls-files.c: static int get_common_prefix_len(const char *common_prefix)
+       * Read the tree specified with --with-tree option
+       * (typically, HEAD) into stage #1 and then
+     
+    + ## cache.h ##
+    +@@ cache.h: static inline int index_pos_to_insert_pos(uintmax_t pos)
+    + #define ADD_CACHE_OK_TO_ADD 1		/* Ok to add */
+    + #define ADD_CACHE_OK_TO_REPLACE 2	/* Ok to replace file/directory */
+    + #define ADD_CACHE_SKIP_DFCHECK 4	/* Ok to skip DF conflict checks */
+    +-#define ADD_CACHE_JUST_APPEND 8		/* Append only; tree.c::read_tree() */
+    ++#define ADD_CACHE_JUST_APPEND 8		/* Append only */
+    + #define ADD_CACHE_NEW_ONLY 16		/* Do not replace existing ones */
+    + #define ADD_CACHE_KEEP_CACHE_TREE 32	/* Do not invalidate cache-tree */
+    + #define ADD_CACHE_RENORMALIZE 64        /* Pass along HASH_RENORMALIZE */
+    +
+      ## tree.c ##
+     @@
+      
+ 3:  a71ffba7d04 =  3:  33656ff63b8 ls-files: don't needlessly pass around stage variable
+ 4:  e78d1810b89 =  4:  1c96d5d3611 ls-files: refactor away read_tree()
+ 5:  05eecdd7519 !  5:  367cb99224b tree.h API: remove support for starting at prefix != ""
+    @@ Commit message
+         ffd31f661d5 (Reimplement read_tree_recursive() using
+         tree_entry_interesting(), 2011-03-25).
+     
+    -    If in the future we need to support recursively reading trees without
+    -    starting at the root we can easily add a read_tree_recursive_subdir(),
+    -    and make that function a thin wrapper for read_tree_1().
+    +    As it turns out (Murphy's law and all) we're just about to gain a new
+    +    in-tree user that would need this parameter[1]. Let's remove it anyway
+    +    as the common case is going to be to not supply it, A later commit
+    +    will bring back this functionality in different form.
+     
+    -    In the meantime there's no reason to keep around what amounts to dead
+    -    code, just in case we need it in the future.
+    +    1. https://lore.kernel.org/git/xmqqft106sok.fsf@gitster.g/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+ 6:  fcecc82e1c8 =  6:  38e36780e22 tree.h API: remove "stage" parameter from read_tree_recursive()
+ -:  ----------- >  7:  859902ffd83 tree.h API: rename read_tree_recursive() to read_tree()
+ -:  ----------- >  8:  a63c9b49f13 show tests: add test for "git show <tree>"
+ -:  ----------- >  9:  570642c8625 tree.h API: expose read_tree_1() as read_tree_at()
+ 7:  e5df57c3440 = 10:  f9bbc30f69f diff.c: remove redundant canon_mode() call
+ 8:  8c2500bbf35 = 11:  187fc2c3e64 notes & match-trees: use name_entry's "pathlen" member
+ 9:  3d98e0c132f ! 12:  311637c5583 cache.h: add a comment to object_type()
     @@ Commit message
          cache.h: add a comment to object_type()
      
@@ -103,9 +142,9 @@ Range-diff:
      
          The object_type() function dates back to 4d1012c3709 (Fix rev-list
          when showing objects involving submodules, 2007-11-11). It's not
-10:  ce5808b317c =  4:  fecfe3d462c tree-walk.h: add object_type member to name_entry
-11:  18f26531acf =  5:  db961ab5e8d tree-walk.c: migrate to using new "object_type" field when possible
-12:  55e2640b815 !  6:  df2fc76161d cache.h: have base_name_compare() take "is tree?", not "mode"
+10:  ce5808b317c = 13:  fecfe3d462c tree-walk.h: add object_type member to name_entry
+11:  18f26531acf = 14:  db961ab5e8d tree-walk.c: migrate to using new "object_type" field when possible
+12:  55e2640b815 ! 15:  df2fc76161d cache.h: have base_name_compare() take "is tree?", not "mode"
     @@ cache.h: int repo_interpret_branch_name(struct repository *r,
       
      -int base_name_compare(const char *name1, int len1, int mode1, const char *name2, int len2, int mode2);
@@ -282,8 +321,8 @@ Range-diff:
       	if (cmp)
       		return cmp;
       
-13:  abc128f6cb9 =  7:  49d5da8c086 tree-walk.h users: switch object_type(...) to new .object_type
-14:  dcf13faf3cd !  8:  c9d209d496a tree.h: format argument lists of read_tree_recursive() users
+13:  abc128f6cb9 = 16:  49d5da8c086 tree-walk.h users: switch object_type(...) to new .object_type
+14:  dcf13faf3cd ! 17:  c9d209d496a tree.h: format argument lists of read_tree_recursive() users
     @@ archive.c: static int check_attr_export_subst(const struct attr_check *check)
      -		void *context)
      +			       int baselen, const char *filename,
@@ -302,7 +341,7 @@ Range-diff:
     - 			struct tree *tree,
     + int read_tree_at(struct repository *r,
     + 		 struct tree *tree,
-15:  b33fcf82349 !  9:  a6d2660fe14 tree.h users: format argument lists in archive.c
+15:  b33fcf82349 ! 18:  a6d2660fe14 tree.h users: format argument lists in archive.c
     @@ Commit message
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -320,8 +359,8 @@ Range-diff:
      @@ archive.c: static int write_archive_entry(const struct object_id *oid, const char *base,
       }
       
-16:  6a20d3c058f = 10:  15f7f89acca archive: get rid of 'stage' parameter
-17:  a7f7444917c ! 11:  7a71404ea3f tree.h API: make read_tree_fn_t take an "enum object_type"
+16:  6a20d3c058f = 19:  15f7f89acca archive: get rid of 'stage' parameter
+17:  a7f7444917c ! 20:  7a71404ea3f tree.h API: make read_tree_fn_t take an "enum object_type"
     @@ merge-recursive.c: static int save_files_dirs(const struct object_id *oid,
       static void get_files_dirs(struct merge_options *opt, struct tree *tree)
      
@@ -364,7 +403,7 @@ Range-diff:
       
     - int read_tree_recursive(struct repository *r,
     + int read_tree_at(struct repository *r,
-18:  625c643513d ! 12:  64dc9364bae tree-walk.h users: migrate "p->mode &&" pattern
+18:  625c643513d ! 21:  64dc9364bae tree-walk.h users: migrate "p->mode &&" pattern
     @@ Metadata
       ## Commit message ##
          tree-walk.h users: migrate "p->mode &&" pattern
@@ -383,16 +422,16 @@ Range-diff:
      
          Since OBJ_NONE is "0" we can also rely on that being zero'd out here,
          along with the rest of the structure. I think this is slightly less
-19:  37b28c7feff = 13:  93ed3edbbd5 tree-walk.h users: refactor chained "mode" if/else into switch
-20:  e0b8ec6e291 = 14:  7aa48aa34c3 tree-walk.h users: migrate miscellaneous "mode" to "object_type"
-21:  0cd162c43d7 = 15:  3ae81621dcf merge-tree tests: test for the mode comparison in same_entry()
-22:  f8ce666d4a7 = 16:  4249ad5c4de merge-ort: correct reference to test in 62fdec17a11
-23:  4963902ba97 = 17:  e5e17505dde fsck.c: switch on "object_type" in fsck_walk_tree()
-24:  d74e6778009 = 18:  3f0b884f1fd tree-walk.h users: use temporary variable(s) for "mode"
-25:  d39db486d4e = 19:  174167613bb tree-walk.h API: formatting changes for subsequent commit
-26:  69eb956b1ab = 20:  ec76db613f2 tree-walk.h API: rename get_tree_entry() to get_tree_entry_mode()
-27:  cc56453e600 = 21:  11e34941729 tree-walk.h API users: use "tmp" for mode in shift_tree_by()
-28:  ca9e3b3ad00 ! 22:  b31c106557f tree-walk.h API: Add get_tree_entry_type()
+19:  37b28c7feff = 22:  93ed3edbbd5 tree-walk.h users: refactor chained "mode" if/else into switch
+20:  e0b8ec6e291 = 23:  7aa48aa34c3 tree-walk.h users: migrate miscellaneous "mode" to "object_type"
+21:  0cd162c43d7 = 24:  3ae81621dcf merge-tree tests: test for the mode comparison in same_entry()
+22:  f8ce666d4a7 = 25:  4249ad5c4de merge-ort: correct reference to test in 62fdec17a11
+23:  4963902ba97 = 26:  e5e17505dde fsck.c: switch on "object_type" in fsck_walk_tree()
+24:  d74e6778009 = 27:  3f0b884f1fd tree-walk.h users: use temporary variable(s) for "mode"
+25:  d39db486d4e = 28:  174167613bb tree-walk.h API: formatting changes for subsequent commit
+26:  69eb956b1ab = 29:  ec76db613f2 tree-walk.h API: rename get_tree_entry() to get_tree_entry_mode()
+27:  cc56453e600 = 30:  11e34941729 tree-walk.h API users: use "tmp" for mode in shift_tree_by()
+28:  ca9e3b3ad00 ! 31:  b31c106557f tree-walk.h API: Add get_tree_entry_type()
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -491,7 +530,7 @@ Range-diff:
       
       /**
        * Generate the full pathname of a tree entry based from the root of the
-30:  5986f494aa1 ! 23:  304d5d4d1af tree-walk.h API: document and format tree_entry_extract()
+30:  5986f494aa1 ! 32:  304d5d4d1af tree-walk.h API: document and format tree_entry_extract()
     @@ tree-walk.h: struct tree_desc {
      - * `pathp` and `modep` arguments are set to the entry's pathname and mode
      - * respectively.
@@ -504,7 +543,7 @@ Range-diff:
      + * appropriate variable to fill in (NULL won't do!):
      + *
      + * tree_entry_extract_mode(): const char *path, unsigned int mode
-31:  9b604a193b8 ! 24:  346453df356 tree-entry.h API: rename tree_entry_extract() to tree_entry_extract_mode()
+31:  9b604a193b8 ! 33:  346453df356 tree-entry.h API: rename tree_entry_extract() to tree_entry_extract_mode()
     @@ tree-diff.c: static struct combine_diff_path *emit_path(struct combine_diff_path
       
       		isdir = S_ISDIR(mode);
@@ -523,7 +562,7 @@ Range-diff:
       ## tree-walk.h ##
      @@ tree-walk.h: struct tree_desc {
        *
-32:  40878d04550 ! 25:  dd012b661e5 tree-walk.h API: add a tree_entry_extract_all() function
+32:  40878d04550 ! 34:  dd012b661e5 tree-walk.h API: add a tree_entry_extract_all() function
     @@ Commit message
      
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
@@ -574,8 +613,8 @@ Range-diff:
       		entrylen = tree_entry_len(&t->entry);
       		update_tree_entry(t);
       		if (entrylen > namelen)
- -:  ----------- > 26:  b6ee8410e38 tree-walk.h API: add get_tree_entry_all()
-29:  6b864e066d9 ! 27:  5c98afd9e7a tree-walk.h API: add a get_tree_entry_path() function
+ -:  ----------- > 35:  b6ee8410e38 tree-walk.h API: add get_tree_entry_all()
+29:  6b864e066d9 ! 36:  5c98afd9e7a tree-walk.h API: add a get_tree_entry_path() function
     @@ tree-walk.c: int get_tree_entry_all(struct repository *r,
      
       ## tree-walk.h ##
@@ -585,11 +624,8 @@ Range-diff:
        * appropriate variable to fill in (NULL won't do!):
        *
      + * get_tree_entry_path(): <no extra argument, just get the common 'path'>
- -:  ----------- > 28:  3e7e0f7eb85 blame: emit a better error on 'git blame directory'
-33:  e4a6fae1ae0 = 29:  ac1ccf13570 tree-walk.h API: add a tree_entry_extract_type() function
+ -:  ----------- > 37:  3e7e0f7eb85 blame: emit a better error on 'git blame directory'
+33:  e4a6fae1ae0 = 38:  ac1ccf13570 tree-walk.h API: add a tree_entry_extract_type() function
 34:  766b4460a95 <  -:  ----------- tree-walk.h API users: rename "struct name_entry"'s "mode" to "raw_mode"
 35:  4bdf94ae5c1 <  -:  ----------- tree.h API users: rename read_tree_fn_t's "mode" to "raw_mode"
 36:  9d049fdbd00 <  -:  ----------- tree-walk.h API: move canon_mode() back out of decode_tree_entry()
--- 
-2.31.0.rc2.211.g1d0b8788b3
-
