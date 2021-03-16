@@ -1,0 +1,74 @@
+From 33656ff63b899bf089eee4a9a724dedbef8649d3 Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210315234344.28427-1-avarab@gmail.com>
+References: <20210315234344.28427-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 6 Mar 2021 02:24:42 +0100
+Subject: [PATCH v4 3/9] ls-files: don't needlessly pass around stage variable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Now that read_tree() has been moved to ls-files.c we can get rid of
+the stage != 1 case that'll never happen.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-files.c | 17 ++++-------------
+ 1 file changed, 4 insertions(+), 13 deletions(-)
+
+diff --git a/builtin/ls-files.c b/builtin/ls-files.c
+index a445862281..74d572a3e4 100644
+--- a/builtin/ls-files.c
++++ b/builtin/ls-files.c
+@@ -470,21 +470,12 @@ static int read_one_entry_quick(const struct object_id *oid, struct strbuf *base
+ }
+ 
+ 
+-static int read_tree(struct repository *r, struct tree *tree, int stage,
++static int read_tree(struct repository *r, struct tree *tree,
+ 		     struct pathspec *match, struct index_state *istate)
+ {
+ 	read_tree_fn_t fn = NULL;
+ 	int i, err;
+ 
+-	/*
+-	 * Currently the only existing callers of this function all
+-	 * call it with stage=1 and after making sure there is nothing
+-	 * at that stage; we could always use read_one_entry_quick().
+-	 *
+-	 * But when we decide to straighten out git-read-tree not to
+-	 * use unpack_trees() in some cases, this will probably start
+-	 * to matter.
+-	 */
+ 
+ 	/*
+ 	 * See if we have cache entry at the stage.  If so,
+@@ -493,13 +484,13 @@ static int read_tree(struct repository *r, struct tree *tree, int stage,
+ 	 */
+ 	for (i = 0; !fn && i < istate->cache_nr; i++) {
+ 		const struct cache_entry *ce = istate->cache[i];
+-		if (ce_stage(ce) == stage)
++		if (ce_stage(ce) == 1)
+ 			fn = read_one_entry;
+ 	}
+ 
+ 	if (!fn)
+ 		fn = read_one_entry_quick;
+-	err = read_tree_recursive(r, tree, "", 0, stage, match, fn, istate);
++	err = read_tree_recursive(r, tree, "", 0, 1, match, fn, istate);
+ 	if (fn == read_one_entry || err)
+ 		return err;
+ 
+@@ -549,7 +540,7 @@ void overlay_tree_on_index(struct index_state *istate,
+ 			       PATHSPEC_PREFER_CWD, prefix, matchbuf);
+ 	} else
+ 		memset(&pathspec, 0, sizeof(pathspec));
+-	if (read_tree(the_repository, tree, 1, &pathspec, istate))
++	if (read_tree(the_repository, tree, &pathspec, istate))
+ 		die("unable to read tree entries %s", tree_name);
+ 
+ 	for (i = 0; i < istate->cache_nr; i++) {
+-- 
+2.31.0.256.gf0ddda3145
+
