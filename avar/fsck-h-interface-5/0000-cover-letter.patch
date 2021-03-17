@@ -1,0 +1,259 @@
+From f05fa5c3ec90f596b4df9bb563d730d06cbe9d5f Mon Sep 17 00:00:00 2001
+In-Reply-To: <20210316161738.30254-1-avarab@gmail.com>
+References: <20210316161738.30254-1-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 17 Mar 2021 19:14:08 +0100
+Subject: [PATCH v5 00/19] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (19):
+  fsck.c: refactor and rename common config callback
+  fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+  fsck.h: use "enum object_type" instead of "int"
+  fsck.c: rename variables in fsck_set_msg_type() for less confusion
+  fsck.c: move definition of msg_id into append_msg_id()
+  fsck.c: rename remaining fsck_msg_id "id" to "msg_id"
+  fsck.c: refactor fsck_msg_type() to limit scope of "int msg_type"
+  fsck.h: move FSCK_{FATAL,INFO,ERROR,WARN,IGNORE} into an enum
+  fsck.h: re-order and re-assign "enum fsck_msg_type"
+  fsck.c: call parse_msg_type() early in fsck_set_msg_type()
+  fsck.c: undefine temporary STR macro after use
+  fsck.c: give "FOREACH_MSG_ID" a more specific name
+  fsck.[ch]: move FOREACH_FSCK_MSG_ID & fsck_msg_id from *.c to *.h
+  fsck.c: pass along the fsck_msg_id in the fsck_error callback
+  fsck.c: add an fsck_set_msg_type() API that takes enums
+  fsck.c: move gitmodules_{found,done} into fsck_options
+  fetch-pack: don't needlessly copy fsck_options
+  fetch-pack: use file-scope static struct for fsck_options
+  fetch-pack: use new fsck API to printing dangling submodules
+
+ builtin/fsck.c           |  14 ++-
+ builtin/index-pack.c     |  30 +-----
+ builtin/mktag.c          |  14 ++-
+ builtin/unpack-objects.c |   3 +-
+ fetch-pack.c             |   6 +-
+ fsck.c                   | 197 +++++++++++++++------------------------
+ fsck.h                   | 131 +++++++++++++++++++++++---
+ 7 files changed, 213 insertions(+), 182 deletions(-)
+
+Range-diff:
+ 1:  9cd942b526 <  -:  ---------- fsck.h: update FSCK_OPTIONS_* for object_name
+ 2:  d67966b838 <  -:  ---------- fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+ 3:  211472e0c5 <  -:  ---------- fsck.h: reduce duplication between FSCK_OPTIONS_{DEFAULT,STRICT}
+ 4:  70afee988d <  -:  ---------- fsck.h: add a FSCK_OPTIONS_COMMON_ERROR_FUNC macro
+ 5:  1337d53352 <  -:  ---------- fsck.h: indent arguments to of fsck_set_msg_type
+ -:  ---------- >  1:  fe33015e0d fsck.c: refactor and rename common config callback
+ -:  ---------- >  2:  72f2e53afa fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+ 6:  e4ef107bb4 =  3:  237a280686 fsck.h: use "enum object_type" instead of "int"
+ 7:  20bac3207e !  4:  13b76c73dd fsck.c: rename variables in fsck_set_msg_type() for less confusion
+    @@ Commit message
+         "msg_id" to "msg_id_str" etc. This will make a follow-up change
+         smaller.
+     
+    +    While I'm at it properly indent the fsck_set_msg_type() argument list.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## fsck.c ##
+    @@ fsck.c: int is_valid_msg_type(const char *msg_id, const char *msg_type)
+      
+      void fsck_set_msg_type(struct fsck_options *options,
+     -		const char *msg_id, const char *msg_type)
+    -+		const char *msg_id_str, const char *msg_type_str)
+    ++		       const char *msg_id_str, const char *msg_type_str)
+      {
+     -	int id = parse_msg_id(msg_id), type;
+     +	int msg_id = parse_msg_id(msg_id_str), msg_type;
+    @@ fsck.c: int is_valid_msg_type(const char *msg_id, const char *msg_type)
+      }
+      
+      void fsck_set_msg_types(struct fsck_options *options, const char *values)
+    +
+    + ## fsck.h ##
+    +@@ fsck.h: struct fsck_options;
+    + struct object;
+    + 
+    + void fsck_set_msg_type(struct fsck_options *options,
+    +-		const char *msg_id, const char *msg_type);
+    ++		       const char *msg_id, const char *msg_type);
+    + void fsck_set_msg_types(struct fsck_options *options, const char *values);
+    + int is_valid_msg_type(const char *msg_id, const char *msg_type);
+    + 
+ 8:  09c3bba9e9 =  5:  4ae83403b7 fsck.c: move definition of msg_id into append_msg_id()
+ 9:  8067df53a2 =  6:  82107f1dac fsck.c: rename remaining fsck_msg_id "id" to "msg_id"
+10:  bdf5e13f3d =  7:  796096bf73 fsck.c: refactor fsck_msg_type() to limit scope of "int msg_type"
+11:  b03caa237f !  8:  3664abb23d fsck.h: move FSCK_{FATAL,INFO,ERROR,WARN,IGNORE} into an enum
+    @@ builtin/index-pack.c: static void show_pack_info(int stat_only)
+      	 * NEEDSWORK: Plumb the MSG_ID (from fsck.c) here and use it
+     
+      ## builtin/mktag.c ##
+    -@@ builtin/mktag.c: static int mktag_config(const char *var, const char *value, void *cb)
+    +@@ builtin/mktag.c: static struct fsck_options fsck_options = FSCK_OPTIONS_STRICT;
+      static int mktag_fsck_error_func(struct fsck_options *o,
+      				 const struct object_id *oid,
+      				 enum object_type object_type,
+    @@ fsck.c: static int fsck_msg_type(enum fsck_msg_id msg_id,
+      		return FSCK_ERROR;
+     @@ fsck.c: int is_valid_msg_type(const char *msg_id, const char *msg_type)
+      void fsck_set_msg_type(struct fsck_options *options,
+    - 		const char *msg_id_str, const char *msg_type_str)
+    + 		       const char *msg_id_str, const char *msg_type_str)
+      {
+     -	int msg_id = parse_msg_id(msg_id_str), msg_type;
+     +	int msg_id = parse_msg_id(msg_id_str);
+12:  7b1d13b4cc =  9:  81e6d7ab45 fsck.h: re-order and re-assign "enum fsck_msg_type"
+13:  a8e4ca7b19 ! 10:  5c2e8e7b84 fsck.c: call parse_msg_type() early in fsck_set_msg_type()
+    @@ Commit message
+     
+      ## fsck.c ##
+     @@ fsck.c: void fsck_set_msg_type(struct fsck_options *options,
+    - 		const char *msg_id_str, const char *msg_type_str)
+    + 		       const char *msg_id_str, const char *msg_type_str)
+      {
+      	int msg_id = parse_msg_id(msg_id_str);
+     -	enum fsck_msg_type msg_type;
+14:  214c375a20 = 11:  7ffbf9af3f fsck.c: undefine temporary STR macro after use
+15:  19a2499a80 = 12:  12ff0f75eb fsck.c: give "FOREACH_MSG_ID" a more specific name
+16:  6e1a7b6274 = 13:  0c49dd5164 fsck.[ch]: move FOREACH_FSCK_MSG_ID & fsck_msg_id from *.c to *.h
+17:  42af4e164c = 14:  900263f503 fsck.c: pass along the fsck_msg_id in the fsck_error callback
+18:  fa47f473a8 ! 15:  5f270e88a0 fsck.c: add an fsck_set_msg_type() API that takes enums
+    @@ builtin/mktag.c: int cmd_mktag(int argc, const char **argv, const char *prefix)
+     +	fsck_set_msg_type_from_ids(&fsck_options, FSCK_MSG_EXTRA_HEADER_ENTRY,
+     +				   FSCK_WARN);
+      	/* config might set fsck.extraHeaderEntry=* again */
+    - 	git_config(mktag_config, NULL);
+    + 	git_config(git_fsck_config, &fsck_options);
+      	if (fsck_tag_standalone(NULL, buf.buf, buf.len, &fsck_options,
+     
+      ## fsck.c ##
+    @@ fsck.c: int is_valid_msg_type(const char *msg_id, const char *msg_type)
+     +}
+     +
+      void fsck_set_msg_type(struct fsck_options *options,
+    - 		const char *msg_id_str, const char *msg_type_str)
+    + 		       const char *msg_id_str, const char *msg_type_str)
+      {
+     @@ fsck.c: void fsck_set_msg_type(struct fsck_options *options,
+      	if (msg_type != FSCK_ERROR && msg_id_info[msg_id].msg_type == FSCK_FATAL)
+19:  4cc3880cc4 = 16:  539d019712 fsck.c: move gitmodules_{found,done} into fsck_options
+20:  fd219d318a = 17:  1acf744236 fetch-pack: don't needlessly copy fsck_options
+21:  e4cd8c250e = 18:  b47c3d5ac6 fetch-pack: use file-scope static struct for fsck_options
+22:  fdbc3c304c ! 19:  f05fa5c3ec fetch-pack: use new fsck API to printing dangling submodules
+    @@ Commit message
+         manipulating the "gitmodules_found" member. A recent commit moved it
+         into "fsck_options" so we could do this here.
+     
+    -    Add a fsck-cb.c file similar to parse-options-cb.c, the alternative
+    -    would be to either define this directly in fsck.c as a public API, or
+    -    to create some library shared by fetch-pack.c ad builtin/index-pack.
+    +    I'm sticking this callback in fsck.c. Perhaps in the future we'd like
+    +    to accumulate such callbacks into another file (maybe fsck-cb.c,
+    +    similar to parse-options-cb.c?), but while we've got just the one
+    +    let's just put it into fsck.c.
+     
+    -    I expect that there won't be many of these fsck utility functions in
+    -    the future, so just having a single fsck-cb.c makes sense.
+    +    A better alternative in this case would be some library some more
+    +    obvious library shared by fetch-pack.c ad builtin/index-pack.c, but
+    +    there isn't such a thing.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## Makefile ##
+    -@@ Makefile: LIB_OBJS += fetch-negotiator.o
+    - LIB_OBJS += fetch-pack.o
+    - LIB_OBJS += fmt-merge-msg.o
+    - LIB_OBJS += fsck.o
+    -+LIB_OBJS += fsck-cb.o
+    - LIB_OBJS += fsmonitor.o
+    - LIB_OBJS += gettext.o
+    - LIB_OBJS += gpg-interface.o
+    -
+      ## builtin/index-pack.c ##
+     @@ builtin/index-pack.c: static int nr_threads;
+      static int from_stdin;
+    @@ fetch-pack.c: static void fsck_gitmodules_oids(struct oidset *gitmodules_oids)
+      		die("fsck failed");
+      }
+     
+    - ## fsck-cb.c (new) ##
+    -@@
+    -+#include "git-compat-util.h"
+    -+#include "fsck.h"
+    + ## fsck.c ##
+    +@@ fsck.c: int fsck_error_function(struct fsck_options *o,
+    + 	return 1;
+    + }
+    + 
+    +-void register_found_gitmodules(struct fsck_options *options, const struct object_id *oid)
+    +-{
+    +-	oidset_insert(&options->gitmodules_found, oid);
+    +-}
+    +-
+    + int fsck_finish(struct fsck_options *options)
+    + {
+    + 	int ret = 0;
+    +@@ fsck.c: int git_fsck_config(const char *var, const char *value, void *cb)
+    + 
+    + 	return git_default_config(var, value, cb);
+    + }
+    ++
+    ++/*
+    ++ * Custom error callbacks that are used in more than one place.
+    ++ */
+     +
+     +int fsck_error_cb_print_missing_gitmodules(struct fsck_options *o,
+     +					   const struct object_id *oid,
+    @@ fsck-cb.c (new)
+     +	return fsck_error_function(o, oid, object_type, msg_type, msg_id, message);
+     +}
+     
+    - ## fsck.c ##
+    -@@ fsck.c: int fsck_error_function(struct fsck_options *o,
+    - 	return 1;
+    - }
+    - 
+    --void register_found_gitmodules(struct fsck_options *options, const struct object_id *oid)
+    --{
+    --	oidset_insert(&options->gitmodules_found, oid);
+    --}
+    --
+    - int fsck_finish(struct fsck_options *options)
+    - {
+    - 	int ret = 0;
+    -
+      ## fsck.h ##
+     @@ fsck.h: int fsck_walk(struct object *obj, void *data, struct fsck_options *options);
+      int fsck_object(struct object *obj, void *data, unsigned long size,
+    @@ fsck.h: int fsck_walk(struct object *obj, void *data, struct fsck_options *optio
+       * fsck a tag, and pass info about it back to the caller. This is
+       * exposed fsck_object() internals for git-mktag(1).
+     @@ fsck.h: const char *fsck_describe_object(struct fsck_options *options,
+    - int fsck_config_internal(const char *var, const char *value, void *cb,
+    - 			 struct fsck_options *options);
+    +  */
+    + int git_fsck_config(const char *var, const char *value, void *cb);
+      
+     +/*
+    -+ * Initializations for callbacks in fsck-cb.c
+    ++ * Custom error callbacks that are used in more than one place.
+     + */
+     +#define FSCK_OPTIONS_MISSING_GITMODULES { \
+     +	.strict = 1, \
+     +	.error_func = fsck_error_cb_print_missing_gitmodules, \
+     +	FSCK_OPTIONS_COMMON \
+     +}
+    -+
+    -+/*
+    -+ * Error callbacks in fsck-cb.c
+    -+ */
+     +int fsck_error_cb_print_missing_gitmodules(struct fsck_options *o,
+     +					   const struct object_id *oid,
+     +					   enum object_type object_type,
+-- 
+2.31.0.260.g719c683c1d
+
