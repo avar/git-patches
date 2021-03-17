@@ -3,12 +3,78 @@ In-Reply-To: <dffe8821fde290a1e19b2968098b007b9ac213e6.1615912983.git.gitgitgadg
 References: <dffe8821fde290a1e19b2968098b007b9ac213e6.1615912983.git.gitgitgadget@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Wed, 17 Mar 2021 14:22:03 +0100
-Subject: [RFC/PATCH 0/5] *** SUBJECT HERE ***
+Subject: [RFC/PATCH 0/5] Re: [PATCH v3 07/20] test-read-cache: print cache entries with --table
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+> From: Derrick Stolee <dstolee@microsoft.com>
+>
+> This table is helpful for discovering data in the index to ensure it is
+> being written correctly, especially as we build and test the
+> sparse-index. This table includes an output format similar to 'git
+> ls-tree', but should not be compared to that directly. The biggest
+> reasons are that 'git ls-tree' includes a tree entry for every
+> subdirectory, even those that would not appear as a sparse directory in
+> a sparse-index. Further, 'git ls-tree' does not use a trailing directory
+> separator for its tree rows.
+>
+> This does not print the stat() information for the blobs. That could be
+> added in a future change with another option. The tests that are added
+> in the next few changes care only about the object types and IDs.
+>
+> To make the option parsing slightly more robust, wrap the string
+> comparisons in a loop adapted from test-dir-iterator.c.
+>
+> Care must be taken with the final check for the 'cnt' variable. We
+> continue the expectation that the numerical value is the final argument.
+>
+> Signed-off-by: Derrick Stolee <dstolee@microsoft.com>
+> ---
+>  t/helper/test-read-cache.c | 55 +++++++++++++++++++++++++++++++-------
+>  1 file changed, 45 insertions(+), 10 deletions(-)
+>
+> diff --git a/t/helper/test-read-cache.c b/t/helper/test-read-cache.c
+> index 244977a29bdf..6cfd8f2de71c 100644
+> --- a/t/helper/test-read-cache.c
+> +++ b/t/helper/test-read-cache.c
+> @@ -1,36 +1,71 @@
+>  #include "test-tool.h"
+>  #include "cache.h"
+>  #include "config.h"
+> +#include "blob.h"
+> +#include "commit.h"
+> +#include "tree.h"
+> +
+> +static void print_cache_entry(struct cache_entry *ce)
+> +{
+> +	const char *type;
+> +	printf("%06o ", ce->ce_mode & 0177777);
+> +
+> +	if (S_ISSPARSEDIR(ce->ce_mode))
+> +		type = tree_type;
+> +	else if (S_ISGITLINK(ce->ce_mode))
+> +		type = commit_type;
+> +	else
+> +		type = blob_type;
+> +
+> +	printf("%s %s\t%s\n",
+> +	       type,
+> +	       oid_to_hex(&ce->oid),
+> +	       ce->name);
+> +}
+> +
+
+So we have a test tool that's mostly ls-files but mocks the output
+ls-tree would emit, won't these tests eventually care about what stage
+things are in?
+
+What follows is an RFC series on top that's the result of me wondering
+why if we're adding new index constructs we aren't updating our
+plumbing to emit that data, can we just add this to ls-files and drop
+this test helper?
+
+Turns out: Yes we can.
 
 Ævar Arnfjörð Bjarmason (5):
   ls-files: defer read_index() after parse_options() etc.
