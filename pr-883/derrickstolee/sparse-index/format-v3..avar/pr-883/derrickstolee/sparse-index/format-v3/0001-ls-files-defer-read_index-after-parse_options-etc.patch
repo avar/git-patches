@@ -1,0 +1,53 @@
+From 48b4a8437623855ee08f6a8f547655247ccc52d0 Mon Sep 17 00:00:00 2001
+In-Reply-To: <pr-883/derrickstolee/sparse-index/format-v3>
+References: <pr-883/derrickstolee/sparse-index/format-v3>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 17 Mar 2021 12:23:57 +0100
+Subject: [RFC/PATCH 1/5] ls-files: defer read_index() after parse_options()
+ etc.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the reading of the index below the parsing of options. We'll need
+to setup some index options in the next commit after option parsing,
+but in any case it makes sense to give parse_options() handling a
+chance to die early before we perform the more expensive operation of
+reading the index.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-files.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/ls-files.c b/builtin/ls-files.c
+index 13bcc2d847..eb72d16493 100644
+--- a/builtin/ls-files.c
++++ b/builtin/ls-files.c
+@@ -681,9 +681,6 @@ int cmd_ls_files(int argc, const char **argv, const char *cmd_prefix)
+ 		prefix_len = strlen(prefix);
+ 	git_config(git_default_config, NULL);
+ 
+-	if (repo_read_index(the_repository) < 0)
+-		die("index file corrupt");
+-
+ 	argc = parse_options(argc, argv, prefix, builtin_ls_files_options,
+ 			ls_files_usage, 0);
+ 	pl = add_pattern_list(&dir, EXC_CMDL, "--exclude option");
+@@ -743,6 +740,12 @@ int cmd_ls_files(int argc, const char **argv, const char *cmd_prefix)
+ 		max_prefix = common_prefix(&pathspec);
+ 	max_prefix_len = get_common_prefix_len(max_prefix);
+ 
++	/*
++	 * Read the index after parse options etc. have had a chance
++	 * to die early.
++	 */
++	if (repo_read_index(the_repository) < 0)
++		die("index file corrupt");
+ 	prune_index(the_repository->index, max_prefix, max_prefix_len);
+ 
+ 	/* Treat unmatching pathspec elements as errors */
+-- 
+2.31.0.260.g719c683c1d
+
