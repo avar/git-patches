@@ -1,0 +1,115 @@
+From 4d51da4ea39c11ac56972da8fa4e5becff7294f7 Mon Sep 17 00:00:00 2001
+Message-Id: <4d51da4ea39c11ac56972da8fa4e5becff7294f7.1616282534.git.avarab@gmail.com>
+In-Reply-To: <cover.1616282533.git.avarab@gmail.com>
+References: <20210316155829.31242-1-avarab@gmail.com>
+	<cover.1616282533.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Mar 2021 11:52:53 +0100
+Subject: [PATCH v4 29/29] tree-walk.h API: add a tree_entry_extract_type()
+ function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add and use a tree_entry_extract_type() function. There were callers
+of tree_entry_extract() which didn't care about the mode, but just the
+type in the tree entry.
+
+In emit_path() the "mode" variable was not used after the "isdir"
+assignment, as can be seen in the diff with it being set to 0.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ match-trees.c | 12 ++++++------
+ tree-diff.c   |  5 +++--
+ tree-walk.h   | 11 +++++++++++
+ 3 files changed, 20 insertions(+), 8 deletions(-)
+
+diff --git a/match-trees.c b/match-trees.c
+index 25bfb46fb02..89109659aa3 100644
+--- a/match-trees.c
++++ b/match-trees.c
+@@ -143,11 +143,11 @@ static void match_trees(const struct object_id *hash1,
+ 	while (one.size) {
+ 		const char *path;
+ 		const struct object_id *elem;
+-		unsigned short mode;
++		enum object_type object_type;
+ 		int score;
+ 
+-		elem = tree_entry_extract_mode(&one, &path, &mode);
+-		if (!S_ISDIR(mode))
++		elem = tree_entry_extract_type(&one, &path, &object_type);
++		if (object_type != OBJ_TREE)
+ 			goto next;
+ 		score = score_trees(elem, hash2);
+ 		if (*best_score < score) {
+@@ -198,14 +198,14 @@ static int splice_tree(const struct object_id *oid1, const char *prefix,
+ 
+ 	rewrite_here = NULL;
+ 	while (desc.size) {
++		enum object_type object_type;
+ 		const char *name;
+-		unsigned short mode;
+ 		int len = tree_entry_len(&desc.entry);
+ 
+-		tree_entry_extract_mode(&desc, &name, &mode);
++		tree_entry_extract_type(&desc, &name, &object_type);
+ 		if (len == toplen &&
+ 		    !memcmp(name, prefix, toplen)) {
+-			if (!S_ISDIR(mode))
++			if (object_type != OBJ_TREE)
+ 				die("entry %s in tree %s is not a tree", name,
+ 				    oid_to_hex(oid1));
+ 
+diff --git a/tree-diff.c b/tree-diff.c
+index 918ad95fa61..8409374f0ba 100644
+--- a/tree-diff.c
++++ b/tree-diff.c
+@@ -208,10 +208,11 @@ static struct combine_diff_path *emit_path(struct combine_diff_path *p,
+ 		 * 1) all modes for tp[i]=tp[imin] should be the same wrt
+ 		 *    S_ISDIR, thanks to base_name_compare().
+ 		 */
+-		tree_entry_extract_mode(&tp[imin], &path, &mode);
++		enum object_type object_type;
++		tree_entry_extract_type(&tp[imin], &path, &object_type);
+ 		pathlen = tree_entry_len(&tp[imin].entry);
+ 
+-		isdir = S_ISDIR(mode);
++		isdir = object_type == OBJ_TREE;
+ 		oid = NULL;
+ 		mode = 0;
+ 	}
+diff --git a/tree-walk.h b/tree-walk.h
+index efcd7ccd10e..f5102ed5427 100644
+--- a/tree-walk.h
++++ b/tree-walk.h
+@@ -47,6 +47,7 @@ struct tree_desc {
+  * appropriate variable to fill in (NULL won't do!):
+  *
+  * tree_entry_extract_mode(): const char *path, unsigned int mode
++ * tree_entry_extract_type(): const char *path, enum object_type
+  * tree_entry_extract_all(): const char *path, unsigned int mode, enum object_type
+  */
+ static inline const struct object_id *tree_entry_extract_mode(struct tree_desc *desc,
+@@ -58,6 +59,16 @@ static inline const struct object_id *tree_entry_extract_mode(struct tree_desc *
+ 	return &desc->entry.oid;
+ }
+ 
++static inline const struct object_id *tree_entry_extract_type(struct tree_desc *desc,
++							      const char **pathp,
++							      enum object_type *object_typep)
++{
++	*pathp = desc->entry.path;
++	*object_typep = desc->entry.object_type;
++	return &desc->entry.oid;
++}
++
++
+ static inline const struct object_id *tree_entry_extract_all(struct tree_desc *desc,
+ 							     const char **pathp,
+ 							     unsigned short *modep,
+-- 
+2.31.0.286.gc175f2cb894
+

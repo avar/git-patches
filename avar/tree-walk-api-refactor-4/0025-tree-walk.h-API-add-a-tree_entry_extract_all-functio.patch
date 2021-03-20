@@ -1,0 +1,97 @@
+From ce7c19ad39c882a6f883ea3acceb99e7771c9a87 Mon Sep 17 00:00:00 2001
+Message-Id: <ce7c19ad39c882a6f883ea3acceb99e7771c9a87.1616282534.git.avarab@gmail.com>
+In-Reply-To: <cover.1616282533.git.avarab@gmail.com>
+References: <20210316155829.31242-1-avarab@gmail.com>
+	<cover.1616282533.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Mar 2021 10:42:40 +0100
+Subject: [PATCH v4 25/29] tree-walk.h API: add a tree_entry_extract_all()
+ function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a tree_entry_extract_all() sibling function to the existing
+tree_entry_extract_mode().
+
+Having the OBJ_{BLOB,TREE,COMMIT} when you have the "mode" is strictly
+speaking redundant, but hopefully makes it easier to read the
+code. We'll now see which parts of the code are checking the types,
+v.s. those that care about the mode specifically.
+
+Only the first use of tree_entry_extract_mode() in emit_path() is
+converted here, the other branch will use a new
+get_tree_entry_mode_type() introduced in a subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ tree-diff.c |  5 +++--
+ tree-walk.c |  2 +-
+ tree-walk.h | 12 ++++++++++++
+ 3 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/tree-diff.c b/tree-diff.c
+index 65c7e4dbc8b..918ad95fa61 100644
+--- a/tree-diff.c
++++ b/tree-diff.c
+@@ -195,10 +195,11 @@ static struct combine_diff_path *emit_path(struct combine_diff_path *p,
+ 	assert(t || tp);
+ 
+ 	if (t) {
++		enum object_type object_type;
+ 		/* path present in resulting tree */
+-		oid = tree_entry_extract_mode(t, &path, &mode);
++		oid = tree_entry_extract_all(t, &path, &mode, &object_type);
+ 		pathlen = tree_entry_len(&t->entry);
+-		isdir = S_ISDIR(mode);
++		isdir = (object_type == OBJ_TREE);
+ 	} else {
+ 		/*
+ 		 * a path was removed - take path from imin parent. Also take
+diff --git a/tree-walk.c b/tree-walk.c
+index 46ce1ba8069..f4473276c9f 100644
+--- a/tree-walk.c
++++ b/tree-walk.c
+@@ -577,7 +577,7 @@ static int find_tree_entry(struct repository *r, struct tree_desc *t,
+ 		struct object_id oid;
+ 		int entrylen, cmp;
+ 
+-		oidcpy(&oid, tree_entry_extract(t, &entry, mode));
++		oidcpy(&oid, tree_entry_extract_all(t, &entry, mode, object_type));
+ 		entrylen = tree_entry_len(&t->entry);
+ 		update_tree_entry(t);
+ 		if (entrylen > namelen)
+diff --git a/tree-walk.h b/tree-walk.h
+index 805cda649ee..a4c54871747 100644
+--- a/tree-walk.h
++++ b/tree-walk.h
+@@ -47,6 +47,7 @@ struct tree_desc {
+  * appropriate variable to fill in (NULL won't do!):
+  *
+  * tree_entry_extract_mode(): const char *path, unsigned int mode
++ * tree_entry_extract_all(): const char *path, unsigned int mode, enum object_type
+  */
+ static inline const struct object_id *tree_entry_extract_mode(struct tree_desc *desc,
+ 							      const char **pathp,
+@@ -57,6 +58,17 @@ static inline const struct object_id *tree_entry_extract_mode(struct tree_desc *
+ 	return &desc->entry.oid;
+ }
+ 
++static inline const struct object_id *tree_entry_extract_all(struct tree_desc *desc,
++							     const char **pathp,
++							     unsigned short *modep,
++							     enum object_type *object_typep)
++{
++	*pathp = desc->entry.path;
++	*modep = desc->entry.mode;
++	*object_typep = desc->entry.object_type;
++	return &desc->entry.oid;
++}
++
+ /**
+  * Calculate the length of a tree entry's pathname. This utilizes the
+  * memory structure of a tree entry to avoid the overhead of using a
+-- 
+2.31.0.286.gc175f2cb894
+

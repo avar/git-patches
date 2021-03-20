@@ -1,0 +1,101 @@
+From 592fecb7abc55ff17eed6b3bcc58a6d9991a337e Mon Sep 17 00:00:00 2001
+Message-Id: <592fecb7abc55ff17eed6b3bcc58a6d9991a337e.1616282534.git.avarab@gmail.com>
+In-Reply-To: <cover.1616282533.git.avarab@gmail.com>
+References: <20210316155829.31242-1-avarab@gmail.com>
+	<cover.1616282533.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 4 Mar 2021 12:10:32 +0100
+Subject: [PATCH v4 15/29] merge-tree tests: test for the mode comparison in
+ same_entry()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test to stress the "a->mode == b->mode" comparison in
+merge-tree.c's same_entry().
+
+That code was initially added by Linus in 33deb63a36f (Add
+"merge-tree" helper program. Maybe it's retarded, maybe it's helpful.,
+2005-04-14), and then again in its current form in
+492e0759bfe (Handling large files with GIT, 2006-02-14).
+
+However, nothing was testing that we handled this case
+correctly. Simply removing the mode comparison left all tests passing,
+but as seen here it's important that we don't think a path with the
+same content but different modes is the same_entry().
+
+The rest of this series will touch code that's relevant to this, but
+won't change its behavior. This test is just something I came up with
+in testing whether the mode test in same_entry() was needed at all.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4300-merge-tree.sh | 44 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/t/t4300-merge-tree.sh b/t/t4300-merge-tree.sh
+index e59601e5fe9..f783d784d02 100755
+--- a/t/t4300-merge-tree.sh
++++ b/t/t4300-merge-tree.sh
+@@ -40,6 +40,25 @@ test_expect_success 'file add A, B (same)' '
+ 	test_must_be_empty actual
+ '
+ 
++test_expect_success 'file add A, B (different mode)' '
++	git reset --hard initial &&
++	test_commit "add-a-b-same-diff-mode-A" "ONE" "AAA" &&
++	git reset --hard initial &&
++	echo AAA >ONE &&
++	test_chmod +x ONE &&
++	test_tick &&
++	git commit -m"add-a-b-same-diff-mode-B" &&
++	git tag "add-a-b-same-diff-mode-B" HEAD &&
++	git merge-tree initial add-a-b-same-diff-mode-A add-a-b-same-diff-mode-B >actual &&
++	cat >expected <<EXPECTED &&
++added in both
++  our    100644 $(git rev-parse add-a-b-same-diff-mode-A:ONE) ONE
++  their  100755 $(git rev-parse add-a-b-same-diff-mode-B:ONE) ONE
++EXPECTED
++
++	test_cmp expected actual
++'
++
+ test_expect_success 'file add A, B (different)' '
+ 	git reset --hard initial &&
+ 	test_commit "add-a-b-diff-A" "ONE" "AAA" &&
+@@ -61,6 +80,31 @@ EXPECTED
+ 	test_cmp expected actual
+ '
+ 
++test_expect_success 'file add A, B (different and different mode)' '
++	git reset --hard initial &&
++	test_commit "add-a-b-diff-diff-mode-A" "ONE" "AAA" &&
++	git reset --hard initial &&
++	echo BBB >ONE &&
++	test_chmod +x ONE &&
++	test_tick &&
++	git commit -m"add-a-b-diff-diff-mode-B" &&
++	git tag "add-a-b-diff-diff-mode-B" &&
++	git merge-tree initial add-a-b-diff-diff-mode-A add-a-b-diff-diff-mode-B >actual &&
++	cat >expected <<EXPECTED &&
++added in both
++  our    100644 $(git rev-parse add-a-b-diff-diff-mode-A:ONE) ONE
++  their  100755 $(git rev-parse add-a-b-diff-diff-mode-B:ONE) ONE
++@@ -1 +1,5 @@
+++<<<<<<< .our
++ AAA
+++=======
+++BBB
+++>>>>>>> .their
++EXPECTED
++
++	test_cmp expected actual
++'
++
+ test_expect_success 'file change A, !B' '
+ 	git reset --hard initial &&
+ 	test_commit "change-a-not-b" "initial-file" "BBB" &&
+-- 
+2.31.0.286.gc175f2cb894
+

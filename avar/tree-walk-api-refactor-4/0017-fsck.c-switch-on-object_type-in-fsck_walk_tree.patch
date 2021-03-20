@@ -1,0 +1,76 @@
+From 685da1abbdc639099731caec2a25980d0fe12616 Mon Sep 17 00:00:00 2001
+Message-Id: <685da1abbdc639099731caec2a25980d0fe12616.1616282534.git.avarab@gmail.com>
+In-Reply-To: <cover.1616282533.git.avarab@gmail.com>
+References: <20210316155829.31242-1-avarab@gmail.com>
+	<cover.1616282533.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 4 Mar 2021 14:29:04 +0100
+Subject: [PATCH v4 17/29] fsck.c: switch on "object_type" in fsck_walk_tree()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since 7146e66f086 (tree-walk: finally switch over tree descriptors to
+contain a pre-parsed entry, 2014-02-06) the "mode" is validated such
+that we'll never reach the "else" clause here.
+
+Good for us that fsck_tree() has its own FSCK_MSG_BAD_FILEMODE check
+which we can use, added way back in 64071805eda (git-fsck-cache: be
+stricter about "tree" objects, 2005-07-27).
+
+Except it really doesn't due to a regression in 7146e66f086. A
+follow-up commit will address that, but for now we can simply rewrite
+this code like the rest of the s/entry.mode/entry.object_type/g
+changes I'm making.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fsck.c | 21 +++++++++------------
+ 1 file changed, 9 insertions(+), 12 deletions(-)
+
+diff --git a/fsck.c b/fsck.c
+index e3030f3b358..7c74c49d329 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -396,28 +396,25 @@ static int fsck_walk_tree(struct tree *tree, void *data, struct fsck_options *op
+ 		struct object *obj;
+ 		int result;
+ 
+-		if (S_ISGITLINK(entry.mode))
++		switch (entry.object_type) {
++		case OBJ_COMMIT:
+ 			continue;
+-
+-		if (S_ISDIR(entry.mode)) {
++		case OBJ_TREE:
+ 			obj = (struct object *)lookup_tree(the_repository, &entry.oid);
+ 			if (name && obj)
+ 				fsck_put_object_name(options, &entry.oid, "%s%s/",
+ 						     name, entry.path);
+-			result = options->walk(obj, OBJ_TREE, data, options);
+-		}
+-		else if (S_ISREG(entry.mode) || S_ISLNK(entry.mode)) {
++			break;
++		case OBJ_BLOB:
+ 			obj = (struct object *)lookup_blob(the_repository, &entry.oid);
+ 			if (name && obj)
+ 				fsck_put_object_name(options, &entry.oid, "%s%s",
+ 						     name, entry.path);
+-			result = options->walk(obj, OBJ_BLOB, data, options);
+-		}
+-		else {
+-			result = error("in tree %s: entry %s has bad mode %.6o",
+-				       fsck_describe_object(options, &tree->object.oid),
+-				       entry.path, entry.mode);
++			break;
++		default:
++			BUG("unreachable");
+ 		}
++		result = options->walk(obj, entry.object_type, data, options);
+ 		if (result < 0)
+ 			return result;
+ 		if (!res)
+-- 
+2.31.0.286.gc175f2cb894
+

@@ -1,0 +1,73 @@
+From 73e92ac187d3bdf82fe81b3a0ccd97ebe1fefa11 Mon Sep 17 00:00:00 2001
+Message-Id: <73e92ac187d3bdf82fe81b3a0ccd97ebe1fefa11.1616282534.git.avarab@gmail.com>
+In-Reply-To: <cover.1616282533.git.avarab@gmail.com>
+References: <20210316155829.31242-1-avarab@gmail.com>
+	<cover.1616282533.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 16 Mar 2021 15:56:38 +0100
+Subject: [PATCH v4 07/29] diff tests: test that "mode" is passed when sorting
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Piggy-back on the recently added fsck tests for mode comparisons in
+mktree and assert that diff-tree also does the right thing in this
+implausible scenario.
+
+As with the other tests I've added in preceding commits, these tests
+will fail if the mode is the same or reversed, respectively.
+
+The diff-tree code being tested here was originally added back in
+.9174026cfe (Add "diff-tree" program to show which files have changed
+between two trees., 2005-04-09).
+
+Unlike the other tests I've added there are existing tests for both of
+these scenarios. Breaking that function as described above will make
+tests in t4002-diff-basic.sh, t6409-merge-subtree.sh and
+t4037-diff-r-t-dirs.sh fail.
+
+I think it's good to have tests for this regardless, so let's add
+these.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1450-fsck.sh | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/t/t1450-fsck.sh b/t/t1450-fsck.sh
+index 46125190b45..5dd842bb82c 100755
+--- a/t/t1450-fsck.sh
++++ b/t/t1450-fsck.sh
+@@ -362,6 +362,28 @@ test_expect_success 'tree entry with duplicate type mismatching objects' '
+ 	)
+ '
+ 
++test_expect_success 'diff-tree stressing tree-diff.c::tree_entry_pathcmp(), not the same type' '
++	zero=$(test_oid zero) &&
++	git -C duplicate-entry diff-tree broken-commit-1 broken-commit-2 >1-to-2 &&
++	grep "$zero" 1-to-2 >lines &&
++	test_line_count = 2 lines &&
++
++	git -C duplicate-entry diff-tree broken-commit-2 broken-commit-1 >2-to-1 &&
++	grep "$zero" 2-to-1 >lines &&
++	test_line_count = 2 lines
++'
++
++test_expect_success 'diff-tree stressing tree-diff.c::tree_entry_pathcmp(), types not reversed' '
++	blob_ok=$(git -C duplicate-entry rev-parse broken-commit-2:A) &&
++	git -C duplicate-entry diff-tree --diff-filter=A broken-commit-1 broken-commit-2 >1-to-2 &&
++	grep "$blob_ok" 1-to-2 &&
++	test_line_count = 1 1-to-2 &&
++
++	git -C duplicate-entry diff-tree --diff-filter=A broken-commit-2 broken-commit-1 >2-to-1 &&
++	grep "$blob_ok" 2-to-1 &&
++	test_line_count = 1 2-to-1
++'
++
+ test_expect_success 'tag pointing to nonexistent' '
+ 	badoid=$(test_oid deadbeef) &&
+ 	cat >invalid-tag <<-EOF &&
+-- 
+2.31.0.286.gc175f2cb894
+

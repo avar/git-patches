@@ -1,0 +1,111 @@
+From 1c2f65cb674c538eb01152a6a26c64899cef1743 Mon Sep 17 00:00:00 2001
+Message-Id: <1c2f65cb674c538eb01152a6a26c64899cef1743.1616282534.git.avarab@gmail.com>
+In-Reply-To: <cover.1616282533.git.avarab@gmail.com>
+References: <20210316155829.31242-1-avarab@gmail.com>
+	<cover.1616282533.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 4 Mar 2021 13:32:10 +0100
+Subject: [PATCH v4 12/29] tree-walk.h users: migrate "p->mode &&" pattern
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code that depends on "p->mode" either being a valid mode or
+zero to use a p->object_type comparison to "OBJ_NONE".
+
+The object_type() function in cache.h will not return OBJ_NONE, but
+these API users are implicitly relying on the memzero() that happens
+in setup_traverse_info().
+
+Since OBJ_NONE is "0" we can also rely on that being zero'd out here,
+along with the rest of the structure. I think this is slightly less
+clever than "mode not set", and helps to get rid of more uses of
+"mode".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/merge-tree.c | 9 +++++----
+ merge-ort.c          | 2 +-
+ unpack-trees.c       | 4 ++--
+ 3 files changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/merge-tree.c b/builtin/merge-tree.c
+index de8520778d2..2de34c2d485 100644
+--- a/builtin/merge-tree.c
++++ b/builtin/merge-tree.c
+@@ -214,7 +214,7 @@ static void unresolved_directory(const struct traverse_info *info,
+ 	void *buf0, *buf1, *buf2;
+ 
+ 	for (p = n; p < n + 3; p++) {
+-		if (p->mode && S_ISDIR(p->mode))
++		if (p->object_type == OBJ_TREE)
+ 			break;
+ 	}
+ 	if (n + 3 <= p)
+@@ -222,7 +222,7 @@ static void unresolved_directory(const struct traverse_info *info,
+ 
+ 	newbase = traverse_path(info, p);
+ 
+-#define ENTRY_OID(e) (((e)->mode && S_ISDIR((e)->mode)) ? &(e)->oid : NULL)
++#define ENTRY_OID(e) (((e)->object_type == OBJ_TREE) ? &(e)->oid : NULL)
+ 	buf0 = fill_tree_descriptor(r, t + 0, ENTRY_OID(n + 0));
+ 	buf1 = fill_tree_descriptor(r, t + 1, ENTRY_OID(n + 1));
+ 	buf2 = fill_tree_descriptor(r, t + 2, ENTRY_OID(n + 2));
+@@ -242,7 +242,7 @@ static struct merge_list *link_entry(unsigned stage, const struct traverse_info
+ 	const char *path;
+ 	struct merge_list *link;
+ 
+-	if (!n->mode)
++	if (n->object_type == OBJ_NONE)
+ 		return entry;
+ 	if (entry)
+ 		path = entry->path;
+@@ -265,7 +265,8 @@ static void unresolved(const struct traverse_info *info, struct name_entry n[3])
+ 		 * Treat missing entries as directories so that we return
+ 		 * after unresolved_directory has handled this.
+ 		 */
+-		if (!n[i].mode || S_ISDIR(n[i].mode))
++		if (n[i].object_type == OBJ_NONE ||
++		    n[i].object_type == OBJ_TREE)
+ 			dirmask |= (1 << i);
+ 	}
+ 
+diff --git a/merge-ort.c b/merge-ort.c
+index 68eaa8f294f..052231efdb2 100644
+--- a/merge-ort.c
++++ b/merge-ort.c
+@@ -668,7 +668,7 @@ static int collect_merge_info_callback(int n,
+ 	 * setup_path_info() for tracking.
+ 	 */
+ 	p = names;
+-	while (!p->mode)
++	while (p->object_type == OBJ_NONE)
+ 		p++;
+ 	len = traverse_path_len(info, p->pathlen);
+ 
+diff --git a/unpack-trees.c b/unpack-trees.c
+index ea1ce7894ba..e6cb505fcb0 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -862,7 +862,7 @@ static int traverse_trees_recursive(int n, unsigned long dirmask,
+ 	}
+ 
+ 	p = names;
+-	while (!p->mode)
++	while (p->object_type == OBJ_NONE)
+ 		p++;
+ 
+ 	newinfo = *info;
+@@ -1242,7 +1242,7 @@ static int unpack_callback(int n, unsigned long mask, unsigned long dirmask, str
+ 	const struct name_entry *p = names;
+ 
+ 	/* Find first entry with a real name (we could use "mask" too) */
+-	while (!p->mode)
++	while (p->object_type == OBJ_NONE)
+ 		p++;
+ 
+ 	if (o->debug_unpack)
+-- 
+2.31.0.286.gc175f2cb894
+
