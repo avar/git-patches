@@ -1,0 +1,160 @@
+From 30c3abfe9b9af8202fb69bb67267cbbd5d09b60a Mon Sep 17 00:00:00 2001
+Message-Id: <30c3abfe9b9af8202fb69bb67267cbbd5d09b60a.1616279653.git.avarab@gmail.com>
+In-Reply-To: <cover.1616279653.git.avarab@gmail.com>
+References: <xmqqpmzxy939.fsf@gitster.g>
+	<cover.1616279653.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 6 Mar 2021 02:31:48 +0100
+Subject: [PATCH v5 5/8] ls-files: refactor away read_tree()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor away the read_tree() function into its only user,
+overlay_tree_on_index().
+
+First, change read_one_entry_opt() to use the strbuf parameter
+read_tree_recursive() passes down in place. This finishes up a partial
+refactoring started in 6a0b0b6de99 (tree.c: update read_tree_recursive
+callback to pass strbuf as base, 2014-11-30).
+
+Moving the rest into overlay_tree_on_index() makes this index juggling
+we're doing easier to read.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-files.c | 77 ++++++++++++++++++++--------------------------
+ 1 file changed, 34 insertions(+), 43 deletions(-)
+
+diff --git a/builtin/ls-files.c b/builtin/ls-files.c
+index 3149a2769a3..aa153423b80 100644
+--- a/builtin/ls-files.c
++++ b/builtin/ls-files.c
+@@ -423,7 +423,7 @@ static int get_common_prefix_len(const char *common_prefix)
+ 
+ static int read_one_entry_opt(struct index_state *istate,
+ 			      const struct object_id *oid,
+-			      const char *base, int baselen,
++			      struct strbuf *base,
+ 			      const char *pathname,
+ 			      unsigned mode, int opt)
+ {
+@@ -434,13 +434,13 @@ static int read_one_entry_opt(struct index_state *istate,
+ 		return READ_TREE_RECURSIVE;
+ 
+ 	len = strlen(pathname);
+-	ce = make_empty_cache_entry(istate, baselen + len);
++	ce = make_empty_cache_entry(istate, base->len + len);
+ 
+ 	ce->ce_mode = create_ce_mode(mode);
+ 	ce->ce_flags = create_ce_flags(1);
+-	ce->ce_namelen = baselen + len;
+-	memcpy(ce->name, base, baselen);
+-	memcpy(ce->name + baselen, pathname, len+1);
++	ce->ce_namelen = base->len + len;
++	memcpy(ce->name, base->buf, base->len);
++	memcpy(ce->name + base->len, pathname, len+1);
+ 	oidcpy(&ce->oid, oid);
+ 	return add_index_entry(istate, ce, opt);
+ }
+@@ -450,7 +450,7 @@ static int read_one_entry(const struct object_id *oid, struct strbuf *base,
+ 			  void *context)
+ {
+ 	struct index_state *istate = context;
+-	return read_one_entry_opt(istate, oid, base->buf, base->len, pathname,
++	return read_one_entry_opt(istate, oid, base, pathname,
+ 				  mode,
+ 				  ADD_CACHE_OK_TO_ADD|ADD_CACHE_SKIP_DFCHECK);
+ }
+@@ -464,42 +464,8 @@ static int read_one_entry_quick(const struct object_id *oid, struct strbuf *base
+ 				void *context)
+ {
+ 	struct index_state *istate = context;
+-	return read_one_entry_opt(istate, oid, base->buf, base->len, pathname,
+-				  mode,
+-				  ADD_CACHE_JUST_APPEND);
+-}
+-
+-
+-static int read_tree(struct repository *r, struct tree *tree,
+-		     struct pathspec *match, struct index_state *istate)
+-{
+-	read_tree_fn_t fn = NULL;
+-	int i, err;
+-
+-
+-	/*
+-	 * See if we have cache entry at the stage.  If so,
+-	 * do it the original slow way, otherwise, append and then
+-	 * sort at the end.
+-	 */
+-	for (i = 0; !fn && i < istate->cache_nr; i++) {
+-		const struct cache_entry *ce = istate->cache[i];
+-		if (ce_stage(ce) == 1)
+-			fn = read_one_entry;
+-	}
+-
+-	if (!fn)
+-		fn = read_one_entry_quick;
+-	err = read_tree_recursive(r, tree, "", 0, 0, match, fn, istate);
+-	if (fn == read_one_entry || err)
+-		return err;
+-
+-	/*
+-	 * Sort the cache entry -- we need to nuke the cache tree, though.
+-	 */
+-	cache_tree_free(&istate->cache_tree);
+-	QSORT(istate->cache, istate->cache_nr, cmp_cache_name_compare);
+-	return 0;
++	return read_one_entry_opt(istate, oid, base, pathname,
++				  mode, ADD_CACHE_JUST_APPEND);
+ }
+ 
+ /*
+@@ -518,6 +484,8 @@ void overlay_tree_on_index(struct index_state *istate,
+ 	struct pathspec pathspec;
+ 	struct cache_entry *last_stage0 = NULL;
+ 	int i;
++	read_tree_fn_t fn = NULL;
++	int err;
+ 
+ 	if (get_oid(tree_name, &oid))
+ 		die("tree-ish %s not found.", tree_name);
+@@ -540,9 +508,32 @@ void overlay_tree_on_index(struct index_state *istate,
+ 			       PATHSPEC_PREFER_CWD, prefix, matchbuf);
+ 	} else
+ 		memset(&pathspec, 0, sizeof(pathspec));
+-	if (read_tree(the_repository, tree, &pathspec, istate))
++
++	/*
++	 * See if we have cache entry at the stage.  If so,
++	 * do it the original slow way, otherwise, append and then
++	 * sort at the end.
++	 */
++	for (i = 0; !fn && i < istate->cache_nr; i++) {
++		const struct cache_entry *ce = istate->cache[i];
++		if (ce_stage(ce) == 1)
++			fn = read_one_entry;
++	}
++
++	if (!fn)
++		fn = read_one_entry_quick;
++	err = read_tree_recursive(the_repository, tree, "", 0, 1, &pathspec, fn, istate);
++	if (err)
+ 		die("unable to read tree entries %s", tree_name);
+ 
++	/*
++	 * Sort the cache entry -- we need to nuke the cache tree, though.
++	 */
++	if (fn == read_one_entry_quick) {
++		cache_tree_free(&istate->cache_tree);
++		QSORT(istate->cache, istate->cache_nr, cmp_cache_name_compare);
++	}
++
+ 	for (i = 0; i < istate->cache_nr; i++) {
+ 		struct cache_entry *ce = istate->cache[i];
+ 		switch (ce_stage(ce)) {
+-- 
+2.31.0.286.gc175f2cb894
+

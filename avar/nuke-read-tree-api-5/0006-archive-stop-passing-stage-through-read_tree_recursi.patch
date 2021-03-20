@@ -1,0 +1,113 @@
+From 02c42be924953e7172639a82d8005bcb664bb8b4 Mon Sep 17 00:00:00 2001
+Message-Id: <02c42be924953e7172639a82d8005bcb664bb8b4.1616279653.git.avarab@gmail.com>
+In-Reply-To: <cover.1616279653.git.avarab@gmail.com>
+References: <xmqqpmzxy939.fsf@gitster.g>
+	<cover.1616279653.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 20 Mar 2021 21:59:17 +0100
+Subject: [PATCH v5 6/8] archive: stop passing "stage" through
+ read_tree_recursive()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "stage" variable being passed around in the archive code has only
+ever been an elaborate way to hardcode the value "0".
+
+This code was added in its original form in e4fbbfe9ecc (Add
+git-zip-tree, 2006-08-26), at which point a hardcoded "0" would be
+passed down through read_tree_recursive() to write_zip_entry().
+
+It was then diligently added to the "struct directory" in
+ed22b4173bd (archive: support filtering paths with glob, 2014-09-21),
+but we were still not doing anything except passing it around as-is.
+
+Let's stop doing that in the code internal to archive.c, we'll still
+feed "0" to read_tree_recursive() itself, but won't use it. That we're
+providing it at all to read_tree_recursive() will be changed in a
+follow-up commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ archive.c | 16 +++++++---------
+ 1 file changed, 7 insertions(+), 9 deletions(-)
+
+diff --git a/archive.c b/archive.c
+index 5919d9e5050..4f271331543 100644
+--- a/archive.c
++++ b/archive.c
+@@ -107,7 +107,6 @@ struct directory {
+ 	struct object_id oid;
+ 	int baselen, len;
+ 	unsigned mode;
+-	int stage;
+ 	char path[FLEX_ARRAY];
+ };
+ 
+@@ -138,7 +137,7 @@ static int check_attr_export_subst(const struct attr_check *check)
+ }
+ 
+ static int write_archive_entry(const struct object_id *oid, const char *base,
+-		int baselen, const char *filename, unsigned mode, int stage,
++		int baselen, const char *filename, unsigned mode,
+ 		void *context)
+ {
+ 	static struct strbuf path = STRBUF_INIT;
+@@ -197,7 +196,7 @@ static int write_archive_entry(const struct object_id *oid, const char *base,
+ 
+ static void queue_directory(const unsigned char *sha1,
+ 		struct strbuf *base, const char *filename,
+-		unsigned mode, int stage, struct archiver_context *c)
++		unsigned mode, struct archiver_context *c)
+ {
+ 	struct directory *d;
+ 	size_t len = st_add4(base->len, 1, strlen(filename), 1);
+@@ -205,7 +204,6 @@ static void queue_directory(const unsigned char *sha1,
+ 	d->up	   = c->bottom;
+ 	d->baselen = base->len;
+ 	d->mode	   = mode;
+-	d->stage   = stage;
+ 	c->bottom  = d;
+ 	d->len = xsnprintf(d->path, len, "%.*s%s/", (int)base->len, base->buf, filename);
+ 	hashcpy(d->oid.hash, sha1);
+@@ -224,7 +222,7 @@ static int write_directory(struct archiver_context *c)
+ 		write_directory(c) ||
+ 		write_archive_entry(&d->oid, d->path, d->baselen,
+ 				    d->path + d->baselen, d->mode,
+-				    d->stage, c) != READ_TREE_RECURSIVE;
++				    c) != READ_TREE_RECURSIVE;
+ 	free(d);
+ 	return ret ? -1 : 0;
+ }
+@@ -256,14 +254,14 @@ static int queue_or_write_archive_entry(const struct object_id *oid,
+ 		if (check_attr_export_ignore(check))
+ 			return 0;
+ 		queue_directory(oid->hash, base, filename,
+-				mode, stage, c);
++				mode, c);
+ 		return READ_TREE_RECURSIVE;
+ 	}
+ 
+ 	if (write_directory(c))
+ 		return -1;
+ 	return write_archive_entry(oid, base->buf, base->len, filename, mode,
+-				   stage, context);
++				   context);
+ }
+ 
+ struct extra_file_info {
+@@ -377,8 +375,8 @@ struct path_exists_context {
+ };
+ 
+ static int reject_entry(const struct object_id *oid, struct strbuf *base,
+-			const char *filename, unsigned mode,
+-			int stage, void *context)
++			const char *filename, unsigned mode, int stage,
++			void *context)
+ {
+ 	int ret = -1;
+ 	struct path_exists_context *ctx = context;
+-- 
+2.31.0.286.gc175f2cb894
+
