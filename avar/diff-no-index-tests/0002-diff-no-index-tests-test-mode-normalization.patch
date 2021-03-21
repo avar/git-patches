@@ -1,0 +1,77 @@
+From 2dcc8bccf9733c6cc072bdb55a5104f16084e5c3 Mon Sep 17 00:00:00 2001
+Message-Id: <2dcc8bccf9733c6cc072bdb55a5104f16084e5c3.1616330120.git.avarab@gmail.com>
+In-Reply-To: <cover.1616330120.git.avarab@gmail.com>
+References: <87wnu0r8tq.fsf@evledraar.gmail.com>
+	<cover.1616330120.git.avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 21 Mar 2021 13:29:47 +0100
+Subject: [PATCH 2/2] diff --no-index tests: test mode normalization
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When "git diff --no-index X Y" is run the modes of the files being
+differ are normalized by canon_mode() in fill_filespec().
+
+I recently broke that behavior in a patch of mine[1] which would pass
+all tests, or not, depending on the umask of the git.git checkout.
+
+Let's test for this explicitly. Arguably this should not be the
+behavior of "git diff --no-index". We aren't diffing our own objects
+or the index, so it might be useful to show mode differences between
+files.
+
+On the other hand diff(1) does not do that, and it would be needlessly
+distracting when e.g. diffing an extracted tar archive whose contents
+is the same, but whose file modes are different.
+
+1. https://lore.kernel.org/git/20210316155829.31242-2-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4053-diff-no-index.sh | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/t/t4053-diff-no-index.sh b/t/t4053-diff-no-index.sh
+index 9b7a8ebfd3f..6fae18612fc 100755
+--- a/t/t4053-diff-no-index.sh
++++ b/t/t4053-diff-no-index.sh
+@@ -149,4 +149,34 @@ test_expect_success 'diff --no-index allows external diff' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'diff --no-index normalizes mode: no changes' '
++	echo foo >x &&
++	cp x y &&
++	git diff --no-index x y >out &&
++	test_must_be_empty out
++'
++
++test_expect_success 'diff --no-index normalizes mode: chmod +x' '
++	chmod +x y &&
++	cat >expected <<-\EOF &&
++	diff --git a/x b/y
++	old mode 100644
++	new mode 100755
++	EOF
++	test_expect_code 1 git diff --no-index x y >actual &&
++	test_cmp expected actual
++'
++
++test_expect_success 'diff --no-index normalizes: mode not like git mode' '
++	chmod 666 x &&
++	chmod 777 y &&
++	cat >expected <<-\EOF &&
++	diff --git a/x b/y
++	old mode 100644
++	new mode 100755
++	EOF
++	test_expect_code 1 git diff --no-index x y >actual &&
++	test_cmp expected actual
++'
++
+ test_done
+-- 
+2.31.0.282.gcc1ec606501
+
