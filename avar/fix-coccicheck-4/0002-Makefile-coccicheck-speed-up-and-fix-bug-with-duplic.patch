@@ -1,0 +1,84 @@
+From 3bca3239cb84488a1638f2bb269392f47f78c6da Mon Sep 17 00:00:00 2001
+Message-Id: <3bca3239cb84488a1638f2bb269392f47f78c6da.1616414932.git.avarab@gmail.com>
+In-Reply-To: <20210306192525.15197-1-avarab@gmail.com>
+References: <20210306192525.15197-1-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Mar 2021 21:22:26 +0100
+Subject: [PATCH v4 2/4] Makefile/coccicheck: speed up and fix bug with
+ duplicate hunks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the coccicheck target to run on all of our *.c and *.h files
+with --include-headers-for-types, instead of trusting it to find *.h
+files and other includes to modify from its recursive walking of
+includes as it has been doing with only --all-includes.
+
+The --all-includes option introduced in a9a884aea57 (coccicheck: use
+--all-includes by default, 2016-09-30) is needed because we have rules
+that e.g. use the "type T" construct that wouldn't match unless we
+scoured our headers for the definition of the relevant type.
+
+But combining --all-includes it with processing N files at a time with
+xargs as we've done since 960154b9c17 (coccicheck: optionally batch
+spatch invocations, 2019-05-06) introduced a subtle bug with duplicate
+hunks being written to the generated *.patch files. I did not dig down
+to the root cause of that, but I think it's due to spatch doing (and
+failing to do) some magical locking/racy mtime checking to decide if
+it emits a hunk. See [1] for a way to reproduce the issue, and a
+discussion of it.
+
+This change speeds up the runtime of "make -j8 coccicheck" from ~1m50s
+to ~1m20s for me. See [2] for more timings.
+
+We could also use --no-includes for a runtime of ~55s, but that would
+produce broken patches (we miss some hunks) in cases where we need the
+type or other definitions from included files.
+
+If anyone cares there's probably an optimization opportunity here to
+e.g. detect that the whole file doesn't need to consider includes,
+since the rules would be unambiguous without considering them.
+
+Note on portability: The --include-headers-for-types option is not in
+my "man spatch", but it's been part of spatch since 2014. See its
+fe3a327a (include headers for types option, 2014-07-27), it was first
+released with version 1.0.0 of spatch, released in April 2015. The
+spatch developers are just inconsistent about updating their TeX docs
+and manpages at the same time.
+
+1. https://lore.kernel.org/git/20210305170724.23859-3-avarab@gmail.com/
+2. https://lore.kernel.org/git/20210306192525.15197-1-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index eef99b4705d..e43a9618df5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1199,7 +1199,8 @@ SPARSE_FLAGS ?=
+ SP_EXTRA_FLAGS = -Wno-universal-initializer
+ 
+ # For the 'coccicheck' target
+-SPATCH_FLAGS = --all-includes --patch .
++SPATCH_FLAGS = --all-includes --include-headers-for-types --patch .
++
+ # For the 'coccicheck' target; setting SPATCH_BATCH_SIZE higher will
+ # usually result in less CPU usage at the cost of higher peak memory.
+ # Setting it to 0 will feed all files in a single spatch invocation.
+@@ -2860,7 +2861,7 @@ check: config-list.h command-list.h
+ 		exit 1; \
+ 	fi
+ 
+-FOUND_C_SOURCES = $(filter %.c,$(shell $(FIND_SOURCE_FILES)))
++FOUND_C_SOURCES = $(filter %.c %.h,$(shell $(FIND_SOURCE_FILES)))
+ COCCI_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES),$(FOUND_C_SOURCES))
+ 
+ %.cocci.patch: %.cocci $(COCCI_SOURCES)
+-- 
+2.31.0.285.gb40d23e604f
+
