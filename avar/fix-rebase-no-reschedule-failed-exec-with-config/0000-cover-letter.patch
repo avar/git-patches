@@ -4,12 +4,77 @@ In-Reply-To: <873d1fda948855510b07f9cb75d374c03d60a94e.1544468695.git.gitgitgadg
 References: <873d1fda948855510b07f9cb75d374c03d60a94e.1544468695.git.gitgitgadget@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Mon, 22 Mar 2021 12:19:33 +0100
-Subject: [PATCH 0/3] *** SUBJECT HERE ***
+Subject: [PATCH 0/3] rebase: don't override --no-reschedule-failed-exec with config
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+I recently started using rebase.rescheduleFailedExec=true and noticed
+this bug in its implementation. It's conceptually a relatively simple
+fix, but as noted in 3/3 rebase being a "start this operation, run
+other command verbs later" has an unintuitive interaction with our
+usual "command-line options override config".
+
+As an aside: There's another bug/misfeature I've noticed with
+rebase.rescheduleFailedExec=true (although maybe it'll be argued by
+someone that it's a feature). Let's say you run:
+
+    git rebase -x false --reschedule-failed-exec HEAD~2
+
+You'll now land in a state of (according to our helpful PS1 code, but
+also the rebase state) of 2/4. Aside: Because you're rebasing 2
+commits, we have 4 because of the 2x exec. So far so good and all of
+that's expected.
+
+But now when you do "git rebase --continue" we'll fail as expected,
+but not as expected (at least I find it funny) bump the count to 3/5,
+then 4/6, 5/7 etc.
+
+With my "I just read the code" hat on this makes perfect sense. Every
+time we process a TODO item we bump the count of processed items, and
+under --reschedule-failed-exec we simply push the command that just
+failed onto the list, hence the increasing done/TODO count when a
+command fails.
+
+But I don't see how it makes any sense to expose this as UI via "git
+status" and __git_ps1. I asked git to process this item of 4 sequencer
+TODO items. If I fail an item it makes more sense that I just don't
+get past it, not that under the hood a new item is rescheduled for me.
+
+Now if I've tried X times to make the "make test" pass for each commit
+in my 3-commit series I'm going to be on item 10/12 or
+whatever. There's no way to just look at that and see where I'm at in
+the sequence.
+
+As an aside it would arguably make more sense to report 1/3 instead of
+2/6 for the first commit of 3 with a failing -x "make test", but you
+can have X number of "exec" items and a manually edited list etc.. So
+that's probably a no-go but at least once I'm used to it I know if i'm
+on 4/6 I'm on commit 2/3, with --reschedule-failed-exec you'll have no
+idea what 12/14 or whatever means for where you are in your 3-patch
+sequence, it has no relation to the TODO list you edited, just
+rebase-merge's own internal state.
+
+Getting back on topic: This just seems like needlessly exposing an
+implementation detail, I also asked to "pick" a commit, but if that
+item "fails" e.g. due to:
+    
+    $ git rebase --continue
+    You must edit all merge conflicts and then
+    mark them as resolved using git add
+
+We don't push a new "pick" item on the list and inflate the count, so
+why would we do it for "exec"?
+
+Anyway, I don't have patches for this side-report/rant. Looking at the
+implementation it seemed more non-trivial than I was willing to
+quickly fix. We bump the count fairly early before we even get to
+there being an "exec" item, to implement this proposed view of the
+world we'd need to defer that (or go back and edit it once we see
+"failed exec" && --reschedule-failed-exec). I'm not familiar enough
+with the sequencer internals to know if trying that would lead us down
+a path of e.g. having inconsistent or bad state if we'd die in the
+middle of all of that.
 
 Ævar Arnfjörð Bjarmason (3):
   rebase tests: camel-case rebase.rescheduleFailedExec consistently
