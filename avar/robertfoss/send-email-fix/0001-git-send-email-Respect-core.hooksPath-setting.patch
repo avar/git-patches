@@ -1,5 +1,5 @@
 From 1365acc38d8839c9050b696591a780e6ce09bc59 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-1.1-1365acc38d8-20210323T172830Z-avarab@gmail.com>
+Message-Id: <patch-1.1-1365acc38d8-20210323T172850Z-avarab@gmail.com>
 In-Reply-To: <20210323162718.1143982-1-robert.foss@linaro.org>
 References: <20210323162718.1143982-1-robert.foss@linaro.org>
 From: Robert Foss <robert.foss@linaro.org>
@@ -22,8 +22,102 @@ Signed-off-by: Robert Foss <robert.foss@linaro.org>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
 Range-diff:
-1:  56c181cf091 < -:  ----------- git-send-email: Respect core.hooksPath setting
--:  ----------- > 1:  1365acc38d8 git-send-email: Respect core.hooksPath setting
+1:  56c181cf091 ! 1:  1365acc38d8 git-send-email: Respect core.hooksPath setting
+    @@ Commit message
+         git for the actual path of the hooks directory.
+     
+         Signed-off-by: Robert Foss <robert.foss@linaro.org>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## git-send-email.perl ##
+     @@ git-send-email.perl: sub validate_patch {
+    @@ git-send-email.perl: sub validate_patch {
+      
+      	if ($repo) {
+     -		my $validate_hook = catfile(catdir($repo->repo_path(), 'hooks'),
+    --					    'sendemail-validate');
+    -+		my $hook_path = $repo->hooks_path();
+    -+		my $validate_hook = catfile($hook_path, 'sendemail-validate');
+    ++		my $validate_hook = catfile($repo->hooks_path(),
+    + 					    'sendemail-validate');
+      		my $hook_error;
+      		if (-x $validate_hook) {
+    - 			my $target = abs_path($fn);
+     
+      ## perl/Git.pm ##
+    -@@ perl/Git.pm: sub repository {
+    - 			$opts{Repository} = abs_path($dir);
+    - 		}
+    - 
+    -+                $opts{HooksPath} = $search->command_oneline('rev-parse', '--git-path', 'hooks');
+    -+
+    - 		delete $opts{Directory};
+    - 	}
+    - 
+     @@ perl/Git.pm: sub _prompt {
+      
+      sub repo_path { $_[0]->{opts}->{Repository} }
+    @@ perl/Git.pm: sub _prompt {
+     +
+     +=cut
+     +
+    -+sub hooks_path { $_[0]->{opts}->{HooksPath} }
+    ++sub hooks_path {
+    ++	my ($self) = @_;
+    ++
+    ++	my $dir = $self->command_oneline('rev-parse', '--git-path', 'hooks');
+    ++	my $abs = abs_path($dir);
+    ++	return $abs;
+    ++}
+      
+      =item wc_path ()
+      
+    @@ t/t9001-send-email.sh: do
+      
+      done
+      
+    -+test_expect_success $PREREQ "--validate respects core.hooksPath path" '
+    ++test_expect_success $PREREQ "--validate respects relative core.hooksPath path" '
+     +	clean_fake_sendmail &&
+    -+	tmp_dir=$(mktemp -d -t ci-XXXXXXXXXX) &&
+    -+	printf "#!/bin/sh" >> $tmp_dir/sendemail-validate &&
+    -+	printf "return 1" >> $tmp_dir/sendemail-validate &&
+    -+	chmod a+x $tmp_dir/sendemail-validate &&
+    -+	git -c core.hooksPath=$tmp_dir send-email \
+    ++	mkdir my-hooks &&
+    ++	test_when_finished "rm my-hooks.ran" &&
+    ++	write_script my-hooks/sendemail-validate <<-\EOF &&
+    ++	>my-hooks.ran
+    ++	exit 1
+    ++	EOF
+    ++	test_config core.hooksPath "my-hooks" &&
+    ++	test_must_fail git send-email \
+    ++		--from="Example <nobody@example.com>" \
+    ++		--to=nobody@example.com \
+    ++		--smtp-server="$(pwd)/fake.sendmail" \
+    ++		--validate \
+    ++		longline.patch 2>err &&
+    ++	test_path_is_file my-hooks.ran &&
+    ++	grep "rejected by sendemail-validate" err
+    ++'
+    ++
+    ++test_expect_success $PREREQ "--validate respects absolute core.hooksPath path" '
+    ++	test_config core.hooksPath "$(pwd)/my-hooks" &&
+    ++	test_when_finished "rm my-hooks.ran" &&
+    ++	test_must_fail git send-email \
+     +		--from="Example <nobody@example.com>" \
+     +		--to=nobody@example.com \
+     +		--smtp-server="$(pwd)/fake.sendmail" \
+     +		--validate \
+    -+		longline.patch \
+    -+		2>&1 >/dev/null | \
+    -+	grep "rejected by sendemail-validate"
+    ++		longline.patch 2>err &&
+    ++	test_path_is_file my-hooks.ran &&
+    ++	grep "rejected by sendemail-validate" err
+     +'
+     +
+      for enc in 7bit 8bit quoted-printable base64
 
  git-send-email.perl   |  2 +-
  perl/Git.pm           | 13 +++++++++++++
