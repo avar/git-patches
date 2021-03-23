@@ -1,0 +1,115 @@
+From 1365acc38d8839c9050b696591a780e6ce09bc59 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-1365acc38d8-20210323T172804Z-avarab@gmail.com>
+In-Reply-To: <20210323162718.1143982-1-robert.foss@linaro.org>
+References: <20210323162718.1143982-1-robert.foss@linaro.org>
+From: Robert Foss <robert.foss@linaro.org>
+Date: Mon, 22 Mar 2021 17:11:24 +0100
+Subject: [PATCH v3] git-send-email: Respect core.hooksPath setting
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+get-send-email currently makes the assumption that the
+'sendemail-validate' hook exists inside of the repository.
+
+Since the introduction of 'core.hooksPath' configuration option in
+v2.9, this is no longer true.
+
+Instead of assuming a hardcoded repo relative path, query
+git for the actual path of the hooks directory.
+
+Signed-off-by: Robert Foss <robert.foss@linaro.org>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff:
+1:  56c181cf091 < -:  ----------- git-send-email: Respect core.hooksPath setting
+-:  ----------- > 1:  1365acc38d8 git-send-email: Respect core.hooksPath setting
+
+ git-send-email.perl   |  2 +-
+ perl/Git.pm           | 13 +++++++++++++
+ t/t9001-send-email.sh | 32 ++++++++++++++++++++++++++++++++
+ 3 files changed, 46 insertions(+), 1 deletion(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 1f425c08091..f5bbf1647e3 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -1942,7 +1942,7 @@ sub validate_patch {
+ 	my ($fn, $xfer_encoding) = @_;
+ 
+ 	if ($repo) {
+-		my $validate_hook = catfile(catdir($repo->repo_path(), 'hooks'),
++		my $validate_hook = catfile($repo->hooks_path(),
+ 					    'sendemail-validate');
+ 		my $hook_error;
+ 		if (-x $validate_hook) {
+diff --git a/perl/Git.pm b/perl/Git.pm
+index 02eacef0c2a..73ebbf80cc6 100644
+--- a/perl/Git.pm
++++ b/perl/Git.pm
+@@ -619,6 +619,19 @@ sub _prompt {
+ 
+ sub repo_path { $_[0]->{opts}->{Repository} }
+ 
++=item hooks_path ()
++
++Return path to the hooks directory. Must be called on a repository instance.
++
++=cut
++
++sub hooks_path {
++	my ($self) = @_;
++
++	my $dir = $self->command_oneline('rev-parse', '--git-path', 'hooks');
++	my $abs = abs_path($dir);
++	return $abs;
++}
+ 
+ =item wc_path ()
+ 
+diff --git a/t/t9001-send-email.sh b/t/t9001-send-email.sh
+index 4eee9c3dcb5..1a1caf8f2ed 100755
+--- a/t/t9001-send-email.sh
++++ b/t/t9001-send-email.sh
+@@ -513,6 +513,38 @@ do
+ 
+ done
+ 
++test_expect_success $PREREQ "--validate respects relative core.hooksPath path" '
++	clean_fake_sendmail &&
++	mkdir my-hooks &&
++	test_when_finished "rm my-hooks.ran" &&
++	write_script my-hooks/sendemail-validate <<-\EOF &&
++	>my-hooks.ran
++	exit 1
++	EOF
++	test_config core.hooksPath "my-hooks" &&
++	test_must_fail git send-email \
++		--from="Example <nobody@example.com>" \
++		--to=nobody@example.com \
++		--smtp-server="$(pwd)/fake.sendmail" \
++		--validate \
++		longline.patch 2>err &&
++	test_path_is_file my-hooks.ran &&
++	grep "rejected by sendemail-validate" err
++'
++
++test_expect_success $PREREQ "--validate respects absolute core.hooksPath path" '
++	test_config core.hooksPath "$(pwd)/my-hooks" &&
++	test_when_finished "rm my-hooks.ran" &&
++	test_must_fail git send-email \
++		--from="Example <nobody@example.com>" \
++		--to=nobody@example.com \
++		--smtp-server="$(pwd)/fake.sendmail" \
++		--validate \
++		longline.patch 2>err &&
++	test_path_is_file my-hooks.ran &&
++	grep "rejected by sendemail-validate" err
++'
++
+ for enc in 7bit 8bit quoted-printable base64
+ do
+ 	test_expect_success $PREREQ "--transfer-encoding=$enc produces correct header" '
+-- 
+2.31.0.366.ga80606b22c1
+
