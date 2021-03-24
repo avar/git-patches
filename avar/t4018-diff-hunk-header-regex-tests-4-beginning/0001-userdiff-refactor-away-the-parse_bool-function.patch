@@ -1,0 +1,80 @@
+From fb7346cd296036ee76fea29f55215c2965c1eb69 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.11-fb7346cd296-20210324T014604Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20210324T014604Z-avarab@gmail.com>
+References: <20210224195129.4004-1-avarab@gmail.com>
+	<cover-00.11-00000000000-20210324T014604Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 Feb 2021 21:44:43 +0100
+Subject: [PATCH v4 01/10] userdiff: refactor away the parse_bool() function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since 6680a0874f (drop odd return value semantics from
+userdiff_config, 2012-02-07) we have not cared about the return values
+of parse_tristate() or git_config_bool() v.s. falling through in
+userdiff_config(), so let's do so in those cases to make the code
+easier to read.
+
+Having a wrapper function for git_config_bool() dates back to
+d9bae1a178 (diff: cache textconv output, 2010-04-01) and
+122aa6f9c0 (diff: introduce diff.<driver>.binary, 2008-10-05), both of
+which predated the change in 6680a0874f which made their return values
+redundant.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ userdiff.c | 18 ++++++------------
+ 1 file changed, 6 insertions(+), 12 deletions(-)
+
+diff --git a/userdiff.c b/userdiff.c
+index 3f81a2261c5..c147bcbb173 100644
+--- a/userdiff.c
++++ b/userdiff.c
+@@ -275,19 +275,12 @@ static int parse_funcname(struct userdiff_funcname *f, const char *k,
+ 	return 0;
+ }
+ 
+-static int parse_tristate(int *b, const char *k, const char *v)
++static void parse_tristate(int *b, const char *k, const char *v)
+ {
+ 	if (v && !strcasecmp(v, "auto"))
+ 		*b = -1;
+ 	else
+ 		*b = git_config_bool(k, v);
+-	return 0;
+-}
+-
+-static int parse_bool(int *b, const char *k, const char *v)
+-{
+-	*b = git_config_bool(k, v);
+-	return 0;
+ }
+ 
+ int userdiff_config(const char *k, const char *v)
+@@ -312,16 +305,17 @@ int userdiff_config(const char *k, const char *v)
+ 		return parse_funcname(&drv->funcname, k, v, 0);
+ 	if (!strcmp(type, "xfuncname"))
+ 		return parse_funcname(&drv->funcname, k, v, REG_EXTENDED);
+-	if (!strcmp(type, "binary"))
+-		return parse_tristate(&drv->binary, k, v);
+ 	if (!strcmp(type, "command"))
+ 		return git_config_string(&drv->external, k, v);
+ 	if (!strcmp(type, "textconv"))
+ 		return git_config_string(&drv->textconv, k, v);
+-	if (!strcmp(type, "cachetextconv"))
+-		return parse_bool(&drv->textconv_want_cache, k, v);
+ 	if (!strcmp(type, "wordregex"))
+ 		return git_config_string(&drv->word_regex, k, v);
++	/* Don't care about the parse errors for these, fallthrough */
++	if (!strcmp(type, "cachetextconv"))
++		drv->textconv_want_cache = git_config_bool(k, v);
++	if (!strcmp(type, "binary"))
++		parse_tristate(&drv->binary, k, v);
+ 
+ 	return 0;
+ }
+-- 
+2.31.0.366.ga80606b22c1
+
