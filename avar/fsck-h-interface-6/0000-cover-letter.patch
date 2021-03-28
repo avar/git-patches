@@ -1,0 +1,268 @@
+From 6a38cade8c3a52f5917590a8015e453348c4112b Mon Sep 17 00:00:00 2001
+Message-Id: <cover-00.20-00000000000-20210328T130922Z-avarab@gmail.com>
+In-Reply-To: <20210317182054.5986-1-avarab@gmail.com>
+References: <20210317182054.5986-1-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Sun, 28 Mar 2021 15:09:22 +0200
+Subject: [PATCH v6 00/19] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (19):
+  fsck.c: refactor and rename common config callback
+  fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+  fsck.h: use "enum object_type" instead of "int"
+  fsck.c: rename variables in fsck_set_msg_type() for less confusion
+  fsck.c: remove (mostly) redundant append_msg_id() function
+  fsck.c: rename remaining fsck_msg_id "id" to "msg_id"
+  fsck.c: refactor fsck_msg_type() to limit scope of "int msg_type"
+  fsck.h: move FSCK_{FATAL,INFO,ERROR,WARN,IGNORE} into an enum
+  fsck.h: re-order and re-assign "enum fsck_msg_type"
+  fsck.c: call parse_msg_type() early in fsck_set_msg_type()
+  fsck.c: undefine temporary STR macro after use
+  fsck.c: give "FOREACH_MSG_ID" a more specific name
+  fsck.[ch]: move FOREACH_FSCK_MSG_ID & fsck_msg_id from *.c to *.h
+  fsck.c: pass along the fsck_msg_id in the fsck_error callback
+  fsck.c: add an fsck_set_msg_type() API that takes enums
+  fsck.c: move gitmodules_{found,done} into fsck_options
+  fetch-pack: don't needlessly copy fsck_options
+  fetch-pack: use file-scope static struct for fsck_options
+  fetch-pack: use new fsck API to printing dangling submodules
+
+ builtin/fsck.c           |  14 ++-
+ builtin/index-pack.c     |  30 +-----
+ builtin/mktag.c          |  14 ++-
+ builtin/unpack-objects.c |   3 +-
+ fetch-pack.c             |  31 ++----
+ fsck.c                   | 207 +++++++++++++--------------------------
+ fsck.h                   | 127 +++++++++++++++++++++---
+ 7 files changed, 210 insertions(+), 216 deletions(-)
+
+Range-diff:
+ 1:  fe33015e0d9 =  1:  579af32ab3e fsck.c: refactor and rename common config callback
+ 2:  72f2e53afac <  -:  ----------- fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+ -:  ----------- >  2:  b17c982293e fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+ 3:  237a2806865 =  3:  a721c396c50 fsck.h: use "enum object_type" instead of "int"
+ 4:  13b76c73dd7 =  4:  fcdba2f8fe8 fsck.c: rename variables in fsck_set_msg_type() for less confusion
+ 5:  4ae83403b73 <  -:  ----------- fsck.c: move definition of msg_id into append_msg_id()
+ 6:  82107f1dac0 <  -:  ----------- fsck.c: rename remaining fsck_msg_id "id" to "msg_id"
+ -:  ----------- >  5:  b07e8e026ac fsck.c: remove (mostly) redundant append_msg_id() function
+ -:  ----------- >  6:  321b0c652de fsck.c: rename remaining fsck_msg_id "id" to "msg_id"
+ 7:  796096bf73e =  7:  948689ad5c8 fsck.c: refactor fsck_msg_type() to limit scope of "int msg_type"
+ 8:  3664abb23de =  8:  8ea468bf4d8 fsck.h: move FSCK_{FATAL,INFO,ERROR,WARN,IGNORE} into an enum
+ 9:  81e6d7ab450 !  9:  9316b35cd3b fsck.h: re-order and re-assign "enum fsck_msg_type"
+    @@ Commit message
+         defined as "2".
+     
+         I'm confident that nothing relies on these values, we always compare
+    -    them explicitly. Let's not omit "0" so it won't be assumed that we're
+    -    using these as a boolean somewhere.
+    +    them for equality. Let's not omit "0" so it won't be assumed that
+    +    we're using these as a boolean somewhere.
+     
+         This also allows us to re-structure the fields to mark which are
+         "private" v.s. "public". See the preceding commit for a rationale for
+10:  5c2e8e7b842 = 10:  d7f1c5d37de fsck.c: call parse_msg_type() early in fsck_set_msg_type()
+11:  7ffbf9af3fa = 11:  ae5efd745cf fsck.c: undefine temporary STR macro after use
+12:  12ff0f75ebf = 12:  96995244806 fsck.c: give "FOREACH_MSG_ID" a more specific name
+13:  0c49dd5164f = 13:  1b42aea3a64 fsck.[ch]: move FOREACH_FSCK_MSG_ID & fsck_msg_id from *.c to *.h
+14:  900263f503a = 14:  563e6a0e5e6 fsck.c: pass along the fsck_msg_id in the fsck_error callback
+15:  5f270e88a0a = 15:  5e504f25c51 fsck.c: add an fsck_set_msg_type() API that takes enums
+16:  539d0197129 ! 16:  611631dd779 fsck.c: move gitmodules_{found,done} into fsck_options
+    @@ Commit message
+         gitmodules_found attribute of "fsck_options" we need this intermediate
+         step first.
+     
+    +    An earlier version of this patch removed the small amount of
+    +    duplication we now have between FSCK_OPTIONS_{DEFAULT,STRICT} with a
+    +    FSCK_OPTIONS_COMMON macro. I don't think such de-duplication is worth
+    +    it for this amount of copy/pasting.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## fetch-pack.c ##
+    @@ fsck.h: struct fsck_options {
+      	kh_oid_map_t *object_names;
+      };
+      
+    -@@ fsck.h: struct fsck_options {
+    - 	.walk = NULL, \
+    - 	.msg_type = NULL, \
+    + #define FSCK_OPTIONS_DEFAULT { \
+      	.skiplist = OIDSET_INIT, \
+     +	.gitmodules_found = OIDSET_INIT, \
+     +	.gitmodules_done = OIDSET_INIT, \
+    - 	.object_names = NULL,
+    - #define FSCK_OPTIONS_COMMON_ERROR_FUNC \
+    - 	FSCK_OPTIONS_COMMON \
+    + 	.error_func = fsck_error_function \
+    + }
+    + #define FSCK_OPTIONS_STRICT { \
+    + 	.strict = 1, \
+    ++	.gitmodules_found = OIDSET_INIT, \
+    ++	.gitmodules_done = OIDSET_INIT, \
+    + 	.error_func = fsck_error_function, \
+    + }
+    + 
+     @@ fsck.h: int fsck_walk(struct object *obj, void *data, struct fsck_options *options);
+      int fsck_object(struct object *obj, void *data, unsigned long size,
+      	struct fsck_options *options);
+17:  1acf7442365 = 17:  03d512c8448 fetch-pack: don't needlessly copy fsck_options
+18:  b47c3d5ac6f = 18:  581c87c63c6 fetch-pack: use file-scope static struct for fsck_options
+19:  f05fa5c3ec9 ! 19:  6a38cade8c3 fetch-pack: use new fsck API to printing dangling submodules
+    @@ fetch-pack.c: static int server_supports_filtering;
+      static struct strbuf fsck_msg_types = STRBUF_INIT;
+      static struct string_list uri_protocols = STRING_LIST_INIT_DUP;
+      
+    -@@ fetch-pack.c: static void fsck_gitmodules_oids(struct oidset *gitmodules_oids)
+    +@@ fetch-pack.c: static int cmp_ref_by_name(const void *a_, const void *b_)
+    + 	return strcmp(a->name, b->name);
+    + }
+      
+    - 	oidset_iter_init(gitmodules_oids, &iter);
+    - 	while ((oid = oidset_iter_next(&iter)))
+    +-static void fsck_gitmodules_oids(struct oidset *gitmodules_oids)
+    +-{
+    +-	struct oidset_iter iter;
+    +-	const struct object_id *oid;
+    +-
+    +-	if (!oidset_size(gitmodules_oids))
+    +-		return;
+    +-
+    +-	oidset_iter_init(gitmodules_oids, &iter);
+    +-	while ((oid = oidset_iter_next(&iter)))
+     -		register_found_gitmodules(&fsck_options, oid);
+    -+		oidset_insert(&fsck_options.gitmodules_found, oid);
+    - 	if (fsck_finish(&fsck_options))
+    - 		die("fsck failed");
+    - }
+    +-	if (fsck_finish(&fsck_options))
+    +-		die("fsck failed");
+    +-}
+    +-
+    + static struct ref *do_fetch_pack(struct fetch_pack_args *args,
+    + 				 int fd[2],
+    + 				 const struct ref *orig_ref,
+    +@@ fetch-pack.c: static struct ref *do_fetch_pack(struct fetch_pack_args *args,
+    + 	int agent_len;
+    + 	struct fetch_negotiator negotiator_alloc;
+    + 	struct fetch_negotiator *negotiator;
+    +-	struct oidset gitmodules_oids = OIDSET_INIT;
+    + 
+    + 	negotiator = &negotiator_alloc;
+    + 	fetch_negotiator_init(r, negotiator);
+    +@@ fetch-pack.c: static struct ref *do_fetch_pack(struct fetch_pack_args *args,
+    + 	else
+    + 		alternate_shallow_file = NULL;
+    + 	if (get_pack(args, fd, pack_lockfiles, NULL, sought, nr_sought,
+    +-		     &gitmodules_oids))
+    ++		     &fsck_options.gitmodules_found))
+    + 		die(_("git fetch-pack: fetch failed."));
+    +-	fsck_gitmodules_oids(&gitmodules_oids);
+    ++	if (fsck_finish(&fsck_options))
+    ++		die("fsck failed");
+    + 
+    +  all_done:
+    + 	if (negotiator)
+    +@@ fetch-pack.c: static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
+    + 	struct string_list packfile_uris = STRING_LIST_INIT_DUP;
+    + 	int i;
+    + 	struct strvec index_pack_args = STRVEC_INIT;
+    +-	struct oidset gitmodules_oids = OIDSET_INIT;
+    + 
+    + 	negotiator = &negotiator_alloc;
+    + 	fetch_negotiator_init(r, negotiator);
+    +@@ fetch-pack.c: static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
+    + 			process_section_header(&reader, "packfile", 0);
+    + 			if (get_pack(args, fd, pack_lockfiles,
+    + 				     packfile_uris.nr ? &index_pack_args : NULL,
+    +-				     sought, nr_sought, &gitmodules_oids))
+    ++				     sought, nr_sought, &fsck_options.gitmodules_found))
+    + 				die(_("git fetch-pack: fetch failed."));
+    + 			do_check_stateless_delimiter(args, &reader);
+    + 
+    +@@ fetch-pack.c: static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
+    + 
+    + 		packname[the_hash_algo->hexsz] = '\0';
+    + 
+    +-		parse_gitmodules_oids(cmd.out, &gitmodules_oids);
+    ++		parse_gitmodules_oids(cmd.out, &fsck_options.gitmodules_found);
+    + 
+    + 		close(cmd.out);
+    + 
+    +@@ fetch-pack.c: static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
+    + 	string_list_clear(&packfile_uris, 0);
+    + 	strvec_clear(&index_pack_args);
+    + 
+    +-	fsck_gitmodules_oids(&gitmodules_oids);
+    ++	if (fsck_finish(&fsck_options))
+    ++		die("fsck failed");
+    + 
+    + 	if (negotiator)
+    + 		negotiator->release(negotiator);
+     
+      ## fsck.c ##
+     @@ fsck.c: int fsck_error_function(struct fsck_options *o,
+    @@ fsck.c: int git_fsck_config(const char *var, const char *value, void *cb)
+     +}
+     
+      ## fsck.h ##
+    +@@ fsck.h: int fsck_error_function(struct fsck_options *o,
+    + 			const struct object_id *oid, enum object_type object_type,
+    + 			enum fsck_msg_type msg_type, enum fsck_msg_id msg_id,
+    + 			const char *message);
+    ++int fsck_error_cb_print_missing_gitmodules(struct fsck_options *o,
+    ++					   const struct object_id *oid,
+    ++					   enum object_type object_type,
+    ++					   enum fsck_msg_type msg_type,
+    ++					   enum fsck_msg_id msg_id,
+    ++					   const char *message);
+    + 
+    + struct fsck_options {
+    + 	fsck_walk_func walk;
+    +@@ fsck.h: struct fsck_options {
+    + 	.gitmodules_done = OIDSET_INIT, \
+    + 	.error_func = fsck_error_function, \
+    + }
+    ++#define FSCK_OPTIONS_MISSING_GITMODULES { \
+    ++	.strict = 1, \
+    ++	.gitmodules_found = OIDSET_INIT, \
+    ++	.gitmodules_done = OIDSET_INIT, \
+    ++	.error_func = fsck_error_cb_print_missing_gitmodules, \
+    ++}
+    + 
+    + /* descend in all linked child objects
+    +  * the return value is:
+     @@ fsck.h: int fsck_walk(struct object *obj, void *data, struct fsck_options *options);
+      int fsck_object(struct object *obj, void *data, unsigned long size,
+      	struct fsck_options *options);
+    @@ fsck.h: int fsck_walk(struct object *obj, void *data, struct fsck_options *optio
+      /*
+       * fsck a tag, and pass info about it back to the caller. This is
+       * exposed fsck_object() internals for git-mktag(1).
+    -@@ fsck.h: const char *fsck_describe_object(struct fsck_options *options,
+    -  */
+    - int git_fsck_config(const char *var, const char *value, void *cb);
+    - 
+    -+/*
+    -+ * Custom error callbacks that are used in more than one place.
+    -+ */
+    -+#define FSCK_OPTIONS_MISSING_GITMODULES { \
+    -+	.strict = 1, \
+    -+	.error_func = fsck_error_cb_print_missing_gitmodules, \
+    -+	FSCK_OPTIONS_COMMON \
+    -+}
+    -+int fsck_error_cb_print_missing_gitmodules(struct fsck_options *o,
+    -+					   const struct object_id *oid,
+    -+					   enum object_type object_type,
+    -+					   enum fsck_msg_type msg_type,
+    -+					   enum fsck_msg_id msg_id,
+    -+					   const char *message);
+    -+
+    - #endif
+-- 
+2.31.1.445.g087790d4945
+
