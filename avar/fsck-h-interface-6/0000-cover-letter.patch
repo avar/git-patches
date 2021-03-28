@@ -1,9 +1,9 @@
 From 6a38cade8c3a52f5917590a8015e453348c4112b Mon Sep 17 00:00:00 2001
-Message-Id: <cover-00.20-00000000000-20210328T130922Z-avarab@gmail.com>
+Message-Id: <cover-00.20-00000000000-20210328T130947Z-avarab@gmail.com>
 In-Reply-To: <20210317182054.5986-1-avarab@gmail.com>
 References: <20210317182054.5986-1-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Sun, 28 Mar 2021 15:09:22 +0200
+Date: Sun, 28 Mar 2021 15:09:47 +0200
 Subject: [PATCH v6 00/19] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -43,14 +43,180 @@ Content-Transfer-Encoding: 8bit
 
 Range-diff:
  1:  fe33015e0d9 =  1:  579af32ab3e fsck.c: refactor and rename common config callback
- 2:  72f2e53afac <  -:  ----------- fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
- -:  ----------- >  2:  b17c982293e fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+ 2:  72f2e53afac !  2:  b17c982293e fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+    @@ Commit message
+         fsck.h: use designed initializers for FSCK_OPTIONS_{DEFAULT,STRICT}
+     
+         Refactor the definitions of FSCK_OPTIONS_{DEFAULT,STRICT} to use
+    -    designated initializers.
+    -
+    -    While I'm at it add the "object_names" member to the
+    -    initialization. This was omitted in 7b35efd734e (fsck_walk():
+    -    optionally name objects on the go, 2016-07-17) when the field was
+    -    added.
+    -
+    -    I'm using a new FSCK_OPTIONS_COMMON and FSCK_OPTIONS_COMMON_ERROR_FUNC
+    -    helper macros to define what FSCK_OPTIONS_{DEFAULT,STRICT} have in
+    -    common, and define the two in terms of those macro.
+    -
+    -    The FSCK_OPTIONS_COMMON macro will be used in a subsequent commit to
+    -    define other variants of common fsck initialization that wants to use
+    -    a custom error function, but share the rest of the defaults.
+    +    designated initializers. This allows us to omit those fields that
+    +    aren't initialized to zero or NULL.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ fsck.h: struct fsck_options {
+      
+     -#define FSCK_OPTIONS_DEFAULT { NULL, fsck_error_function, 0, NULL, OIDSET_INIT }
+     -#define FSCK_OPTIONS_STRICT { NULL, fsck_error_function, 1, NULL, OIDSET_INIT }
+    -+#define FSCK_OPTIONS_COMMON \
+    -+	.walk = NULL, \
+    -+	.msg_type = NULL, \
+    ++#define FSCK_OPTIONS_DEFAULT { \
+     +	.skiplist = OIDSET_INIT, \
+    -+	.object_names = NULL,
+    -+#define FSCK_OPTIONS_COMMON_ERROR_FUNC \
+    -+	FSCK_OPTIONS_COMMON \
+    -+	.error_func = fsck_error_function
+    -+
+    -+#define FSCK_OPTIONS_DEFAULT	{ .strict = 0, FSCK_OPTIONS_COMMON_ERROR_FUNC }
+    -+#define FSCK_OPTIONS_STRICT	{ .strict = 1, FSCK_OPTIONS_COMMON_ERROR_FUNC }
+    ++	.error_func = fsck_error_function \
+    ++}
+    ++#define FSCK_OPTIONS_STRICT { \
+    ++	.strict = 1, \
+    ++	.error_func = fsck_error_function, \
+    ++}
+      
+      /* descend in all linked child objects
+       * the return value is:
  3:  237a2806865 =  3:  a721c396c50 fsck.h: use "enum object_type" instead of "int"
  4:  13b76c73dd7 =  4:  fcdba2f8fe8 fsck.c: rename variables in fsck_set_msg_type() for less confusion
- 5:  4ae83403b73 <  -:  ----------- fsck.c: move definition of msg_id into append_msg_id()
- 6:  82107f1dac0 <  -:  ----------- fsck.c: rename remaining fsck_msg_id "id" to "msg_id"
- -:  ----------- >  5:  b07e8e026ac fsck.c: remove (mostly) redundant append_msg_id() function
- -:  ----------- >  6:  321b0c652de fsck.c: rename remaining fsck_msg_id "id" to "msg_id"
+ 5:  4ae83403b73 !  5:  b07e8e026ac fsck.c: move definition of msg_id into append_msg_id()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    fsck.c: move definition of msg_id into append_msg_id()
+    +    fsck.c: remove (mostly) redundant append_msg_id() function
+     
+    -    Refactor code added in 71ab8fa840f (fsck: report the ID of the
+    -    error/warning, 2015-06-22) to resolve the msg_id to a string in the
+    -    function that wants it, instead of doing it in report().
+    +    Remove the append_msg_id() function in favor of calling
+    +    prepare_msg_ids(). We already have code to compute the camel-cased
+    +    msg_id strings in msg_id_info, let's use it.
+    +
+    +    When the append_msg_id() function was added in 71ab8fa840f (fsck:
+    +    report the ID of the error/warning, 2015-06-22) the prepare_msg_ids()
+    +    function didn't exist. When prepare_msg_ids() was added in
+    +    a46baac61eb (fsck: factor out msg_id_info[] lazy initialization code,
+    +    2018-05-26) this code wasn't moved over to lazy initialization.
+    +
+    +    This changes the behavior of the code to initialize all the messages
+    +    instead of just camel-casing the one we need on the fly. Since the
+    +    common case is that we're printing just one message this is mostly
+    +    redundant work.
+    +
+    +    But that's OK in this case, reporting this fsck issue to the user
+    +    isn't performance-sensitive. If we were somehow doing so in a tight
+    +    loop (in a hopelessly broken repository?) this would help, since we'd
+    +    save ourselves from re-doing this work for identical messages, we
+    +    could just grab the prepared string from msg_id_info after the first
+    +    invocation.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ fsck.c: void fsck_set_msg_types(struct fsck_options *options, const char *values
+      }
+      
+     -static void append_msg_id(struct strbuf *sb, const char *msg_id)
+    -+static void append_msg_id(struct strbuf *sb, enum fsck_msg_id id)
+    +-{
+    +-	for (;;) {
+    +-		char c = *(msg_id)++;
+    +-
+    +-		if (!c)
+    +-			break;
+    +-		if (c != '_')
+    +-			strbuf_addch(sb, tolower(c));
+    +-		else {
+    +-			assert(*msg_id);
+    +-			strbuf_addch(sb, *(msg_id)++);
+    +-		}
+    +-	}
+    +-
+    +-	strbuf_addstr(sb, ": ");
+    +-}
+    +-
+    + static int object_on_skiplist(struct fsck_options *opts,
+    + 			      const struct object_id *oid)
+      {
+    -+	const char *msg_id = msg_id_info[id].id_string;
+    - 	for (;;) {
+    - 		char c = *(msg_id)++;
+    - 
+     @@ fsck.c: static int report(struct fsck_options *options,
+      	else if (msg_type == FSCK_INFO)
+      		msg_type = FSCK_WARN;
+      
+     -	append_msg_id(&sb, msg_id_info[id].id_string);
+    -+	append_msg_id(&sb, id);
+    ++	prepare_msg_ids();
+    ++	strbuf_addf(&sb, "%s: ", msg_id_info[id].camelcased);
+      
+      	va_start(ap, fmt);
+      	strbuf_vaddf(&sb, fmt, ap);
+ 6:  82107f1dac0 !  6:  321b0c652de fsck.c: rename remaining fsck_msg_id "id" to "msg_id"
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## fsck.c ##
+    -@@ fsck.c: void fsck_set_msg_types(struct fsck_options *options, const char *values)
+    - 	free(to_free);
+    - }
+    - 
+    --static void append_msg_id(struct strbuf *sb, enum fsck_msg_id id)
+    -+static void append_msg_id(struct strbuf *sb, enum fsck_msg_id msg_id)
+    - {
+    --	const char *msg_id = msg_id_info[id].id_string;
+    -+	const char *msg_id_str = msg_id_info[msg_id].id_string;
+    - 	for (;;) {
+    --		char c = *(msg_id)++;
+    -+		char c = *(msg_id_str)++;
+    - 
+    - 		if (!c)
+    - 			break;
+    - 		if (c != '_')
+    - 			strbuf_addch(sb, tolower(c));
+    - 		else {
+    --			assert(*msg_id);
+    --			strbuf_addch(sb, *(msg_id)++);
+    -+			assert(*msg_id_str);
+    -+			strbuf_addch(sb, *(msg_id_str)++);
+    - 		}
+    - 	}
+    - 
+     @@ fsck.c: static int object_on_skiplist(struct fsck_options *opts,
+      __attribute__((format (printf, 5, 6)))
+      static int report(struct fsck_options *options,
+    @@ fsck.c: static int object_on_skiplist(struct fsck_options *opts,
+      	if (msg_type == FSCK_IGNORE)
+      		return 0;
+     @@ fsck.c: static int report(struct fsck_options *options,
+    - 	else if (msg_type == FSCK_INFO)
+      		msg_type = FSCK_WARN;
+      
+    --	append_msg_id(&sb, id);
+    -+	append_msg_id(&sb, msg_id);
+    + 	prepare_msg_ids();
+    +-	strbuf_addf(&sb, "%s: ", msg_id_info[id].camelcased);
+    ++	strbuf_addf(&sb, "%s: ", msg_id_info[msg_id].camelcased);
+      
+      	va_start(ap, fmt);
+      	strbuf_vaddf(&sb, fmt, ap);
  7:  796096bf73e =  7:  948689ad5c8 fsck.c: refactor fsck_msg_type() to limit scope of "int msg_type"
  8:  3664abb23de =  8:  8ea468bf4d8 fsck.h: move FSCK_{FATAL,INFO,ERROR,WARN,IGNORE} into an enum
  9:  81e6d7ab450 !  9:  9316b35cd3b fsck.h: re-order and re-assign "enum fsck_msg_type"
