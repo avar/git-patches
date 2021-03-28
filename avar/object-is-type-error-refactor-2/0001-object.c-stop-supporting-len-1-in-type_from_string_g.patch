@@ -1,0 +1,72 @@
+From e51c860a65de3074d345285014e4dfaeefb9c7e3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.11-e51c860a65d-20210328T021059Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20210328T021059Z-avarab@gmail.com>
+References: <20210308200426.21824-1-avarab@gmail.com>
+	<cover-00.11-00000000000-20210328T021059Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 28 Mar 2021 01:22:21 +0100
+Subject: [PATCH v2 01/10] object.c: stop supporting len == -1 in
+ type_from_string_gently()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the type_from_string() macro into a function and drop the
+support for passing len < 0.
+
+Support for len < 0 was added in fe8e3b71805 (Refactor
+type_from_string() to allow continuing after detecting an error,
+2014-09-10), but no callers use that form. Let's drop it to simplify
+this, and in preparation for simplifying these even further.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object.c | 10 +++++++---
+ object.h |  2 +-
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/object.c b/object.c
+index 78343781ae7..65446172172 100644
+--- a/object.c
++++ b/object.c
+@@ -39,9 +39,6 @@ int type_from_string_gently(const char *str, ssize_t len, int gentle)
+ {
+ 	int i;
+ 
+-	if (len < 0)
+-		len = strlen(str);
+-
+ 	for (i = 1; i < ARRAY_SIZE(object_type_strings); i++)
+ 		if (!strncmp(str, object_type_strings[i], len) &&
+ 		    object_type_strings[i][len] == '\0')
+@@ -53,6 +50,13 @@ int type_from_string_gently(const char *str, ssize_t len, int gentle)
+ 	die(_("invalid object type \"%s\""), str);
+ }
+ 
++int type_from_string(const char *str)
++{
++	size_t len = strlen(str);
++	int ret = type_from_string_gently(str, len, 0);
++	return ret;
++}
++
+ /*
+  * Return a numerical hash value between 0 and n-1 for the object with
+  * the specified sha1.  n must be a power of 2.  Please note that the
+diff --git a/object.h b/object.h
+index 59daadce214..3ab3eb193d3 100644
+--- a/object.h
++++ b/object.h
+@@ -94,7 +94,7 @@ struct object {
+ 
+ const char *type_name(unsigned int type);
+ int type_from_string_gently(const char *str, ssize_t, int gentle);
+-#define type_from_string(str) type_from_string_gently(str, -1, 0)
++int type_from_string(const char *str);
+ 
+ /*
+  * Return the current number of buckets in the object hashmap.
+-- 
+2.31.1.442.g6c06c9fe35c
+

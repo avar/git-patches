@@ -1,0 +1,171 @@
+From c10082f4facf69b01328910a61e7497b1e69c4e8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-04.11-c10082f4fac-20210328T021059Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20210328T021059Z-avarab@gmail.com>
+References: <20210308200426.21824-1-avarab@gmail.com>
+	<cover-00.11-00000000000-20210328T021059Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 7 Mar 2021 15:24:42 +0100
+Subject: [PATCH v2 04/10] object-file.c: make oid_object_info() return "enum
+ object_type"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change oid_object_info() to return an "enum object_type". Unlike
+oid_object_info_extended() function the simpler oid_object_info()
+explicitly returns the oi.typep member, which is itself an "enum
+object_type".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/blame.c      |  2 +-
+ builtin/index-pack.c |  2 +-
+ object-file.c        |  8 +++-----
+ object-name.c        | 19 +++++++++----------
+ object-store.h       |  4 +++-
+ packfile.c           |  2 +-
+ 6 files changed, 18 insertions(+), 19 deletions(-)
+
+diff --git a/builtin/blame.c b/builtin/blame.c
+index 641523ff9af..5dd3c38a8c6 100644
+--- a/builtin/blame.c
++++ b/builtin/blame.c
+@@ -810,7 +810,7 @@ static int peel_to_commit_oid(struct object_id *oid_ret, void *cbdata)
+ 	oidcpy(&oid, oid_ret);
+ 	while (1) {
+ 		struct object *obj;
+-		int kind = oid_object_info(r, &oid, NULL);
++		enum object_type kind = oid_object_info(r, &oid, NULL);
+ 		if (kind == OBJ_COMMIT) {
+ 			oidcpy(oid_ret, &oid);
+ 			return 0;
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index 21899687e2c..17376db1e39 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -236,7 +236,7 @@ static unsigned check_object(struct object *obj)
+ 
+ 	if (!(obj->flags & FLAG_CHECKED)) {
+ 		unsigned long size;
+-		int type = oid_object_info(the_repository, &obj->oid, &size);
++		enum object_type type = oid_object_info(the_repository, &obj->oid, &size);
+ 		if (type <= 0)
+ 			die(_("did not receive expected object %s"),
+ 			      oid_to_hex(&obj->oid));
+diff --git a/object-file.c b/object-file.c
+index b7c26b67355..8ed54d6f621 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1572,11 +1572,9 @@ int oid_object_info_extended(struct repository *r, const struct object_id *oid,
+ 	return ret;
+ }
+ 
+-
+-/* returns enum object_type or negative */
+-int oid_object_info(struct repository *r,
+-		    const struct object_id *oid,
+-		    unsigned long *sizep)
++enum object_type oid_object_info(struct repository *r,
++				 const struct object_id *oid,
++				 unsigned long *sizep)
+ {
+ 	enum object_type type;
+ 	struct object_info oi = OBJECT_INFO_INIT;
+diff --git a/object-name.c b/object-name.c
+index 64202de60b1..4d7f0c66cf2 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -239,9 +239,8 @@ static int disambiguate_committish_only(struct repository *r,
+ 					void *cb_data_unused)
+ {
+ 	struct object *obj;
+-	int kind;
++	enum object_type kind = oid_object_info(r, oid, NULL);
+ 
+-	kind = oid_object_info(r, oid, NULL);
+ 	if (kind == OBJ_COMMIT)
+ 		return 1;
+ 	if (kind != OBJ_TAG)
+@@ -258,7 +257,7 @@ static int disambiguate_tree_only(struct repository *r,
+ 				  const struct object_id *oid,
+ 				  void *cb_data_unused)
+ {
+-	int kind = oid_object_info(r, oid, NULL);
++	enum object_type kind = oid_object_info(r, oid, NULL);
+ 	return kind == OBJ_TREE;
+ }
+ 
+@@ -267,7 +266,7 @@ static int disambiguate_treeish_only(struct repository *r,
+ 				     void *cb_data_unused)
+ {
+ 	struct object *obj;
+-	int kind;
++	enum object_type kind;
+ 
+ 	kind = oid_object_info(r, oid, NULL);
+ 	if (kind == OBJ_TREE || kind == OBJ_COMMIT)
+@@ -286,7 +285,7 @@ static int disambiguate_blob_only(struct repository *r,
+ 				  const struct object_id *oid,
+ 				  void *cb_data_unused)
+ {
+-	int kind = oid_object_info(r, oid, NULL);
++	enum object_type kind = oid_object_info(r, oid, NULL);
+ 	return kind == OBJ_BLOB;
+ }
+ 
+@@ -361,7 +360,7 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ {
+ 	const struct disambiguate_state *ds = data;
+ 	struct strbuf desc = STRBUF_INIT;
+-	int type;
++	enum object_type type;
+ 
+ 	if (ds->fn && !ds->fn(ds->repo, oid, ds->cb_data))
+ 		return 0;
+@@ -405,10 +404,10 @@ static int repo_collect_ambiguous(struct repository *r,
+ static int sort_ambiguous(const void *a, const void *b, void *ctx)
+ {
+ 	struct repository *sort_ambiguous_repo = ctx;
+-	int a_type = oid_object_info(sort_ambiguous_repo, a, NULL);
+-	int b_type = oid_object_info(sort_ambiguous_repo, b, NULL);
+-	int a_type_sort;
+-	int b_type_sort;
++	enum object_type a_type = oid_object_info(sort_ambiguous_repo, a, NULL);
++	enum object_type b_type = oid_object_info(sort_ambiguous_repo, b, NULL);
++	enum object_type a_type_sort;
++	enum object_type b_type_sort;
+ 
+ 	/*
+ 	 * Sorts by hash within the same object type, just as
+diff --git a/object-store.h b/object-store.h
+index ec32c23dcb5..eab9674d085 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -208,7 +208,9 @@ static inline void *repo_read_object_file(struct repository *r,
+ #endif
+ 
+ /* Read and unpack an object file into memory, write memory to an object file */
+-int oid_object_info(struct repository *r, const struct object_id *, unsigned long *);
++enum object_type oid_object_info(struct repository *r,
++				 const struct object_id *,
++				 unsigned long *);
+ 
+ int hash_object_file(const struct git_hash_algo *algo, const void *buf,
+ 		     unsigned long len, const char *type,
+diff --git a/packfile.c b/packfile.c
+index 6661f3325a4..3ee01ea7323 100644
+--- a/packfile.c
++++ b/packfile.c
+@@ -1266,7 +1266,7 @@ static int retry_bad_packed_offset(struct repository *r,
+ 				   struct packed_git *p,
+ 				   off_t obj_offset)
+ {
+-	int type;
++	enum object_type type;
+ 	uint32_t pos;
+ 	struct object_id oid;
+ 	if (offset_to_pack_pos(p, obj_offset, &pos) < 0)
+-- 
+2.31.1.442.g6c06c9fe35c
+

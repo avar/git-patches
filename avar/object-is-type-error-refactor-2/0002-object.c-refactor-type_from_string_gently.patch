@@ -1,0 +1,109 @@
+From 3e3979b6b358558a442a4f371df28a0d74ff2765 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.11-3e3979b6b35-20210328T021059Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20210328T021059Z-avarab@gmail.com>
+References: <20210308200426.21824-1-avarab@gmail.com>
+	<cover-00.11-00000000000-20210328T021059Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 28 Mar 2021 01:25:32 +0100
+Subject: [PATCH v2 02/10] object.c: refactor type_from_string_gently()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Get rid of the "gently" argument to type_from_string_gently() to make
+it consistent with most other *_gently() functions.
+
+This refactoring of adding a third parameter was done in
+fe8e3b71805 (Refactor type_from_string() to allow continuing after
+detecting an error, 2014-09-10) in preparation for its use in
+fsck.c.
+
+Simplifying this means we can move the die() into the simpler
+type_from_string() function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fsck.c        |  2 +-
+ object-file.c |  2 +-
+ object.c      | 12 +++++-------
+ object.h      |  2 +-
+ 4 files changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/fsck.c b/fsck.c
+index e3030f3b358..6cc4f9ea892 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -957,7 +957,7 @@ int fsck_tag_standalone(const struct object_id *oid, const char *buffer,
+ 		ret = report(options, oid, OBJ_TAG, FSCK_MSG_MISSING_TYPE, "invalid format - unexpected end after 'type' line");
+ 		goto done;
+ 	}
+-	*tagged_type = type_from_string_gently(buffer, eol - buffer, 1);
++	*tagged_type = type_from_string_gently(buffer, eol - buffer);
+ 	if (*tagged_type < 0)
+ 		ret = report(options, oid, OBJ_TAG, FSCK_MSG_BAD_TYPE, "invalid 'type' value");
+ 	if (ret)
+diff --git a/object-file.c b/object-file.c
+index 624af408cdc..b7c26b67355 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1314,7 +1314,7 @@ static int parse_loose_header_extended(const char *hdr, struct object_info *oi,
+ 		type_len++;
+ 	}
+ 
+-	type = type_from_string_gently(type_buf, type_len, 1);
++	type = type_from_string_gently(type_buf, type_len);
+ 	if (oi->type_name)
+ 		strbuf_add(oi->type_name, type_buf, type_len);
+ 	/*
+diff --git a/object.c b/object.c
+index 65446172172..1c36ea606f2 100644
+--- a/object.c
++++ b/object.c
+@@ -35,7 +35,7 @@ const char *type_name(unsigned int type)
+ 	return object_type_strings[type];
+ }
+ 
+-int type_from_string_gently(const char *str, ssize_t len, int gentle)
++int type_from_string_gently(const char *str, ssize_t len)
+ {
+ 	int i;
+ 
+@@ -43,17 +43,15 @@ int type_from_string_gently(const char *str, ssize_t len, int gentle)
+ 		if (!strncmp(str, object_type_strings[i], len) &&
+ 		    object_type_strings[i][len] == '\0')
+ 			return i;
+-
+-	if (gentle)
+-		return -1;
+-
+-	die(_("invalid object type \"%s\""), str);
++	return -1;
+ }
+ 
+ int type_from_string(const char *str)
+ {
+ 	size_t len = strlen(str);
+-	int ret = type_from_string_gently(str, len, 0);
++	int ret = type_from_string_gently(str, len);
++	if (ret < 0)
++		die(_("invalid object type \"%s\""), str);
+ 	return ret;
+ }
+ 
+diff --git a/object.h b/object.h
+index 3ab3eb193d3..ffdc1298300 100644
+--- a/object.h
++++ b/object.h
+@@ -93,7 +93,7 @@ struct object {
+ };
+ 
+ const char *type_name(unsigned int type);
+-int type_from_string_gently(const char *str, ssize_t, int gentle);
++int type_from_string_gently(const char *str, ssize_t len);
+ int type_from_string(const char *str);
+ 
+ /*
+-- 
+2.31.1.442.g6c06c9fe35c
+

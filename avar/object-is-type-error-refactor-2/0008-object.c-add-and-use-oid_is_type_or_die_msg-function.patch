@@ -1,0 +1,83 @@
+From 351a8ec79c8e21de959495d09bb0cd12a33d75a3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-08.11-351a8ec79c8-20210328T021059Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20210328T021059Z-avarab@gmail.com>
+References: <20210308200426.21824-1-avarab@gmail.com>
+	<cover-00.11-00000000000-20210328T021059Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 28 Mar 2021 03:24:07 +0200
+Subject: [PATCH v2 08/10] object.c: add and use oid_is_type_or_die_msg()
+ function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a oid_is_type_or_die_msg() function to go with the "error" and
+"die" forms for emitting "expected type X, got Y" messages. This is
+useful for callers that want the message itself as a char *.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ merge-recursive.c |  6 ++++--
+ object.c          | 12 ++++++++++++
+ object.h          |  3 +++
+ 3 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/merge-recursive.c b/merge-recursive.c
+index feb9bfeb8af..152e63e4436 100644
+--- a/merge-recursive.c
++++ b/merge-recursive.c
+@@ -2971,9 +2971,11 @@ static int read_oid_strbuf(struct merge_options *opt,
+ 	if (!buf)
+ 		return err(opt, _("cannot read object %s"), oid_to_hex(oid));
+ 	if (type != OBJ_BLOB) {
+-		const char* msg = oid_is_type_or_die_msg(oid, OBJ_BLOB, &type);
++		char *msg = oid_is_type_or_die_msg(oid, OBJ_BLOB, &type);
++		int ret = err(opt, msg);
+ 		free(buf);
+-		return err(opt, _("object %s is not a blob"), oid_to_hex(oid));
++		free(msg);
++		return ret;
+ 	}
+ 	strbuf_attach(dst, buf, size, size + 1);
+ 	return 0;
+diff --git a/object.c b/object.c
+index fa18b243280..0f60743e61f 100644
+--- a/object.c
++++ b/object.c
+@@ -182,6 +182,18 @@ int oid_is_type_or_error(const struct object_id *oid,
+ 		     type_name(want));
+ }
+ 
++char* oid_is_type_or_die_msg(const struct object_id *oid,
++				   enum object_type want,
++				   enum object_type *type)
++{
++	struct strbuf sb = STRBUF_INIT;
++	if (want == *type)
++		BUG("call this just to get the message!");
++	strbuf_addf(&sb, _(object_type_mismatch_msg), oid_to_hex(oid),
++		    type_name(*type), type_name(want));
++	return strbuf_detach(&sb, NULL);
++}
++
+ void *object_as_type(struct object *obj, enum object_type type, int quiet)
+ {
+ 	if (obj->type == type)
+diff --git a/object.h b/object.h
+index d2d4a236d0e..cdc3242a128 100644
+--- a/object.h
++++ b/object.h
+@@ -128,6 +128,9 @@ void oid_is_type_or_die(const struct object_id *oid, enum object_type want,
+ 			enum object_type *type);
+ int oid_is_type_or_error(const struct object_id *oid, enum object_type want,
+ 			 enum object_type *type);
++char* oid_is_type_or_die_msg(const struct object_id *oid,
++			     enum object_type want,
++			     enum object_type *type);
+ 
+ /*
+  * Returns the object, having parsed it to find out what it is.
+-- 
+2.31.1.442.g6c06c9fe35c
+
