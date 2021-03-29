@@ -1,0 +1,130 @@
+From 1089ca3d18457bb6e98622d9e16bf49b2cfd8c9d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.7-1089ca3d184-20210329T162327Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20210329T162327Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210329T161723Z-avarab@gmail.com>
+	<cover-0.7-00000000000-20210329T162327Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 29 Mar 2021 12:20:40 +0200
+Subject: [PATCH 4/6] Makefile: make INSTALL_SYMLINKS affect the build
+ directory
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the INSTALL_SYMLINKS flag to also affect whether a built-in
+like e.g. git-fetch is a symlink or not in git's build directory.
+
+This doesn't matter for anything other than as an aid to developers
+who might be confused about their build not matching the installation,
+and who'd like to be reminded that e.g. "git-fetch" is a built-in by
+"ls" coloring appropriately it as a symlink.
+
+In order to make this work we need to rebuild the relevant programs
+when the INSTALL_SYMLINKS flag changes. This also ensures that we'll
+install the right thing, we don't want a different "INSTALL_SYMLINKS"
+setting during "make all" and "make install" to result in a broken
+installation.
+
+We will do the wrong thing here if both the SKIP_DASHED_BUILT_INS and
+INSTALL_SYMLINKS are being flipped. But that's not a new bug:
+
+A build with "INSTALL_SYMLINKS=Y SKIP_DASHED_BUILT_INS=" will result
+in e.g. "git-fetch" being a symlink. When building again with
+"INSTALL_SYMLINKS= SKIP_DASHED_BUILT_INS=Y", only unconditionally
+built programs such as "git-upload-pack" will correctly be flipped to
+a hardlink, but e.g. "git-fetch" will be left as a symlink.
+
+That's an existing bug (or unexpected behavior) in the
+SKIP_DASHED_BUILT_INS flag, not something new being introduced or made
+worse here. It's a bit more noticeable now as we might not expect
+these now-stale symlinks to be left behind, and "ls" (in some
+configurations) will color them prominently.
+
+But we'll still do the right thing on "make install" since we'll
+ignore the likes of "git-fetch" there under "SKIP_DASHED_BUILT_INS=Y".
+Under "SKIP_DASHED_BUILT_INS=" we'll correctly flip the symlink to a
+hardlink or vice-versa if needed before installation.
+
+Still, we should get around to fixing that SKIP_DASHED_BUILT_INS. You
+can't reliably set that flag to "Y" for checking whether the tests
+rely on the now-skipped dashed built-ins without first running "make
+clean" (or knowing you've always been building with
+SKIP_DASHED_BUILT_INS=Y).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .gitignore |  1 +
+ Makefile   | 19 +++++++++++++++++--
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index 3dcdb6bb5ab..f90aa21b23b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,6 +5,7 @@
+ /GIT-BUILD-OPTIONS
+ /GIT-CFLAGS
+ /GIT-LDFLAGS
++/GIT-LNCPFLAGS
+ /GIT-PREFIX
+ /GIT-PERL-DEFINES
+ /GIT-PERL-HEADER
+diff --git a/Makefile b/Makefile
+index a4784f28f5b..29d9bade5a8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -337,6 +337,11 @@ all::
+ # NO_INSTALL_HARDLINKS. This will not produce any indirect symlinks, we will
+ # always symlink to the final target directly.
+ #
++# NO_INSTALL_HARDLINKS which will also use symlinking by indirection
++# within the same directory in some cases, INSTALL_SYMLINKS will
++# always symlink to the final target directly. This option also
++# affects dashed built-ins in the build directory pre-installation.
++#
+ # Define NO_CROSS_DIRECTORY_HARDLINKS if you plan to distribute the installed
+ # programs as a tar, where bin/ and libexec/ might be on different file systems.
+ #
+@@ -2197,9 +2202,12 @@ version.sp version.s version.o: EXTRA_CPPFLAGS = \
+ 		GIT_CEILING_DIRECTORIES="$(CURDIR)/.." \
+ 		git rev-parse -q --verify HEAD 2>/dev/null)"'
+ 
++$(BUILT_INS): GIT-LNCPFLAGS
+ $(BUILT_INS): git$X
+ 	$(QUIET_BUILT_IN)$(RM) $@ && \
+-	./ln-or-cp.sh $< $@
++	./ln-or-cp.sh \
++		--install-symlinks "$(INSTALL_SYMLINKS)" \
++		$< $@
+ 
+ config-list.h: generate-configlist.sh
+ 
+@@ -2548,9 +2556,12 @@ git-http-push$X: http.o http-push.o GIT-LDFLAGS $(GITLIBS)
+ 		$(CURL_LIBCURL) $(EXPAT_LIBEXPAT) $(LIBS) && \
+ 	mv $@+ $@
+ 
++$(REMOTE_CURL_ALIASES): GIT-LNCPFLAGS
+ $(REMOTE_CURL_ALIASES): $(REMOTE_CURL_PRIMARY)
+ 	$(QUIET_LNCP)$(RM) $@ && \
+-	./ln-or-cp.sh $< $@
++	./ln-or-cp.sh \
++		--install-symlinks "$(INSTALL_SYMLINKS)" \
++		$< $@
+ 
+ $(REMOTE_CURL_PRIMARY): remote-curl.o http.o http-walker.o GIT-LDFLAGS $(GITLIBS)
+ 	$(QUIET_LINK)$(CC) $(ALL_CFLAGS) -o $@+ $(ALL_LDFLAGS) $(filter %.o,$^) \
+@@ -2742,6 +2753,10 @@ GIT-LDFLAGS: FORCE
+ 		echo "$$FLAGS" >GIT-LDFLAGS; \
+             fi
+ 
++GIT-LNCPFLAGS: FORCE
++	@echo INSTALL_SYMLINKS=\''$(subst ','\'',$(subst ','\'',$(INSTALL_SYMLINKS)))'\' >$@+
++	@if cmp $@+ $@ >/dev/null 2>&1; then $(RM) $@+; else mv $@+ $@; fi
++
+ # We need to apply sq twice, once to protect from the shell
+ # that runs GIT-BUILD-OPTIONS, and then again to protect it
+ # and the first level quoting from the shell that runs "echo".
+-- 
+2.31.1.461.gd47399f6574
+

@@ -1,0 +1,112 @@
+From f81708f612067997cac4aec5f1839de1d11c827a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.7-f81708f6120-20210329T162327Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20210329T162327Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210329T161723Z-avarab@gmail.com>
+	<cover-0.7-00000000000-20210329T162327Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 29 Mar 2021 13:07:36 +0200
+Subject: [PATCH 5/6] Makefile: use "ln -f" instead of "rm && ln"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the invocations and behavior of "ln-or-cp.sh" to not assume
+that we're going to "rm" the file in question beforehand.
+
+This reduces the complexity of these rules, and as a bonus means it's
+now safe to "make install" on a system that may have running "git"
+programs, before this we'd be racing the "rm && ln/cp" and wouldn't
+have a working "git" (or one of the built-ins) in the interim.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile    | 10 ++--------
+ ln-or-cp.sh |  5 ++---
+ 2 files changed, 4 insertions(+), 11 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 29d9bade5a8..466df1a8e90 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2204,8 +2204,7 @@ version.sp version.s version.o: EXTRA_CPPFLAGS = \
+ 
+ $(BUILT_INS): GIT-LNCPFLAGS
+ $(BUILT_INS): git$X
+-	$(QUIET_BUILT_IN)$(RM) $@ && \
+-	./ln-or-cp.sh \
++	$(QUIET_BUILT_IN)./ln-or-cp.sh \
+ 		--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 		$< $@
+ 
+@@ -2558,8 +2557,7 @@ git-http-push$X: http.o http-push.o GIT-LDFLAGS $(GITLIBS)
+ 
+ $(REMOTE_CURL_ALIASES): GIT-LNCPFLAGS
+ $(REMOTE_CURL_ALIASES): $(REMOTE_CURL_PRIMARY)
+-	$(QUIET_LNCP)$(RM) $@ && \
+-	./ln-or-cp.sh \
++	$(QUIET_LNCP)./ln-or-cp.sh \
+ 		--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 		$< $@
+ 
+@@ -3021,7 +3019,6 @@ endif
+ 	destdir_from_execdir_SQ=$$(echo '$(gitexecdir_relative_SQ)' | sed -e 's|[^/][^/]*|..|g') && \
+ 	{ test "$$bindir/" = "$$execdir/" || \
+ 	  for p in git$X $(filter $(install_bindir_programs),$(ALL_PROGRAMS)); do \
+-		$(RM) "$$execdir/$$p" && \
+ 		./ln-or-cp.sh \
+ 			--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 			--no-install-hardlinks "$(NO_INSTALL_HARDLINKS)" \
+@@ -3031,7 +3028,6 @@ endif
+ 	  done; \
+ 	} && \
+ 	for p in $(filter $(install_bindir_programs),$(BUILT_INS)); do \
+-		$(RM) "$$bindir/$$p" && \
+ 		./ln-or-cp.sh \
+ 			--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 			--no-install-hardlinks "$(NO_INSTALL_HARDLINKS)" \
+@@ -3039,7 +3035,6 @@ endif
+ 			"$$bindir/git$X" "$$bindir/$$p"; \
+ 	done && \
+ 	for p in $(BUILT_INS); do \
+-		$(RM) "$$execdir/$$p" && \
+ 		if test -z "$(SKIP_DASHED_BUILT_INS)"; \
+ 		then \
+ 			./ln-or-cp.sh \
+@@ -3051,7 +3046,6 @@ endif
+ 	done && \
+ 	remote_curl_aliases="$(REMOTE_CURL_ALIASES)" && \
+ 	for p in $$remote_curl_aliases; do \
+-		$(RM) "$$execdir/$$p" && \
+ 		./ln-or-cp.sh \
+ 			--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 			--no-install-hardlinks "$(NO_INSTALL_HARDLINKS)" \
+diff --git a/ln-or-cp.sh b/ln-or-cp.sh
+index 663ffd0489d..37380993c64 100755
+--- a/ln-or-cp.sh
++++ b/ln-or-cp.sh
+@@ -40,11 +40,10 @@ link="$2"
+ hardlink_or_cp () {
+ 	if test -z "$no_install_hardlinks" -a -z "$no_cross_directory_hardlinks"
+ 	then
+-		if ! ln "$target" "$link"
++		if ! ln -f "$target" "$link"
+ 		then
+ 			cp "$target" "$link"
+ 		fi
+-
+ 	else
+ 		cp "$target" "$link"
+ 	fi
+@@ -53,7 +52,7 @@ hardlink_or_cp () {
+ main_with_fallbacks () {
+ 	if test -n "$install_symlinks" -o -n "$no_install_hardlinks"
+ 	then
+-		if ! ln -s "$symlink_target" "$link"
++		if ! ln -f -s "$symlink_target" "$link"
+ 		then
+ 			hardlink_or_cp
+ 		fi
+-- 
+2.31.1.461.gd47399f6574
+

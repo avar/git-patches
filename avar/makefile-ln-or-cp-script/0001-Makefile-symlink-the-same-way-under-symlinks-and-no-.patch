@@ -1,0 +1,116 @@
+From 39926acb0d1432310d4e6ed759eb7ebe6df7c78a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.7-39926acb0d1-20210329T162327Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20210329T162327Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210329T161723Z-avarab@gmail.com>
+	<cover-0.7-00000000000-20210329T162327Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 29 Mar 2021 13:47:09 +0200
+Subject: [PATCH 1/6] Makefile: symlink the same way under "symlinks" and "no
+ hardlinks"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the INSTALL_SYMLINKS option was added in ad874608d8c (Makefile:
+optionally symlink libexec/git-core binaries to bin/git, 2018-03-13)
+we retained bug-for-bug compatibility with how the old
+NO_INSTALL_HARDLINKS=Y would selectively fall back on symlinks.
+
+In particular INSTALL_SYMLINKS=Y will result in a link tree like:
+
+    bin/git
+    libexec/git -> ../bin/git
+    libexec/git-add -> ../bin/git
+
+Whereas NO_INSTALL_HARDLINKS=Y in cases where the "ln" would fail would result in:
+
+    bin/git
+    libexec/git
+    libexec/git-add -> git
+
+I.e. we duplicated the "git" between the bin/ and libexec/
+directories (by default they're hardlinked), and potentially had had
+e.g. "git-add" pointing at the libexec/git hardlink (or more likely if
+"ln" is failing, a copy), instead of the bin/git.
+
+Now we'll instead use the same symlinks to point to the bindir. I
+don't see any reason not to do so, and no breakage related to this has
+been reported with INSTALL_SYMLINKS in all this time. I just did it
+this way to maintain bug-for-bug compatibility at the time.
+
+There is a behavior change here, if the "ln -s" fails we'll no longer
+direct it to stderr. Supporting that edge case would be painful, and
+as we'll see in subsequent commits that difference is going away
+anyway, so let's proceed for now without retaining it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index ce76c476a3c..1e59d90a8d2 100644
+--- a/Makefile
++++ b/Makefile
+@@ -334,15 +334,16 @@ all::
+ # Define INSTALL_SYMLINKS if you prefer to have everything that can be
+ # symlinked between bin/ and libexec/ to use relative symlinks between
+ # the two. This option overrides NO_CROSS_DIRECTORY_HARDLINKS and
+-# NO_INSTALL_HARDLINKS which will also use symlinking by indirection
+-# within the same directory in some cases, INSTALL_SYMLINKS will
++# NO_INSTALL_HARDLINKS. This will not produce any indirect symlinks, we will
+ # always symlink to the final target directly.
+ #
+ # Define NO_CROSS_DIRECTORY_HARDLINKS if you plan to distribute the installed
+ # programs as a tar, where bin/ and libexec/ might be on different file systems.
+ #
+-# Define NO_INSTALL_HARDLINKS if you prefer to use either symbolic links or
+-# copies to install built-in git commands e.g. git-cat-file.
++# Define NO_INSTALL_HARDLINKS if you'd like to have programs in bin/
++# and libexec/ either symlinked (we try with INSTALL_SYMLINKS first),
++# or if that fails fall back on a "cp" instead of a "ln". Useful for
++# when you don't want hardlinks at all.
+ #
+ # Define SKIP_DASHED_BUILT_INS if you do not need the dashed versions of the
+ # built-ins to be linked/copied at all.
+@@ -3019,33 +3020,30 @@ endif
+ 	} && \
+ 	for p in $(filter $(install_bindir_programs),$(BUILT_INS)); do \
+ 		$(RM) "$$bindir/$$p" && \
+-		test -n "$(INSTALL_SYMLINKS)" && \
++		test -n "$(INSTALL_SYMLINKS)" -o "$(NO_INSTALL_HARDLINKS)" && \
+ 		ln -s "git$X" "$$bindir/$$p" || \
+ 		{ test -z "$(NO_INSTALL_HARDLINKS)" && \
+ 		  ln "$$bindir/git$X" "$$bindir/$$p" 2>/dev/null || \
+-		  ln -s "git$X" "$$bindir/$$p" 2>/dev/null || \
+ 		  cp "$$bindir/git$X" "$$bindir/$$p" || exit; }; \
+ 	done && \
+ 	for p in $(BUILT_INS); do \
+ 		$(RM) "$$execdir/$$p" && \
+ 		if test -z "$(SKIP_DASHED_BUILT_INS)"; \
+ 		then \
+-			test -n "$(INSTALL_SYMLINKS)" && \
++			test -n "$(INSTALL_SYMLINKS)" -o "$(NO_INSTALL_HARDLINKS)" && \
+ 			ln -s "$$destdir_from_execdir_SQ/$(bindir_relative_SQ)/git$X" "$$execdir/$$p" || \
+ 			{ test -z "$(NO_INSTALL_HARDLINKS)" && \
+ 			  ln "$$execdir/git$X" "$$execdir/$$p" 2>/dev/null || \
+-			  ln -s "git$X" "$$execdir/$$p" 2>/dev/null || \
+ 			  cp "$$execdir/git$X" "$$execdir/$$p" || exit; }; \
+ 		fi \
+ 	done && \
+ 	remote_curl_aliases="$(REMOTE_CURL_ALIASES)" && \
+ 	for p in $$remote_curl_aliases; do \
+ 		$(RM) "$$execdir/$$p" && \
+-		test -n "$(INSTALL_SYMLINKS)" && \
++		test -n "$(INSTALL_SYMLINKS)" -o "$(NO_INSTALL_HARDLINKS)" && \
+ 		ln -s "git-remote-http$X" "$$execdir/$$p" || \
+ 		{ test -z "$(NO_INSTALL_HARDLINKS)" && \
+ 		  ln "$$execdir/git-remote-http$X" "$$execdir/$$p" 2>/dev/null || \
+-		  ln -s "git-remote-http$X" "$$execdir/$$p" 2>/dev/null || \
+ 		  cp "$$execdir/git-remote-http$X" "$$execdir/$$p" || exit; } \
+ 	done && \
+ 	./check_bindir "z$$bindir" "z$$execdir" "$$bindir/git-add$X"
+-- 
+2.31.1.461.gd47399f6574
+

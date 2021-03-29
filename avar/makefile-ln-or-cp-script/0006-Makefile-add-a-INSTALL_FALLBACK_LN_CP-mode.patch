@@ -1,0 +1,149 @@
+From 9ada8979890b600e95711550a8e86cecad7ada21 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-6.7-9ada8979890-20210329T162327Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20210329T162327Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210329T161723Z-avarab@gmail.com>
+	<cover-0.7-00000000000-20210329T162327Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 29 Mar 2021 14:44:32 +0200
+Subject: [PATCH 6/6] Makefile: add a INSTALL_FALLBACK_LN_CP mode
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the default behavior on "make install" where we fallback
+through a chain of "ln || ln -s || cp" to instead error out when we
+can't symlink or hardlink, and not then fallback on a "cp" (or from a
+symlink to hardlink etc.).
+
+The fallback behavior was introduced in 3e073dc5611 (Makefile: always
+provide a fallback when hardlinks fail, 2008-08-25), since then we've
+gained the ability to specify e.g. that we'd like symlinks via the
+INSTALL_SYMLINKS setting.
+
+It doesn't make sense as a default to silently fall back if we can't
+satisfy those settings. We should instead error out, at which point
+the developer/builder/sysadmin can set one or more of the relevant
+hardlink or symlink settings.
+
+This also changes the behavior for the build (not install!) to always
+use the new strict mode. This will theoretically break things for
+someone who can't make symlinks or hardlinks in their git checkout
+when building.
+
+That part of this change would break building on Windows and other
+platforms that don't support symlinks if INSTALL_SYMLINKS were to
+become the default, but it's not on by default, so we should be fine
+here. If and when INSTALL_SYMLINKS ever becomes the default the right
+way to deal with this would be to tweak config.mak.uname
+appropriately, not to silently fall back on a copy.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile    | 11 +++++++++++
+ ln-or-cp.sh | 29 ++++++++++++++++++++++++++++-
+ 2 files changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 466df1a8e90..ccbded79093 100644
+--- a/Makefile
++++ b/Makefile
+@@ -350,6 +350,13 @@ all::
+ # or if that fails fall back on a "cp" instead of a "ln". Useful for
+ # when you don't want hardlinks at all.
+ #
++# Define INSTALL_FALLBACK_LN_CP if you'd like your
++# "INSTALL_SYMLINKS=Y" to fall back on hardlinks if we can't run "ln
++# -s", and for "ln" to fall back on "NO_INSTALL_HARDLINKS=Y" if we
++# can't perform a "ln" and need to fall-back to a "cp". This used to
++# be the default behavior, but we'll now error if we can't satisfy
++# your INSTALL_SYMLINKS, NO_INSTALL_HARDLINKS etc. settings.
++#
+ # Define SKIP_DASHED_BUILT_INS if you do not need the dashed versions of the
+ # built-ins to be linked/copied at all.
+ #
+@@ -3020,6 +3027,7 @@ endif
+ 	{ test "$$bindir/" = "$$execdir/" || \
+ 	  for p in git$X $(filter $(install_bindir_programs),$(ALL_PROGRAMS)); do \
+ 		./ln-or-cp.sh \
++			--install-fallback-ln-cp "$(INSTALL_FALLBACK_LN_CP)" \
+ 			--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 			--no-install-hardlinks "$(NO_INSTALL_HARDLINKS)" \
+ 			--no-cross-directory-hardlinks "$(NO_CROSS_DIRECTORY_HARDLINKS)" \
+@@ -3029,6 +3037,7 @@ endif
+ 	} && \
+ 	for p in $(filter $(install_bindir_programs),$(BUILT_INS)); do \
+ 		./ln-or-cp.sh \
++			--install-fallback-ln-cp "$(INSTALL_FALLBACK_LN_CP)" \
+ 			--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 			--no-install-hardlinks "$(NO_INSTALL_HARDLINKS)" \
+ 			--symlink-target "git$X" \
+@@ -3038,6 +3047,7 @@ endif
+ 		if test -z "$(SKIP_DASHED_BUILT_INS)"; \
+ 		then \
+ 			./ln-or-cp.sh \
++				--install-fallback-ln-cp "$(INSTALL_FALLBACK_LN_CP)" \
+ 				--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 				--no-install-hardlinks "$(NO_INSTALL_HARDLINKS)" \
+ 				--symlink-target "$$destdir_from_execdir_SQ/$(bindir_relative_SQ)/git$X" \
+@@ -3047,6 +3057,7 @@ endif
+ 	remote_curl_aliases="$(REMOTE_CURL_ALIASES)" && \
+ 	for p in $$remote_curl_aliases; do \
+ 		./ln-or-cp.sh \
++			--install-fallback-ln-cp "$(INSTALL_FALLBACK_LN_CP)" \
+ 			--install-symlinks "$(INSTALL_SYMLINKS)" \
+ 			--no-install-hardlinks "$(NO_INSTALL_HARDLINKS)" \
+ 			--symlink-target "git-remote-http$X" \
+diff --git a/ln-or-cp.sh b/ln-or-cp.sh
+index 37380993c64..f77dad71bdb 100755
+--- a/ln-or-cp.sh
++++ b/ln-or-cp.sh
+@@ -1,5 +1,6 @@
+ #!/bin/sh
+ 
++install_fallback_ln_cp=
+ install_symlinks=
+ no_install_hardlinks=
+ no_cross_directory_hardlinks=
+@@ -7,6 +8,10 @@ symlink_target=
+ while test $# != 0
+ do
+ 	case "$1" in
++	--install-fallback-ln-cp)
++		install_fallback_ln_cp="$2"
++		shift
++		;;
+ 	--install-symlinks)
+ 		install_symlinks="$2"
+ 		shift
+@@ -61,4 +66,26 @@ main_with_fallbacks () {
+ 	fi
+ }
+ 
+-main_with_fallbacks
++main_no_fallbacks () {
++	if test -n "$no_install_hardlinks" -a -z "$install_symlinks"
++	then
++		cp "$target" "$link"
++	elif test -n "$install_symlinks" -o -n "$no_cross_directory_hardlinks"
++	then
++		ln -f -s "$symlink_target" "$link"
++	elif test -n "$no_install_hardlinks"
++	then
++		cp "$target" "$link"
++	else
++		ln -f "$target" "$link"
++	fi
++}
++
++if test -z "$install_fallback_ln_cp"
++then
++	# The stricter mode, where we know what we want
++	main_no_fallbacks
++else
++	main_with_fallbacks
++
++fi
+-- 
+2.31.1.461.gd47399f6574
+
