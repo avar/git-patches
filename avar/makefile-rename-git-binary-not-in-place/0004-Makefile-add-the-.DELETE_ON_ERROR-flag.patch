@@ -1,0 +1,70 @@
+From 2ff6359c273dcf4eacf970e88301f63f0a4e550a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.6-2ff6359c273-20210329T161549Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210329T161549Z-avarab@gmail.com>
+References: <20210307132001.7485-1-avarab@gmail.com>
+	<cover-0.6-00000000000-20210329T161549Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 29 Mar 2021 10:43:02 +0200
+Subject: [PATCH v2 4/5] Makefile: add the ".DELETE_ON_ERROR" flag
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Use the GNU make ".DELETE_ON_ERROR" flag. As discussed in preceding
+commits we're now less paranoid about "mv" failing, let's bring that
+paranoia back in a way that makes more sense, and applies to all rules
+in the Makefile.
+
+Now if a command to make X fails X will be removed, the default
+behavior of GNU make is to only do so if "make" itself is interrupted
+with a signal.
+
+E.g. if we now intentionally break one of the rules with:
+
+    -       mv $@+ $@
+    +       mv $@+ $@ && \
+    +       false
+
+We'll get output like:
+
+    $ make git
+        CC git.o
+        LINK git
+    make: *** [Makefile:2179: git] Error 1
+    make: *** Deleting file 'git'
+    $ file git
+    git: cannot open `git' (No such file or directory)
+
+Before this change we'd leave the file in place in under this
+scenario.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index f08635067b3..573bce20357 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2126,6 +2126,16 @@ shell_compatibility_test: please_set_SHELL_PATH_to_a_more_modern_shell
+ strip: $(PROGRAMS) git$X
+ 	$(STRIP) $(STRIP_OPTS) $^
+ 
++### Flags affecting all rules
++
++# A GNU make extension since gmake 3.72 (released in late 1994) to
++# remove the target of rules if commands in those rules fail. The
++# default is to only do that if make itself receives a signal. Affects
++# all targets, see:
++#
++#    info make --index-search=.DELETE_ON_ERROR
++.DELETE_ON_ERROR:
++
+ ### Target-specific flags and dependencies
+ 
+ # The generic compilation pattern rule and automatically
+-- 
+2.31.1.461.gd47399f6574
+
