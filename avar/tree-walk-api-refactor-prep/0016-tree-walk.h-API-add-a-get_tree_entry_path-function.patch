@@ -1,0 +1,162 @@
+From 3ba77fd3a47347599d916c0046a566f08a129f60 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-16.19-3ba77fd3a47-20210331T190507Z-avarab@gmail.com>
+In-Reply-To: <cover-00.19-00000000000-20210331T190507Z-avarab@gmail.com>
+References: <87o8fcqrg8.fsf@evledraar.gmail.com>
+	<cover-00.19-00000000000-20210331T190507Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Mar 2021 10:49:42 +0100
+Subject: [PATCH v5 16/18] tree-walk.h API: add a get_tree_entry_path()
+ function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a get_tree_entry_path() variant in addition to
+get_tree_entry_path_mode(). This is for those callers that don't need
+the "mode" filled for them.
+
+There are callers here which don't need the "struct object_id" filled
+either, but let's leave that for now. I'm focusing downstream code
+that depends on "mode" (or "enum object_type").
+
+The code being modified here was introduced in:
+
+ - shift_tree(): 68faf68938e (A new merge stragety[sic] 'subtree'.,
+    2007-02-15) for the shift_tree()
+
+ - tree_has_path(): 96e7ffbdc31 (merge-recursive: check for directory
+   level conflicts, 2018-04-19)
+
+ - init_notes(): fd53c9eb445 (Speed up git notes lookup, 2009-10-09)
+
+ - diagnose_invalid_oid_path(): 009fee4774d (Detailed diagnosis when
+   parsing an object name fails., 2009-12-07)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ match-trees.c     | 4 +---
+ merge-recursive.c | 6 ++----
+ notes.c           | 3 +--
+ object-name.c     | 3 +--
+ tree-walk.c       | 9 +++++++++
+ tree-walk.h       | 3 +++
+ 6 files changed, 17 insertions(+), 11 deletions(-)
+
+diff --git a/match-trees.c b/match-trees.c
+index d4457eba997..240922f7080 100644
+--- a/match-trees.c
++++ b/match-trees.c
+@@ -288,12 +288,10 @@ void shift_tree(struct repository *r,
+ 
+ 	if (add_score < del_score) {
+ 		/* We need to pick a subtree of two */
+-		unsigned short mode;
+-
+ 		if (!*del_prefix)
+ 			return;
+ 
+-		if (get_tree_entry_mode(r, hash2, del_prefix, shifted, &mode))
++		if (get_tree_entry_path(r, hash2, del_prefix, shifted))
+ 			die("cannot find path %s in tree %s",
+ 			    del_prefix, oid_to_hex(hash2));
+ 		return;
+diff --git a/merge-recursive.c b/merge-recursive.c
+index c2e9f5d22d0..28ed69ddfaa 100644
+--- a/merge-recursive.c
++++ b/merge-recursive.c
+@@ -1882,11 +1882,9 @@ static int tree_has_path(struct repository *r, struct tree *tree,
+ 			 const char *path)
+ {
+ 	struct object_id hashy;
+-	unsigned short mode_o;
+-
+-	return !get_tree_entry_mode(r,
++	return !get_tree_entry_path(r,
+ 				    &tree->object.oid, path,
+-				    &hashy, &mode_o);
++				    &hashy);
+ }
+ 
+ /*
+diff --git a/notes.c b/notes.c
+index e6244624055..6766b1b478f 100644
+--- a/notes.c
++++ b/notes.c
+@@ -994,7 +994,6 @@ void init_notes(struct notes_tree *t, const char *notes_ref,
+ 		combine_notes_fn combine_notes, int flags)
+ {
+ 	struct object_id oid, object_oid;
+-	unsigned short mode;
+ 	struct leaf_node root_tree;
+ 
+ 	if (!t)
+@@ -1021,7 +1020,7 @@ void init_notes(struct notes_tree *t, const char *notes_ref,
+ 		return;
+ 	if (flags & NOTES_INIT_WRITABLE && read_ref(notes_ref, &object_oid))
+ 		die("Cannot use notes ref %s", notes_ref);
+-	if (get_tree_entry_mode(the_repository, &object_oid, "", &oid, &mode))
++	if (get_tree_entry_path(the_repository, &object_oid, "", &oid))
+ 		die("Failed to read notes tree referenced by %s (%s)",
+ 		    notes_ref, oid_to_hex(&object_oid));
+ 
+diff --git a/object-name.c b/object-name.c
+index 7e3b2d6d739..9ff5f83c1ff 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -1693,7 +1693,6 @@ static void diagnose_invalid_oid_path(struct repository *r,
+ 				      int object_name_len)
+ {
+ 	struct object_id oid;
+-	unsigned short mode;
+ 
+ 	if (!prefix)
+ 		prefix = "";
+@@ -1704,7 +1703,7 @@ static void diagnose_invalid_oid_path(struct repository *r,
+ 	if (is_missing_file_error(errno)) {
+ 		char *fullname = xstrfmt("%s%s", prefix, filename);
+ 
+-		if (!get_tree_entry_mode(r, tree_oid, fullname, &oid, &mode)) {
++		if (!get_tree_entry_path(r, tree_oid, fullname, &oid)) {
+ 			die(_("path '%s' exists, but not '%s'\n"
+ 			    "hint: Did you mean '%.*s:%s' aka '%.*s:./%s'?"),
+ 			    fullname,
+diff --git a/tree-walk.c b/tree-walk.c
+index 30e3bb64e49..d0dc0c35318 100644
+--- a/tree-walk.c
++++ b/tree-walk.c
+@@ -628,6 +628,15 @@ int get_tree_entry_mode(struct repository *r,
+ 	return retval;
+ }
+ 
++int get_tree_entry_path(struct repository *r,
++			const struct object_id *tree_oid,
++			const char *name,
++			struct object_id *oid)
++{
++	unsigned short mode;
++	return get_tree_entry_mode(r, tree_oid, name, oid, &mode);
++}
++
+ /*
+  * This is Linux's built-in max for the number of symlinks to follow.
+  * That limit, of course, does not affect git, but it's a reasonable
+diff --git a/tree-walk.h b/tree-walk.h
+index a01f2f226ec..c60667cba8f 100644
+--- a/tree-walk.h
++++ b/tree-walk.h
+@@ -172,8 +172,11 @@ struct traverse_info {
+  * You always need a pointer to an appropriate variable to fill in
+  * (NULL won't do!). That variable is:
+  *
++ * get_tree_entry_path(): <no extra argument, just get the common 'path'>
+  * get_tree_entry_mode(): unsigned short mode
+  */
++int get_tree_entry_path(struct repository *, const struct object_id *, const char *,
++			struct object_id *);
+ int get_tree_entry_mode(struct repository *, const struct object_id *, const char *,
+ 			struct object_id *,
+ 			unsigned short *);
+-- 
+2.31.1.474.g72d45d12706
+
