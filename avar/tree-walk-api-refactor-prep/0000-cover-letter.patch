@@ -1,9 +1,9 @@
 From e961a0e8b5b335453e35199657dbbab6b8ea6d2c Mon Sep 17 00:00:00 2001
-Message-Id: <cover-00.19-00000000000-20210331T190507Z-avarab@gmail.com>
+Message-Id: <cover-00.19-00000000000-20210331T190531Z-avarab@gmail.com>
 In-Reply-To: <87o8fcqrg8.fsf@evledraar.gmail.com>
 References: <87o8fcqrg8.fsf@evledraar.gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Wed, 31 Mar 2021 21:05:07 +0200
+Date: Wed, 31 Mar 2021 21:05:31 +0200
 Subject: [PATCH v5 00/18] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -265,7 +265,216 @@ Range-diff:
       ## tree-walk.c ##
      @@ tree-walk.c: static int find_tree_entry(struct repository *r, struct tree_desc *t,
       			oidcpy(result, &oid);
- -:  ----------- > 14:  44f16d74426 tree-walk.h API doc: improve documentation of get_tree_entry()
+30:  7f699bf2d5c ! 14:  44f16d74426 tree-walk.h API: add get_tree_entry_type()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    tree-walk.h API: add get_tree_entry_type()
+    +    tree-walk.h API doc: improve documentation of get_tree_entry()
+     
+    -    Add a get_tree_entry_type() helper function to compliment the existing
+    -    get_tree_entry(), and a static get_tree_entry_all() which it uses internally.
+    -
+    -    Move those users of get_tree_entry_type() who didn't care about the
+    -    mode specifically, but just want to know whether the tree entry is one
+    -    of OBJ_{BLOB,COMMIT,TREE} over to the new get_tree_entry_type().
+    -
+    -    The get_tree_entry_all() function itself will be made non-static in a
+    -    subsequent commit. I'm leaving its argument list indented accordingly
+    -    to reduce churn when I do so.
+    +    Change a mention of sha1 to OID and change the comment to a listing of
+    +    functions discussed below, right now there's only one function, but
+    +    subsequent commits will add more.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## archive.c ##
+    -@@ archive.c: static void parse_treeish_arg(const char **argv,
+    - 
+    - 	if (prefix) {
+    - 		struct object_id tree_oid;
+    --		unsigned short mode;
+    -+		enum object_type object_type;
+    - 		int err;
+    - 
+    --		err = get_tree_entry_mode(ar_args->repo,
+    -+		err = get_tree_entry_type(ar_args->repo,
+    - 					  &tree->object.oid,
+    - 					  prefix, &tree_oid,
+    --					  &mode);
+    --		if (err || !S_ISDIR(mode))
+    -+					  &object_type);
+    -+		if (err || object_type != OBJ_TREE)
+    - 			die(_("current working directory is untracked"));
+    - 
+    - 		tree = parse_tree_indirect(&tree_oid);
+    -
+    - ## match-trees.c ##
+    -@@ match-trees.c: void shift_tree_by(struct repository *r,
+    - 		   const char *shift_prefix)
+    - {
+    - 	struct object_id sub1, sub2;
+    --	unsigned short tmp;
+    -+	enum object_type tmp;
+    - 	unsigned candidate = 0;
+    - 
+    - 	/* Can hash2 be a tree at shift_prefix in tree hash1? */
+    --	if (!get_tree_entry_mode(r, hash1, shift_prefix, &sub1, &tmp) &&
+    --	    S_ISDIR(tmp))
+    -+	if (!get_tree_entry_type(r, hash1, shift_prefix, &sub1, &tmp) &&
+    -+	    tmp == OBJ_TREE)
+    - 		candidate |= 1;
+    - 
+    - 	/* Can hash1 be a tree at shift_prefix in tree hash2? */
+    --	if (!get_tree_entry_mode(r, hash2, shift_prefix, &sub2, &tmp) &&
+    --	    S_ISDIR(tmp))
+    -+	if (!get_tree_entry_type(r, hash2, shift_prefix, &sub2, &tmp) &&
+    -+	    tmp == OBJ_TREE)
+    - 		candidate |= 2;
+    - 
+    - 	if (candidate == 3) {
+    -
+    - ## tree-walk.c ##
+    -@@ tree-walk.c: struct dir_state {
+    - 	struct object_id oid;
+    - };
+    - 
+    -+static int get_tree_entry_all(struct repository *r,
+    -+			      const struct object_id *tree_oid,
+    -+			      const char *name,
+    -+			      struct object_id *oid,
+    -+			      unsigned short *mode,
+    -+			      enum object_type *object_type);
+    -+
+    - static int find_tree_entry(struct repository *r, struct tree_desc *t,
+    - 			   const char *name, struct object_id *result,
+    --			   unsigned short *mode)
+    -+			   unsigned short *mode,
+    -+			   enum object_type *object_type)
+    - {
+    - 	int namelen = strlen(name);
+    - 	while (t->size) {
+    -@@ tree-walk.c: static int find_tree_entry(struct repository *r, struct tree_desc *t,
+    - 		}
+    - 		if (name[entrylen] != '/')
+    - 			continue;
+    --		if (!S_ISDIR(*mode))
+    -+		if (*object_type != OBJ_TREE)
+    - 			break;
+    - 		if (++entrylen == namelen) {
+    - 			oidcpy(result, &oid);
+    - 			return 0;
+    - 		}
+    --		return get_tree_entry_mode(r, &oid, name + entrylen, result,
+    --					   mode);
+    -+		return get_tree_entry_all(r, &oid, name + entrylen, result,
+    -+					  mode, object_type);
+    - 	}
+    - 	return -1;
+    - }
+    - 
+    --int get_tree_entry_mode(struct repository *r,
+    --			const struct object_id *tree_oid,
+    --			const char *name,
+    --			struct object_id *oid,
+    --			unsigned short *mode)
+    -+static int get_tree_entry_all(struct repository *r,
+    -+		       const struct object_id *tree_oid,
+    -+		       const char *name,
+    -+		       struct object_id *oid,
+    -+		       unsigned short *mode,
+    -+		       enum object_type *object_type)
+    - {
+    - 	int retval;
+    - 	void *tree;
+    -@@ tree-walk.c: int get_tree_entry_mode(struct repository *r,
+    - 		struct tree_desc t;
+    - 		init_tree_desc(&t, tree, size);
+    - 		retval = find_tree_entry(r, &t, name, oid,
+    --					 mode);
+    -+					 mode, object_type);
+    - 	}
+    - 	free(tree);
+    - 	return retval;
+    - }
+    - 
+    -+int get_tree_entry_mode(struct repository *r,
+    -+			const struct object_id *tree_oid,
+    -+			const char *name,
+    -+			struct object_id *oid,
+    -+			unsigned short *mode)
+    -+{
+    -+	enum object_type object_type;
+    -+	return get_tree_entry_all(r, tree_oid, name, oid,
+    -+				  mode, &object_type);
+    -+}
+    -+
+    -+int get_tree_entry_type(struct repository *r,
+    -+			const struct object_id *tree_oid,
+    -+			const char *name,
+    -+			struct object_id *oid,
+    -+			enum object_type *object_type)
+    -+{
+    -+	unsigned short mode;
+    -+	return get_tree_entry_all(r, tree_oid, name, oid,
+    -+				  &mode, object_type);
+    -+}
+    -+
+    - /*
+    -  * This is Linux's built-in max for the number of symlinks to follow.
+    -  * That limit, of course, does not affect git, but it's a reasonable
+    -@@ tree-walk.c: enum get_oid_result get_tree_entry_follow_symlinks(struct repository *r,
+    - 		int find_result;
+    - 		char *first_slash;
+    - 		char *remainder = NULL;
+    -+		enum object_type object_type;
+    - 
+    - 		if (!t.buffer) {
+    - 			void *tree;
+    -@@ tree-walk.c: enum get_oid_result get_tree_entry_follow_symlinks(struct repository *r,
+    - 		/* Look up the first (or only) path component in the tree. */
+    - 		find_result = find_tree_entry(r, &t, namebuf.buf,
+    - 					      &current_tree_oid,
+    --					      mode);
+    -+					      mode, &object_type);
+    - 		if (find_result) {
+    - 			goto done;
+    - 		}
+    -
+      ## tree-walk.h ##
+     @@ tree-walk.h: struct traverse_info {
+    -  * Find an entry in a tree given a pathname and the sha1 of a tree to
+    + };
+    + 
+    + /**
+    +- * Find an entry in a tree given a pathname and the sha1 of a tree to
+    ++ * Find an entry in a tree given a pathname and the OID of a tree to
+       * search. Returns 0 if the entry is found and -1 otherwise.
+       *
+     - * The third and fourth parameters are set to the entry's sha1 and
+     - * mode respectively.
+    -+ * There are variants of this function depending on what fields in the
+    -+ * "struct name_entry" you'd like. You always need a pointer to an
+    -+ * appropriate variable to fill in (NULL won't do!):
+    ++ * You always need a pointer to an appropriate variable to fill in
+    ++ * (NULL won't do!). That variable is:
+     + *
+    -+ * get_tree_entry_mode(): unsigned int mode
+    -+ * get_tree_entry_type(): enum object_type
+    ++ * get_tree_entry(): unsigned short mode
+       */
+    - int get_tree_entry_mode(struct repository *, const struct object_id *, const char *,
+    - 			struct object_id *,
+    - 			unsigned short *);
+    -+int get_tree_entry_type(struct repository *, const struct object_id *, const char *,
+    -+			struct object_id *,
+    -+			enum object_type *);
+    - 
+    - /**
+    -  * Generate the full pathname of a tree entry based from the root of the
+    + int get_tree_entry(struct repository *, const struct object_id *, const char *,
+    + 		   struct object_id *,
 28:  9e521a3cbf2 ! 15:  adbada0ade8 tree-walk.h API: rename get_tree_entry() to get_tree_entry_mode()
     @@ Commit message
          change is only a search-replacement of the name and indentation of the
@@ -334,7 +543,6 @@ Range-diff:
        */
      -int get_tree_entry(struct repository *, const struct object_id *, const char *,
      -		   struct object_id *,
-30:  7f699bf2d5c <  -:  ----------- tree-walk.h API: add get_tree_entry_type()
 35:  a2a34fd3e2d ! 16:  3ba77fd3a47 tree-walk.h API: add a get_tree_entry_path() function
     @@ Commit message
          tree-walk.h API: add a get_tree_entry_path() function
