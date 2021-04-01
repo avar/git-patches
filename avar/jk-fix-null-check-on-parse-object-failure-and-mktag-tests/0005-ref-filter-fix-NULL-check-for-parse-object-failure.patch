@@ -1,0 +1,74 @@
+From 2ffe8f9fe3c9a95f00e1243cbc01a403a36cccb3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.6-2ffe8f9fe3c-20210401T135419Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210401T135419Z-avarab@gmail.com>
+References: <YGWFGMdGcKeaqCQF@coredump.intra.peff.net>
+	<cover-0.6-00000000000-20210401T135419Z-avarab@gmail.com>
+From: Jeff King <peff@peff.net>
+Date: Thu, 1 Apr 2021 04:32:24 -0400
+Subject: [PATCH v2 5/5] ref-filter: fix NULL check for parse object failure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+After we run parse_object_buffer() to get an object's contents, we try
+to check that the return value wasn't NULL. However, since our "struct
+object" is a pointer-to-pointer, and we assign like:
+
+  *obj = parse_object_buffer(...);
+
+it's not correct to check:
+
+  if (!obj)
+
+That will always be true, since our double pointer will continue to
+point to the single pointer (which is itself NULL). This is a regression
+that was introduced by aa46a0da30 (ref-filter: use oid_object_info() to
+get object, 2018-07-17); since that commit we'll segfault on a parse
+failure, as we try to look at the NULL object pointer.
+
+There are many ways a parse could fail, but most of them are hard to set
+up in the tests (it's easy to make a bogus object, but update-ref will
+refuse to point to it).
+
+A minimal stand-alone test can be found at, but let's use the newly
+amended t3800-mktag.sh tests to test these cases exhaustively on all
+sorts of bad tags.
+
+1. http://lore.kernel.org/git/YGWFGMdGcKeaqCQF@coredump.intra.peff.net
+
+Signed-off-by: Jeff King <peff@peff.net>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ref-filter.c     | 2 +-
+ t/t3800-mktag.sh | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ref-filter.c b/ref-filter.c
+index f0bd32f7141..a0adb4551d8 100644
+--- a/ref-filter.c
++++ b/ref-filter.c
+@@ -1608,7 +1608,7 @@ static int get_object(struct ref_array_item *ref, int deref, struct object **obj
+ 
+ 	if (oi->info.contentp) {
+ 		*obj = parse_object_buffer(the_repository, &oi->oid, oi->type, oi->size, oi->content, &eaten);
+-		if (!obj) {
++		if (!*obj) {
+ 			if (!eaten)
+ 				free(oi->content);
+ 			return strbuf_addf_ret(err, -1, _("parse_object_buffer failed on %s for %s"),
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 10e4fde28de..b175d639013 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -64,7 +64,7 @@ check_verify_failure () {
+ 		git -C bad-tag for-each-ref "$tag_ref" >actual &&
+ 		test_cmp expected actual &&
+ 		# segfaults!
+-		! git -C bad-tag for-each-ref --format="%(*objectname)"
++		test_must_fail git -C bad-tag for-each-ref --format="%(*objectname)"
+ 	'
+ }
+ 
+-- 
+2.31.1.474.g72d45d12706
+
