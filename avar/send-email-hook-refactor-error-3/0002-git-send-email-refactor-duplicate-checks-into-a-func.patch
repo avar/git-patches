@@ -1,0 +1,113 @@
+From 4ee582d8301a11d3932fe13de4c720cc0109f7f6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.4-4ee582d8301-20210406T135716Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20210406T135715Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210404T091649Z-avarab@gmail.com>
+	<cover-0.4-00000000000-20210406T135715Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 2 Apr 2021 13:23:28 +0200
+Subject: [PATCH v3 2/3] git-send-email: refactor duplicate $? checks into a
+ function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the duplicate checking of $? into a function. There's an
+outstanding series[1] wanting to add a third use of system() in this
+file, let's not copy this boilerplate anymore when that happens.
+
+1. http://lore.kernel.org/git/87y2esg22j.fsf@evledraar.gmail.com
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 45 ++++++++++++++++++++++++++++-----------------
+ 1 file changed, 28 insertions(+), 17 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 6893c8e5808..2dd48621759 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -212,22 +212,31 @@ sub format_2822_time {
+ my $multiedit;
+ my $editor;
+ 
++sub system_or_msg {
++	my ($args, $msg) = @_;
++	system(@$args);
++	my $signalled = $? & 127;
++	my $exit_code = $? >> 8;
++	return unless $signalled or $exit_code;
++
++	return sprintf(__("failed to run command %s, died with code %d"),
++		       "@$args", $exit_code);
++}
++
++sub system_or_die {
++	my $msg = system_or_msg(@_);
++	die $msg if $msg;
++}
++
+ sub do_edit {
+ 	if (!defined($editor)) {
+ 		$editor = Git::command_oneline('var', 'GIT_EDITOR');
+ 	}
++	my $die_msg = __("the editor exited uncleanly, aborting everything");
+ 	if (defined($multiedit) && !$multiedit) {
+-		for (@_) {
+-			system('sh', '-c', $editor.' "$@"', $editor, $_);
+-			if (($? & 127) || ($? >> 8)) {
+-				die(__("the editor exited uncleanly, aborting everything"));
+-			}
+-		}
++		system_or_die(['sh', '-c', $editor.' "$@"', $editor, $_], $die_msg) for @_;
+ 	} else {
+-		system('sh', '-c', $editor.' "$@"', $editor, @_);
+-		if (($? & 127) || ($? >> 8)) {
+-			die(__("the editor exited uncleanly, aborting everything"));
+-		}
++		system_or_die(['sh', '-c', $editor.' "$@"', $editor, @_], $die_msg);
+ 	}
+ }
+ 
+@@ -698,9 +707,7 @@ sub is_format_patch_arg {
+ if ($validate) {
+ 	foreach my $f (@files) {
+ 		unless (-p $f) {
+-			my $error = validate_patch($f, $target_xfer_encoding);
+-			$error and die sprintf(__("fatal: %s: %s\nwarning: no patches were sent\n"),
+-						  $f, $error);
++			validate_patch($f, $target_xfer_encoding);
+ 		}
+ 	}
+ }
+@@ -1952,11 +1959,13 @@ sub validate_patch {
+ 			chdir($repo->wc_path() or $repo->repo_path())
+ 				or die("chdir: $!");
+ 			local $ENV{"GIT_DIR"} = $repo->repo_path();
+-			$hook_error = "rejected by sendemail-validate hook"
+-				if system($validate_hook, $target);
++			$hook_error = system_or_msg([$validate_hook, $target]);
+ 			chdir($cwd_save) or die("chdir: $!");
+ 		}
+-		return $hook_error if $hook_error;
++		if ($hook_error) {
++			die sprintf(__("fatal: %s: rejected by sendemail-validate hook\n" .
++				       "warning: no patches were sent\n"), $fn);
++		}
+ 	}
+ 
+ 	# Any long lines will be automatically fixed if we use a suitable transfer
+@@ -1966,7 +1975,9 @@ sub validate_patch {
+ 			or die sprintf(__("unable to open %s: %s\n"), $fn, $!);
+ 		while (my $line = <$fh>) {
+ 			if (length($line) > 998) {
+-				return sprintf(__("%s: patch contains a line longer than 998 characters"), $.);
++				die sprintf(__("fatal: %s: %d: patch contains a line longer than 998 characters\n" .
++					       "warning: no patches were sent\n"),
++					    $fn, $.);
+ 			}
+ 		}
+ 	}
+-- 
+2.31.1.527.g9b8f7de2547
+

@@ -1,0 +1,135 @@
+From 8a67afd3404f72c344572fcd12422e8bb6e0599c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.4-8a67afd3404-20210406T135716Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20210406T135715Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210404T091649Z-avarab@gmail.com>
+	<cover-0.4-00000000000-20210406T135715Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 4 Apr 2021 11:10:47 +0200
+Subject: [PATCH v3 3/3] git-send-email: improve --validate error output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Improve the output we emit on --validate error to:
+
+ * Say "FILE:LINE" instead of "FILE: LINE", to match "grep -n",
+   compiler error messages etc.
+
+ * Don't say "patch contains a" after just mentioning the filename,
+   just leave it at "FILE:LINE: is longer than[...]. The "contains a"
+   sounded like we were talking about the file in general, when we're
+   actually checking it line-by-line.
+
+ * Don't just say "rejected by sendemail-validate hook", but combine
+   that with the system_or_msg() output to say what exit code the hook
+   died with.
+
+I had an aborted attempt to make the line length checker note all
+lines that were longer than the limit. I didn't think that was worth
+the effort, but I've left in the testing change to check that we die
+as soon as we spot the first long line.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl   | 12 ++++++------
+ t/t9001-send-email.sh | 17 ++++++++++++-----
+ 2 files changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 2dd48621759..175da07d946 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -219,8 +219,8 @@ sub system_or_msg {
+ 	my $exit_code = $? >> 8;
+ 	return unless $signalled or $exit_code;
+ 
+-	return sprintf(__("failed to run command %s, died with code %d"),
+-		       "@$args", $exit_code);
++	return sprintf(__("fatal: command '%s' died with exit code %d"),
++		       $args->[0], $exit_code);
+ }
+ 
+ sub system_or_die {
+@@ -1964,7 +1964,8 @@ sub validate_patch {
+ 		}
+ 		if ($hook_error) {
+ 			die sprintf(__("fatal: %s: rejected by sendemail-validate hook\n" .
+-				       "warning: no patches were sent\n"), $fn);
++				       "%s\n" .
++				       "warning: no patches were sent\n"), $fn, $hook_error);
+ 		}
+ 	}
+ 
+@@ -1975,9 +1976,8 @@ sub validate_patch {
+ 			or die sprintf(__("unable to open %s: %s\n"), $fn, $!);
+ 		while (my $line = <$fh>) {
+ 			if (length($line) > 998) {
+-				die sprintf(__("fatal: %s: %d: patch contains a line longer than 998 characters\n" .
+-					       "warning: no patches were sent\n"),
+-					    $fn, $.);
++				die sprintf(__("fatal: %s:%d is longer than 998 characters\n" .
++					       "warning: no patches were sent\n"), $fn, $.);
+ 			}
+ 		}
+ 	}
+diff --git a/t/t9001-send-email.sh b/t/t9001-send-email.sh
+index 74225e3dc7a..65b30353719 100755
+--- a/t/t9001-send-email.sh
++++ b/t/t9001-send-email.sh
+@@ -415,7 +415,11 @@ test_expect_success $PREREQ 'reject long lines' '
+ 	z512=$z64$z64$z64$z64$z64$z64$z64$z64 &&
+ 	clean_fake_sendmail &&
+ 	cp $patches longline.patch &&
+-	echo $z512$z512 >>longline.patch &&
++	cat >>longline.patch <<-EOF &&
++	$z512$z512
++	not a long line
++	$z512$z512
++	EOF
+ 	test_must_fail git send-email \
+ 		--from="Example <nobody@example.com>" \
+ 		--to=nobody@example.com \
+@@ -424,7 +428,7 @@ test_expect_success $PREREQ 'reject long lines' '
+ 		$patches longline.patch \
+ 		2>actual &&
+ 	cat >expect <<-\EOF &&
+-	fatal: longline.patch: 35: patch contains a line longer than 998 characters
++	fatal: longline.patch:35 is longer than 998 characters
+ 	warning: no patches were sent
+ 	EOF
+ 	test_cmp expect actual
+@@ -533,15 +537,17 @@ test_expect_success $PREREQ "--validate respects relative core.hooksPath path" '
+ 		--validate \
+ 		longline.patch 2>actual &&
+ 	test_path_is_file my-hooks.ran &&
+-	cat >expect <<-\EOF &&
++	cat >expect <<-EOF &&
+ 	fatal: longline.patch: rejected by sendemail-validate hook
++	fatal: command '"'"'$(pwd)/my-hooks/sendemail-validate'"'"' died with exit code 1
+ 	warning: no patches were sent
+ 	EOF
+ 	test_cmp expect actual
+ '
+ 
+ test_expect_success $PREREQ "--validate respects absolute core.hooksPath path" '
+-	test_config core.hooksPath "$(pwd)/my-hooks" &&
++	hooks_path="$(pwd)/my-hooks" &&
++	test_config core.hooksPath "$hooks_path" &&
+ 	test_when_finished "rm my-hooks.ran" &&
+ 	test_must_fail git send-email \
+ 		--from="Example <nobody@example.com>" \
+@@ -550,8 +556,9 @@ test_expect_success $PREREQ "--validate respects absolute core.hooksPath path" '
+ 		--validate \
+ 		longline.patch 2>actual &&
+ 	test_path_is_file my-hooks.ran &&
+-	cat >expect <<-\EOF &&
++	cat >expect <<-EOF &&
+ 	fatal: longline.patch: rejected by sendemail-validate hook
++	fatal: command '"'"'$hooks_path/sendemail-validate'"'"' died with exit code 1
+ 	warning: no patches were sent
+ 	EOF
+ 	test_cmp expect actual
+-- 
+2.31.1.527.g9b8f7de2547
+

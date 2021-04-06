@@ -1,0 +1,139 @@
+From 8a67afd3404f72c344572fcd12422e8bb6e0599c Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.4-00000000000-20210406T135715Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210404T091649Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210404T091649Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 6 Apr 2021 15:57:15 +0200
+Subject: [PATCH v3 0/3] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (3):
+  git-send-email: test full --validate output
+  git-send-email: refactor duplicate $? checks into a function
+  git-send-email: improve --validate error output
+
+ git-send-email.perl   | 45 +++++++++++++++++++++++++++----------------
+ t/t9001-send-email.sh | 35 +++++++++++++++++++++++++--------
+ 2 files changed, 55 insertions(+), 25 deletions(-)
+
+Range-diff:
+2:  15b59c226d4 = 1:  6e1009e5bed git-send-email: test full --validate output
+1:  f236f083e36 ! 2:  4ee582d8301 git-send-email: refactor duplicate $? checks into a function
+    @@ git-send-email.perl: sub is_format_patch_arg {
+      		}
+      	}
+      }
+    -@@ git-send-email.perl: sub unique_email_list {
+    - 	return @emails;
+    - }
+    - 
+    -+sub validate_patch_error {
+    -+	my ($fn, $error) = @_;
+    -+	die sprintf(__("fatal: %s: %s\nwarning: no patches were sent\n"),
+    -+		    $fn, $error);
+    -+}
+    -+
+    - sub validate_patch {
+    - 	my ($fn, $xfer_encoding) = @_;
+    - 
+     @@ git-send-email.perl: sub validate_patch {
+      			chdir($repo->wc_path() or $repo->repo_path())
+      				or die("chdir: $!");
+      			local $ENV{"GIT_DIR"} = $repo->repo_path();
+     -			$hook_error = "rejected by sendemail-validate hook"
+     -				if system($validate_hook, $target);
+    -+			if (my $msg = system_or_msg([$validate_hook, $target])) {
+    -+				$hook_error = __("rejected by sendemail-validate hook");
+    -+			}
+    ++			$hook_error = system_or_msg([$validate_hook, $target]);
+      			chdir($cwd_save) or die("chdir: $!");
+      		}
+     -		return $hook_error if $hook_error;
+    -+		validate_patch_error($fn, $hook_error) if $hook_error;
+    ++		if ($hook_error) {
+    ++			die sprintf(__("fatal: %s: rejected by sendemail-validate hook\n" .
+    ++				       "warning: no patches were sent\n"), $fn);
+    ++		}
+      	}
+      
+      	# Any long lines will be automatically fixed if we use a suitable transfer
+    @@ git-send-email.perl: sub validate_patch {
+      		while (my $line = <$fh>) {
+      			if (length($line) > 998) {
+     -				return sprintf(__("%s: patch contains a line longer than 998 characters"), $.);
+    -+				validate_patch_error($fn, sprintf(__("%s: patch contains a line longer than 998 characters"), $.));
+    ++				die sprintf(__("fatal: %s: %d: patch contains a line longer than 998 characters\n" .
+    ++					       "warning: no patches were sent\n"),
+    ++					    $fn, $.);
+      			}
+      		}
+      	}
+3:  a1edceb4913 ! 3:  8a67afd3404 git-send-email: improve --validate error output
+    @@ Commit message
+     
+         Improve the output we emit on --validate error to:
+     
+    -     * Say "FILE:LINE" instead of "FILE: LINE".
+    +     * Say "FILE:LINE" instead of "FILE: LINE", to match "grep -n",
+    +       compiler error messages etc.
+     
+          * Don't say "patch contains a" after just mentioning the filename,
+            just leave it at "FILE:LINE: is longer than[...]. The "contains a"
+    @@ git-send-email.perl: sub system_or_msg {
+      }
+      
+      sub system_or_die {
+    -@@ git-send-email.perl: sub unique_email_list {
+    - 	return @emails;
+    - }
+    - 
+    --sub validate_patch_error {
+    --	my ($fn, $error) = @_;
+    --	die sprintf(__("fatal: %s: %s\nwarning: no patches were sent\n"),
+    --		    $fn, $error);
+    --}
+    --
+    - sub validate_patch {
+    - 	my ($fn, $xfer_encoding) = @_;
+    - 
+     @@ git-send-email.perl: sub validate_patch {
+    - 			chdir($repo->wc_path() or $repo->repo_path())
+    - 				or die("chdir: $!");
+    - 			local $ENV{"GIT_DIR"} = $repo->repo_path();
+    --			if (my $msg = system_or_msg([$validate_hook, $target])) {
+    --				$hook_error = __("rejected by sendemail-validate hook");
+    --			}
+    -+			$hook_error = system_or_msg([$validate_hook, $target]);
+    - 			chdir($cwd_save) or die("chdir: $!");
+      		}
+    --		validate_patch_error($fn, $hook_error) if $hook_error;
+    -+		if ($hook_error) {
+    -+			die sprintf(__("fatal: %s: rejected by sendemail-validate hook\n" .
+    + 		if ($hook_error) {
+    + 			die sprintf(__("fatal: %s: rejected by sendemail-validate hook\n" .
+    +-				       "warning: no patches were sent\n"), $fn);
+     +				       "%s\n" .
+     +				       "warning: no patches were sent\n"), $fn, $hook_error);
+    -+		}
+    + 		}
+      	}
+      
+    - 	# Any long lines will be automatically fixed if we use a suitable transfer
+     @@ git-send-email.perl: sub validate_patch {
+      			or die sprintf(__("unable to open %s: %s\n"), $fn, $!);
+      		while (my $line = <$fh>) {
+      			if (length($line) > 998) {
+    --				validate_patch_error($fn, sprintf(__("%s: patch contains a line longer than 998 characters"), $.));
+    +-				die sprintf(__("fatal: %s: %d: patch contains a line longer than 998 characters\n" .
+    +-					       "warning: no patches were sent\n"),
+    +-					    $fn, $.);
+     +				die sprintf(__("fatal: %s:%d is longer than 998 characters\n" .
+     +					       "warning: no patches were sent\n"), $fn, $.);
+      			}
+-- 
+2.31.1.527.g9b8f7de2547
+
