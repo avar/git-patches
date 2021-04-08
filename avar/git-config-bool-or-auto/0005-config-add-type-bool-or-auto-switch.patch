@@ -1,0 +1,163 @@
+From 9f8996a88822e3c6680ddcc33bc799587357d727 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.6-9f8996a888-20210408T133125Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-0000000000-20210408T133125Z-avarab@gmail.com>
+References: <cover-0.6-0000000000-20210408T133125Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 8 Apr 2021 15:14:38 +0200
+Subject: [PATCH 5/5] config: add --type=bool-or-auto switch
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Now that we're using git_config_tristate() internally let's expose it
+via "git config" like we do "bool", "int" etc for completeness, and so
+that we can easily test it.
+
+Unlike the --type=bool-or-str option added in dbd8c09bfe (mergetool:
+allow auto-merge for meld to follow the vim-diff behavior, 2020-05-07)
+we don't have or anticipate any in-tree user of this except the tests.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-config.txt |  4 +++
+ builtin/config.c             | 19 ++++++++++++++
+ t/t1300-config.sh            | 49 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 72 insertions(+)
+
+diff --git a/Documentation/git-config.txt b/Documentation/git-config.txt
+index 4ae9ef210c..1af8222e82 100644
+--- a/Documentation/git-config.txt
++++ b/Documentation/git-config.txt
+@@ -189,6 +189,10 @@ Valid `<type>`'s include:
+   above.
+ - 'bool-or-str: canonicalize according to either 'bool' (as described
+   above), or emit the value as-is.
++- 'bool-or-auto: canonicalize according to either 'bool', as described
++  above, or whether the value is "auto". This is used by various
++  "tristate" variables such as `core.restrictInheritedHandles`,
++  `format.numbered` etc.
+ - 'path': canonicalize by adding a leading `~` to the value of `$HOME` and
+   `~user` to the home directory for the specified user. This specifier has no
+   effect when setting the value (but you can use `git config section.variable
+diff --git a/builtin/config.c b/builtin/config.c
+index f71fa39b38..039a4f0961 100644
+--- a/builtin/config.c
++++ b/builtin/config.c
+@@ -68,6 +68,7 @@ static int fixed_value;
+ #define TYPE_EXPIRY_DATE	5
+ #define TYPE_COLOR		6
+ #define TYPE_BOOL_OR_STR	7
++#define TYPE_BOOL_OR_AUTO	8
+ 
+ #define OPT_CALLBACK_VALUE(s, l, v, h, i) \
+ 	{ OPTION_CALLBACK, (s), (l), (v), NULL, (h), PARSE_OPT_NOARG | \
+@@ -99,6 +100,8 @@ static int option_parse_type(const struct option *opt, const char *arg,
+ 			new_type = TYPE_BOOL_OR_INT;
+ 		else if (!strcmp(arg, "bool-or-str"))
+ 			new_type = TYPE_BOOL_OR_STR;
++		else if (!strcmp(arg, "bool-or-auto"))
++			new_type = TYPE_BOOL_OR_AUTO;
+ 		else if (!strcmp(arg, "path"))
+ 			new_type = TYPE_PATH;
+ 		else if (!strcmp(arg, "expiry-date"))
+@@ -156,6 +159,7 @@ static struct option builtin_config_options[] = {
+ 	OPT_CALLBACK_VALUE(0, "int", &type, N_("value is decimal number"), TYPE_INT),
+ 	OPT_CALLBACK_VALUE(0, "bool-or-int", &type, N_("value is --bool or --int"), TYPE_BOOL_OR_INT),
+ 	OPT_CALLBACK_VALUE(0, "bool-or-str", &type, N_("value is --bool or string"), TYPE_BOOL_OR_STR),
++	/* No bool-or-auto! The --<type> form is deprecated in favor of --type=<what> */
+ 	OPT_CALLBACK_VALUE(0, "path", &type, N_("value is a path (file or directory name)"), TYPE_PATH),
+ 	OPT_CALLBACK_VALUE(0, "expiry-date", &type, N_("value is an expiry date"), TYPE_EXPIRY_DATE),
+ 	OPT_GROUP(N_("Other")),
+@@ -263,6 +267,12 @@ static int format_config(struct strbuf *buf, const char *key_, const char *value
+ 				strbuf_addstr(buf, value_);
+ 			else
+ 				strbuf_addstr(buf, v ? "true" : "false");
++		} else if (type == TYPE_BOOL_OR_AUTO) {
++			int v = git_config_tristate(key_, value_);
++			if (v == 2)
++				strbuf_addstr(buf, "auto");
++			else
++				strbuf_addstr(buf, v ? "true" : "false");
+ 		} else if (type == TYPE_PATH) {
+ 			const char *v;
+ 			if (git_config_pathname(&v, key_, value_) < 0)
+@@ -435,6 +445,15 @@ static char *normalize_value(const char *key, const char *value)
+ 		else
+ 			return xstrdup(v ? "true" : "false");
+ 	}
++	if (type == TYPE_BOOL_OR_AUTO) {
++		int v = git_parse_maybe_tristate(value);
++		if (v < 0)
++			return xstrdup(value);
++		else if (v == 2)
++			xstrdup("auto");
++		else
++			return xstrdup(v ? "true" : "false");
++	}
+ 	if (type == TYPE_COLOR) {
+ 		char v[COLOR_MAXLEN];
+ 		if (git_config_color(v, key, value))
+diff --git a/t/t1300-config.sh b/t/t1300-config.sh
+index a002ec5644..952d9e9ed9 100755
+--- a/t/t1300-config.sh
++++ b/t/t1300-config.sh
+@@ -874,6 +874,55 @@ test_expect_success 'get --bool-or-str' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'there is no --bool-or-auto, --<type> is deprecated in favor of --type=<type>' '
++	test_expect_code 129 git config --bool-or-auto
++'
++
++test_expect_success 'get --type=bool-or-auto' '
++	cat >.git/config <<-\EOF &&
++	[bool]
++	true1
++	true2 = true
++	false = false
++	[int]
++	int1 = 0
++	int2 = 1
++	int3 = -1
++	[string]
++	string1 = hello
++	string2 = there you
++	[auto]
++	auto1 = auto
++	auto2 = AUTO
++	[bad-auto]
++	bad-auto1 = AUTOMATIC
++	EOF
++	cat >expect <<-\EOF &&
++	true
++	true
++	false
++	false
++	true
++	true
++	auto
++	auto
++	EOF
++	{
++		git config --type=bool-or-auto bool.true1 &&
++		git config --type=bool-or-auto bool.true2 &&
++		git config --type=bool-or-auto bool.false &&
++		git config --type=bool-or-auto int.int1 &&
++		git config --type=bool-or-auto int.int2 &&
++		git config --type=bool-or-auto int.int3 &&
++		git config --type=bool-or-auto auto.auto1 &&
++		git config --type=bool-or-auto auto.auto2
++	} >actual &&
++	test_cmp expect actual &&
++
++	test_must_fail git config --type=bool-or-auto --get bad-auto.bad-auto1 2>err &&
++	grep "bad tristate config value" err
++'
++
+ cat >expect <<\EOF
+ [bool]
+ 	true1 = true
+-- 
+2.31.1.527.g9b8f7de2547
+
