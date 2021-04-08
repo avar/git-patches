@@ -1,9 +1,9 @@
 From 548673260bf4885f6d51a9fc2ddad6e71873852c Mon Sep 17 00:00:00 2001
-Message-Id: <cover-00.10-0000000000-20210408T145802Z-avarab@gmail.com>
+Message-Id: <cover-00.10-0000000000-20210408T145833Z-avarab@gmail.com>
 In-Reply-To: <cover-00.11-00000000000-20210324T014604Z-avarab@gmail.com>
 References: <cover-00.11-00000000000-20210324T014604Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Thu, 8 Apr 2021 16:58:02 +0200
+Date: Thu, 8 Apr 2021 16:58:33 +0200
 Subject: [PATCH v5 0/9] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -35,15 +35,247 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 t/helper/test-userdiff.c
 
 Range-diff:
- -:  ---------- >  1:  2f7a7b2897 userdiff style: re-order drivers in alphabetical order
- -:  ---------- >  2:  22e48f33b6 userdiff style: declare patterns with consistent style
- -:  ---------- >  3:  dff2aa0d38 userdiff style: normalize pascal regex declaration
- -:  ---------- >  4:  1a3a61e389 userdiff: add and use for_each_userdiff_driver()
- -:  ---------- >  5:  3eb7abd121 userdiff tests: explicitly test "default" pattern
- -:  ---------- >  6:  e90758a978 userdiff tests: list builtin drivers via test-tool
- -:  ---------- >  7:  04bce275ab userdiff: remove support for "broken" tests
- -:  ---------- >  8:  3583078715 blame tests: don't rely on t/t4018/ directory
- -:  ---------- >  9:  548673260b blame tests: simplify userdiff driver test
+ 1:  fb7346cd29 <  -:  ---------- userdiff: refactor away the parse_bool() function
+ 2:  149387155b =  1:  2f7a7b2897 userdiff style: re-order drivers in alphabetical order
+ 3:  faf1a824f0 =  2:  22e48f33b6 userdiff style: declare patterns with consistent style
+ 4:  1e9ddcd1a9 =  3:  dff2aa0d38 userdiff style: normalize pascal regex declaration
+ 5:  64ea5e8443 !  4:  1a3a61e389 userdiff: add and use for_each_userdiff_driver()
+    @@ userdiff.c: static struct userdiff_driver driver_false = {
+      };
+      
+     -static struct userdiff_driver *userdiff_find_by_namelen(const char *k, size_t len)
+    -+struct for_each_userdiff_driver_cb {
+    -+	const char *k;
+    ++struct find_by_namelen_data {
+    ++	const char *name;
+     +	size_t len;
+     +	struct userdiff_driver *driver;
+     +};
+    @@ userdiff.c: static struct userdiff_driver driver_false = {
+     -		struct userdiff_driver *drv = builtin_drivers + i;
+     -		if (!strncmp(drv->name, k, len) && !drv->name[len])
+     -			return drv;
+    -+	struct for_each_userdiff_driver_cb *cb_data = priv;
+    ++	struct find_by_namelen_data *cb_data = priv;
+     +
+    -+	if (!strncmp(driver->name, cb_data->k, cb_data->len) &&
+    ++	if (!strncmp(driver->name, cb_data->name, cb_data->len) &&
+     +	    !driver->name[cb_data->len]) {
+     +		cb_data->driver = driver;
+    -+		return -1; /* found it! */
+    ++		return 1; /* tell the caller to stop iterating */
+      	}
+     -	return NULL;
+     +	return 0;
+     +}
+     +
+    -+static struct userdiff_driver *userdiff_find_by_namelen(const char *k, size_t len)
+    ++static struct userdiff_driver *userdiff_find_by_namelen(const char *name, size_t len)
+     +{
+    -+	struct for_each_userdiff_driver_cb udcbdata = { .k = k, .len = len, .driver = NULL };
+    -+
+    -+	for_each_userdiff_driver(userdiff_find_by_namelen_cb,
+    -+				 USERDIFF_DRIVER_TYPE_UNSPECIFIED, &udcbdata);
+    ++	struct find_by_namelen_data udcbdata = {
+    ++		.name = name,
+    ++		.len = len,
+    ++	};
+    ++	for_each_userdiff_driver(userdiff_find_by_namelen_cb, &udcbdata);
+     +	return udcbdata.driver;
+      }
+      
+    @@ userdiff.c: struct userdiff_driver *userdiff_get_textconv(struct repository *r,
+      	return driver;
+      }
+     +
+    -+int for_each_userdiff_driver(each_userdiff_driver_fn fn,
+    -+			     enum userdiff_driver_type type, void *cb_data)
+    ++static int for_each_userdiff_driver_list(each_userdiff_driver_fn fn,
+    ++					 enum userdiff_driver_type type, void *cb_data,
+    ++					 struct userdiff_driver *drv,
+    ++					 int drv_size)
+     +{
+    -+	int i, ret;
+    -+	if (type & (USERDIFF_DRIVER_TYPE_UNSPECIFIED | USERDIFF_DRIVER_TYPE_CUSTOM)) {
+    -+
+    -+		for (i = 0; i < ndrivers; i++) {
+    -+			struct userdiff_driver *drv = drivers + i;
+    -+			ret = fn(drv, USERDIFF_DRIVER_TYPE_CUSTOM, cb_data);
+    -+			if (ret)
+    -+				return ret;
+    -+		}
+    ++	int i;
+    ++	int ret;
+    ++	for (i = 0; i < drv_size; i++) {
+    ++		struct userdiff_driver *item = drv + i;
+    ++		if ((ret = fn(item, type, cb_data)))
+    ++			return ret;
+     +	}
+    -+	if (type & (USERDIFF_DRIVER_TYPE_UNSPECIFIED | USERDIFF_DRIVER_TYPE_BUILTIN)) {
+    ++	return 0;
+    ++}
+    ++
+    ++int for_each_userdiff_driver(each_userdiff_driver_fn fn, void *cb_data)
+    ++{
+    ++	int ret;
+    ++
+    ++	ret = for_each_userdiff_driver_list(fn, USERDIFF_DRIVER_TYPE_CUSTOM,
+    ++					    cb_data, drivers, ndrivers);
+    ++	if (ret)
+    ++		return ret;
+    ++
+    ++	ret = for_each_userdiff_driver_list(fn, USERDIFF_DRIVER_TYPE_BUILTIN,
+    ++					    cb_data, builtin_drivers,
+    ++					    ARRAY_SIZE(builtin_drivers));
+    ++	if (ret)
+    ++		return ret;
+     +
+    -+		for (i = 0; i < ARRAY_SIZE(builtin_drivers); i++) {
+    -+			struct userdiff_driver *drv = builtin_drivers + i;
+    -+			ret = fn(drv, USERDIFF_DRIVER_TYPE_BUILTIN, cb_data);
+    -+			if (ret)
+    -+				return ret;
+    -+		}
+    -+	}
+     +	return 0;
+     +}
+     
+    @@ userdiff.h: struct userdiff_driver {
+      	int textconv_want_cache;
+      };
+     +enum userdiff_driver_type {
+    -+	USERDIFF_DRIVER_TYPE_UNSPECIFIED = 1<<0,
+    -+	USERDIFF_DRIVER_TYPE_BUILTIN = 1<<1,
+    -+	USERDIFF_DRIVER_TYPE_CUSTOM = 1<<2,
+    ++	USERDIFF_DRIVER_TYPE_BUILTIN = 1<<0,
+    ++	USERDIFF_DRIVER_TYPE_CUSTOM = 1<<1,
+     +};
+     +typedef int (*each_userdiff_driver_fn)(struct userdiff_driver *,
+     +				       enum userdiff_driver_type, void *);
+    @@ userdiff.h: struct userdiff_driver *userdiff_find_by_path(struct index_state *is
+      					      struct userdiff_driver *driver);
+      
+     +/*
+    -+ * Iterate over each driver of type userdiff_driver_type, or
+    -+ * USERDIFF_DRIVER_TYPE_UNSPECIFIED for all of them. Return non-zero
+    -+ * to exit from the loop.
+    ++ * Iterate over all userdiff drivers. The userdiff_driver_type
+    ++ * argument to each_userdiff_driver_fn indicates their type. Return
+    ++ * non-zero to exit early from the loop.
+     + */
+    -+int for_each_userdiff_driver(each_userdiff_driver_fn,
+    -+			     enum userdiff_driver_type, void *);
+    ++int for_each_userdiff_driver(each_userdiff_driver_fn, void *);
+     +
+      #endif /* USERDIFF */
+ 6:  862f6ab5d6 =  5:  3eb7abd121 userdiff tests: explicitly test "default" pattern
+ 7:  22a07591b7 !  6:  e90758a978 userdiff tests: list builtin drivers via test-tool
+    @@ t/helper/test-userdiff.c (new)
+     +#include "test-tool.h"
+     +#include "cache.h"
+     +#include "userdiff.h"
+    ++#include "config.h"
+     +
+     +static int driver_cb(struct userdiff_driver *driver,
+     +		     enum userdiff_driver_type type, void *priv)
+     +{
+    -+	if (driver->funcname.pattern)
+    ++	enum userdiff_driver_type *want_type = priv;
+    ++	if (type & *want_type && driver->funcname.pattern)
+     +		puts(driver->name);
+     +	return 0;
+     +}
+     +
+    -+static int list_what(enum userdiff_driver_type type)
+    ++static int cmd__userdiff_config(const char *var, const char *value, void *cb)
+     +{
+    -+	return for_each_userdiff_driver(driver_cb, type, NULL);
+    ++	if (userdiff_config(var, value) < 0)
+    ++		return -1;
+    ++	return 0;
+     +}
+     +
+     +int cmd__userdiff(int argc, const char **argv)
+     +{
+    ++	enum userdiff_driver_type want = 0;
+     +	if (argc != 2)
+     +		return 1;
+     +
+     +	if (!strcmp(argv[1], "list-drivers"))
+    -+		return list_what(USERDIFF_DRIVER_TYPE_UNSPECIFIED);
+    ++		want = (USERDIFF_DRIVER_TYPE_BUILTIN |
+    ++			USERDIFF_DRIVER_TYPE_CUSTOM);
+     +	else if (!strcmp(argv[1], "list-builtin-drivers"))
+    -+		return list_what(USERDIFF_DRIVER_TYPE_BUILTIN);
+    ++		want = USERDIFF_DRIVER_TYPE_BUILTIN;
+     +	else if (!strcmp(argv[1], "list-custom-drivers"))
+    -+		return list_what(USERDIFF_DRIVER_TYPE_CUSTOM);
+    ++		want = USERDIFF_DRIVER_TYPE_CUSTOM;
+     +	else
+     +		return error("unknown argument %s", argv[1]);
+    ++
+    ++	if (want & USERDIFF_DRIVER_TYPE_CUSTOM) {
+    ++		setup_git_directory();
+    ++		git_config(cmd__userdiff_config, NULL);
+    ++	}
+    ++
+    ++	for_each_userdiff_driver(driver_cb, &want);
+    ++
+    ++	return 0;
+     +}
+     
+      ## t/t4018-diff-funcname.sh ##
+    -@@ t/t4018-diff-funcname.sh: test_description='Test custom diff function name patterns'
+    - . ./test-lib.sh
+    +@@ t/t4018-diff-funcname.sh: test_expect_success 'setup' '
+    + 	echo B >B.java
+    + '
+      
+    - test_expect_success 'setup' '
+    ++test_expect_success 'setup: test-tool userdiff' '
+     +	# Make sure additions to builtin_drivers are sorted
+     +	test_when_finished "rm builtin-drivers.sorted" &&
+     +	test-tool userdiff list-builtin-drivers >builtin-drivers &&
+    @@ t/t4018-diff-funcname.sh: test_description='Test custom diff function name patte
+     +	sort <builtin-drivers >builtin-drivers.sorted &&
+     +	test_cmp builtin-drivers.sorted builtin-drivers &&
+     +
+    - 	# a non-trivial custom pattern
+    - 	git config diff.custom1.funcname "!static
+    - !String
+    -@@ t/t4018-diff-funcname.sh: test_expect_success 'setup' '
+    - '
+    - 
+    ++	# Ditto, but "custom" requires the .git directory and config
+    ++	# to be setup and read.
+    ++	test_when_finished "rm custom-drivers.sorted" &&
+    ++	test-tool userdiff list-custom-drivers >custom-drivers &&
+    ++	test_file_not_empty custom-drivers &&
+    ++	sort <custom-drivers >custom-drivers.sorted &&
+    ++	test_cmp custom-drivers.sorted custom-drivers
+    ++'
+    ++
+      diffpatterns="
+     -	ada
+     -	bash
+    @@ t/t4018-diff-funcname.sh: test_expect_success 'setup' '
+     -	rust
+     -	tex
+     -	default
+    +-	custom1
+    +-	custom2
+    +-	custom3
+     +	$(cat builtin-drivers)
+    - 	custom1
+    - 	custom2
+    - 	custom3
+    ++	$(cat custom-drivers)
+    + "
+    + 
+    + for p in $diffpatterns
+ 8:  7755db9501 =  7:  04bce275ab userdiff: remove support for "broken" tests
+ 9:  4e0b4b42e1 =  8:  3583078715 blame tests: don't rely on t/t4018/ directory
+10:  ce98c61bf4 =  9:  548673260b blame tests: simplify userdiff driver test
 -- 
 2.31.1.527.g9b8f7de2547
 
