@@ -1,0 +1,218 @@
+From 5acb116feaaf27272caa5e79580c091a7121e72f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.7-5acb116fea-20210409T145353Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-0000000000-20210409T145353Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210326T103454Z-avarab@gmail.com>
+	<cover-0.7-0000000000-20210409T145353Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Mar 2021 10:51:04 +0100
+Subject: [PATCH v2 4/7] doc lint: fix bugs in, simplify and improve lint
+ script
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The lint-gitlink.perl script added in ab81411ced (ci: validate
+"linkgit:" in documentation, 2016-05-04) was more complex than it
+needed to be. It:
+
+ - Was using File::Find to recursively find *.txt files in
+   Documentation/, let's instead use the Makefile as a source of truth
+   for *.txt files, and pass it down to the script.
+
+ - We now don't lint linkgit:* in RelNotes/* or technical/*, which we
+   shouldn't have been doing in the first place anyway.
+
+ - When the doc-diff script was added in beb188e22a (add a script to
+   diff rendered documentation, 2018-08-06) we started sometimes having
+   a "git worktree" under Documentation/.
+
+   This tree contains a full checkout of git.git, as a result the
+   "lint" script would recurse into that, and lint any *.txt file
+   found in that entire repository.
+
+   In practice the only in-tree "linkgit" outside of the
+   Documentation/ tree is contrib/contacts/git-contacts.txt and
+   contrib/subtree/git-subtree.txt, so this wouldn't emit any errors
+
+Now we instead simply trust the Makefile to give us *.txt files.
+Since the Makefile also knows what sections each page should be in we
+don't have to open the files ourselves and try to parse that out. As a
+bonus this will also catch bugs with the section line in the files
+themselves being incorrect.
+
+The structure of the new script is mostly based on
+t/check-non-portable-shell.pl. As an added bonus it will also use
+pos() to print where the problems it finds are, e.g. given an issue
+like:
+
+    diff --git a/Documentation/git-cherry.txt b/Documentation/git-cherry.txt
+    [...]
+     and line numbers.  git-cherry therefore detects when commits have been
+    -"copied" by means of linkgit:git-cherry-pick[1], linkgit:git-am[1] or
+    -linkgit:git-rebase[1].
+    +"copied" by means of linkgit:git-cherry-pick[2], linkgit:git-am[3] or
+    +linkgit:git-rebase[4].
+
+We'll now emit:
+
+    git-cherry.txt:20: error: git-cherry-pick[2]: wrong section (should be 1), shown with 'HERE' below:
+    git-cherry.txt:20:      '"copied" by means of linkgit:git-cherry-pick[2]' <-- HERE
+    git-cherry.txt:20: error: git-am[3]: wrong section (should be 1), shown with 'HERE' below:
+    git-cherry.txt:20:      '"copied" by means of linkgit:git-cherry-pick[2], linkgit:git-am[3]' <-- HERE
+    git-cherry.txt:21: error: git-rebase[4]: wrong section (should be 1), shown with 'HERE' below:
+    git-cherry.txt:21:      'linkgit:git-rebase[4]' <-- HERE
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/Makefile          |   6 +-
+ Documentation/lint-gitlink.perl | 106 +++++++++++++++-----------------
+ 2 files changed, 55 insertions(+), 57 deletions(-)
+
+diff --git a/Documentation/Makefile b/Documentation/Makefile
+index 164d5ff2f9..de55c4ecf5 100644
+--- a/Documentation/Makefile
++++ b/Documentation/Makefile
+@@ -478,7 +478,11 @@ print-man1:
+ 	@for i in $(MAN1_TXT); do echo $$i; done
+ 
+ lint-docs::
+-	$(QUIET_LINT)$(PERL_PATH) lint-gitlink.perl
++	$(QUIET_LINT)$(PERL_PATH) lint-gitlink.perl \
++		$(HOWTO_TXT) $(DOC_DEP_TXT) \
++		--section=1 $(MAN1_TXT) \
++		--section=5 $(MAN5_TXT) \
++		--section=7 $(MAN7_TXT)
+ 
+ ifeq ($(wildcard po/Makefile),po/Makefile)
+ doc-l10n install-l10n::
+diff --git a/Documentation/lint-gitlink.perl b/Documentation/lint-gitlink.perl
+index 35230875c2..b22a367844 100755
+--- a/Documentation/lint-gitlink.perl
++++ b/Documentation/lint-gitlink.perl
+@@ -2,72 +2,66 @@
+ 
+ use strict;
+ use warnings;
+-use File::Find;
+-use Getopt::Long;
+ 
+-my $basedir = ".";
+-GetOptions("basedir=s" => \$basedir)
+-	or die("Cannot parse command line arguments\n");
++# Parse arguments, a simple state machine for input like:
++#
++# howto/*.txt config/*.txt --section=1 git.txt git-add.txt [...] --to-lint git-add.txt a-file.txt [...]
++my %TXT;
++my %SECTION;
++my $section;
++my $lint_these = 0;
++for my $arg (@ARGV) {
++	if (my ($sec) = $arg =~ /^--section=(\d+)$/s) {
++		$section = $sec;
++		next;
++	}
+ 
+-my $found_errors = 0;
++	my ($name) = $arg =~ /^(.*?)\.txt$/s;
++	unless (defined $section) {
++		$TXT{$name} = $arg;
++		next;
++	}
+ 
+-sub report {
+-	my ($where, $what, $error) = @_;
+-	print "$where: $error: $what\n";
+-	$found_errors = 1;
++	$SECTION{$name} = $section;
+ }
+ 
+-sub grab_section {
+-	my ($page) = @_;
+-	open my $fh, "<", "$basedir/$page.txt";
+-	my $firstline = <$fh>;
+-	chomp $firstline;
+-	close $fh;
+-	my ($section) = ($firstline =~ /.*\((\d)\)$/);
+-	return $section;
++my $exit_code = 0;
++sub report {
++	my ($pos, $line, $target, $msg) = @_;
++	substr($line, $pos) = "' <-- HERE";
++	$line =~ s/^\s+//;
++	print "$ARGV:$.: error: $target: $msg, shown with 'HERE' below:\n";
++	print "$ARGV:$.:\t'$line\n";
++	$exit_code = 1;
+ }
+ 
+-sub lint {
+-	my ($file) = @_;
+-	open my $fh, "<", $file
+-		or return;
+-	while (<$fh>) {
+-		my $where = "$file:$.";
+-		while (s/linkgit:((.*?)\[(\d)\])//) {
+-			my ($target, $page, $section) = ($1, $2, $3);
++@ARGV = sort values %TXT;
++die "BUG: Nothing to process!" unless @ARGV;
++while (<>) {
++	my $line = $_;
++	while ($line =~ m/linkgit:((.*?)\[(\d)\])/g) {
++		my $pos = pos $line;
++		my ($target, $page, $section) = ($1, $2, $3);
+ 
+-			# De-AsciiDoc
+-			$page =~ s/{litdd}/--/g;
++		# De-AsciiDoc
++		$page =~ s/{litdd}/--/g;
+ 
+-			if ($page !~ /^git/) {
+-				report($where, $target, "nongit link");
+-				next;
+-			}
+-			if (! -f "$basedir/$page.txt") {
+-				report($where, $target, "no such source");
+-				next;
+-			}
+-			my $real_section = grab_section($page);
+-			if ($real_section != $section) {
+-				report($where, $target,
+-					"wrong section (should be $real_section)");
+-				next;
+-			}
++		if (!exists $TXT{$page}) {
++			report($pos, $line, $target, "link outside of our own docs");
++			next;
++		}
++		if (!exists $SECTION{$page}) {
++			report($pos, $line, $target, "link outside of our sectioned docs");
++			next;
++		}
++		my $real_section = $SECTION{$page};
++		if ($section != $SECTION{$page}) {
++			report($pos, $line, $target, "wrong section (should be $real_section)");
++			next;
+ 		}
+ 	}
+-	close $fh;
+-}
+-
+-sub lint_it {
+-	lint($File::Find::name) if -f && /\.txt$/;
+-}
+-
+-if (!@ARGV) {
+-	find({ wanted => \&lint_it, no_chdir => 1 }, $basedir);
+-} else {
+-	for (@ARGV) {
+-		lint($_);
+-	}
++	# this resets our $. for each file
++	close ARGV if eof;
+ }
+ 
+-exit $found_errors;
++exit $exit_code;
+-- 
+2.31.1.622.g1b8cc22e65
+
