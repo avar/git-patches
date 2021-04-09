@@ -1,0 +1,59 @@
+From 754d5ae2676a7914a76ffb70fd6035cfe155f4c9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.7-754d5ae267-20210409T083436Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-0000000000-20210409T083436Z-avarab@gmail.com>
+References: <cover-0.6-0000000000-20210409T082935Z-avarab@gmail.com>
+	<cover-0.7-0000000000-20210409T083436Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 2 Apr 2021 16:34:44 +0200
+Subject: [PATCH 5/7] commit.c: don't use deref_tag() -> object_as_type()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change a use of the object_as_type() function introduced in
+8ff226a9d5e (add object_as_type helper for casting objects,
+2014-07-13) to instead assume that we're not dealing with OBJ_NONE (or
+OBJ_BAD) from deref_tag().
+
+This makes this code easier to read, as the reader isn't wondering why
+the function would need to deal with that. We're simply doing a check
+of OBJ_{COMMIT,TREE,BLOB,TAG} here, not the bare-bones initialization
+object_as_type() might be called on to do.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit.c | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/commit.c b/commit.c
+index b370100367..437a8b8548 100644
+--- a/commit.c
++++ b/commit.c
+@@ -31,13 +31,19 @@ const char *commit_type = "commit";
+ struct commit *lookup_commit_reference_gently(struct repository *r,
+ 		const struct object_id *oid, int quiet)
+ {
+-	struct object *obj = deref_tag(r,
+-				       parse_object(r, oid),
+-				       NULL, 0);
++	struct object *tmp = parse_object(r, oid);
++	struct object *obj = deref_tag(r, tmp, NULL, 0);
+ 
+ 	if (!obj)
+ 		return NULL;
+-	return object_as_type(obj, OBJ_COMMIT, quiet);
++
++	if (obj->type != OBJ_COMMIT) {
++		enum object_type want = OBJ_COMMIT;
++		if (!quiet)
++			oid_is_type_or_error(oid, OBJ_COMMIT, &want);
++		return NULL;
++	}
++	return (struct commit *)obj;
+ }
+ 
+ struct commit *lookup_commit_reference(struct repository *r, const struct object_id *oid)
+-- 
+2.31.1.592.gdf54ba9003
+
