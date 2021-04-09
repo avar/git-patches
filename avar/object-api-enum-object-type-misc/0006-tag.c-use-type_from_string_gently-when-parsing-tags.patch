@@ -1,0 +1,70 @@
+From 3eabfab4cefa0d2e0b6668e74ec065e514526db9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-6.7-3eabfab4ce-20210409T081127Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-0000000000-20210409T081127Z-avarab@gmail.com>
+References: <cover-0.3-0000000000-20210409T080534Z-avarab@gmail.com>
+	<cover-0.7-0000000000-20210409T081127Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 2 Apr 2021 15:53:29 +0200
+Subject: [PATCH 6/6] tag.c: use type_from_string_gently() when parsing tags
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change a series of strcmp() to instead use type_from_string_gently()
+to get the integer type early, and then use that for comparison.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ tag.c | 19 ++++++++++---------
+ 1 file changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/tag.c b/tag.c
+index 3e18a41841..871c4c9a14 100644
+--- a/tag.c
++++ b/tag.c
+@@ -135,7 +135,7 @@ void release_tag_memory(struct tag *t)
+ int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, unsigned long size)
+ {
+ 	struct object_id oid;
+-	char type[20];
++	enum object_type type;
+ 	const char *bufptr = data;
+ 	const char *tail = bufptr + size;
+ 	const char *nl;
+@@ -162,23 +162,24 @@ int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, u
+ 		return -1;
+ 	bufptr += 5;
+ 	nl = memchr(bufptr, '\n', tail - bufptr);
+-	if (!nl || sizeof(type) <= (nl - bufptr))
++	if (!nl)
++		return -1;
++	type = type_from_string_gently(bufptr, nl - bufptr);
++	if (type < 0)
+ 		return -1;
+-	memcpy(type, bufptr, nl - bufptr);
+-	type[nl - bufptr] = '\0';
+ 	bufptr = nl + 1;
+ 
+-	if (!strcmp(type, blob_type)) {
++	if (type == OBJ_BLOB) {
+ 		item->tagged = (struct object *)lookup_blob(r, &oid);
+-	} else if (!strcmp(type, tree_type)) {
++	} else if (type == OBJ_TREE) {
+ 		item->tagged = (struct object *)lookup_tree(r, &oid);
+-	} else if (!strcmp(type, commit_type)) {
++	} else if (type == OBJ_COMMIT) {
+ 		item->tagged = (struct object *)lookup_commit(r, &oid);
+-	} else if (!strcmp(type, tag_type)) {
++	} else if (type == OBJ_TAG) {
+ 		item->tagged = (struct object *)lookup_tag(r, &oid);
+ 	} else {
+ 		return error("unknown tag type '%s' in %s",
+-			     type, oid_to_hex(&item->object.oid));
++			     type_name(type), oid_to_hex(&item->object.oid));
+ 	}
+ 
+ 	if (!item->tagged)
+-- 
+2.31.1.584.gf4baedee75
+
