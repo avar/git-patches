@@ -1,9 +1,9 @@
 From 9cb100826e66e9ef30c052939269c0b993d1076e Mon Sep 17 00:00:00 2001
-Message-Id: <cover-0.7-0000000000-20210409T145353Z-avarab@gmail.com>
+Message-Id: <cover-0.7-0000000000-20210409T145515Z-avarab@gmail.com>
 In-Reply-To: <cover-0.6-00000000000-20210326T103454Z-avarab@gmail.com>
 References: <cover-0.6-00000000000-20210326T103454Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 9 Apr 2021 16:53:53 +0200
+Date: Fri, 9 Apr 2021 16:55:15 +0200
 Subject: [PATCH v2 0/7] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -37,10 +37,189 @@ Content-Transfer-Encoding: 8bit
  create mode 100755 Documentation/lint-man-section-order.perl
 
 Range-diff against v1:
--:  ---------- > 1:  8efebc7a03 Documentation/Makefile: make $(wildcard howto/*.txt) a var
--:  ---------- > 2:  8046e7941e Documentation/Makefile: make doc.dep dependencies a variable again
--:  ---------- > 3:  29545543bd doc lint: Perl "strict" and "warnings" in lint-gitlink.perl
--:  ---------- > 4:  5acb116fea doc lint: fix bugs in, simplify and improve lint script
+1:  248f72c697 = 1:  8efebc7a03 Documentation/Makefile: make $(wildcard howto/*.txt) a var
+2:  b06c748a81 ! 2:  8046e7941e Documentation/Makefile: make $(wildcard <doc deps>) a var
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    Documentation/Makefile: make $(wildcard <doc deps>) a var
+    +    Documentation/Makefile: make doc.dep dependencies a variable again
+     
+    -    Refactor the wildcard we'll scan for "include" directives into a
+    -    single INCLUDE_TARGETS_TXT variable for readability, consistency.
+    +    Re-introduce a variable to declare what *.txt files need to be
+    +    considered for the purposes of scouring files to generate a dependency
+    +    graph of includes.
+    +
+    +    When doc.dep was introduced in a5ae8e64cf (Fix documentation
+    +    dependency generation., 2005-11-07) we had such a variable called
+    +    TEXTFILES, but it was refactored away just a few commits after that in
+    +    fb612d54c1 (Documentation: fix dependency generation.,
+    +    2005-11-07). I'm planning to add more wildcards here, so let's bring
+    +    it back.
+    +
+    +    I'm not calling it TEXTFILES because we e.g. don't consider
+    +    Documentation/technical/*.txt when generating the graph (they don't
+    +    use includes). Let's instead call it DOC_DEP_TXT.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ Documentation/Makefile: MAN1_TXT =
+      MAN5_TXT =
+      MAN7_TXT =
+      HOWTO_TXT =
+    -+INCLUDE_TARGETS_TXT =
+    ++DOC_DEP_TXT =
+      TECH_DOCS =
+      ARTICLES =
+      SP_ARTICLES =
+    @@ Documentation/Makefile: MAN7_TXT += gitworkflows.txt
+      
+      HOWTO_TXT += $(wildcard howto/*.txt)
+      
+    -+INCLUDE_TARGETS_TXT += $(wildcard *.txt)
+    -+INCLUDE_TARGETS_TXT += $(wildcard config/*.txt)
+    ++DOC_DEP_TXT += $(wildcard *.txt)
+    ++DOC_DEP_TXT += $(wildcard config/*.txt)
+     +
+      ifdef MAN_FILTER
+      MAN_TXT = $(filter $(MAN_FILTER),$(MAN1_TXT) $(MAN5_TXT) $(MAN7_TXT))
+    @@ Documentation/Makefile: docdep_prereqs = \
+      	cmd-list.made $(cmds_txt)
+      
+     -doc.dep : $(docdep_prereqs) $(wildcard *.txt) $(wildcard config/*.txt) build-docdep.perl
+    -+doc.dep : $(docdep_prereqs) $(INCLUDE_TARGETS_TXT) build-docdep.perl
+    ++doc.dep : $(docdep_prereqs) $(DOC_DEP_TXT) build-docdep.perl
+      	$(QUIET_GEN)$(RM) $@+ $@ && \
+      	$(PERL_PATH) ./build-docdep.perl >$@+ $(QUIET_STDERR) && \
+      	mv $@+ $@
+3:  e74c65a12f = 3:  29545543bd doc lint: Perl "strict" and "warnings" in lint-gitlink.perl
+4:  002a3cc3bc ! 4:  5acb116fea doc lint: fix bugs in, simplify and improve lint script
+    @@ Commit message
+     
+          - When the doc-diff script was added in beb188e22a (add a script to
+            diff rendered documentation, 2018-08-06) we started sometimes having
+    -       a "git worktree" under "documentation". This tree contains a full
+    -       checkout of git.git, as a result the "lint" script would recurse into
+    -       that, and lint any *.txt file found in that entire repository.
+    +       a "git worktree" under Documentation/.
+    +
+    +       This tree contains a full checkout of git.git, as a result the
+    +       "lint" script would recurse into that, and lint any *.txt file
+    +       found in that entire repository.
+     
+            In practice the only in-tree "linkgit" outside of the
+            Documentation/ tree is contrib/contacts/git-contacts.txt and
+            contrib/subtree/git-subtree.txt, so this wouldn't emit any errors
+     
+    -    Now we instead simply trust the Makefile to give us *.txt files, and
+    -    since the Makefile also knows what sections each page should be in we
+    +    Now we instead simply trust the Makefile to give us *.txt files.
+    +    Since the Makefile also knows what sections each page should be in we
+         don't have to open the files ourselves and try to parse that out. As a
+    -    bonus this will also catch bugs with the section line in the file
+    -    being incorrect.
+    +    bonus this will also catch bugs with the section line in the files
+    +    themselves being incorrect.
+     
+         The structure of the new script is mostly based on
+         t/check-non-portable-shell.pl. As an added bonus it will also use
+    @@ Commit message
+         We'll now emit:
+     
+             git-cherry.txt:20: error: git-cherry-pick[2]: wrong section (should be 1), shown with 'HERE' below:
+    -        git-cherry.txt:20:      "copied" by means of linkgit:git-cherry-pick[2]' <-- HERE
+    +        git-cherry.txt:20:      '"copied" by means of linkgit:git-cherry-pick[2]' <-- HERE
+             git-cherry.txt:20: error: git-am[3]: wrong section (should be 1), shown with 'HERE' below:
+    -        git-cherry.txt:20:      "copied" by means of linkgit:git-cherry-pick[2], linkgit:git-am[3]' <-- HERE
+    +        git-cherry.txt:20:      '"copied" by means of linkgit:git-cherry-pick[2], linkgit:git-am[3]' <-- HERE
+             git-cherry.txt:21: error: git-rebase[4]: wrong section (should be 1), shown with 'HERE' below:
+    -        git-cherry.txt:21:      linkgit:git-rebase[4]' <-- HERE
+    +        git-cherry.txt:21:      'linkgit:git-rebase[4]' <-- HERE
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Documentation/Makefile ##
+    -@@ Documentation/Makefile: MAN5_TXT =
+    - MAN7_TXT =
+    - HOWTO_TXT =
+    - INCLUDE_TARGETS_TXT =
+    -+ALL_TXT =
+    - TECH_DOCS =
+    - ARTICLES =
+    - SP_ARTICLES =
+    -@@ Documentation/Makefile: HOWTO_TXT += $(wildcard howto/*.txt)
+    - INCLUDE_TARGETS_TXT += $(wildcard *.txt)
+    - INCLUDE_TARGETS_TXT += $(wildcard config/*.txt)
+    - 
+    -+# For linting
+    -+ALL_TXT += $(MAN1_TXT)
+    -+ALL_TXT += $(MAN5_TXT)
+    -+ALL_TXT += $(MAN7_TXT)
+    -+ALL_TXT += $(HOWTO_TXT)
+    -+ALL_TXT += $(INCLUDE_TARGETS_TXT)
+    -+
+    - ifdef MAN_FILTER
+    - MAN_TXT = $(filter $(MAN_FILTER),$(MAN1_TXT) $(MAN5_TXT) $(MAN7_TXT))
+    - else
+     @@ Documentation/Makefile: print-man1:
+      	@for i in $(MAN1_TXT); do echo $$i; done
+      
+      lint-docs::
+     -	$(QUIET_LINT)$(PERL_PATH) lint-gitlink.perl
+     +	$(QUIET_LINT)$(PERL_PATH) lint-gitlink.perl \
+    ++		$(HOWTO_TXT) $(DOC_DEP_TXT) \
+     +		--section=1 $(MAN1_TXT) \
+     +		--section=5 $(MAN5_TXT) \
+    -+		--section=7 $(MAN7_TXT)	\
+    -+		--to-lint $(ALL_TXT)
+    ++		--section=7 $(MAN7_TXT)
+      
+      ifeq ($(wildcard po/Makefile),po/Makefile)
+      doc-l10n install-l10n::
+    @@ Documentation/lint-gitlink.perl
+     -	or die("Cannot parse command line arguments\n");
+     +# Parse arguments, a simple state machine for input like:
+     +#
+    -+# --section=1 git.txt git-add.txt [...] --to-lint git-add.txt a-file.txt [...]
+    ++# howto/*.txt config/*.txt --section=1 git.txt git-add.txt [...] --to-lint git-add.txt a-file.txt [...]
+     +my %TXT;
+     +my %SECTION;
+     +my $section;
+    @@ Documentation/lint-gitlink.perl
+     +	if (my ($sec) = $arg =~ /^--section=(\d+)$/s) {
+     +		$section = $sec;
+     +		next;
+    -+	} elsif ($arg eq '--to-lint') {
+    -+		$lint_these = 1;
+    -+		next;
+     +	}
+      
+     -my $found_errors = 0;
+     +	my ($name) = $arg =~ /^(.*?)\.txt$/s;
+    -+	if ($lint_these) {
+    ++	unless (defined $section) {
+     +		$TXT{$name} = $arg;
+     +		next;
+     +	}
+    @@ Documentation/lint-gitlink.perl
+     +	substr($line, $pos) = "' <-- HERE";
+     +	$line =~ s/^\s+//;
+     +	print "$ARGV:$.: error: $target: $msg, shown with 'HERE' below:\n";
+    -+	print "$ARGV:$.:\t$line\n";
+    ++	print "$ARGV:$.:\t'$line\n";
+     +	$exit_code = 1;
+      }
+      
+    @@ Documentation/lint-gitlink.perl
+     -		while (s/linkgit:((.*?)\[(\d)\])//) {
+     -			my ($target, $page, $section) = ($1, $2, $3);
+     +@ARGV = sort values %TXT;
+    ++die "BUG: Nothing to process!" unless @ARGV;
+     +while (<>) {
+     +	my $line = $_;
+     +	while ($line =~ m/linkgit:((.*?)\[(\d)\])/g) {
 -:  ---------- > 5:  e3af1a9405 doc lint: lint and fix missing "GIT" end sections
 -:  ---------- > 6:  8c294afe2a doc lint: lint relative section order
 -:  ---------- > 7:  9cb100826e docs: fix linting issues due to incorrect relative section order
