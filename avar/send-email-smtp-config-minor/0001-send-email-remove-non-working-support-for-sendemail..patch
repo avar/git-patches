@@ -1,0 +1,79 @@
+From ee041188e557564f02534bedff034aa8a290cc4b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.2-ee041188e55-20210411T144128Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20210411T144128Z-avarab@gmail.com>
+References: <20210411125431.28971-1-sir@cmpwn.com>
+	<cover-0.2-00000000000-20210411T144128Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Apr 2021 22:13:50 +0200
+Subject: [PATCH 1/2] send-email: remove non-working support for
+ "sendemail.smtpssl"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the already dead code to support "sendemail.smtssl" by finally
+removing the dead code supporting the configuration option.
+
+In f6bebd121ac (git-send-email: add support for TLS via
+Net::SMTP::SSL, 2008-06-25) the --smtp-ssl command-line option was
+documented as deprecated, later in 65180c66186 (List send-email config
+options in config.txt., 2009-07-22) the "sendemail.smtpssl"
+configuration option was also documented as such.
+
+Then in in 3ff15040e22 (send-email: fix regression in
+sendemail.identity parsing, 2019-05-17) I unintentionally removed
+support for it by introducing a bug in read_config().
+
+As can be seen from the diff context we've already returned unless
+$enc i defined, so it's not possible for us to reach the "elsif"
+branch here. This code was therefore already dead since Git v2.23.0.
+
+So let's just remove it instead of fixing the bug, clearly nobody's
+cared enough to complain.
+
+The --smtp-ssl option is still deprecated, if someone cares they can
+follow-up and remove that too, but unlike the config option that one
+could still be in use in the wild. I'm just removing this code that's
+provably unused already.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/sendemail.txt | 3 ---
+ git-send-email.perl                | 6 +-----
+ 2 files changed, 1 insertion(+), 8 deletions(-)
+
+diff --git a/Documentation/config/sendemail.txt b/Documentation/config/sendemail.txt
+index cbc5af42fdf..50baa5d6bfb 100644
+--- a/Documentation/config/sendemail.txt
++++ b/Documentation/config/sendemail.txt
+@@ -8,9 +8,6 @@ sendemail.smtpEncryption::
+ 	See linkgit:git-send-email[1] for description.  Note that this
+ 	setting is not subject to the 'identity' mechanism.
+ 
+-sendemail.smtpssl (deprecated)::
+-	Deprecated alias for 'sendemail.smtpEncryption = ssl'.
+-
+ sendemail.smtpsslcertpath::
+ 	Path to ca-certificates (either a directory or a single file).
+ 	Set it to an empty string to disable certificate verification.
+diff --git a/git-send-email.perl b/git-send-email.perl
+index f5bbf1647e3..877c7dd1a21 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -374,11 +374,7 @@ sub read_config {
+ 		my $enc = Git::config(@repo, $setting);
+ 		return unless defined $enc;
+ 		return if $configured->{$setting}++;
+-		if (defined $enc) {
+-			$smtp_encryption = $enc;
+-		} elsif (Git::config_bool(@repo, "$prefix.smtpssl")) {
+-			$smtp_encryption = 'ssl';
+-		}
++		$smtp_encryption = $enc;
+ 	}
+ }
+ 
+-- 
+2.31.1.623.g88b15a793d
+
