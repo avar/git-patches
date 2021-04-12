@@ -1,0 +1,140 @@
+From 424caad189f70d2b37424aac5baad32457f440ad Mon Sep 17 00:00:00 2001
+Message-Id: <patch-12.16-424caad189f-20210412T110456Z-avarab@gmail.com>
+In-Reply-To: <cover-00.16-00000000000-20210412T110456Z-avarab@gmail.com>
+References: <cover-00.16-00000000000-20210412T110456Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 22 Mar 2021 23:27:34 +0100
+Subject: [PATCH 12/16] test-lib: modernize test_create_repo() function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove redundant "mkdir -p", argument number checking', test
+environment sanity checking, and disabling of hooks from
+test_create_repo(). As we'll see below these were all either redundant
+to other test other framework code, or to changes in git itself.
+
+Respectively:
+
+ 1. "mkdir -p" isn't needed because "git init" itself will create
+    leading directories if needed.
+
+ 2. We don't need to check the number of arguments anymore, instead
+    we'll feed "git init" with "$@". It will die if given too many
+    arguments.
+
+ 3. We won't ever hit that "Cannot setup test environment"
+    error.
+
+    Checking the test environment sanity when doing "git init" dates
+    back to eea420693be (t0000: catch trivial pilot errors.,
+    2005-12-10) and 2ccd2027b01 (trivial: check, if t/trash directory
+    was successfully created, 2006-01-05).
+
+    We can also see it in another form a bit later in my own
+    0d314ce834d (test-lib: use subshell instead of cd $new && .. && cd
+    $old, 2010-08-30).
+
+    But since 2006f0adaee (t/test-lib: make sure Git has already been
+    built, 2012-09-17) we already check if we have a built git
+    earlier.
+
+    The one thing this was testing after that 2012 change was that
+    we'd just built "git", but not "git-init", but since
+    3af4c7156c4 (tests: respect GIT_TEST_INSTALLED when initializing
+    repositories, 2018-11-12) we invoke "git", not "git-init".
+
+    So all of that's been checked already, and we don't need to
+    re-check it here.
+
+ 4. We don't need to move .git/hooks out of the way.
+
+    That dates back to c09a69a83e3 (Disable hooks during tests.,
+    2005-10-16), since then hooks became disabled by default in
+    f98f8cbac01 (Ship sample hooks with .sample suffix, 2008-06-24).
+
+    So the hooks were already disabled by default, but as can be seen
+    from "mkdir .git/hooks" changes various tests needed to re-setup
+    that directory. Now they no longer do.
+
+ 5. Since we don't need to move the .git/hooks directory we don't need
+    the subshell here either.
+
+In the end it turns out that all we needed was a plain "git init"
+invocation with a custom --template directory.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5406-remote-rejects.sh           |  1 -
+ t/t5407-post-rewrite-hook.sh        |  2 --
+ t/t5409-colorize-remote-messages.sh |  1 -
+ t/test-lib-functions.sh             | 15 +++------------
+ 4 files changed, 3 insertions(+), 16 deletions(-)
+
+diff --git a/t/t5406-remote-rejects.sh b/t/t5406-remote-rejects.sh
+index ff06f99649e..5c509db6fc3 100755
+--- a/t/t5406-remote-rejects.sh
++++ b/t/t5406-remote-rejects.sh
+@@ -5,7 +5,6 @@ test_description='remote push rejects are reported by client'
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+-	mkdir .git/hooks &&
+ 	write_script .git/hooks/update <<-\EOF &&
+ 	exit 1
+ 	EOF
+diff --git a/t/t5407-post-rewrite-hook.sh b/t/t5407-post-rewrite-hook.sh
+index 5bb23cc3a4e..6da8d760e28 100755
+--- a/t/t5407-post-rewrite-hook.sh
++++ b/t/t5407-post-rewrite-hook.sh
+@@ -20,8 +20,6 @@ test_expect_success 'setup' '
+ 	git checkout main
+ '
+ 
+-mkdir .git/hooks
+-
+ cat >.git/hooks/post-rewrite <<EOF
+ #!/bin/sh
+ echo \$@ > "$TRASH_DIRECTORY"/post-rewrite.args
+diff --git a/t/t5409-colorize-remote-messages.sh b/t/t5409-colorize-remote-messages.sh
+index 5d8f401d8ec..9f1a483f426 100755
+--- a/t/t5409-colorize-remote-messages.sh
++++ b/t/t5409-colorize-remote-messages.sh
+@@ -5,7 +5,6 @@ test_description='remote messages are colorized on the client'
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+-	mkdir .git/hooks &&
+ 	write_script .git/hooks/update <<-\EOF &&
+ 	echo error: error
+ 	echo ERROR: also highlighted
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index c81726acb9e..1258329fdd8 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -1252,18 +1252,9 @@ test_atexit () {
+ # Most tests can use the created repository, but some may need to create more.
+ # Usage: test_create_repo <directory>
+ test_create_repo () {
+-	test "$#" = 1 ||
+-	BUG "not 1 parameter to test-create-repo"
+-	repo="$1"
+-	mkdir -p "$repo"
+-	(
+-		cd "$repo" || error "Cannot setup test environment"
+-		"${GIT_TEST_INSTALLED:-$GIT_EXEC_PATH}/git$X" \
+-			init \
+-			"--template=$GIT_BUILD_DIR/templates/blt/" >&3 2>&4 ||
+-		error "cannot run git init -- have you built things yet?"
+-		mv .git/hooks .git/hooks-disabled
+-	) || exit
++	"${GIT_TEST_INSTALLED:-$GIT_EXEC_PATH}/git$X" \
++		init \
++		"--template=$GIT_BUILD_DIR/templates/blt/" "$@" >&3 2>&4
+ }
+ 
+ # This function helps on symlink challenged file systems when it is not
+-- 
+2.31.1.634.gb41287a30b0
+
