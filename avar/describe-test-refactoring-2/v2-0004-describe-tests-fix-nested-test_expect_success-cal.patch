@@ -1,0 +1,90 @@
+From 5c81358d6bbe16e38d2d0f1c86207785787eb945 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.5-5c81358d6bb-20210412T111601Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210412T111601Z-avarab@gmail.com>
+References: <20210228195414.21372-1-avarab@gmail.com>
+	<cover-0.5-00000000000-20210412T111601Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 27 Feb 2021 12:55:06 +0100
+Subject: [PATCH v2 4/5] describe tests: fix nested "test_expect_success" call
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a nested invocation of "test_expect_success", the
+"check_describe()" function is a wrapper for calling
+test_expect_success, and therefore needs to be called outside the body
+of another "test_expect_success".
+
+The two tests added in 30b1c7ad9d6 (describe: don't abort too early
+when searching tags, 2020-02-26) were not testing for anything due to
+this logic error. Without this fix reverting the C code changes in
+that commit still has all tests passing, with this fix we're actually
+testing the "describe" output. This is because "test_expect_success"
+calls "test_finish_", whose last statement happens to be true.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6120-describe.sh | 22 ++++++++++++++--------
+ 1 file changed, 14 insertions(+), 8 deletions(-)
+
+diff --git a/t/t6120-describe.sh b/t/t6120-describe.sh
+index 911b1928057..9dc07782ea6 100755
+--- a/t/t6120-describe.sh
++++ b/t/t6120-describe.sh
+@@ -469,7 +469,7 @@ test_expect_success 'name-rev covers all conditions while looking at parents' '
+ #  o-----o---o----x
+ #        A
+ #
+-test_expect_success 'describe commits with disjoint bases' '
++test_expect_success 'setup: describe commits with disjoint bases' '
+ 	git init disjoint1 &&
+ 	(
+ 		cd disjoint1 &&
+@@ -482,19 +482,22 @@ test_expect_success 'describe commits with disjoint bases' '
+ 		git checkout --orphan branch && rm file &&
+ 		echo B > file2 && git add file2 && git commit -m B &&
+ 		git tag B -a -m B &&
+-		git merge --no-ff --allow-unrelated-histories main -m x &&
+-
+-		check_describe "A-3-gHASH" HEAD
++		git merge --no-ff --allow-unrelated-histories main -m x
+ 	)
+ '
+ 
++(
++	cd disjoint1 &&
++	check_describe "A-3-gHASH" HEAD
++)
++
+ #           B
+ #   o---o---o------------.
+ #                         \
+ #                  o---o---x
+ #                  A
+ #
+-test_expect_success 'describe commits with disjoint bases 2' '
++test_expect_success 'setup: describe commits with disjoint bases 2' '
+ 	git init disjoint2 &&
+ 	(
+ 		cd disjoint2 &&
+@@ -508,10 +511,13 @@ test_expect_success 'describe commits with disjoint bases 2' '
+ 		echo o >> file2 && git add file2 && GIT_COMMITTER_DATE="2020-01-01 15:01" git commit -m o &&
+ 		echo B >> file2 && git add file2 && GIT_COMMITTER_DATE="2020-01-01 15:02" git commit -m B &&
+ 		git tag B -a -m B &&
+-		git merge --no-ff --allow-unrelated-histories main -m x &&
+-
+-		check_describe "B-3-gHASH" HEAD
++		git merge --no-ff --allow-unrelated-histories main -m x
+ 	)
+ '
+ 
++(
++	cd disjoint2 &&
++	check_describe "B-3-gHASH" HEAD
++)
++
+ test_done
+-- 
+2.31.1.634.gb41287a30b0
+

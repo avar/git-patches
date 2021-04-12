@@ -1,0 +1,86 @@
+From 50b5a41f88d200fa10a27b4c43fd864fdb979f6d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.5-50b5a41f88d-20210412T111601Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210412T111601Z-avarab@gmail.com>
+References: <20210228195414.21372-1-avarab@gmail.com>
+	<cover-0.5-00000000000-20210412T111601Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 27 Feb 2021 12:12:50 +0100
+Subject: [PATCH v2 3/5] describe tests: don't rely on err.actual from
+ "check_describe"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Convert the one test that relied on the "err.actual" file produced by
+check_describe() to instead do its own check of "git describe"
+output.
+
+This means that the two tests won't have an inter-dependency (e.g. if
+the earlier test is skipped).
+
+An earlier version of this patch instead asserted that no other test
+had any output on stderr. We're not doing that here out of fear that
+"gc --auto" or another future change to "git describe" will cause it
+to legitimately emit output on stderr unexpectedly[1].
+
+I'd think that inverting the test added in 3291fe4072e (Add
+git-describe test for "verify annotated tag names on output",
+2008-03-03) to make checking that we don't have warnings the rule
+rather than the exception would be the sort of thing the describe
+tests should be catching, but for now let's leave it as it is.
+
+1. http://lore.kernel.org/git/xmqqwnuqo8ze.fsf@gitster.c.googlers.com
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6120-describe.sh | 25 +++++++++++--------------
+ 1 file changed, 11 insertions(+), 14 deletions(-)
+
+diff --git a/t/t6120-describe.sh b/t/t6120-describe.sh
+index 13117bbcfb7..911b1928057 100755
+--- a/t/t6120-describe.sh
++++ b/t/t6120-describe.sh
+@@ -21,7 +21,7 @@ check_describe () {
+ 	shift
+ 	describe_opts="$@"
+ 	test_expect_success "describe $describe_opts" '
+-		git describe $describe_opts 2>err.actual >raw &&
++		git describe $describe_opts >raw &&
+ 		sed -e "s/-g[0-9a-f]*\$/-gHASH/" <raw >actual &&
+ 		echo "$expect" >expect &&
+ 		test_cmp expect actual
+@@ -90,20 +90,17 @@ test_expect_success 'describe --contains defaults to HEAD without commit-ish' '
+ '
+ 
+ check_describe tags/A --all A^0
+-test_expect_success 'no warning was displayed for A' '
+-	test_must_be_empty err.actual
+-'
+ 
+-test_expect_success 'rename tag A to Q locally' '
+-	mv .git/refs/tags/A .git/refs/tags/Q
+-'
+-cat - >err.expect <<EOF
+-warning: tag 'Q' is externally known as 'A'
+-EOF
+-check_describe A-8-gHASH HEAD
+-test_expect_success 'warning was displayed for Q' '
+-	test_cmp err.expect err.actual
+-'
++test_expect_success 'renaming tag A to Q locally produces a warning' "
++	mv .git/refs/tags/A .git/refs/tags/Q &&
++	git describe HEAD 2>err >out &&
++	cat >expected <<-\EOF &&
++	warning: tag 'Q' is externally known as 'A'
++	EOF
++	test_cmp expected err &&
++	grep -E '^A-8-g[0-9a-f]+$' out
++"
++
+ test_expect_success 'misnamed annotated tag forces long output' '
+ 	description=$(git describe --no-long Q^0) &&
+ 	expr "$description" : "A-0-g[0-9a-f]*$" &&
+-- 
+2.31.1.634.gb41287a30b0
+
