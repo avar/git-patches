@@ -1,0 +1,69 @@
+From 807275d63021277e71ac352c302e804e216aaaa8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-807275d6302-20210412T112644Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20210412T112644Z-avarab@gmail.com>
+References: <20210228195414.21372-1-avarab@gmail.com>
+	<cover-0.2-00000000000-20210412T112644Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 28 Feb 2021 20:36:21 +0100
+Subject: [PATCH v2 2/2] svn tests: refactor away a "set -e" in test body
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor a test added in 83c9433e67 (git-svn: support for git-svn
+propset, 2014-12-07) to avoid using "set -e" in the test body. This
+would have broken in combination with a subsequent change to make
+"test_expect_success" return 1 to catch such cases.
+
+While I'm at it rewrite the test to conform to a modern style in our
+tests, using the "test_when_finished" function for the "rm -rf", and
+avoiding repeated "mkdir" in favor of "mkdir -p".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t9148-git-svn-propset.sh | 27 +++++++++++++++------------
+ 1 file changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/t/t9148-git-svn-propset.sh b/t/t9148-git-svn-propset.sh
+index 102639090c1..aebb28995e5 100755
+--- a/t/t9148-git-svn-propset.sh
++++ b/t/t9148-git-svn-propset.sh
+@@ -7,19 +7,22 @@ test_description='git svn propset tests'
+ 
+ . ./lib-git-svn.sh
+ 
+-foo_subdir2="subdir/subdir2/foo_subdir2"
++test_expect_success 'setup propset via import' '
++	test_when_finished "rm -rf import" &&
+ 
+-set -e
+-mkdir import &&
+-(set -e ; cd import
+-	mkdir subdir
+-	mkdir subdir/subdir2
+-	touch foo 		# for 'add props top level'
+-	touch subdir/foo_subdir # for 'add props relative'
+-	touch "$foo_subdir2"	# for 'add props subdir'
+-	svn_cmd import -m 'import for git svn' . "$svnrepo" >/dev/null
+-)
+-rm -rf import
++	foo_subdir2="subdir/subdir2/foo_subdir2" &&
++	mkdir -p import/subdir/subdir2 &&
++	(
++		cd import &&
++		# for "add props top level"
++		>foo &&
++		# for "add props relative"
++		>subdir/foo_subdir &&
++		# for "add props subdir"
++		>"$foo_subdir2" &&
++		svn_cmd import -m "import for git svn" . "$svnrepo"
++	)
++'
+ 
+ test_expect_success 'initialize git svn' '
+ 	git svn init "$svnrepo"
+-- 
+2.31.1.634.gb41287a30b0
+
