@@ -1,0 +1,78 @@
+From ed83c3add89d60a0ac24565ea0c54c3abcbb56d9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-16.22-ed83c3add89-20210412T170022Z-avarab@gmail.com>
+In-Reply-To: <cover-00.22-00000000000-20210412T170022Z-avarab@gmail.com>
+References: <20210216115801.4773-1-avarab@gmail.com>
+	<cover-00.22-00000000000-20210412T170022Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Feb 2021 15:30:46 +0100
+Subject: [PATCH v3 16/22] pickaxe -S: slightly optimize contains()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the "log -S<pat>" switch counts occurrences of <pat> on the
+pre-image and post-image of a change. As soon as we know we had e.g. 1
+before and 2 now we can stop, we don't need to keep counting past 2.
+
+With this change a diff between A and B may have different performance
+characteristics than between B and A. That's OK in this case, since
+we'll emit the same output, and the effect is to make one of them
+better.
+
+I'm picking a check of "one" first on the assumption that it's a more
+common case to have files grow over time than not.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diffcore-pickaxe.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/diffcore-pickaxe.c b/diffcore-pickaxe.c
+index 23362a23597..b7494fdf89c 100644
+--- a/diffcore-pickaxe.c
++++ b/diffcore-pickaxe.c
+@@ -68,7 +68,8 @@ static int diff_grep(mmfile_t *one, mmfile_t *two,
+ 	return ecbdata.hit;
+ }
+ 
+-static unsigned int contains(mmfile_t *mf, regex_t *regexp, kwset_t kws)
++static unsigned int contains(mmfile_t *mf, regex_t *regexp, kwset_t kws,
++			     unsigned int limit)
+ {
+ 	unsigned int cnt = 0;
+ 	unsigned long sz = mf->size;
+@@ -88,6 +89,9 @@ static unsigned int contains(mmfile_t *mf, regex_t *regexp, kwset_t kws)
+ 				sz--;
+ 			}
+ 			cnt++;
++
++			if (limit && cnt == limit)
++				return cnt;
+ 		}
+ 
+ 	} else { /* Classic exact string match */
+@@ -99,6 +103,9 @@ static unsigned int contains(mmfile_t *mf, regex_t *regexp, kwset_t kws)
+ 			sz -= offset + kwsm.size[0];
+ 			data += offset + kwsm.size[0];
+ 			cnt++;
++
++			if (limit && cnt == limit)
++				return cnt;
+ 		}
+ 	}
+ 	return cnt;
+@@ -108,8 +115,8 @@ static int has_changes(mmfile_t *one, mmfile_t *two,
+ 		       struct diff_options *o,
+ 		       regex_t *regexp, kwset_t kws)
+ {
+-	unsigned int c1 = one ? contains(one, regexp, kws) : 0;
+-	unsigned int c2 = two ? contains(two, regexp, kws) : 0;
++	unsigned int c1 = one ? contains(one, regexp, kws, 0) : 0;
++	unsigned int c2 = two ? contains(two, regexp, kws, c1 + 1) : 0;
+ 	return c1 != c2;
+ }
+ 
+-- 
+2.31.1.639.g3d04783866f
+

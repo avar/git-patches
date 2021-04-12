@@ -1,0 +1,75 @@
+From 749c3ca3f98f66691d18ca584582a394866ee34b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-08.22-749c3ca3f98-20210412T170022Z-avarab@gmail.com>
+In-Reply-To: <cover-00.22-00000000000-20210412T170022Z-avarab@gmail.com>
+References: <20210216115801.4773-1-avarab@gmail.com>
+	<cover-00.22-00000000000-20210412T170022Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Feb 2021 17:04:07 +0100
+Subject: [PATCH v3 08/22] pickaxe: die when --find-object and --pickaxe-all
+ are combined
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Neither the --pickaxe-all documentation nor --find-object's has ever
+suggested that you can combine the two. See f506b8e8b5 (git log/diff:
+add -G<regexp> that greps in the patch text, 2010-08-23) and
+15af58c1ad (diffcore: add a pickaxe option to find a specific blob,
+2018-01-04).
+
+But we've silently tolerated it, which makes the logic in
+diffcore_pickaxe() harder to reason about. Let's assert that we won't
+have the two combined.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c                 | 3 +++
+ diff.h                 | 2 ++
+ t/t4209-log-pickaxe.sh | 3 +++
+ 3 files changed, 8 insertions(+)
+
+diff --git a/diff.c b/diff.c
+index f9e86bca04e..c1f47a7f013 100644
+--- a/diff.c
++++ b/diff.c
+@@ -4631,6 +4631,9 @@ void diff_setup_done(struct diff_options *options)
+ 	if (HAS_MULTI_BITS(options->pickaxe_opts & DIFF_PICKAXE_KINDS_G_REGEX_MASK))
+ 		die(_("-G and --pickaxe-regex are mutually exclusive, use --pickaxe-regex with -S"));
+ 
++	if (HAS_MULTI_BITS(options->pickaxe_opts & DIFF_PICKAXE_KINDS_ALL_OBJFIND_MASK))
++		die(_("---pickaxe-all and --find-object are mutually exclusive, use --pickaxe-all with -G and -S"));
++
+ 	/*
+ 	 * Most of the time we can say "there are changes"
+ 	 * only by checking if there are changed paths, but
+diff --git a/diff.h b/diff.h
+index 5e110d349be..82254396f95 100644
+--- a/diff.h
++++ b/diff.h
+@@ -558,6 +558,8 @@ int git_config_rename(const char *var, const char *value);
+ 				 DIFF_PICKAXE_KIND_OBJFIND)
+ #define DIFF_PICKAXE_KINDS_G_REGEX_MASK (DIFF_PICKAXE_KIND_G | \
+ 					 DIFF_PICKAXE_REGEX)
++#define DIFF_PICKAXE_KINDS_ALL_OBJFIND_MASK (DIFF_PICKAXE_ALL | \
++					     DIFF_PICKAXE_KIND_OBJFIND)
+ 
+ #define DIFF_PICKAXE_IGNORE_CASE	32
+ 
+diff --git a/t/t4209-log-pickaxe.sh b/t/t4209-log-pickaxe.sh
+index 772c6c1a7c8..16166ffd3e6 100755
+--- a/t/t4209-log-pickaxe.sh
++++ b/t/t4209-log-pickaxe.sh
+@@ -63,6 +63,9 @@ test_expect_success 'usage' '
+ 	grep "mutually exclusive" err &&
+ 
+ 	test_expect_code 128 git log -Sstring --find-object=HEAD 2>err &&
++	grep "mutually exclusive" err &&
++
++	test_expect_code 128 git log --pickaxe-all --find-object=HEAD 2>err &&
+ 	grep "mutually exclusive" err
+ '
+ 
+-- 
+2.31.1.639.g3d04783866f
+

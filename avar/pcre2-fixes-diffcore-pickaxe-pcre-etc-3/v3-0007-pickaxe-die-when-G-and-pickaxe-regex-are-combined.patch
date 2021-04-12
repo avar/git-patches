@@ -1,0 +1,83 @@
+From 83e7b4793b694a6f7abc8969a5a7b1359f29bc64 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.22-83e7b4793b6-20210412T170022Z-avarab@gmail.com>
+In-Reply-To: <cover-00.22-00000000000-20210412T170022Z-avarab@gmail.com>
+References: <20210216115801.4773-1-avarab@gmail.com>
+	<cover-00.22-00000000000-20210412T170022Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Feb 2021 17:00:56 +0100
+Subject: [PATCH v3 07/22] pickaxe: die when -G and --pickaxe-regex are
+ combined
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the -G and --pickaxe-regex options are combined we simply ignore
+the --pickaxe-regex option. Let's die instead as suggested by our
+documentation, since -G is always a regex.
+
+When --pickaxe-regex was added in d01d8c6782 (Support for pickaxe
+matching regular expressions, 2006-03-29) only the -S option
+existed. Then when -G was added in f506b8e8b5 (git log/diff: add
+-G<regexp> that greps in the patch text, 2010-08-23) neither the
+documentation for --pickaxe-regex was updated accordingly, nor was
+something like this assertion added.
+
+Since 5bc3f0b567 (diffcore-pickaxe doc: document -S and -G properly,
+2013-05-31) we've claimed that --pickaxe-regex should only be used
+with -S, but have silently tolerated combining it with -G, let's die
+instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c                 | 3 +++
+ diff.h                 | 2 ++
+ t/t4209-log-pickaxe.sh | 5 +++++
+ 3 files changed, 10 insertions(+)
+
+diff --git a/diff.c b/diff.c
+index 4acccd9d7ed..f9e86bca04e 100644
+--- a/diff.c
++++ b/diff.c
+@@ -4628,6 +4628,9 @@ void diff_setup_done(struct diff_options *options)
+ 	if (HAS_MULTI_BITS(options->pickaxe_opts & DIFF_PICKAXE_KINDS_MASK))
+ 		die(_("-G, -S and --find-object are mutually exclusive"));
+ 
++	if (HAS_MULTI_BITS(options->pickaxe_opts & DIFF_PICKAXE_KINDS_G_REGEX_MASK))
++		die(_("-G and --pickaxe-regex are mutually exclusive, use --pickaxe-regex with -S"));
++
+ 	/*
+ 	 * Most of the time we can say "there are changes"
+ 	 * only by checking if there are changed paths, but
+diff --git a/diff.h b/diff.h
+index c8f3faea8aa..5e110d349be 100644
+--- a/diff.h
++++ b/diff.h
+@@ -556,6 +556,8 @@ int git_config_rename(const char *var, const char *value);
+ #define DIFF_PICKAXE_KINDS_MASK (DIFF_PICKAXE_KIND_S | \
+ 				 DIFF_PICKAXE_KIND_G | \
+ 				 DIFF_PICKAXE_KIND_OBJFIND)
++#define DIFF_PICKAXE_KINDS_G_REGEX_MASK (DIFF_PICKAXE_KIND_G | \
++					 DIFF_PICKAXE_REGEX)
+ 
+ #define DIFF_PICKAXE_IGNORE_CASE	32
+ 
+diff --git a/t/t4209-log-pickaxe.sh b/t/t4209-log-pickaxe.sh
+index 532bb875f02..772c6c1a7c8 100755
+--- a/t/t4209-log-pickaxe.sh
++++ b/t/t4209-log-pickaxe.sh
+@@ -66,6 +66,11 @@ test_expect_success 'usage' '
+ 	grep "mutually exclusive" err
+ '
+ 
++test_expect_success 'usage: --pickaxe-regex' '
++	test_expect_code 128 git log -Gregex --pickaxe-regex 2>err &&
++	grep "mutually exclusive" err
++'
++
+ test_expect_success 'usage: --no-pickaxe-regex' '
+ 	cat >expect <<-\EOF &&
+ 	fatal: unrecognized argument: --no-pickaxe-regex
+-- 
+2.31.1.639.g3d04783866f
+
