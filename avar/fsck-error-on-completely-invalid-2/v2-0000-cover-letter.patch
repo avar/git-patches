@@ -1,0 +1,121 @@
+From 226d2031bcf2e710e366cee8e6a2f4d9916d0074 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.6-00000000000-20210413T093705Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210328T025618Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210328T025618Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 13 Apr 2021 11:37:05 +0200
+Subject: [PATCH v2 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  cache.h: move object functions to object-store.h
+  fsck tests: refactor one test to use a sub-repo
+  fsck: don't hard die on invalid object types
+  object-store.h: move read_loose_object() below 'struct object_info'
+  fsck: report invalid types recorded in objects
+  fsck: report invalid object type-path combinations
+
+ builtin/cat-file.c    |  7 +++--
+ builtin/fast-export.c |  2 +-
+ builtin/fsck.c        | 28 +++++++++++++++---
+ builtin/index-pack.c  |  2 +-
+ builtin/mktag.c       |  3 +-
+ cache.h               | 10 -------
+ object-file.c         | 66 +++++++++++++++++++++----------------------
+ object-store.h        | 39 ++++++++++++++++---------
+ object.c              |  4 +--
+ pack-check.c          |  3 +-
+ streaming.c           |  5 +++-
+ t/t1450-fsck.sh       | 64 ++++++++++++++++++++++++++++++-----------
+ 12 files changed, 146 insertions(+), 87 deletions(-)
+
+Range-diff against v1:
+ 1:  a7b329c21cf <  -:  ----------- usage.c: don't copy/paste the same comment three times
+ 2:  8c8b1dfd184 <  -:  ----------- api docs: document BUG() in api-error-handling.txt
+ 3:  f0e0d0daa6e <  -:  ----------- api docs: document that BUG() emits a trace2 error event
+ 4:  515d146cac8 <  -:  ----------- usage.c: add a non-fatal bug() function to go with BUG()
+ 5:  f8f00db8d31 =  1:  37c323a2410 cache.h: move object functions to object-store.h
+ 6:  3e547289408 =  2:  5a2cd6cca9c fsck tests: refactor one test to use a sub-repo
+ 7:  74654a01ba3 =  3:  d0d9cb33315 fsck: don't hard die on invalid object types
+ -:  ----------- >  4:  81fffefcf99 object-store.h: move read_loose_object() below 'struct object_info'
+ 8:  d23fb5cd039 !  5:  5fb6ac4faee fsck: improve the error on invalid object types
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    fsck: improve the error on invalid object types
+    +    fsck: report invalid types recorded in objects
+     
+         Continue the work in the preceding commit and improve the error on:
+     
+    @@ object-file.c: int read_loose_object(const char *path,
+      			free(*contents);
+     
+      ## object-store.h ##
+    -@@ object-store.h: int force_object_loose(const struct object_id *oid, time_t mtime);
+    +@@ object-store.h: int oid_object_info_extended(struct repository *r,
+    + 
+    + /*
+    +  * Open the loose object at path, check its hash, and return the contents,
+    ++ * use the "oi" argument to assert things about the object, or e.g. populate its
+    +  * type, and size. If the object is a blob, then "contents" may return NULL,
+    +  * to allow streaming of large blobs.
+       *
+    -  * Returns 0 on success, negative on error (details may be written to stderr).
+    +@@ object-store.h: int oid_object_info_extended(struct repository *r,
+       */
+    -+struct object_info;
+      int read_loose_object(const char *path,
+      		      const struct object_id *expected_oid,
+     -		      enum object_type *type,
+    @@ object-store.h: int force_object_loose(const struct object_id *oid, time_t mtime
+     +		      struct object_info *oi,
+      		      unsigned int oi_flags);
+      
+    - /* Retry packed storage after checking packed and loose storage */
+    + /*
+     
+      ## t/t1450-fsck.sh ##
+     @@ t/t1450-fsck.sh: test_expect_success 'object with hash mismatch' '
+ 9:  bcec536b0f6 !  6:  226d2031bcf fsck: improve error on loose object hash mismatch
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    +    fsck: report invalid object type-path combinations
+    +
+         fsck: improve error on loose object hash mismatch
+     
+         Improve the error that's emitted in cases where we find a loose object
+    @@ object-file.c: int read_loose_object(const char *path,
+     -			      oid_to_hex(expected_oid));
+     +					   *contents, *size, oi->type_name->buf, real_oid)) {
+     +			if (oideq(real_oid, &null_oid))
+    -+				/*
+    -+				 * Not a plain BUG() because if it
+    -+				 * does happen we're in the middle of
+    -+				 * an fsck we'd like to see to the
+    -+				 * end.
+    -+				 */
+    -+				bug("BUG trying to compute hash for object at %s (expected %s)",
+    -+				    path, oid_to_hex(expected_oid));
+    ++				BUG("should only get OID mismatch errors with mapped contents");
+      			free(*contents);
+      			goto out;
+      		}
+     
+      ## object-store.h ##
+    -@@ object-store.h: int force_object_loose(const struct object_id *oid, time_t mtime);
+    - struct object_info;
+    +@@ object-store.h: int oid_object_info_extended(struct repository *r,
+    +  */
+      int read_loose_object(const char *path,
+      		      const struct object_id *expected_oid,
+     +		      struct object_id *real_oid,
+-- 
+2.31.1.645.g989d83ea6a6
+
