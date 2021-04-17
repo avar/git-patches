@@ -1,0 +1,54 @@
+From a8b483bc771028e680d62193b2060e39c625d5fa Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.15-a8b483bc771-20210417T092233Z-avarab@gmail.com>
+In-Reply-To: <cover-00.15-00000000000-20210417T092232Z-avarab@gmail.com>
+References: <cover-00.16-00000000000-20210412T110456Z-avarab@gmail.com>
+	<cover-00.15-00000000000-20210417T092232Z-avarab@gmail.com>
+From: =?ISO-2022-JP?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 12 Apr 2021 02:02:47 +0200
+Subject: [PATCH v2 01/15] check-non-portable-shell: check for "test <cond>
+ -a/-o <cond>"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=ISO-2022-JP
+Content-Transfer-Encoding: 8bit
+
+Add a check for -a/-o in "test", as a follow-up to the
+CodingGuidelines having recommended against their use since
+897f964c0dc (CodingGuidelines: avoid "test <cond> -a/-o <cond>",
+2014-05-20).
+
+These constructs are considered obsolescent by POSIX[1]. GNU has
+likewise warned against them[2] for a few decades.
+
+These will only match the simplistic forms of `test -X blah` (where
+"-X" is some single letter option), but will miss expressions such as
+`test "$foo" = bar`. We stop at "&" or "|" to try not to overmatch
+things like:
+
+    test whatever && ls -a foo
+    test whatever && foo -o outfile
+
+1. https://pubs.opengroup.org/onlinepubs/9699919799/utilities/test.html#tag_20_128_16
+2. https://www.gnu.org/savannah-checkouts/gnu/autoconf/manual/autoconf-2.70/html_node/Limitations-of-Builtins.html
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/check-non-portable-shell.pl | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/t/check-non-portable-shell.pl b/t/check-non-portable-shell.pl
+index fd3303552be..894aa0a4f92 100755
+--- a/t/check-non-portable-shell.pl
++++ b/t/check-non-portable-shell.pl
+@@ -41,6 +41,8 @@ sub err {
+ 	/^\s*declare\s+/ and err 'arrays/declare not portable';
+ 	/^\s*[^#]\s*which\s/ and err 'which is not portable (use type)';
+ 	/\btest\s+[^=]*==/ and err '"test a == b" is not portable (use =)';
++	/\btest\s+-[a-z]\s+[^&|]+\s+-a\s+/ and err '"test A && test B" preferred to "test A -a B"';
++	/\btest\s+-[a-z]\s+[^&|]+\s+-o\s+/ and err '"test A || test B" preferred to "test A -o B"';
+ 	/\bwc -l.*"\s*=/ and err '`"$(wc -l)"` is not portable (use test_line_count)';
+ 	/\bhead\s+-c\b/ and err 'head -c is not portable (use test_copy_bytes BYTES <file >out)';
+ 	/(?:\$\(seq|^\s*seq\b)/ and err 'seq is not portable (use test_seq)';
+-- 
+2.31.1.687.g1d87aeed692
+

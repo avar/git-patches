@@ -1,0 +1,109 @@
+From 9b6bf65ce1c82001b2cc3672c37077d66fdb003a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.15-9b6bf65ce1c-20210417T092233Z-avarab@gmail.com>
+In-Reply-To: <cover-00.15-00000000000-20210417T092232Z-avarab@gmail.com>
+References: <cover-00.16-00000000000-20210412T110456Z-avarab@gmail.com>
+	<cover-00.15-00000000000-20210417T092232Z-avarab@gmail.com>
+From: =?ISO-2022-JP?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 27 Feb 2021 12:42:46 +0100
+Subject: [PATCH v2 06/15] test-lib functions: add an --annotated option to
+ "test_commit"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=ISO-2022-JP
+Content-Transfer-Encoding: 8bit
+
+Add an --annotated option to test_commit to create annotated tags. The
+tag will share the same message as the commit, and we'll call
+test_tick before creating it (unless --notick) is provided.
+
+There's quite a few tests that could be simplified with this
+construct. I've picked one to convert in this change as a
+demonstration.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1403-show-ref.sh     |  6 ++----
+ t/test-lib-functions.sh | 27 ++++++++++++++++++++++-----
+ 2 files changed, 24 insertions(+), 9 deletions(-)
+
+diff --git a/t/t1403-show-ref.sh b/t/t1403-show-ref.sh
+index 6ce62f878c3..17d3cc14050 100755
+--- a/t/t1403-show-ref.sh
++++ b/t/t1403-show-ref.sh
+@@ -7,11 +7,9 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+-	test_commit A &&
+-	git tag -f -a -m "annotated A" A &&
++	test_commit --annotate A &&
+ 	git checkout -b side &&
+-	test_commit B &&
+-	git tag -f -a -m "annotated B" B &&
++	test_commit --annotate B &&
+ 	git checkout main &&
+ 	test_commit C &&
+ 	git branch B A^0
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index d0f4f3885d6..6e2332a324a 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -179,6 +179,10 @@ debug () {
+ #	Invoke "git commit" with --author <author>
+ #   --no-tag
+ #	Do not tag the resulting commit
++#   --annotate
++#	Create an annotated tag with "--annotate -m <message>". Calls
++#	test_tick between making the commit and tag, unless --notick
++#	is given.
+ #
+ # This will commit a file with the given contents and the given commit
+ # message, and tag the resulting commit with the given tag name.
+@@ -191,7 +195,7 @@ test_commit () {
+ 	author= &&
+ 	signoff= &&
+ 	indir= &&
+-	no_tag= &&
++	tag=light &&
+ 	while test $# != 0
+ 	do
+ 		case "$1" in
+@@ -219,7 +223,10 @@ test_commit () {
+ 			shift
+ 			;;
+ 		--no-tag)
+-			no_tag=yes
++			tag=none
++			;;
++		--annotate)
++			tag=annotate
+ 			;;
+ 		*)
+ 			break
+@@ -243,10 +250,20 @@ test_commit () {
+ 	git ${indir:+ -C "$indir"} commit \
+ 	    ${author:+ --author "$author"} \
+ 	    $signoff -m "$1" &&
+-	if test -z "$no_tag"
+-	then
++	case "$tag" in
++	none)
++		;;
++	light)
+ 		git ${indir:+ -C "$indir"} tag "${4:-$1}"
+-	fi
++		;;
++	annotate)
++		if test -z "$notick"
++		then
++			test_tick
++		fi &&
++		git ${indir:+ -C "$indir"} tag -a -m "$1" "${4:-$1}"
++		;;
++	esac
+ }
+ 
+ # Call test_merge with the arguments "<message> <commit>", where <commit>
+-- 
+2.31.1.687.g1d87aeed692
+
