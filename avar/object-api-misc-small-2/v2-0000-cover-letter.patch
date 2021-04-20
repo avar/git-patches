@@ -1,9 +1,9 @@
 From fe75526a654fd5bf9a9d68de3264910567d1862a Mon Sep 17 00:00:00 2001
-Message-Id: <cover-00.10-0000000000-20210420T124413Z-avarab@gmail.com>
+Message-Id: <cover-00.10-0000000000-20210420T124428Z-avarab@gmail.com>
 In-Reply-To: <cover-0.3-0000000000-20210409T080534Z-avarab@gmail.com>
 References: <cover-0.3-0000000000-20210409T080534Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 20 Apr 2021 14:44:13 +0200
+Date: Tue, 20 Apr 2021 14:44:28 +0200
 Subject: [PATCH v2 00/10] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -47,15 +47,240 @@ Content-Transfer-Encoding: 8bit
  20 files changed, 111 insertions(+), 63 deletions(-)
 
 Range-diff against v1:
- 1:  68a7709fe5 <  -:  ---------- blob.c: remove buffer & size arguments to parse_blob_buffer()
- 2:  f1fcc31717 <  -:  ---------- object.c: initialize automatic variable in lookup_object()
  -:  ---------- >  1:  5818eca45d cat-file tests: test for bogus type name handling
  -:  ---------- >  2:  0b48389325 hash-object tests: more detailed test for invalid type
  -:  ---------- >  3:  cd585017a9 mktree tests: add test for invalid object type
  -:  ---------- >  4:  48aca62864 object-file.c: take type id, not string, in read_object_with_reference()
  -:  ---------- >  5:  5213d500b9 {commit,tree,blob,tag}.c: add a create_{commit,tree,blob,tag}()
- -:  ---------- >  6:  02c8d2a9ba blob.c: remove parse_blob_buffer()
- -:  ---------- >  7:  ee0b572f7d object.c: simplify return semantic of parse_object_buffer()
+ 1:  68a7709fe5 !  6:  02c8d2a9ba blob.c: remove buffer & size arguments to parse_blob_buffer()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    blob.c: remove buffer & size arguments to parse_blob_buffer()
+    +    blob.c: remove parse_blob_buffer()
+     
+         As noted in the comment introduced in 837d395a5c0 (Replace
+         parse_blob() with an explanatory comment, 2010-01-18) the old
+    -    parse_blob() function and the current parse_blob_buffer() exist merely
+    -    to provide consistency in the API.
+    +    parse_blob() function and the parse_blob_buffer() existed to provide
+    +    consistency in the API.
+    +
+    +    See bd2c39f58f9 ([PATCH] don't load and decompress objects twice with
+    +    parse_object(), 2005-05-06) for the introduction of
+    +    parse_blob_buffer().
+     
+         We're not going to parse blobs like we "parse" commits, trees or
+    -    tags. So let's not have the parse_blob_buffer() take arguments that
+    -    pretends that we do. Its only use is to set the "parsed" flag.
+    +    tags. So we should not have the parse_blob_buffer() take arguments
+    +    that pretends that we do. Its only use is to set the "parsed" flag.
+     
+    -    See bd2c39f58f9 ([PATCH] don't load and decompress objects twice with
+    -    parse_object(), 2005-05-06) for the introduction of parse_blob_buffer().
+    +    So let's entirely remove the function, and use our newly created
+    +    create_blob() for the allocation. We can then set the "parsed" flag
+    +    directly in parse_object_buffer() and parse_object() instead.
+     
+    -    I'm moving the prototype of parse_blob_buffer() below the comment
+    -    added in 837d395a5c0 while I'm at it. That comment was originally
+    -    meant to be a replacement for the missing parse_blob() function, but
+    -    it's much less confusing to have it be above the parse_blob_buffer()
+    -    function it refers to.
+    +    At this point I could move the comment added in 837d395a5c0 to one or
+    +    both of those object.c function, but let's just delete it instead. I
+    +    think it's obvious from the flow of the code what's going on
+    +    here. Setting the parsed flag no longer happens at a distance, so why
+    +    we're doing it isn't unclear anymore.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## blob.c ##
+    +@@
+    + 
+    + const char *blob_type = "blob";
+    + 
+    +-static struct blob *create_blob(struct repository *r, const struct object_id *oid)
+    ++struct blob *create_blob(struct repository *r, const struct object_id *oid)
+    + {
+    + 	return create_object(r, oid, alloc_blob_node(r));
+    + }
+     @@ blob.c: struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
+    + 		return create_blob(r, oid);
+      	return object_as_type(obj, OBJ_BLOB, 0);
+      }
+    - 
+    +-
+     -int parse_blob_buffer(struct blob *item, void *buffer, unsigned long size)
+    -+int parse_blob_buffer(struct blob *item)
+    - {
+    - 	item->object.parsed = 1;
+    - 	return 0;
+    +-{
+    +-	item->object.parsed = 1;
+    +-	return 0;
+    +-}
+     
+      ## blob.h ##
+     @@ blob.h: struct blob {
+    + 	struct object object;
+    + };
+      
+    ++struct blob *create_blob(struct repository *r, const struct object_id *oid);
+      struct blob *lookup_blob(struct repository *r, const struct object_id *oid);
+      
+     -int parse_blob_buffer(struct blob *item, void *buffer, unsigned long size);
+     -
+    - /**
+    -  * Blobs do not contain references to other objects and do not have
+    -  * structured data that needs parsing. However, code may use the
+    -@@ blob.h: int parse_blob_buffer(struct blob *item, void *buffer, unsigned long size);
+    -  * parse_blob_buffer() is used (by object.c) to flag that the object
+    -  * has been read successfully from the database.
+    -  **/
+    -+int parse_blob_buffer(struct blob *item);
+    - 
+    +-/**
+    +- * Blobs do not contain references to other objects and do not have
+    +- * structured data that needs parsing. However, code may use the
+    +- * "parsed" bit in the struct object for a blob to determine whether
+    +- * its content has been found to actually be available, so
+    +- * parse_blob_buffer() is used (by object.c) to flag that the object
+    +- * has been read successfully from the database.
+    +- **/
+    +-
+      #endif /* BLOB_H */
+     
+      ## object.c ##
+    @@ object.c: struct object *parse_object_buffer(struct repository *r, const struct
+      		struct blob *blob = lookup_blob(r, oid);
+      		if (blob) {
+     -			if (parse_blob_buffer(blob, buffer, size))
+    -+			if (parse_blob_buffer(blob))
+    - 				return NULL;
+    +-				return NULL;
+    ++			blob->object.parsed = 1;
+      			obj = &blob->object;
+      		}
+    + 	} else if (type == OBJ_TREE) {
+     @@ object.c: struct object *parse_object(struct repository *r, const struct object_id *oid)
+    + 	if ((obj && obj->type == OBJ_BLOB && repo_has_object_file(r, oid)) ||
+    + 	    (!obj && repo_has_object_file(r, oid) &&
+    + 	     oid_object_info(r, oid, NULL) == OBJ_BLOB)) {
+    ++		if (!obj) {
+    ++			struct blob *blob = create_blob(r, oid);
+    ++			obj = &blob->object;
+    ++		}
+    + 		if (check_object_signature(r, repl, NULL, 0, NULL) < 0) {
+      			error(_("hash mismatch %s"), oid_to_hex(oid));
+      			return NULL;
+      		}
+     -		parse_blob_buffer(lookup_blob(r, oid), NULL, 0);
+    -+		parse_blob_buffer(lookup_blob(r, oid));
+    - 		return lookup_object(r, oid);
+    +-		return lookup_object(r, oid);
+    ++		obj->parsed = 1;
+    ++		return obj;
+      	}
+      
+    + 	buffer = repo_read_object_file(r, oid, &type, &size);
+ 2:  f1fcc31717 !  7:  ee0b572f7d object.c: initialize automatic variable in lookup_object()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    object.c: initialize automatic variable in lookup_object()
+    +    object.c: simplify return semantic of parse_object_buffer()
+     
+    -    Initialize a "struct object obj*" variable to NULL explicitly and
+    -    return it instead of leaving it uninitialized until the "while"
+    -    loop.
+    +    Remove the local "obj" variable from parse_object_buffer() and return
+    +    the object directly instead.
+     
+    -    There was no bug here, it's just less confusing when debugging if the
+    -    "obj" is either NULL or a valid object, not some random invalid
+    -    pointer.
+    +    The reason this variable was introduced was to free() a variable
+    +    before returning in bd2c39f58f9 ([PATCH] don't load and decompress
+    +    objects twice with parse_object() 2005-05-06). But that was when
+    +    parse_object_buffer() didn't exist, there was only the parse_object()
+    +    function.
+     
+    -    See 0556a11a0df (git object hash cleanups, 2006-06-30) for the initial
+    -    implementation.
+    +    Since the split-up of the two in 9f613ddd21c (Add git-for-each-ref:
+    +    helper for language bindings, 2006-09-15) we have not needed this
+    +    variable, and as demonstrated here not having to set it to (re)set it
+    +    to NULL simplifies the function.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## object.c ##
+    -@@ object.c: static void insert_obj_hash(struct object *obj, struct object **hash, unsigned i
+    - struct object *lookup_object(struct repository *r, const struct object_id *oid)
+    +@@ object.c: struct object *lookup_unknown_object(const struct object_id *oid)
+    + 
+    + struct object *parse_object_buffer(struct repository *r, const struct object_id *oid, enum object_type type, unsigned long size, void *buffer, int *eaten_p)
+      {
+    - 	unsigned int i, first;
+     -	struct object *obj;
+    -+	struct object *obj = NULL;
+    + 	*eaten_p = 0;
+      
+    - 	if (!r->parsed_objects->obj_hash)
+    --		return NULL;
+    -+		return obj;
+    +-	obj = NULL;
+    + 	if (type == OBJ_BLOB) {
+    + 		struct blob *blob = lookup_blob(r, oid);
+    + 		if (blob) {
+    + 			blob->object.parsed = 1;
+    +-			obj = &blob->object;
+    ++			return &blob->object;
+    + 		}
+    + 	} else if (type == OBJ_TREE) {
+    + 		struct tree *tree = lookup_tree(r, oid);
+    + 		if (tree) {
+    +-			obj = &tree->object;
+    + 			if (!tree->buffer)
+    + 				tree->object.parsed = 0;
+    + 			if (!tree->object.parsed) {
+    +@@ object.c: struct object *parse_object_buffer(struct repository *r, const struct object_id
+    + 					return NULL;
+    + 				*eaten_p = 1;
+    + 			}
+    ++			return &tree->object;
+    + 		}
+    + 	} else if (type == OBJ_COMMIT) {
+    + 		struct commit *commit = lookup_commit(r, oid);
+    +@@ object.c: struct object *parse_object_buffer(struct repository *r, const struct object_id
+    + 				set_commit_buffer(r, commit, buffer, size);
+    + 				*eaten_p = 1;
+    + 			}
+    +-			obj = &commit->object;
+    ++			return &commit->object;
+    + 		}
+    + 	} else if (type == OBJ_TAG) {
+    + 		struct tag *tag = lookup_tag(r, oid);
+    + 		if (tag) {
+    + 			if (parse_tag_buffer(r, tag, buffer, size))
+    + 			       return NULL;
+    +-			obj = &tag->object;
+    ++			return &tag->object;
+    + 		}
+    + 	} else {
+    + 		warning(_("object %s has unknown type id %d"), oid_to_hex(oid), type);
+    +-		obj = NULL;
+    + 	}
+    +-	return obj;
+    ++	return NULL;
+    + }
+      
+    - 	first = i = hash_obj(oid, r->parsed_objects->obj_hash_size);
+    - 	while ((obj = r->parsed_objects->obj_hash[i]) != NULL) {
+    + struct object *parse_object_or_die(const struct object_id *oid,
  -:  ---------- >  8:  f652d0fb5c object.c: don't go past "len" under die() in type_from_string_gently()
  -:  ---------- >  9:  e463fe5f6a mktree: stop setting *ntr++ to NIL
  -:  ---------- > 10:  fe75526a65 mktree: emit a more detailed error when the <type> is invalid
