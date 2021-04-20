@@ -1,0 +1,85 @@
+From 0ff9c653c333c50cf92ac8eaa14e34a0f7295813 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.10-0ff9c653c3-20210420T125416Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-0000000000-20210420T125415Z-avarab@gmail.com>
+References: <cover-0.6-0000000000-20210409T082935Z-avarab@gmail.com>
+	<cover-00.10-0000000000-20210420T125415Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 28 Mar 2021 01:22:21 +0100
+Subject: [PATCH v2 01/10] object.c: stop supporting len == -1 in
+ type_from_string_gently()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the type_from_string() macro into a function and drop the
+support for passing len < 0.
+
+Support for len < 0 was added in fe8e3b71805 (Refactor
+type_from_string() to allow continuing after detecting an error,
+2014-09-10), but no callers use that form. Let's drop it to simplify
+this, and in preparation for simplifying these even further.
+
+Even though the argument was changed from ssize_t to the unsigned
+size_t C is by design forgiving about passing -1 as an unsigned
+type (it's just an alias for "set all bits)", let's detect any
+outstanding in-flight callers passing a -1.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object.c | 13 ++++++++++---
+ object.h |  4 ++--
+ 2 files changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/object.c b/object.c
+index bad9e17f25..aae2a27e55 100644
+--- a/object.c
++++ b/object.c
+@@ -35,12 +35,12 @@ const char *type_name(unsigned int type)
+ 	return object_type_strings[type];
+ }
+ 
+-int type_from_string_gently(const char *str, ssize_t len, int gentle)
++int type_from_string_gently(const char *str, size_t len, int gentle)
+ {
+ 	int i;
+ 
+-	if (len < 0)
+-		len = strlen(str);
++	if (len == ~(size_t)0)
++		BUG("type-from-string-gently no longer allows unspecified length");
+ 
+ 	for (i = 1; i < ARRAY_SIZE(object_type_strings); i++)
+ 		if (!strncmp(str, object_type_strings[i], len) &&
+@@ -53,6 +53,13 @@ int type_from_string_gently(const char *str, ssize_t len, int gentle)
+ 	die(_("invalid object type \"%.*s\""), (int)len, str);
+ }
+ 
++int type_from_string(const char *str)
++{
++	size_t len = strlen(str);
++	int ret = type_from_string_gently(str, len, 0);
++	return ret;
++}
++
+ /*
+  * Return a numerical hash value between 0 and n-1 for the object with
+  * the specified sha1.  n must be a power of 2.  Please note that the
+diff --git a/object.h b/object.h
+index 59daadce21..f9d8f4d22b 100644
+--- a/object.h
++++ b/object.h
+@@ -93,8 +93,8 @@ struct object {
+ };
+ 
+ const char *type_name(unsigned int type);
+-int type_from_string_gently(const char *str, ssize_t, int gentle);
+-#define type_from_string(str) type_from_string_gently(str, -1, 0)
++int type_from_string_gently(const char *str, size_t, int gentle);
++int type_from_string(const char *str);
+ 
+ /*
+  * Return the current number of buckets in the object hashmap.
+-- 
+2.31.1.723.ga5d7868e4a
+
