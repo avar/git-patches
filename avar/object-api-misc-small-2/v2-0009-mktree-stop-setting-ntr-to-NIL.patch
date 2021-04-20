@@ -1,0 +1,63 @@
+From e463fe5f6a09e042ad6e071c9ef20bc5329e4ba4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.10-e463fe5f6a-20210420T124413Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-0000000000-20210420T124413Z-avarab@gmail.com>
+References: <cover-0.3-0000000000-20210409T080534Z-avarab@gmail.com>
+	<cover-00.10-0000000000-20210420T124413Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Apr 2021 12:49:10 +0200
+Subject: [PATCH v2 09/10] mktree: stop setting *ntr++ to NIL
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since 58ce21b819e (builtin/mktree: remove hard-coded constant,
+2018-10-15) we have not made any subsequent use of the ntr variable
+itself, but we did rely on it to NIL-delimit the string we were about
+to feed to type_from_string().
+
+Using type_from_string() here results in needless work, as we'd do a
+strlen() on it, just to find point at which we had a SPC
+character (now NIL) earlier in this function.
+
+We can instead skip incrementing the ntr pointer, then pass the
+pointer and length to the type_from_string() function instead.
+
+Doing so would have been buggy in cases where the type was invalid
+until a preceding commit fixed the die() invocation in
+type_from_string() to also pay attention to the length. A preceding
+commit added a test to t1010-mktree.sh which would fail if not for
+that fix in type_from_string(), i.e. we'd end up printing the rest of
+the line, not just the invalid type.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/mktree.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/builtin/mktree.c b/builtin/mktree.c
+index 891991b00d..7a27cfa2e0 100644
+--- a/builtin/mktree.c
++++ b/builtin/mktree.c
+@@ -95,9 +95,6 @@ static void mktree_line(char *buf, int nul_term_line, int allow_missing)
+ 	if (S_ISGITLINK(mode))
+ 		allow_missing = 1;
+ 
+-
+-	*ntr++ = 0; /* now at the beginning of SHA1 */
+-
+ 	path = (char *)p + 1;  /* at the beginning of name */
+ 	if (!nul_term_line && path[0] == '"') {
+ 		struct strbuf p_uq = STRBUF_INIT;
+@@ -111,7 +108,7 @@ static void mktree_line(char *buf, int nul_term_line, int allow_missing)
+ 	 * These should all agree.
+ 	 */
+ 	mode_type = object_type(mode);
+-	if (mode_type != type_from_string(ptr)) {
++	if (mode_type != type_from_string_gently(ptr, ntr - ptr, 0)) {
+ 		die("entry '%s' object type (%s) doesn't match mode type (%s)",
+ 			path, ptr, type_name(mode_type));
+ 	}
+-- 
+2.31.1.723.ga5d7868e4a
+

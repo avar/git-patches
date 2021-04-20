@@ -1,0 +1,93 @@
+From fe75526a654fd5bf9a9d68de3264910567d1862a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.10-fe75526a65-20210420T124413Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-0000000000-20210420T124413Z-avarab@gmail.com>
+References: <cover-0.3-0000000000-20210409T080534Z-avarab@gmail.com>
+	<cover-00.10-0000000000-20210420T124413Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Apr 2021 12:57:38 +0200
+Subject: [PATCH v2 10/10] mktree: emit a more detailed error when the <type>
+ is invalid
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When given an invalid <type> as part of a "<mode> SP [...]" line (see
+the added comment) we'd use the generic die() message in
+type_from_string_gently().
+
+Let's do a bit better in that case and emit a message at the same
+level of detail as the existing die() message if the type was valid,
+but didn't match the mode.
+
+In preceding commits we fixed the type_from_string_gently() function
+for cases where gentle=0, now there are no more callers of it that
+pass "gentle=0" that aren't type_from_string() itself.
+
+So that fixing of a bug wasn't strictly needed for this end-state, but
+helps to incrementally explain and test the changes we're making, and
+of course leaves type_from_string_gently() in a good state for any
+future gently=0 callers.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/mktree.c  | 20 ++++++++++++++++----
+ t/t1010-mktree.sh |  2 +-
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/mktree.c b/builtin/mktree.c
+index 7a27cfa2e0..67e11d8562 100644
+--- a/builtin/mktree.c
++++ b/builtin/mktree.c
+@@ -72,8 +72,17 @@ static void mktree_line(char *buf, int nul_term_line, int allow_missing)
+ 	char *ptr, *ntr;
+ 	const char *p;
+ 	unsigned mode;
+-	enum object_type mode_type; /* object type derived from mode */
+-	enum object_type obj_type; /* object type derived from sha */
++	/*
++	 * For a line like:
++	 *
++	 *     <mode> SP <type> SP <object> SP <object size> TAB <file>"
++	 *
++	 * We'll discover and validate the type from all of <mode>,
++	 * <type> and <object>
++	 */
++	enum object_type mode_type;
++	enum object_type type_type;
++	enum object_type obj_type;
+ 	char *path, *to_free = NULL;
+ 	struct object_id oid;
+ 
+@@ -108,10 +117,13 @@ static void mktree_line(char *buf, int nul_term_line, int allow_missing)
+ 	 * These should all agree.
+ 	 */
+ 	mode_type = object_type(mode);
+-	if (mode_type != type_from_string_gently(ptr, ntr - ptr, 0)) {
++	type_type = type_from_string_gently(ptr, ntr - ptr, 1);
++	if (type_type < 0)
++		die("entry '%s' object type '%.*s' is invalid (our derived mode type is '%s')",
++			path, (int)(ntr - ptr), ptr, type_name(mode_type));
++	else if (mode_type != type_type)
+ 		die("entry '%s' object type (%s) doesn't match mode type (%s)",
+ 			path, ptr, type_name(mode_type));
+-	}
+ 
+ 	/* Check the type of object identified by sha1 */
+ 	obj_type = oid_object_info(the_repository, &oid, NULL);
+diff --git a/t/t1010-mktree.sh b/t/t1010-mktree.sh
+index 2a7b04aed8..fe8601e7bb 100755
+--- a/t/t1010-mktree.sh
++++ b/t/t1010-mktree.sh
+@@ -63,7 +63,7 @@ test_expect_success 'invalid object type' '
+ 	test_must_fail git mktree <bad-type >out 2>err &&
+ 	test_must_be_empty out &&
+ 	cat >expected <<-\EOF &&
+-	fatal: invalid object type "whee"
++	fatal: entry '"'"'a.'"'"' object type '"'"'whee'"'"' is invalid (our derived mode type is '"'"'tree'"'"')
+ 	EOF
+ 	test_cmp expected err
+ '
+-- 
+2.31.1.723.ga5d7868e4a
+

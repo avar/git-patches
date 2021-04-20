@@ -1,0 +1,94 @@
+From ee0b572f7df4ff02ff7a4f032f5f19d3cb5a8f14 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.10-ee0b572f7d-20210420T124413Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-0000000000-20210420T124413Z-avarab@gmail.com>
+References: <cover-0.3-0000000000-20210409T080534Z-avarab@gmail.com>
+	<cover-00.10-0000000000-20210420T124413Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Apr 2021 12:01:54 +0200
+Subject: [PATCH v2 07/10] object.c: simplify return semantic of
+ parse_object_buffer()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the local "obj" variable from parse_object_buffer() and return
+the object directly instead.
+
+The reason this variable was introduced was to free() a variable
+before returning in bd2c39f58f9 ([PATCH] don't load and decompress
+objects twice with parse_object() 2005-05-06). But that was when
+parse_object_buffer() didn't exist, there was only the parse_object()
+function.
+
+Since the split-up of the two in 9f613ddd21c (Add git-for-each-ref:
+helper for language bindings, 2006-09-15) we have not needed this
+variable, and as demonstrated here not having to set it to (re)set it
+to NULL simplifies the function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object.c | 13 +++++--------
+ 1 file changed, 5 insertions(+), 8 deletions(-)
+
+diff --git a/object.c b/object.c
+index f4e419e5c3..70af833ca1 100644
+--- a/object.c
++++ b/object.c
+@@ -188,20 +188,17 @@ struct object *lookup_unknown_object(const struct object_id *oid)
+ 
+ struct object *parse_object_buffer(struct repository *r, const struct object_id *oid, enum object_type type, unsigned long size, void *buffer, int *eaten_p)
+ {
+-	struct object *obj;
+ 	*eaten_p = 0;
+ 
+-	obj = NULL;
+ 	if (type == OBJ_BLOB) {
+ 		struct blob *blob = lookup_blob(r, oid);
+ 		if (blob) {
+ 			blob->object.parsed = 1;
+-			obj = &blob->object;
++			return &blob->object;
+ 		}
+ 	} else if (type == OBJ_TREE) {
+ 		struct tree *tree = lookup_tree(r, oid);
+ 		if (tree) {
+-			obj = &tree->object;
+ 			if (!tree->buffer)
+ 				tree->object.parsed = 0;
+ 			if (!tree->object.parsed) {
+@@ -209,6 +206,7 @@ struct object *parse_object_buffer(struct repository *r, const struct object_id
+ 					return NULL;
+ 				*eaten_p = 1;
+ 			}
++			return &tree->object;
+ 		}
+ 	} else if (type == OBJ_COMMIT) {
+ 		struct commit *commit = lookup_commit(r, oid);
+@@ -219,20 +217,19 @@ struct object *parse_object_buffer(struct repository *r, const struct object_id
+ 				set_commit_buffer(r, commit, buffer, size);
+ 				*eaten_p = 1;
+ 			}
+-			obj = &commit->object;
++			return &commit->object;
+ 		}
+ 	} else if (type == OBJ_TAG) {
+ 		struct tag *tag = lookup_tag(r, oid);
+ 		if (tag) {
+ 			if (parse_tag_buffer(r, tag, buffer, size))
+ 			       return NULL;
+-			obj = &tag->object;
++			return &tag->object;
+ 		}
+ 	} else {
+ 		warning(_("object %s has unknown type id %d"), oid_to_hex(oid), type);
+-		obj = NULL;
+ 	}
+-	return obj;
++	return NULL;
+ }
+ 
+ struct object *parse_object_or_die(const struct object_id *oid,
+-- 
+2.31.1.723.ga5d7868e4a
+
