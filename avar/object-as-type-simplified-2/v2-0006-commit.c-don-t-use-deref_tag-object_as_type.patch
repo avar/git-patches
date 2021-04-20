@@ -1,12 +1,12 @@
-From d053d98615bc61aee6efb471ae3413580ddcdc10 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-5.7-d053d98615-20210420T130433Z-avarab@gmail.com>
-In-Reply-To: <cover-0.7-0000000000-20210420T130433Z-avarab@gmail.com>
+From f337a5442d0a8f531aac8a402ba70cf82bf2cbad Mon Sep 17 00:00:00 2001
+Message-Id: <patch-6.8-f337a5442d-20210420T133027Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-0000000000-20210420T133026Z-avarab@gmail.com>
 References: <cover-0.7-0000000000-20210409T083436Z-avarab@gmail.com>
-	<cover-0.7-0000000000-20210420T130433Z-avarab@gmail.com>
+	<cover-0.8-0000000000-20210420T133026Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Fri, 2 Apr 2021 16:34:44 +0200
-Subject: [PATCH v2 5/7] commit.c: don't use deref_tag() -> object_as_type()
+Subject: [PATCH v2 6/8] commit.c: don't use deref_tag() -> object_as_type()
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -21,16 +21,20 @@ the function would need to deal with that. We're simply doing a check
 of OBJ_{COMMIT,TREE,BLOB,TAG} here, not the bare-bones initialization
 object_as_type() might be called on to do.
 
+Even though we can read deref_tag() and see that it won't return
+OBJ_NONE and friends, let's add a BUG() assertion here to help future
+maintenance.
+
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- commit.c | 14 ++++++++++----
- 1 file changed, 10 insertions(+), 4 deletions(-)
+ commit.c | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
 
 diff --git a/commit.c b/commit.c
-index 3d7f1fba0c..c166d31aaf 100644
+index 3d7f1fba0c..c3bc6cbec4 100644
 --- a/commit.c
 +++ b/commit.c
-@@ -31,13 +31,19 @@ const char *commit_type = "commit";
+@@ -31,13 +31,22 @@ const char *commit_type = "commit";
  struct commit *lookup_commit_reference_gently(struct repository *r,
  		const struct object_id *oid, int quiet)
  {
@@ -44,10 +48,13 @@ index 3d7f1fba0c..c166d31aaf 100644
  		return NULL;
 -	return object_as_type(obj, OBJ_COMMIT, quiet);
 +
++	if (obj->type <= 0)
++		BUG("should have initialized obj->type = OBJ_{COMMIT,TREE,BLOB,TAG} from deref_tag()");
 +	if (obj->type != OBJ_COMMIT) {
-+		enum object_type want = OBJ_COMMIT;
-+		if (!quiet)
-+			oid_is_type_or_error(oid, OBJ_COMMIT, &want);
++		if (!quiet) {
++			enum object_type have = obj->type;
++			oid_is_type_or_error(oid, OBJ_COMMIT, &have);
++		}
 +		return NULL;
 +	}
 +	return (struct commit *)obj;

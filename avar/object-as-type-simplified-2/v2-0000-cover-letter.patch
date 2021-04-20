@@ -1,48 +1,79 @@
-From 6c0c524d2e30c23408ba86d892be4e5d8ea64cbb Mon Sep 17 00:00:00 2001
-Message-Id: <cover-0.7-0000000000-20210420T130433Z-avarab@gmail.com>
+From a47d23f1b19318f9e486490b0f11f6e68f1d0789 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.8-0000000000-20210420T133026Z-avarab@gmail.com>
 In-Reply-To: <cover-0.7-0000000000-20210409T083436Z-avarab@gmail.com>
 References: <cover-0.7-0000000000-20210409T083436Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 20 Apr 2021 15:04:33 +0200
-Subject: [PATCH v2 0/7] *** SUBJECT HERE ***
+Date: Tue, 20 Apr 2021 15:30:26 +0200
+Subject: [PATCH v2 0/8] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 *** BLURB HERE ***
 
-Ævar Arnfjörð Bjarmason (7):
+Ævar Arnfjörð Bjarmason (8):
   tree.c: fix misindentation in parse_tree_gently()
   object.c: add a utility function for "expected type X, got Y"
   object.c: add and use oid_is_type_or_die_msg() function
   commit-graph: use obj->type, not object_as_type()
+  branch tests: assert lookup_commit_reference_gently() error
   commit.c: don't use deref_tag() -> object_as_type()
   object.c: normalize brace style in object_as_type()
   object.c: remove "quiet" parameter from object_as_type()
 
- blob.c                 |  2 +-
- builtin/commit-graph.c |  2 +-
- builtin/fsck.c         |  2 +-
- builtin/index-pack.c   |  9 +++-----
- combine-diff.c         |  3 +--
- commit.c               | 28 ++++++++++++++---------
- merge-recursive.c      |  5 ++++-
- object.c               | 51 ++++++++++++++++++++++++++++++++++--------
- object.h               | 10 ++++++++-
- refs.c                 |  2 +-
- t/helper/test-reach.c  |  2 +-
- tag.c                  |  2 +-
- tree.c                 | 15 +++++++------
- 13 files changed, 90 insertions(+), 43 deletions(-)
+ blob.c                     |  2 +-
+ builtin/commit-graph.c     |  2 +-
+ builtin/fsck.c             |  2 +-
+ builtin/index-pack.c       |  9 +++----
+ combine-diff.c             |  3 +--
+ commit.c                   | 29 ++++++++++++++--------
+ merge-recursive.c          |  5 +++-
+ object.c                   | 51 +++++++++++++++++++++++++++++++-------
+ object.h                   | 10 +++++++-
+ refs.c                     |  2 +-
+ t/helper/test-reach.c      |  2 +-
+ t/t3201-branch-contains.sh |  8 +++++-
+ tag.c                      |  2 +-
+ tree.c                     | 15 +++++------
+ 14 files changed, 98 insertions(+), 44 deletions(-)
 
 Range-diff against v1:
 1:  4bf9a4f7a1 = 1:  c39b235035 tree.c: fix misindentation in parse_tree_gently()
 2:  0be843e838 = 2:  1b472fcd85 object.c: add a utility function for "expected type X, got Y"
 3:  fb2e4feb3d = 3:  22e7d9a3db object.c: add and use oid_is_type_or_die_msg() function
 4:  995135c814 = 4:  8e43d44911 commit-graph: use obj->type, not object_as_type()
-5:  754d5ae267 = 5:  d053d98615 commit.c: don't use deref_tag() -> object_as_type()
-6:  e414cfe40c = 6:  035547d586 object.c: normalize brace style in object_as_type()
-7:  64360ac260 ! 7:  6c0c524d2e object.c: remove "quiet" parameter from object_as_type()
+-:  ---------- > 5:  8982c42127 branch tests: assert lookup_commit_reference_gently() error
+5:  754d5ae267 ! 6:  f337a5442d commit.c: don't use deref_tag() -> object_as_type()
+    @@ Commit message
+         of OBJ_{COMMIT,TREE,BLOB,TAG} here, not the bare-bones initialization
+         object_as_type() might be called on to do.
+     
+    +    Even though we can read deref_tag() and see that it won't return
+    +    OBJ_NONE and friends, let's add a BUG() assertion here to help future
+    +    maintenance.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## commit.c ##
+    @@ commit.c: const char *commit_type = "commit";
+      		return NULL;
+     -	return object_as_type(obj, OBJ_COMMIT, quiet);
+     +
+    ++	if (obj->type <= 0)
+    ++		BUG("should have initialized obj->type = OBJ_{COMMIT,TREE,BLOB,TAG} from deref_tag()");
+     +	if (obj->type != OBJ_COMMIT) {
+    -+		enum object_type want = OBJ_COMMIT;
+    -+		if (!quiet)
+    -+			oid_is_type_or_error(oid, OBJ_COMMIT, &want);
+    ++		if (!quiet) {
+    ++			enum object_type have = obj->type;
+    ++			oid_is_type_or_error(oid, OBJ_COMMIT, &have);
+    ++		}
+     +		return NULL;
+     +	}
+     +	return (struct commit *)obj;
+6:  e414cfe40c = 7:  893b178573 object.c: normalize brace style in object_as_type()
+7:  64360ac260 ! 8:  a47d23f1b1 object.c: remove "quiet" parameter from object_as_type()
     @@ blob.c
      @@ blob.c: struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
       	struct object *obj = lookup_object(r, oid);
@@ -57,7 +88,24 @@ Range-diff against v1:
      
       ## builtin/fsck.c ##
      @@ builtin/fsck.c: static void mark_unreachable_referents(const struct object_id *oid)
-    @@ commit.c: struct commit *lookup_commit_reference_gently(struct repository *r,
+    @@ builtin/fsck.c: static void mark_unreachable_referents(const struct object_id *o
+      	options.walk = mark_used;
+     
+      ## commit.c ##
+    -@@ commit.c: struct commit *lookup_commit_reference_gently(struct repository *r,
+    - 		return NULL;
+    - 
+    - 	if (obj->type != OBJ_COMMIT) {
+    --		enum object_type want = OBJ_COMMIT;
+    -+		if (obj->type <= 0)
+    -+			BUG("noes");
+    - 		if (!quiet)
+    --			oid_is_type_or_error(oid, OBJ_COMMIT, &want);
+    -+			fprintf(stderr, "noes ohes");/*
+    -+			oid_is_type_or_error(oid, OBJ_COMMIT, &obj->type);*/
+    - 		return NULL;
+    - 	}
+    - 	return (struct commit *)obj;
      @@ commit.c: struct commit *lookup_commit(struct repository *r, const struct object_id *oid)
       	struct object *obj = lookup_object(r, oid);
       	if (!obj)
