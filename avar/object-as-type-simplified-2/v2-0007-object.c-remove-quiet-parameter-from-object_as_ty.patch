@@ -1,0 +1,182 @@
+From 6c0c524d2e30c23408ba86d892be4e5d8ea64cbb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-7.7-6c0c524d2e-20210420T130330Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-0000000000-20210420T130330Z-avarab@gmail.com>
+References: <cover-0.7-0000000000-20210409T083436Z-avarab@gmail.com>
+	<cover-0.7-0000000000-20210420T130330Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 6 Apr 2021 02:11:11 +0200
+Subject: [PATCH v2 7/7] object.c: remove "quiet" parameter from
+ object_as_type()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the now-unused "quiet" parameter from object_as_type(). As
+shown in preceding commits the previous users of this parameter were
+better off with higher-level APIs.
+
+The "quiet" parameter was originally introduced when the
+object_as_type() function was added in 8ff226a9d5e (add object_as_type
+helper for casting objects,.  2014-07-13), but the commit.c use-case
+for it is now gone.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ blob.c                | 2 +-
+ builtin/fsck.c        | 2 +-
+ commit.c              | 8 +++++---
+ object.c              | 9 ++++-----
+ object.h              | 2 +-
+ refs.c                | 2 +-
+ t/helper/test-reach.c | 2 +-
+ tag.c                 | 2 +-
+ tree.c                | 2 +-
+ 9 files changed, 16 insertions(+), 15 deletions(-)
+
+diff --git a/blob.c b/blob.c
+index 1308299eab..f8d8f0b84e 100644
+--- a/blob.c
++++ b/blob.c
+@@ -15,5 +15,5 @@ struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_blob(r, oid);
+-	return object_as_type(obj, OBJ_BLOB, 0);
++	return object_as_type(obj, OBJ_BLOB);
+ }
+diff --git a/builtin/fsck.c b/builtin/fsck.c
+index 70ff95837a..5d534cf218 100644
+--- a/builtin/fsck.c
++++ b/builtin/fsck.c
+@@ -221,7 +221,7 @@ static void mark_unreachable_referents(const struct object_id *oid)
+ 		enum object_type type = oid_object_info(the_repository,
+ 							&obj->oid, NULL);
+ 		if (type > 0)
+-			object_as_type(obj, type, 0);
++			object_as_type(obj, type);
+ 	}
+ 
+ 	options.walk = mark_used;
+diff --git a/commit.c b/commit.c
+index c166d31aaf..d80fedb954 100644
+--- a/commit.c
++++ b/commit.c
+@@ -38,9 +38,11 @@ struct commit *lookup_commit_reference_gently(struct repository *r,
+ 		return NULL;
+ 
+ 	if (obj->type != OBJ_COMMIT) {
+-		enum object_type want = OBJ_COMMIT;
++		if (obj->type <= 0)
++			BUG("noes");
+ 		if (!quiet)
+-			oid_is_type_or_error(oid, OBJ_COMMIT, &want);
++			fprintf(stderr, "noes ohes");/*
++			oid_is_type_or_error(oid, OBJ_COMMIT, &obj->type);*/
+ 		return NULL;
+ 	}
+ 	return (struct commit *)obj;
+@@ -73,7 +75,7 @@ struct commit *lookup_commit(struct repository *r, const struct object_id *oid)
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_commit(r, oid);
+-	return object_as_type(obj, OBJ_COMMIT, 0);
++	return object_as_type(obj, OBJ_COMMIT);
+ }
+ 
+ struct commit *lookup_commit_reference_by_name(const char *name)
+diff --git a/object.c b/object.c
+index f694db7e87..9f6f36707b 100644
+--- a/object.c
++++ b/object.c
+@@ -188,7 +188,7 @@ char* oid_is_type_or_die_msg(const struct object_id *oid,
+ 	return strbuf_detach(&sb, NULL);
+ }
+ 
+-void *object_as_type(struct object *obj, enum object_type type, int quiet)
++void *object_as_type(struct object *obj, enum object_type type)
+ {
+ 	if (obj->type == type) {
+ 		return obj;
+@@ -199,10 +199,9 @@ void *object_as_type(struct object *obj, enum object_type type, int quiet)
+ 			obj->type = type;
+ 		return obj;
+ 	} else {
+-		if (!quiet)
+-			error(_(object_type_mismatch_msg),
+-			      oid_to_hex(&obj->oid),
+-			      type_name(obj->type), type_name(type));
++		error(_(object_type_mismatch_msg),
++		      oid_to_hex(&obj->oid),
++		      type_name(obj->type), type_name(type));
+ 		return NULL;
+ 	}
+ }
+diff --git a/object.h b/object.h
+index 7ae6407598..bb65a6cd5a 100644
+--- a/object.h
++++ b/object.h
+@@ -121,7 +121,7 @@ struct object *lookup_object(struct repository *r, const struct object_id *oid);
+ 
+ void *create_object(struct repository *r, const struct object_id *oid, void *obj);
+ 
+-void *object_as_type(struct object *obj, enum object_type type, int quiet);
++void *object_as_type(struct object *obj, enum object_type type);
+ 
+ void oid_is_type_or_die(const struct object_id *oid, enum object_type want,
+ 			enum object_type *type);
+diff --git a/refs.c b/refs.c
+index 261fd82beb..7f4ca3441c 100644
+--- a/refs.c
++++ b/refs.c
+@@ -341,7 +341,7 @@ enum peel_status peel_object(const struct object_id *name, struct object_id *oid
+ 
+ 	if (o->type == OBJ_NONE) {
+ 		int type = oid_object_info(the_repository, name, NULL);
+-		if (type < 0 || !object_as_type(o, type, 0))
++		if (type < 0 || !object_as_type(o, type))
+ 			return PEEL_INVALID;
+ 	}
+ 
+diff --git a/t/helper/test-reach.c b/t/helper/test-reach.c
+index cda804ed79..c9fd74b21f 100644
+--- a/t/helper/test-reach.c
++++ b/t/helper/test-reach.c
+@@ -67,7 +67,7 @@ int cmd__reach(int ac, const char **av)
+ 			die("failed to load commit for input %s resulting in oid %s\n",
+ 			    buf.buf, oid_to_hex(&oid));
+ 
+-		c = object_as_type(peeled, OBJ_COMMIT, 0);
++		c = object_as_type(peeled, OBJ_COMMIT);
+ 
+ 		if (!c)
+ 			die("failed to load commit for input %s resulting in oid %s\n",
+diff --git a/tag.c b/tag.c
+index 1bd81bf1d1..25d79c3db3 100644
+--- a/tag.c
++++ b/tag.c
+@@ -109,7 +109,7 @@ struct tag *lookup_tag(struct repository *r, const struct object_id *oid)
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_tag(r, oid);
+-	return object_as_type(obj, OBJ_TAG, 0);
++	return object_as_type(obj, OBJ_TAG);
+ }
+ 
+ static timestamp_t parse_tag_date(const char *buf, const char *tail)
+diff --git a/tree.c b/tree.c
+index f1c6e8f647..fd3ad18051 100644
+--- a/tree.c
++++ b/tree.c
+@@ -112,7 +112,7 @@ struct tree *lookup_tree(struct repository *r, const struct object_id *oid)
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_tree(r, oid);
+-	return object_as_type(obj, OBJ_TREE, 0);
++	return object_as_type(obj, OBJ_TREE);
+ }
+ 
+ int parse_tree_buffer(struct tree *item, void *buffer, unsigned long size)
+-- 
+2.31.1.723.ga5d7868e4a
+
