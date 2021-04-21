@@ -1,9 +1,9 @@
 From 947791d953518fd0b0cca62d0536b19ab96e086f Mon Sep 17 00:00:00 2001
-Message-Id: <cover-0.5-00000000000-20210421T144909Z-avarab@gmail.com>
+Message-Id: <cover-0.5-00000000000-20210421T144921Z-avarab@gmail.com>
 In-Reply-To: <cover-0.3-0000000000-20210420T122706Z-avarab@gmail.com>
 References: <cover-0.3-0000000000-20210420T122706Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Wed, 21 Apr 2021 16:49:09 +0200
+Date: Wed, 21 Apr 2021 16:49:21 +0200
 Subject: [PATCH v2 0/5] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -28,129 +28,10 @@ Content-Transfer-Encoding: 8bit
 Range-diff against v1:
 1:  fd33f6d71f0 = 1:  ba9d6251ad5 test-lib-functions: normalize test_path_is_missing() debugging
 2:  67ddd821dfa = 2:  5f8e5ad27f5 Revert and amend "test-lib-functions: assert correct parameter count"
+3:  8fd51861b59 < -:  ----------- test-lib-functions: remove last two parameter count assertions
 -:  ----------- > 3:  44948c6ace9 test helpers: remove unused test-tool path-utils slice-tests
 -:  ----------- > 4:  ae5dc5d03b3 test-helpers: rename "path-utils is_valid_path" to "is-valid-paths"
-3:  8fd51861b59 ! 5:  947791d9535 test-lib-functions: remove last two parameter count assertions
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    test-lib-functions: remove last two parameter count assertions
-    +    test-helpers: split "file-size" into "file-size(s)"
-     
-    -    Remove a couple of parameter count assertions where, unlike the
-    -    preceding commit's migration to 'test -$x "$@"', we'll now silently do
-    -    the "wrong" thing if given too many parameters. The benefit is less
-    -    verbose trace output, as noted in the preceding commit.
-    +    Split the "file-size" helper into two helpers, one that takes 1
-    +    argument, and another one that takes N.
-     
-    -    In the case of "test_file_size", the "test-tool" we're invoking is
-    -    happy to accept N parameters (it'll print out all N sizes). Let's just
-    -    use "$@" in that case anyway. There's only a few callers, and
-    -    eventually those should probably be moved to use the test-tool
-    -    directly.
-    +    This allows us to remove the "BUG" check in test-lib-functions.sh for
-    +    briefer -x output, and more importantly will clearly distinguish those
-    +    cases where we expect one argument v.s. many.
-     
-    -    That only leaves test_line_count, I suppose I could leave that one
-    -    alone, but since it's the only common function left that does this
-    -    assertion let's remove it for the brevity of the -x output and
-    -    consistency with other functions.
-    +    The use in t1050-large.sh wants to check just one pack, we used to
-    +    check that explicitly before 53b67a801bb (tests: consolidate the
-    +    `file_size` function into `test-lib-functions.sh`, 2020-11-07), now we
-    +    do so again.
-     
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-    - ## t/test-lib-functions.sh ##
-    -@@ t/test-lib-functions.sh: test_path_is_missing () {
-    - # output through when the number of lines is wrong.
-    + ## t/helper/test-path-utils.c ##
-    +@@ t/helper/test-path-utils.c: static int protect_ntfs_hfs_benchmark(int argc, const char **argv)
-    + 
-    + int cmd__path_utils(int argc, const char **argv)
-    + {
-    ++	int is_file_size, is_file_sizes;
-    ++
-    + 	if (argc == 3 && !strcmp(argv[1], "normalize_path_copy")) {
-    + 		char *buf = xmallocz(strlen(argv[2]));
-    + 		int rv = normalize_path_copy(buf, argv[2]);
-    +@@ t/helper/test-path-utils.c: int cmd__path_utils(int argc, const char **argv)
-    + 		return !!res;
-    + 	}
-      
-    - test_line_count () {
-    --	if test $# != 3
-    --	then
-    --		BUG "not 3 parameters to test_line_count"
-    --	elif ! test $(wc -l <"$3") "$1" "$2"
-    -+	if ! test $(wc -l <"$3") "$1" "$2"
-    - 	then
-    - 		echo "test_line_count: line count for $3 !$1 $2"
-    - 		cat "$3"
-    +-	if (argc > 2 && !strcmp(argv[1], "file-size")) {
-    ++	is_file_size = !strcmp(argv[1], "file-size");
-    ++	is_file_sizes = !strcmp(argv[1], "file-sizes");
-    ++	if (argc > 2 && (is_file_size || is_file_sizes)) {
-    + 		int res = 0, i;
-    + 		struct stat st;
-    + 
-    ++		if (is_file_size && argc > 3) {
-    ++			res = error("too many arguments to is-file-size, use is-file-sizes?");
-    ++			return res;
-    ++		}
-    ++
-    + 		for (i = 2; i < argc; i++)
-    + 			if (stat(argv[i], &st))
-    + 				res = error_errno("Cannot stat '%s'", argv[i]);
-    +
-    + ## t/t1050-large.sh ##
-    +@@ t/t1050-large.sh: do
-    + 	test_expect_success "add with $config" '
-    + 		test_when_finished "rm -f .git/objects/pack/pack-*.* .git/index" &&
-    + 		git $config add large1 &&
-    +-		sz=$(test_file_size .git/objects/pack/pack-*.pack) &&
-    ++		sz=$(test-tool path-utils file-size .git/objects/pack/pack-*.pack) &&
-    + 		case "$expect" in
-    + 		small) test "$sz" -le 100000 ;;
-    + 		large) test "$sz" -ge 100000 ;;
-    +
-    + ## t/t5319-multi-pack-index.sh ##
-    +@@ t/t5319-multi-pack-index.sh: test_expect_success 'repack with minimum size does not alter existing packs' '
-    + 		test-tool chmtime =-3 .git/objects/pack/pack-B* &&
-    + 		test-tool chmtime =-2 .git/objects/pack/pack-A* &&
-    + 		ls .git/objects/pack >expect &&
-    +-		MINSIZE=$(test-tool path-utils file-size .git/objects/pack/*pack | sort -n | head -n 1) &&
-    ++		MINSIZE=$(test-tool path-utils file-sizes .git/objects/pack/*pack | sort -n | head -n 1) &&
-    + 		git multi-pack-index repack --batch-size=$MINSIZE &&
-    + 		ls .git/objects/pack >actual &&
-    + 		test_cmp expect actual
-    +@@ t/t5319-multi-pack-index.sh: test_expect_success 'repack respects repack.packKeptObjects=false' '
-    + 		test_line_count = 5 idx-list &&
-    + 		test-tool read-midx .git/objects | grep idx >midx-list &&
-    + 		test_line_count = 5 midx-list &&
-    +-		THIRD_SMALLEST_SIZE=$(test-tool path-utils file-size .git/objects/pack/*pack | sort -n | sed -n 3p) &&
-    ++		THIRD_SMALLEST_SIZE=$(test-tool path-utils file-sizes .git/objects/pack/*pack | sort -n | sed -n 3p) &&
-    + 		BATCH_SIZE=$((THIRD_SMALLEST_SIZE + 1)) &&
-    + 		git multi-pack-index repack --batch-size=$BATCH_SIZE &&
-    + 		ls .git/objects/pack/*idx >idx-list &&
-    +@@ t/t5319-multi-pack-index.sh: test_expect_success 'repack creates a new pack' '
-    + 		cd dup &&
-    + 		ls .git/objects/pack/*idx >idx-list &&
-    + 		test_line_count = 5 idx-list &&
-    +-		THIRD_SMALLEST_SIZE=$(test-tool path-utils file-size .git/objects/pack/*pack | sort -n | head -n 3 | tail -n 1) &&
-    ++		THIRD_SMALLEST_SIZE=$(test-tool path-utils file-sizes .git/objects/pack/*pack | sort -n | head -n 3 | tail -n 1) &&
-    + 		BATCH_SIZE=$(($THIRD_SMALLEST_SIZE + 1)) &&
-    + 		git multi-pack-index repack --batch-size=$BATCH_SIZE &&
-    + 		ls .git/objects/pack/*idx >idx-list &&
-    +
-    + ## t/test-lib-functions.sh ##
-     @@ t/test-lib-functions.sh: test_line_count () {
-      }
-      
+-:  ----------- > 5:  947791d9535 test-helpers: split "file-size" into "file-size(s)"
 -- 
 2.31.1.721.gbeb6a21927
 
