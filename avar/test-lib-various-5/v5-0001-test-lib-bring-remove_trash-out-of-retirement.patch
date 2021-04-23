@@ -1,0 +1,114 @@
+From 75667f98f3a61f3c559c7d85bd75e83eb1ea9cde Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.11-75667f98f3a-20210423T072006Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20210423T072006Z-avarab@gmail.com>
+References: <cover-00.11-0000000000-20210421T101156Z-avarab@gmail.com>
+	<cover-00.11-00000000000-20210423T072006Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 10 Mar 2021 13:21:04 +0100
+Subject: [PATCH v5 01/11] test-lib: bring $remove_trash out of retirement
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There's no point in creating a repository or directory only to decide
+right afterwards that we're skipping all the tests. We can save
+ourselves the redundant "git init" or "mkdir" and "rm -rf" in this
+case.
+
+We carry around the "$remove_trash" variable because if the directory
+is unexpectedly gone at test_done time we'll hit the error about it
+being unexpectedly gone added in df4c0d1a792 (test-lib: abort when
+can't remove trash directory, 2017-04-20).
+
+So let's partially revert 06478dab4c (test-lib: retire $remove_trash
+variable, 2017-04-23) and move the decision about whether to skip all
+tests earlier.
+
+Let's also fix a bug that was with us since abc5d372ec (Enable
+parallel tests, 2008-08-08): we would leak $remove_trash from the
+environment. We don't want this to error out, so let's reset it to the
+empty string first:
+
+     remove_trash=t GIT_SKIP_TESTS=t0001 ./t0001-init.sh
+
+I tested this with --debug, see 4d0912a206 (test-lib.sh: do not barf
+under --debug at the end of the test, 2017-04-24) for a bug we don't
+want to re-introduce.
+
+While I'm at it let's move the HOME assignment to just before
+test_create_repo, it could be lower, but it seems better to set it
+before calling anything in test-lib-functions.sh
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh | 32 ++++++++++++++++++--------------
+ 1 file changed, 18 insertions(+), 14 deletions(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 3dec266221c..105c424bf56 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1169,7 +1169,7 @@ test_done () {
+ 			esac
+ 		fi
+ 
+-		if test -z "$debug"
++		if test -z "$debug" && test -n "$remove_trash"
+ 		then
+ 			test -d "$TRASH_DIRECTORY" ||
+ 			error "Tests passed but trash directory already removed before test cleanup; aborting"
+@@ -1334,6 +1334,22 @@ then
+ 	exit 1
+ fi
+ 
++# Are we running this test at all?
++remove_trash=
++this_test=${0##*/}
++this_test=${this_test%%-*}
++if match_pattern_list "$this_test" $GIT_SKIP_TESTS
++then
++	say_color info >&3 "skipping test $this_test altogether"
++	skip_all="skip all tests in $this_test"
++	test_done
++fi
++
++# Last-minute variable setup
++HOME="$TRASH_DIRECTORY"
++GNUPGHOME="$HOME/gnupg-home-not-used"
++export HOME GNUPGHOME
++
+ # Test repository
+ rm -fr "$TRASH_DIRECTORY" || {
+ 	GIT_EXIT_OK=t
+@@ -1341,10 +1357,7 @@ rm -fr "$TRASH_DIRECTORY" || {
+ 	exit 1
+ }
+ 
+-HOME="$TRASH_DIRECTORY"
+-GNUPGHOME="$HOME/gnupg-home-not-used"
+-export HOME GNUPGHOME
+-
++remove_trash=t
+ if test -z "$TEST_NO_CREATE_REPO"
+ then
+ 	test_create_repo "$TRASH_DIRECTORY"
+@@ -1356,15 +1369,6 @@ fi
+ # in subprocesses like git equals our $PWD (for pathname comparisons).
+ cd -P "$TRASH_DIRECTORY" || exit 1
+ 
+-this_test=${0##*/}
+-this_test=${this_test%%-*}
+-if match_pattern_list "$this_test" $GIT_SKIP_TESTS
+-then
+-	say_color info >&3 "skipping test $this_test altogether"
+-	skip_all="skip all tests in $this_test"
+-	test_done
+-fi
+-
+ if test -n "$write_junit_xml"
+ then
+ 	junit_xml_dir="$TEST_OUTPUT_DIRECTORY/out"
+-- 
+2.31.1.737.g98b508eba36
+
