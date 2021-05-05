@@ -1,0 +1,66 @@
+From 6872fd6a59b9fde7b7658d92c8c5c7a6a166620f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.2-6872fd6a59b-20210505T121028Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20210505T121028Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20210505T121028Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 5 May 2021 12:54:12 +0200
+Subject: [PATCH 1/2] sparse-index.c: remove set_index_sparse_config()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the set_index_sparse_config() function by folding it into
+set_sparse_index_config(), which was its only user.
+
+Since 122ba1f7b52 (sparse-checkout: toggle sparse index from builtin,
+2021-03-30) the flow of this code hasn't made much sense, we'd get
+"enabled" in set_sparse_index_config(), proceed to call
+set_index_sparse_config() with it.
+
+There we'd call prepare_repo_settings() and set
+"repo->settings.sparse_index = 1", only to needlessly call
+prepare_repo_settings() again in set_sparse_index_config() (where it
+would early abort), and finally setting "repo->settings.sparse_index =
+enabled".
+
+Instead we can just call prepare_repo_settings() once, and set the
+variable to "enabled" in the first place.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sparse-index.c | 11 +----------
+ 1 file changed, 1 insertion(+), 10 deletions(-)
+
+diff --git a/sparse-index.c b/sparse-index.c
+index 6f21397e2ee..b0d5dc5f081 100644
+--- a/sparse-index.c
++++ b/sparse-index.c
+@@ -102,7 +102,7 @@ static int convert_to_sparse_rec(struct index_state *istate,
+ 	return num_converted - start_converted;
+ }
+ 
+-static int set_index_sparse_config(struct repository *repo, int enable)
++int set_sparse_index_config(struct repository *repo, int enable)
+ {
+ 	int res;
+ 	char *config_path = repo_git_path(repo, "config.worktree");
+@@ -111,15 +111,6 @@ static int set_index_sparse_config(struct repository *repo, int enable)
+ 					    enable ? "true" : NULL);
+ 	free(config_path);
+ 
+-	prepare_repo_settings(repo);
+-	repo->settings.sparse_index = 1;
+-	return res;
+-}
+-
+-int set_sparse_index_config(struct repository *repo, int enable)
+-{
+-	int res = set_index_sparse_config(repo, enable);
+-
+ 	prepare_repo_settings(repo);
+ 	repo->settings.sparse_index = enable;
+ 	return res;
+-- 
+2.31.1.838.g7ac6e98bb53
+
