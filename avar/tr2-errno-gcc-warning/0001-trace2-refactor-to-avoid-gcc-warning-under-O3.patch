@@ -1,0 +1,117 @@
+From 87d9bcf109572d6ffbd72791186bf7c077d866b3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-87d9bcf1095-20210505T083951Z-avarab@gmail.com>
+In-Reply-To: <20200404142131.GA679473@coredump.intra.peff.net>
+References: <20200404142131.GA679473@coredump.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 4 May 2021 17:39:29 +0200
+Subject: [PATCH] trace2: refactor to avoid gcc warning under -O3
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor tr2_dst_try_uds_connect() to avoid a gcc warning[1] that
+appears under -O3 (but not -O2). This makes the build pass under
+DEVELOPER=1 without needing a DEVOPTS=no-error.
+
+This can be reproduced with GCC Debian 8.3.0-6, but not e.g. with
+clang 7.0.1-8+deb10u2. We've had this warning since
+ee4512ed481 (trace2: create new combined trace facility, 2019-02-22).
+
+As noted in [2] this warning happens because the compiler doesn't
+assume that errno must be non-zero after a failed syscall. Let's work
+around it as suggested in that analysis. We now return -1 ourselves on
+error, and save away the value of errno in a variable the caller
+passes in.
+
+1.
+
+    trace2/tr2_dst.c: In function ‘tr2_dst_get_trace_fd.part.5’:
+    trace2/tr2_dst.c:296:10: warning: ‘fd’ may be used uninitialized in this function [-Wmaybe-uninitialized]
+      dst->fd = fd;
+      ~~~~~~~~^~~~
+    trace2/tr2_dst.c:229:6: note: ‘fd’ was declared here
+      int fd;
+          ^~
+2. https://lore.kernel.org/git/20200404142131.GA679473@coredump.intra.peff.net/
+---
+ trace2/tr2_dst.c | 27 +++++++++++++++------------
+ 1 file changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/trace2/tr2_dst.c b/trace2/tr2_dst.c
+index ae052a07fe2..c2aba71041b 100644
+--- a/trace2/tr2_dst.c
++++ b/trace2/tr2_dst.c
+@@ -197,22 +197,25 @@ static int tr2_dst_try_path(struct tr2_dst *dst, const char *tgt_value)
+ #define PREFIX_AF_UNIX_STREAM "af_unix:stream:"
+ #define PREFIX_AF_UNIX_DGRAM "af_unix:dgram:"
+ 
+-static int tr2_dst_try_uds_connect(const char *path, int sock_type, int *out_fd)
++static int tr2_dst_try_uds_connect(const char *path, int sock_type,
++				   int *out_fd, int *saved_errno)
+ {
+ 	int fd;
+ 	struct sockaddr_un sa;
+ 
+ 	fd = socket(AF_UNIX, sock_type, 0);
+-	if (fd == -1)
+-		return errno;
++	if (fd == -1) {
++		*saved_errno = errno;
++		return -1;
++	}
+ 
+ 	sa.sun_family = AF_UNIX;
+ 	strlcpy(sa.sun_path, path, sizeof(sa.sun_path));
+ 
+ 	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
+-		int e = errno;
++		*saved_errno = errno;
+ 		close(fd);
+-		return e;
++		return -1;
+ 	}
+ 
+ 	*out_fd = fd;
+@@ -227,7 +230,7 @@ static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
+ {
+ 	unsigned int uds_try = 0;
+ 	int fd;
+-	int e;
++	int saved_errno;
+ 	const char *path = NULL;
+ 
+ 	/*
+@@ -271,15 +274,15 @@ static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
+ 	}
+ 
+ 	if (uds_try & TR2_DST_UDS_TRY_STREAM) {
+-		e = tr2_dst_try_uds_connect(path, SOCK_STREAM, &fd);
+-		if (!e)
++		if (!tr2_dst_try_uds_connect(path, SOCK_STREAM, &fd,
++					     &saved_errno))
+ 			goto connected;
+-		if (e != EPROTOTYPE)
++		if (saved_errno != EPROTOTYPE)
+ 			goto error;
+ 	}
+ 	if (uds_try & TR2_DST_UDS_TRY_DGRAM) {
+-		e = tr2_dst_try_uds_connect(path, SOCK_DGRAM, &fd);
+-		if (!e)
++		if (!tr2_dst_try_uds_connect(path, SOCK_DGRAM, &fd,
++					     &saved_errno))
+ 			goto connected;
+ 	}
+ 
+@@ -287,7 +290,7 @@ static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
+ 	if (tr2_dst_want_warning())
+ 		warning("trace2: could not connect to socket '%s' for '%s' tracing: %s",
+ 			path, tr2_sysenv_display_name(dst->sysenv_var),
+-			strerror(e));
++			strerror(saved_errno));
+ 
+ 	tr2_dst_trace_disable(dst);
+ 	return 0;
+-- 
+2.31.1.745.g2af7c6593ce
+
