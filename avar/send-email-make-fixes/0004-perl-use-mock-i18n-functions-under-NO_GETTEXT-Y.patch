@@ -1,0 +1,81 @@
+From 97247cb72a5b035012de82eefe0d0f57420ff49b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.4-97247cb72a5-20210505T121857Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20210505T121857Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20210505T121857Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Apr 2021 10:04:33 +0200
+Subject: [PATCH 4/4] perl: use mock i18n functions under NO_GETTEXT=Y
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the logic of the i18n functions I added in 5e9637c6297 (i18n:
+add infrastructure for translating Git with gettext, 2011-11-18) to
+use pass-through functions when NO_GETTEXT is defined.
+
+This speeds up the compilation time of commands that use this library
+when NO_GETTEXT=Y is in effect. Loading it and POSIX.pm is around 20ms
+on my machine, whereas it takes 2ms to just instantiate perl itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile         |  3 +++
+ perl/Git/I18N.pm | 10 ++++++++++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index 574b25512e7..b8d6b313056 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1986,6 +1986,7 @@ ETC_GITCONFIG_SQ = $(subst ','\'',$(ETC_GITCONFIG))
+ ETC_GITATTRIBUTES_SQ = $(subst ','\'',$(ETC_GITATTRIBUTES))
+ 
+ DESTDIR_SQ = $(subst ','\'',$(DESTDIR))
++NO_GETTEXT_SQ = $(subst ','\'',$(NO_GETTEXT))
+ bindir_SQ = $(subst ','\'',$(bindir))
+ bindir_relative_SQ = $(subst ','\'',$(bindir_relative))
+ mandir_SQ = $(subst ','\'',$(mandir))
+@@ -2276,6 +2277,7 @@ PERL_DEFINES += $(PERLLIB_EXTRA_SQ)
+ PERL_DEFINES += $(perllibdir_SQ)
+ PERL_DEFINES += $(RUNTIME_PREFIX)
+ PERL_DEFINES += $(NO_PERL_CPAN_FALLBACKS)
++PERL_DEFINES += $(NO_GETTEXT)
+ 
+ # Support Perl runtime prefix. In this mode, a different header is installed
+ # into Perl scripts.
+@@ -2680,6 +2682,7 @@ endif
+ perl/build/lib/%.pm: perl/%.pm GIT-PERL-DEFINES
+ 	$(QUIET_GEN)mkdir -p $(dir $@) && \
+ 	sed -e 's|@@LOCALEDIR@@|$(perl_localedir_SQ)|g' \
++	    -e 's|@@NO_GETTEXT@@|$(NO_GETTEXT_SQ)|g' \
+ 	    -e 's|@@NO_PERL_CPAN_FALLBACKS@@|$(NO_PERL_CPAN_FALLBACKS_SQ)|g' \
+ 	< $< > $@
+ 
+diff --git a/perl/Git/I18N.pm b/perl/Git/I18N.pm
+index 2037f387c89..895e759c57a 100644
+--- a/perl/Git/I18N.pm
++++ b/perl/Git/I18N.pm
+@@ -16,9 +16,19 @@ BEGIN
+ our @EXPORT = qw(__ __n N__);
+ our @EXPORT_OK = @EXPORT;
+ 
++# See Git::LoadCPAN's NO_PERL_CPAN_FALLBACKS_STR for a description of
++# this "'@@' [...] '@@'" pattern.
++use constant NO_GETTEXT_STR => '@@' . 'NO_GETTEXT' . '@@';
++use constant NO_GETTEXT => (
++	q[@@NO_GETTEXT@@] ne ''
++	and
++	q[@@NO_GETTEXT@@] ne NO_GETTEXT_STR
++);
++
+ sub __bootstrap_locale_messages {
+ 	our $TEXTDOMAIN = 'git';
+ 	our $TEXTDOMAINDIR ||= $ENV{GIT_TEXTDOMAINDIR} || '@@LOCALEDIR@@';
++	die "NO_GETTEXT=" . NO_GETTEXT_STR if NO_GETTEXT;
+ 
+ 	require POSIX;
+ 	POSIX->import(qw(setlocale));
+-- 
+2.31.1.838.g7ac6e98bb53
+
