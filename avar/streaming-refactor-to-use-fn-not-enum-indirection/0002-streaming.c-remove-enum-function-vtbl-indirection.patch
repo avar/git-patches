@@ -1,0 +1,119 @@
+From 13061f012124df1add1936b21c2ce71b7fb2c624 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.5-13061f01212-20210505T122645Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210505T122645Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210505T122645Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 26 Apr 2021 13:45:04 +0200
+Subject: [PATCH 2/5] streaming.c: remove enum/function/vtbl indirection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the indirection of discovering a function pointer to use via an
+enum and virtual table. This refactors code added in
+46bf043807c (streaming: a new API to read from the object store,
+2011-05-11).
+
+We can instead simply return an "open_istream_fn" for use from the
+"istream_source()" selector function directly. This allows us to get
+rid of the "incore", "loose" and "pack_non_delta" enum
+variables. We'll return the functions instead.
+
+The "stream_error" variable in that enum can likewise go in favor of
+returning NULL, which is what the open_istream() was doing when it got
+that value anyway.
+
+We can thus remove the entire enum, and the "open_istream_tbl" virtual
+table that (indirectly) referenced it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ streaming.c | 36 +++++++++++-------------------------
+ 1 file changed, 11 insertions(+), 25 deletions(-)
+
+diff --git a/streaming.c b/streaming.c
+index b0d439e47a7..628369519b9 100644
+--- a/streaming.c
++++ b/streaming.c
+@@ -8,13 +8,6 @@
+ #include "replace-object.h"
+ #include "packfile.h"
+ 
+-enum input_source {
+-	stream_error = -1,
+-	incore = 0,
+-	loose = 1,
+-	pack_non_delta = 2
+-};
+-
+ typedef int (*open_istream_fn)(struct git_istream *,
+ 			       struct repository *,
+ 			       struct object_info *,
+@@ -424,16 +417,10 @@ static open_method_decl(incore)
+  * static helpers variables and functions for users of streaming interface
+  *****************************************************************************/
+ 
+-static open_istream_fn open_istream_tbl[] = {
+-	open_istream_incore,
+-	open_istream_loose,
+-	open_istream_pack_non_delta,
+-};
+-
+-static enum input_source istream_source(struct repository *r,
+-					const struct object_id *oid,
+-					enum object_type *type,
+-					struct object_info *oi)
++static open_istream_fn istream_source(struct repository *r,
++				      const struct object_id *oid,
++				      enum object_type *type,
++				      struct object_info *oi)
+ {
+ 	unsigned long size;
+ 	int status;
+@@ -442,21 +429,20 @@ static enum input_source istream_source(struct repository *r,
+ 	oi->sizep = &size;
+ 	status = oid_object_info_extended(r, oid, oi, 0);
+ 	if (status < 0)
+-		return stream_error;
++		return NULL;
+ 
+ 	switch (oi->whence) {
+ 	case OI_LOOSE:
+-		return loose;
++		return open_istream_loose;
+ 	case OI_PACKED:
+ 		if (!oi->u.packed.is_delta && big_file_threshold < size)
+-			return pack_non_delta;
++			return open_istream_pack_non_delta;
+ 		/* fallthru */
+ 	default:
+-		return incore;
++		return open_istream_incore;
+ 	}
+ }
+ 
+-
+ /****************************************************************
+  * Users of streaming interface
+  ****************************************************************/
+@@ -482,13 +468,13 @@ struct git_istream *open_istream(struct repository *r,
+ 	struct git_istream *st;
+ 	struct object_info oi = OBJECT_INFO_INIT;
+ 	const struct object_id *real = lookup_replace_object(r, oid);
+-	enum input_source src = istream_source(r, real, type, &oi);
++	open_istream_fn open_fn = istream_source(r, real, type, &oi);
+ 
+-	if (src < 0)
++	if (!open_fn)
+ 		return NULL;
+ 
+ 	st = xmalloc(sizeof(*st));
+-	if (open_istream_tbl[src](st, r, &oi, real, type)) {
++	if (open_fn(st, r, &oi, real, type)) {
+ 		if (open_istream_incore(st, r, &oi, real, type)) {
+ 			free(st);
+ 			return NULL;
+-- 
+2.31.1.838.g7ac6e98bb53
+
