@@ -1,5 +1,5 @@
 From 2e41e3e4cb943a8fe46cf29b411991e60684c7eb Mon Sep 17 00:00:00 2001
-Message-Id: <patch-1.1-2e41e3e4cb-20210520T110340Z-avarab@gmail.com>
+Message-Id: <patch-1.1-2e41e3e4cb-20210520T110357Z-avarab@gmail.com>
 In-Reply-To: <xmqqim3ew905.fsf@gitster.g>
 References: <xmqqim3ew905.fsf@gitster.g>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -43,8 +43,104 @@ Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Signed-off-by: Jeff King <peff@peff.net>
 ---
 Range-diff against v2:
-1:  782555daad < -:  ---------- trace2: refactor to avoid gcc warning under -O3
--:  ---------- > 1:  2e41e3e4cb trace2: refactor to avoid gcc warning under -O3
+1:  782555daad ! 1:  2e41e3e4cb trace2: refactor to avoid gcc warning under -O3
+    @@ Commit message
+         ee4512ed481 (trace2: create new combined trace facility, 2019-02-22).
+     
+         As noted in [2] this warning happens because the compiler doesn't
+    -    assume that errno must be non-zero after a failed syscall. Let's work
+    -    around it as suggested in that analysis. We now return -1 ourselves on
+    -    error, and save away the value of errno in a variable the caller
+    -    passes in.
+    +    assume that errno must be non-zero after a failed syscall.
+    +
+    +    Let's work around by using the well-established "saved_errno" pattern,
+    +    along with returning -1 ourselves instead of "errno". The caller can
+    +    thus rely on our "errno" on failure.
+     
+         See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=61846 for a related
+         bug report against GCC.
+    @@ Commit message
+         2. https://lore.kernel.org/git/20200404142131.GA679473@coredump.intra.peff.net/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    Signed-off-by: Jeff King <peff@peff.net>
+     
+      ## trace2/tr2_dst.c ##
+    -@@ trace2/tr2_dst.c: static int tr2_dst_try_path(struct tr2_dst *dst, const char *tgt_value)
+    - #define PREFIX_AF_UNIX_STREAM "af_unix:stream:"
+    - #define PREFIX_AF_UNIX_DGRAM "af_unix:dgram:"
+    - 
+    --static int tr2_dst_try_uds_connect(const char *path, int sock_type, int *out_fd)
+    -+static int tr2_dst_try_uds_connect(const char *path, int sock_type,
+    -+				   int *out_fd, int *e)
+    - {
+    - 	int fd;
+    - 	struct sockaddr_un sa;
+    +@@ trace2/tr2_dst.c: static int tr2_dst_try_uds_connect(const char *path, int sock_type, int *out_fd)
+      
+      	fd = socket(AF_UNIX, sock_type, 0);
+    --	if (fd == -1)
+    + 	if (fd == -1)
+     -		return errno;
+    -+	if (fd == -1) {
+    -+		*e = errno;
+     +		return -1;
+    -+	}
+      
+      	sa.sun_family = AF_UNIX;
+      	strlcpy(sa.sun_path, path, sizeof(sa.sun_path));
+      
+      	if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
+     -		int e = errno;
+    -+		*e = errno;
+    ++		int saved_errno = errno;
+      		close(fd);
+     -		return e;
+    ++		errno = saved_errno;
+     +		return -1;
+      	}
+      
+      	*out_fd = fd;
+    +@@ trace2/tr2_dst.c: static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
+    + {
+    + 	unsigned int uds_try = 0;
+    + 	int fd;
+    +-	int e;
+    + 	const char *path = NULL;
+    + 
+    + 	/*
+     @@ trace2/tr2_dst.c: static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
+      	}
+      
+      	if (uds_try & TR2_DST_UDS_TRY_STREAM) {
+     -		e = tr2_dst_try_uds_connect(path, SOCK_STREAM, &fd);
+     -		if (!e)
+    -+		if (!tr2_dst_try_uds_connect(path, SOCK_STREAM, &fd, &e))
+    ++		if (!tr2_dst_try_uds_connect(path, SOCK_STREAM, &fd))
+      			goto connected;
+    - 		if (e != EPROTOTYPE)
+    +-		if (e != EPROTOTYPE)
+    ++		if (errno != EPROTOTYPE)
+      			goto error;
+      	}
+      	if (uds_try & TR2_DST_UDS_TRY_DGRAM) {
+     -		e = tr2_dst_try_uds_connect(path, SOCK_DGRAM, &fd);
+     -		if (!e)
+    -+		if (!tr2_dst_try_uds_connect(path, SOCK_DGRAM, &fd, &e))
+    ++		if (!tr2_dst_try_uds_connect(path, SOCK_DGRAM, &fd))
+      			goto connected;
+      	}
+      
+    +@@ trace2/tr2_dst.c: static int tr2_dst_try_unix_domain_socket(struct tr2_dst *dst,
+    + 	if (tr2_dst_want_warning())
+    + 		warning("trace2: could not connect to socket '%s' for '%s' tracing: %s",
+    + 			path, tr2_sysenv_display_name(dst->sysenv_var),
+    +-			strerror(e));
+    ++			strerror(errno));
+    + 
+    + 	tr2_dst_trace_disable(dst);
+    + 	return 0;
 
  trace2/tr2_dst.c | 18 ++++++++----------
  1 file changed, 8 insertions(+), 10 deletions(-)
