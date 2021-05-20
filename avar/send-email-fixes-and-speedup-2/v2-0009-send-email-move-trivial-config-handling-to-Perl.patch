@@ -1,0 +1,116 @@
+From 2524ec8292725775befe974003495d153f2fe0b0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.10-2524ec82927-20210520T081202Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20210520T081202Z-avarab@gmail.com>
+References: <cover-0.9-0000000000-20210512T132955Z-avarab@gmail.com>
+	<cover-00.10-00000000000-20210520T081202Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Apr 2021 22:28:47 +0200
+Subject: [PATCH v2 09/10] send-email: move trivial config handling to Perl
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Optimize the startup time of git-send-email by using an amended
+config_regexp() function to retrieve the list of config keys and
+values we're interested in.
+
+For boolean keys we can handle the [true|false] case ourselves, and
+the "--get" case didn't need any parsing. Let's leave "--path" and
+other "--bool" cases to "git config". As noted in a preceding commit
+we're free to change the config_regexp() function, it's only used by
+"git send-email".
+
+This brings the runtime of "git send-email" from ~60-~70ms to a very
+steady ~40ms on my test box. We no run just one "git config"
+invocation on startup instead of 8, the exact number will differ based
+on the local sendemail.* config. I happen to have 8 of those set.
+
+This brings the runtime of t9001-send-email.sh from ~13s down to ~12s
+for me. The change there is less impressive as many of those tests set
+various config values, and we're also getting to the point of
+diminishing returns for optimizing "git send-email" itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 17 ++++++++++-------
+ perl/Git.pm         | 10 +++++-----
+ 2 files changed, 15 insertions(+), 12 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index a521f37c341..28b9a20a7f2 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -324,7 +324,10 @@ sub read_config {
+ 		my $target = $config_bool_settings{$setting};
+ 		my $key = "$prefix.$setting";
+ 		next unless exists $known_keys->{$key};
+-		my $v = Git::config_bool(@repo, $key);
++		my $v = (@{$known_keys->{$key}} == 1 &&
++			 $known_keys->{$key}->[0] =~ /^(?:true|false)$/s)
++			? $known_keys->{$key}->[0] eq 'true'
++			: Git::config_bool(@repo, $key);
+ 		next unless defined $v;
+ 		next if $configured->{$setting}++;
+ 		$$target = $v;
+@@ -353,14 +356,12 @@ sub read_config {
+ 		my $key = "$prefix.$setting";
+ 		next unless exists $known_keys->{$key};
+ 		if (ref($target) eq "ARRAY") {
+-			my @values = Git::config(@repo, $key);
+-			next unless @values;
++			my @values = @{$known_keys->{$key}};
+ 			next if $configured->{$setting}++;
+ 			@$target = @values;
+ 		}
+ 		else {
+-			my $v = Git::config(@repo, $key);
+-			next unless defined $v;
++			my $v = $known_keys->{$key}->[0];
+ 			next if $configured->{$setting}++;
+ 			$$target = $v;
+ 		}
+@@ -371,8 +372,10 @@ sub read_config {
+ # parses 'bool' etc.) by only doing so for config keys that exist.
+ my %known_config_keys;
+ {
+-	my @known_config_keys = Git::config_regexp("^sende?mail[.]");
+-	@known_config_keys{@known_config_keys} = ();
++	my @kv = Git::config_regexp("^sende?mail[.]");
++	while (my ($k, $v) = splice @kv, 0, 2) {
++		push @{$known_config_keys{$k}} => $v;
++	}
+ }
+ 
+ # sendemail.identity yields to --identity. We must parse this
+diff --git a/perl/Git.pm b/perl/Git.pm
+index f18852fb09c..a9020d0d01f 100644
+--- a/perl/Git.pm
++++ b/perl/Git.pm
+@@ -739,18 +739,18 @@ sub config_int {
+ =item config_regexp ( RE )
+ 
+ Retrieve the list of configuration key names matching the regular
+-expression C<RE>. The return value is a list of strings matching
+-this regex.
++expression C<RE>. The return value is an ARRAY of key-value pairs.
+ 
+ =cut
+ 
+ sub config_regexp {
+ 	my ($self, $regex) = _maybe_self(@_);
+ 	try {
+-		my @cmd = ('config', '--name-only', '--get-regexp', $regex);
++		my @cmd = ('config', '--null', '--get-regexp', $regex);
+ 		unshift @cmd, $self if $self;
+-		my @matches = command(@cmd);
+-		return @matches;
++		my $data = command(@cmd);
++		my (@kv) = map { split /\n/, $_, 2 } split /\0/, $data;
++		return @kv;
+ 	} catch Git::Error::Command with {
+ 		my $E = shift;
+ 		if ($E->value() == 1) {
+-- 
+2.32.0.rc0.405.g5d387561bb3
+

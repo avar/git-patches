@@ -1,0 +1,158 @@
+From 1b27a393ae32bd28d83a21eefc7e0c438447a537 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.10-1b27a393ae3-20210520T081202Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20210520T081202Z-avarab@gmail.com>
+References: <cover-0.9-0000000000-20210512T132955Z-avarab@gmail.com>
+	<cover-00.10-00000000000-20210520T081202Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Apr 2021 20:54:18 +0200
+Subject: [PATCH v2 03/10] send-email: lazily load config for a big speedup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reduce the time it takes git-send-email to get to even the most
+trivial of tasks (such as serving up its "-h" output) by first listing
+config keys that exist, and only then only call e.g. "git config
+--bool" on them if they do.
+
+Over a lot of runs this speeds the time to "-h" up for me from ~250ms
+to ~150ms, and the runtime of t9001-send-email.sh goes from ~25s to
+~20s.
+
+This introduces a race condition where we'll do the "wrong" thing if a
+config key were to be inserted between us discovering the list and
+calling read_config(), i.e. we won't know about the racily added
+key. In theory this is a change in behavior, in practice it doesn't
+matter.
+
+The config_regexp() function being changed here was added in
+dd84e528a34 (git-send-email: die if sendmail.* config is set,
+2020-07-23) for use by git-send-email. So we can change its odd return
+value in the case where no values are found by "git config". The
+difference in the *.pm code would matter if it was invoked in scalar
+context, but now it no longer is.
+
+Arguably this caching belongs in Git.pm itself, but in lieu of
+modifying it for all its callers let's only do this for "git
+send-email". The other big potential win would be "git svn", but
+unlike "git send-email" it doesn't check tens of config variables one
+at a time at startup (in my brief testing it doesn't check any).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 35 ++++++++++++++++++++++++++---------
+ perl/Git.pm         |  4 ++--
+ 2 files changed, 28 insertions(+), 11 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index f9d859da3ed..5b0b7c33ec6 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -337,11 +337,13 @@ sub signal_handler {
+ 
+ # Read our sendemail.* config
+ sub read_config {
+-	my ($configured, $prefix) = @_;
++	my ($known_keys, $configured, $prefix) = @_;
+ 
+ 	foreach my $setting (keys %config_bool_settings) {
+ 		my $target = $config_bool_settings{$setting};
+-		my $v = Git::config_bool(@repo, "$prefix.$setting");
++		my $key = "$prefix.$setting";
++		next unless exists $known_keys->{$key};
++		my $v = Git::config_bool(@repo, $key);
+ 		next unless defined $v;
+ 		next if $configured->{$setting}++;
+ 		$$target = $v;
+@@ -349,8 +351,10 @@ sub read_config {
+ 
+ 	foreach my $setting (keys %config_path_settings) {
+ 		my $target = $config_path_settings{$setting};
++		my $key = "$prefix.$setting";
++		next unless exists $known_keys->{$key};
+ 		if (ref($target) eq "ARRAY") {
+-			my @values = Git::config_path(@repo, "$prefix.$setting");
++			my @values = Git::config_path(@repo, $key);
+ 			next unless @values;
+ 			next if $configured->{$setting}++;
+ 			@$target = @values;
+@@ -365,14 +369,16 @@ sub read_config {
+ 
+ 	foreach my $setting (keys %config_settings) {
+ 		my $target = $config_settings{$setting};
++		my $key = "$prefix.$setting";
++		next unless exists $known_keys->{$key};
+ 		if (ref($target) eq "ARRAY") {
+-			my @values = Git::config(@repo, "$prefix.$setting");
++			my @values = Git::config(@repo, $key);
+ 			next unless @values;
+ 			next if $configured->{$setting}++;
+ 			@$target = @values;
+ 		}
+ 		else {
+-			my $v = Git::config(@repo, "$prefix.$setting");
++			my $v = Git::config(@repo, $key);
+ 			next unless defined $v;
+ 			next if $configured->{$setting}++;
+ 			$$target = $v;
+@@ -380,9 +386,20 @@ sub read_config {
+ 	}
+ }
+ 
++# Save ourselves a lot of work of shelling out to 'git config' (it
++# parses 'bool' etc.) by only doing so for config keys that exist.
++my %known_config_keys;
++{
++	my @known_config_keys = Git::config_regexp("^sende?mail[.]");
++	@known_config_keys{@known_config_keys} = ();
++}
++
+ # sendemail.identity yields to --identity. We must parse this
+ # special-case first before the rest of the config is read.
+-$identity = Git::config(@repo, "sendemail.identity");
++{
++	my $key = "sendemail.identity";
++	$identity = Git::config(@repo, $key) if exists $known_config_keys{$key};
++}
+ my $rc = GetOptions(
+ 	"identity=s" => \$identity,
+ 	"no-identity" => \$no_identity,
+@@ -393,8 +410,8 @@ sub read_config {
+ # Now we know enough to read the config
+ {
+     my %configured;
+-    read_config(\%configured, "sendemail.$identity") if defined $identity;
+-    read_config(\%configured, "sendemail");
++    read_config(\%known_config_keys, \%configured, "sendemail.$identity") if defined $identity;
++    read_config(\%known_config_keys, \%configured, "sendemail");
+ }
+ 
+ # Begin by accumulating all the variables (defined above), that we will end up
+@@ -478,7 +495,7 @@ sub read_config {
+     usage();
+ }
+ 
+-if ($forbid_sendmail_variables && (scalar Git::config_regexp("^sendmail[.]")) != 0) {
++if ($forbid_sendmail_variables && grep { /^sendmail/s } keys %known_config_keys) {
+ 	die __("fatal: found configuration options for 'sendmail'\n" .
+ 		"git-send-email is configured with the sendemail.* options - note the 'e'.\n" .
+ 		"Set sendemail.forbidSendmailVariables to false to disable this check.\n");
+diff --git a/perl/Git.pm b/perl/Git.pm
+index 73ebbf80cc6..06a10b175a7 100644
+--- a/perl/Git.pm
++++ b/perl/Git.pm
+@@ -754,8 +754,8 @@ sub config_regexp {
+ 	} catch Git::Error::Command with {
+ 		my $E = shift;
+ 		if ($E->value() == 1) {
+-			my @matches = ();
+-			return @matches;
++			# Key(s) not found.
++			return;
+ 		} else {
+ 			throw $E;
+ 		}
+-- 
+2.32.0.rc0.405.g5d387561bb3
+
