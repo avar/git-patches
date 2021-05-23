@@ -1,0 +1,86 @@
+From 4326c2f99c11f6b9199dea5d4a3967f33e968b27 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.13-4326c2f99c-20210523T085231Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-0000000000-20210523T085231Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20210520T081826Z-avarab@gmail.com>
+	<cover-00.13-0000000000-20210523T085231Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Apr 2021 21:24:36 +0200
+Subject: [PATCH v3 07/13] send-email: lazily shell out to "git var"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Optimize git-send-email by only shelling out to "git var" if we need
+to. This is easily done by re-inventing our own small version of
+perl's Memoize module.
+
+I suppose I could just use Memoize itself, but in a subsequent patch
+I'll be micro-optimizing send-email's use of dependencies. Using
+Memoize is a measly extra 5-10 milliseconds, but as we'll see that'll
+end up mattering for us in the end.
+
+This brings the runtime of a plain "send-email" from around ~160-170ms
+to ~140m-150ms. The runtime of the tests is around the same, or around
+~20s.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 20 +++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index d294681cf3..56bd5b0e50 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -578,8 +578,18 @@ sub config_regexp {
+ }
+ 
+ my ($repoauthor, $repocommitter);
+-($repoauthor) = Git::ident_person(@repo, 'author');
+-($repocommitter) = Git::ident_person(@repo, 'committer');
++{
++	my %cache;
++	my ($author, $committer);
++	my $common = sub {
++		my ($what) = @_;
++		return $cache{$what} if exists $cache{$what};
++		($cache{$what}) = Git::ident_person(@repo, $what);
++		return $cache{$what};
++	};
++	$repoauthor = sub { $common->('author') };
++	$repocommitter = sub { $common->('committer') };
++}
+ 
+ sub parse_address_line {
+ 	return map { $_->format } Mail::Address->parse($_[0]);
+@@ -767,7 +777,7 @@ sub get_patch_subject {
+ 		or die sprintf(__("Failed to open for writing %s: %s"), $compose_filename, $!);
+ 
+ 
+-	my $tpl_sender = $sender || $repoauthor || $repocommitter || '';
++	my $tpl_sender = $sender || $repoauthor->() || $repocommitter->() || '';
+ 	my $tpl_subject = $initial_subject || '';
+ 	my $tpl_in_reply_to = $initial_in_reply_to || '';
+ 	my $tpl_reply_to = $reply_to || '';
+@@ -973,7 +983,7 @@ sub file_declares_8bit_cte {
+ 	$sender =~ s/^\s+|\s+$//g;
+ 	($sender) = expand_aliases($sender);
+ } else {
+-	$sender = $repoauthor || $repocommitter || '';
++	$sender = $repoauthor->() || $repocommitter->() || '';
+ }
+ 
+ # $sender could be an already sanitized address
+@@ -1122,7 +1132,7 @@ sub make_message_id {
+ 	$uniq = "$message_id_stamp-$message_id_serial";
+ 
+ 	my $du_part;
+-	for ($sender, $repocommitter, $repoauthor) {
++	for ($sender, $repocommitter->(), $repoauthor->()) {
+ 		$du_part = extract_valid_address(sanitize_address($_));
+ 		last if (defined $du_part and $du_part ne '');
+ 	}
+-- 
+2.32.0.rc0.406.g05cb3eebfc
+
