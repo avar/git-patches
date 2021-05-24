@@ -1,0 +1,70 @@
+From d36b57e429ff1c4fb9869e6b0cfcd8bf83ee8193 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-13.13-d36b57e429f-20210524T074932Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20210524T074932Z-avarab@gmail.com>
+References: <cover-00.13-0000000000-20210523T085231Z-avarab@gmail.com>
+	<cover-00.13-00000000000-20210524T074932Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 20 May 2021 09:57:23 +0200
+Subject: [PATCH v4 13/13] perl: nano-optimize by replacing Cwd::cwd() with
+ Cwd::getcwd()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+It has been pointed out[1] that cwd() invokes "pwd(1)" while getcwd()
+is a Perl-native XS function. For what we're using these for we can
+use getcwd().
+
+The performance difference is miniscule, we're saving on the order of
+a millisecond or so, see [2] below for the benchmark. I don't think
+this matters in practice for optimizing git-send-email or perl
+execution (unlike the patches leading up to this one).
+
+But let's do it regardless of that, if only so we don't have to think
+about this as a low-hanging fruit anymore.
+
+1. https://lore.kernel.org/git/20210512180517.GA11354@dcvr/
+2.
+    $ perl -MBenchmark=:all -MCwd -wE 'cmpthese(10000, { getcwd => sub { getcwd }, cwd => sub { cwd }, pwd => sub { system "pwd >/dev/null" }})'
+                (warning: too few iterations for a reliable count)
+                             Rate                  pwd                 cwd    getcwd
+    pwd                     982/s                   --                -48%     -100%
+    cwd                    1890/s                  92%                  --     -100%
+    getcwd 10000000000000000000/s 1018000000000000000% 529000000000000064%        -
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 2 +-
+ perl/Git.pm         | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 1ea4d9589d8..c6af05e8a31 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -2007,7 +2007,7 @@ sub validate_patch {
+ 			require Cwd;
+ 			my $target = Cwd::abs_path($fn);
+ 			# The hook needs a correct cwd and GIT_DIR.
+-			my $cwd_save = Cwd::cwd();
++			my $cwd_save = Cwd::getcwd();
+ 			chdir($repo->wc_path() or $repo->repo_path())
+ 				or die("chdir: $!");
+ 			local $ENV{"GIT_DIR"} = $repo->repo_path();
+diff --git a/perl/Git.pm b/perl/Git.pm
+index 4d048f307b3..863bd80694c 100644
+--- a/perl/Git.pm
++++ b/perl/Git.pm
+@@ -405,7 +405,7 @@ sub command_bidi_pipe {
+ 	if ($self) {
+ 		shift;
+ 		require Cwd;
+-		$cwd_save = Cwd::cwd();
++		$cwd_save = Cwd::getcwd();
+ 		_setup_git_cmd_env($self);
+ 	}
+ 	require IPC::Open2;
+-- 
+2.32.0.rc1.385.g46e826f1e55
+

@@ -1,0 +1,110 @@
+From 3818000bfbad9e967377aee456ca02df0b1b4234 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-12.13-3818000bfba-20210524T074932Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20210524T074932Z-avarab@gmail.com>
+References: <cover-00.13-0000000000-20210523T085231Z-avarab@gmail.com>
+	<cover-00.13-00000000000-20210524T074932Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Apr 2021 22:28:47 +0200
+Subject: [PATCH v4 12/13] send-email: move trivial config handling to Perl
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Optimize the startup time of git-send-email by using an amended
+config_regexp() function to retrieve the list of config keys and
+values we're interested in.
+
+For boolean keys we can handle the [true|false] case ourselves, and
+the "--get" case didn't need any parsing. Let's leave "--path" and
+other "--bool" cases to "git config". I'm not bothering with the
+"undef" or "" case (true and false, respectively), let's just punt on
+those and others and have "git config --type=bool" handle it.
+
+This brings the runtime of "git send-email" from ~60-~70ms to a very
+steady ~40ms on my test box. We now run just one "git config"
+invocation on startup instead of 8, the exact number will differ based
+on the local sendemail.* config. I happen to have 8 of those set.
+
+This brings the runtime of t9001-send-email.sh from ~13s down to ~12s
+for me. The change there is less impressive as many of those tests set
+various config values, and we're also getting to the point of
+diminishing returns for optimizing "git send-email" itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 29 ++++++++++++++++++++---------
+ 1 file changed, 20 insertions(+), 9 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 1e9273fd4f5..1ea4d9589d8 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -324,7 +324,11 @@ sub read_config {
+ 		my $target = $config_bool_settings{$setting};
+ 		my $key = "$prefix.$setting";
+ 		next unless exists $known_keys->{$key};
+-		my $v = Git::config_bool(@repo, $key);
++		my $v = (@{$known_keys->{$key}} == 1 &&
++			 (defined $known_keys->{$key}->[0] &&
++			  $known_keys->{$key}->[0] =~ /^(?:true|false)$/s))
++			? $known_keys->{$key}->[0] eq 'true'
++			: Git::config_bool(@repo, $key);
+ 		next unless defined $v;
+ 		next if $configured->{$setting}++;
+ 		$$target = $v;
+@@ -353,14 +357,12 @@ sub read_config {
+ 		my $key = "$prefix.$setting";
+ 		next unless exists $known_keys->{$key};
+ 		if (ref($target) eq "ARRAY") {
+-			my @values = Git::config(@repo, $key);
+-			next unless @values;
++			my @values = @{$known_keys->{$key}};
+ 			next if $configured->{$setting}++;
+ 			@$target = @values;
+ 		}
+ 		else {
+-			my $v = Git::config(@repo, $key);
+-			next unless defined $v;
++			my $v = $known_keys->{$key}->[0];
+ 			next if $configured->{$setting}++;
+ 			$$target = $v;
+ 		}
+@@ -371,12 +373,19 @@ sub config_regexp {
+ 	my ($regex) = @_;
+ 	my @ret;
+ 	eval {
+-		@ret = Git::command(
++		my $ret = Git::command(
+ 			'config',
+-			'--name-only',
++			'--null',
+ 			'--get-regexp',
+ 			$regex,
+ 		);
++		@ret = map {
++			# We must always return ($k, $v) here, since
++			# empty config values will be just "key\0",
++			# not "key\nvalue\0".
++			my ($k, $v) = split /\n/, $_, 2;
++			($k, $v);
++		} split /\0/, $ret;
+ 		1;
+ 	} or do {
+ 		# If we have no keys we're OK, otherwise re-throw
+@@ -389,8 +398,10 @@ sub config_regexp {
+ # parses 'bool' etc.) by only doing so for config keys that exist.
+ my %known_config_keys;
+ {
+-	my @known_config_keys = config_regexp("^sende?mail[.]");
+-	@known_config_keys{@known_config_keys} = ();
++	my @kv = config_regexp("^sende?mail[.]");
++	while (my ($k, $v) = splice @kv, 0, 2) {
++		push @{$known_config_keys{$k}} => $v;
++	}
+ }
+ 
+ # sendemail.identity yields to --identity. We must parse this
+-- 
+2.32.0.rc1.385.g46e826f1e55
+
