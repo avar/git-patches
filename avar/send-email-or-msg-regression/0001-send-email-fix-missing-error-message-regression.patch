@@ -1,0 +1,95 @@
+From df3a2b8562da71ab3bec45c1362aa134767d78f8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.2-df3a2b8562d-20210524T231047Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20210524T231047Z-avarab@gmail.com>
+References: <bb30fe2b-cd75-4782-24a6-08bb002a0367@kdbg.org>
+	<cover-0.2-00000000000-20210524T231047Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 May 2021 00:23:44 +0200
+Subject: [PATCH 1/2] send-email: fix missing error message regression
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression with the "the editor exited uncleanly, aborting
+everything" error message going missing after my
+d21616c0394 (git-send-email: refactor duplicate $? checks into a
+function, 2021-04-06).
+
+I introduced a $msg variable, but did not actually use it. This caused
+us to miss the optional error message supplied by the "do_edit"
+codepath. Fix that, and add tests to check that this works.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl   | 12 +++++++++++-
+ t/t9001-send-email.sh | 23 +++++++++++++++++++++--
+ 2 files changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 175da07d946..170f42fe210 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -219,8 +219,18 @@ sub system_or_msg {
+ 	my $exit_code = $? >> 8;
+ 	return unless $signalled or $exit_code;
+ 
++	my @sprintf_args = ($args->[0], $exit_code);
++	if (defined $msg) {
++		# Quiet the 'redundant' warning category, except we
++		# need to support down to Perl 5.8, so we can't do a
++		# "no warnings 'redundant'", since that category was
++		# introduced in perl 5.22, and asking for it will die
++		# on older perls.
++		no warnings;
++		return sprintf($msg, @sprintf_args);
++	}
+ 	return sprintf(__("fatal: command '%s' died with exit code %d"),
+-		       $args->[0], $exit_code);
++		       @sprintf_args);
+ }
+ 
+ sub system_or_die {
+diff --git a/t/t9001-send-email.sh b/t/t9001-send-email.sh
+index 65b30353719..2acf389837c 100755
+--- a/t/t9001-send-email.sh
++++ b/t/t9001-send-email.sh
+@@ -644,14 +644,33 @@ test_expect_success $PREREQ 'In-Reply-To with --chain-reply-to' '
+ 	test_cmp expect actual
+ '
+ 
++test_set_editor "$(pwd)/fake-editor"
++
++test_expect_success $PREREQ 'setup erroring fake editor' '
++	write_script fake-editor <<-\EOF
++	echo >&2 "I am about to error"
++	exit 1
++	EOF
++'
++
++test_expect_success $PREREQ 'fake editor dies with error' '
++	clean_fake_sendmail &&
++	test_must_fail git send-email \
++		--compose --subject foo \
++		--from="Example <nobody@example.com>" \
++		--to=nobody@example.com \
++		--smtp-server="$(pwd)/fake.sendmail" \
++		$patches 2>err &&
++	grep "I am about to error" err &&
++	grep "the editor exited uncleanly, aborting everything" err
++'
++
+ test_expect_success $PREREQ 'setup fake editor' '
+ 	write_script fake-editor <<-\EOF
+ 	echo fake edit >>"$1"
+ 	EOF
+ '
+ 
+-test_set_editor "$(pwd)/fake-editor"
+-
+ test_expect_success $PREREQ '--compose works' '
+ 	clean_fake_sendmail &&
+ 	git send-email \
+-- 
+2.32.0.rc1.385.g9db524b96f7
+
