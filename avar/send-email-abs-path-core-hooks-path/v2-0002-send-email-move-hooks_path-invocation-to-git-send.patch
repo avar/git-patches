@@ -1,0 +1,77 @@
+From cda41c36772b5011d1d4767c434fed7895182302 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-cda41c36772-20210526T111558Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20210526T111558Z-avarab@gmail.com>
+References: <xmqq5yz6ehpk.fsf@gitster.g>
+	<cover-0.2-00000000000-20210526T111558Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 26 May 2021 11:35:39 +0200
+Subject: [PATCH v2 2/2] send-email: move "hooks_path" invocation to
+ git-send-email.perl
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the newly added "hooks_path" API in Git.pm to its only user in
+git-send-email.perl. This was added in c8243933c74 (git-send-email:
+Respect core.hooksPath setting, 2021-03-23), meaning that it hasn't
+yet made it into a non-rc release of git.
+
+The consensus with Git.pm is that we need to be considerate of
+out-of-tree users who treat it as a public documented interface. We
+should therefore be less willing to add new functionality to it, least
+we be stuck supporting it after our own uses for it disappear.
+
+In this case the git-send-email.perl hook invocation will probably be
+replaced by a future "git hook run" command, and in the commit
+preceding this one the "hooks_path" become nothing but a trivial
+wrapper for "rev-parse --git-path hooks" anyway (with no
+Cwd::abs_path() call), so let's just inline this command in
+git-send-email.perl itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl |  3 ++-
+ perl/Git.pm         | 12 ------------
+ 2 files changed, 2 insertions(+), 13 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 170f42fe210..25be2ebd2af 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -1959,7 +1959,8 @@ sub validate_patch {
+ 	my ($fn, $xfer_encoding) = @_;
+ 
+ 	if ($repo) {
+-		my $validate_hook = catfile($repo->hooks_path(),
++		my $hooks_path = $repo->command_oneline('rev-parse', '--git-path', 'hooks');
++		my $validate_hook = catfile($hooks_path,
+ 					    'sendemail-validate');
+ 		my $hook_error;
+ 		if (-x $validate_hook) {
+diff --git a/perl/Git.pm b/perl/Git.pm
+index df6280ebab5..02eacef0c2a 100644
+--- a/perl/Git.pm
++++ b/perl/Git.pm
+@@ -619,18 +619,6 @@ sub _prompt {
+ 
+ sub repo_path { $_[0]->{opts}->{Repository} }
+ 
+-=item hooks_path ()
+-
+-Return path to the hooks directory. Must be called on a repository instance.
+-
+-=cut
+-
+-sub hooks_path {
+-	my ($self) = @_;
+-
+-	my $dir = $self->command_oneline('rev-parse', '--git-path', 'hooks');
+-	return $dir;
+-}
+ 
+ =item wc_path ()
+ 
+-- 
+2.32.0.rc1.400.g0a5a93401d3
+

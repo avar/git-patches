@@ -1,0 +1,85 @@
+From cda41c36772b5011d1d4767c434fed7895182302 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.2-00000000000-20210526T111558Z-avarab@gmail.com>
+In-Reply-To: <xmqq5yz6ehpk.fsf@gitster.g>
+References: <xmqq5yz6ehpk.fsf@gitster.g>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 26 May 2021 13:15:58 +0200
+Subject: [PATCH v2 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  send-email: don't needlessly abs_path() the core.hooksPath
+  send-email: move "hooks_path" invocation to git-send-email.perl
+
+ git-send-email.perl   |  3 ++-
+ perl/Git.pm           | 13 -------------
+ t/t9001-send-email.sh |  7 ++++---
+ 3 files changed, 6 insertions(+), 17 deletions(-)
+
+Range-diff against v1:
+1:  df3a2b8562d < -:  ----------- send-email: fix missing error message regression
+2:  d097e7b0b81 ! 1:  ff01d4619ea send-email: don't needlessly abs_path() the core.hooksPath
+    @@ Commit message
+         2021-04-06) when we started emitting the path to the hook, which was
+         previously only internal to git-send-email.perl.
+     
+    -    I think this change should let us have our cake and eat it too. We now
+    -    emit a relative path for the common case where the hook is in the
+    -    .git/hooks directory, but in the case it's an absolute path (there's
+    -    another test for that, not seen here) we'll prefix it with $(pwd).
+    +    The just-landed 53753a37d09 (t9001-send-email.sh: fix expected
+    +    absolute paths on Windows, 2021-05-24) narrowly fixed this issue, but
+    +    I believe we can do better here. We should not be relying on whatever
+    +    changes Perl's abs_path() makes to the path "rev-parse --git-path
+    +    hooks" hands to us. Let's instead trust it, and hand it to Perl's
+    +    system() in git-send-email.perl. It will handle either a relative or
+    +    absolute path.
+     
+    -    I hope that unlike the current implementation that $(pwd) v.s. $PWD
+    -    difference won't matter on Windows, since now the absolute path is the
+    -    one we get from rev-parse, not the one that's been passed through
+    -    Perl's Cwd::abs_path().
+    +    So let's revert most of 53753a37d09 and just have "hooks_path" return
+    +    what we get from "rev-parse" directly without modification. This has
+    +    the added benefit of making the error message friendlier in the common
+    +    case, we'll no longer print an absolute path for repository-local hook
+    +    errors.
+     
+         1. http://lore.kernel.org/git/bb30fe2b-cd75-4782-24a6-08bb002a0367@kdbg.org
+     
+    @@ t/t9001-send-email.sh: test_expect_success $PREREQ "--validate respects relative
+      	test_path_is_file my-hooks.ran &&
+      	cat >expect <<-EOF &&
+      	fatal: longline.patch: rejected by sendemail-validate hook
+    --	fatal: command '"'"'$(pwd)/my-hooks/sendemail-validate'"'"' died with exit code 1
+    +-	fatal: command '"'"'$PWD/my-hooks/sendemail-validate'"'"' died with exit code 1
+     +	fatal: command '"'"'my-hooks/sendemail-validate'"'"' died with exit code 1
+      	warning: no patches were sent
+      	EOF
+      	test_cmp expect actual
+    + '
+    + 
+    + test_expect_success $PREREQ "--validate respects absolute core.hooksPath path" '
+    +-	test_config core.hooksPath "$(pwd)/my-hooks" &&
+    ++	hooks_path="$(pwd)/my-hooks" &&
+    ++	test_config core.hooksPath "$hooks_path" &&
+    + 	test_when_finished "rm my-hooks.ran" &&
+    + 	test_must_fail git send-email \
+    + 		--from="Example <nobody@example.com>" \
+    +@@ t/t9001-send-email.sh: test_expect_success $PREREQ "--validate respects absolute core.hooksPath path" '
+    + 	test_path_is_file my-hooks.ran &&
+    + 	cat >expect <<-EOF &&
+    + 	fatal: longline.patch: rejected by sendemail-validate hook
+    +-	fatal: command '"'"'$PWD/my-hooks/sendemail-validate'"'"' died with exit code 1
+    ++	fatal: command '"'"'$hooks_path/sendemail-validate'"'"' died with exit code 1
+    + 	warning: no patches were sent
+    + 	EOF
+    + 	test_cmp expect actual
+-:  ----------- > 2:  cda41c36772 send-email: move "hooks_path" invocation to git-send-email.perl
+-- 
+2.32.0.rc1.400.g0a5a93401d3
+
