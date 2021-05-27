@@ -1,0 +1,448 @@
+From d085d59a4171de0985539b8f6f66d3235e33136d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-d085d59a417-20210527T005213Z-avarab@gmail.com>
+In-Reply-To: <878s41m5nc.fsf@evledraar.gmail.com>
+References: <878s41m5nc.fsf@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 27 May 2021 02:08:51 +0200
+Subject: [PATCH] pack-objects: move builtin-only code to its own header
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the code that's only used in builtin/pack-objects.c to a new
+builtin/pack-objects.h header and out of pack-objects.h.
+
+This fixes an issue where Solaris's SunCC hasn't been able to compile
+git since 483fa7f42d9 (t/helper/test-bitmap.c: initial commit,
+2021-03-31).
+
+The real origin of that issue is that in 898eba5e630 (pack-objects:
+refer to delta objects by index instead of pointer, 2018-04-14)
+utility functions only needed by builtin/pack-objects.c were added to
+pack-objects.h. Since then the header has been used in a few other
+places, but 483fa7f42d9 was the first time it was used by test helper.
+
+Since Solaris is stricter about linking and the oe_get_size_slow()
+function lives in builtin/pack-objects.c the build started failing
+with:
+
+    Undefined                       first referenced
+     symbol                             in file
+    oe_get_size_slow                    t/helper/test-bitmap.o
+    ld: fatal: symbol referencing errors. No output written to t/helper/test-tool
+
+On other platforms this is presumably OK because the compiler and/or
+linker detects that the "static inline" functions that reference
+oe_get_size_slow() aren't used.
+
+Let's solve this by moving the relevant code to
+builtin/pack-objects.c. This is almost entirely a code-only move, but
+because of the early macro definitions in that file referencing some
+of these inline functions we need to move the definition of "static
+struct packing_data to_pack" earlier, and declare these inline
+functions above the macros.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/pack-objects.c | 174 +++++++++++++++++++++++++++++++++++++++--
+ pack-objects.h         | 159 -------------------------------------
+ 2 files changed, 167 insertions(+), 166 deletions(-)
+
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index 6ded130e45b..de00adbb9e0 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -37,6 +37,134 @@
+ #include "shallow.h"
+ #include "promisor-remote.h"
+ 
++/*
++ * Objects we are going to pack are collected in the `to_pack` structure.
++ * It contains an array (dynamically expanded) of the object data, and a map
++ * that can resolve SHA1s to their position in the array.
++ */
++static struct packing_data to_pack;
++
++static inline struct object_entry *oe_delta(
++		const struct packing_data *pack,
++		const struct object_entry *e)
++{
++	if (!e->delta_idx)
++		return NULL;
++	if (e->ext_base)
++		return &pack->ext_bases[e->delta_idx - 1];
++	else
++		return &pack->objects[e->delta_idx - 1];
++}
++
++static inline unsigned long oe_delta_size(struct packing_data *pack,
++					  const struct object_entry *e)
++{
++	if (e->delta_size_valid)
++		return e->delta_size_;
++
++	/*
++	 * pack->delta_size[] can't be NULL because oe_set_delta_size()
++	 * must have been called when a new delta is saved with
++	 * oe_set_delta().
++	 * If oe_delta() returns NULL (i.e. default state, which means
++	 * delta_size_valid is also false), then the caller must never
++	 * call oe_delta_size().
++	 */
++	return pack->delta_size[e - pack->objects];
++}
++
++unsigned long oe_get_size_slow(struct packing_data *pack,
++			       const struct object_entry *e);
++
++static inline unsigned long oe_size(struct packing_data *pack,
++				    const struct object_entry *e)
++{
++	if (e->size_valid)
++		return e->size_;
++
++	return oe_get_size_slow(pack, e);
++}
++
++static inline void oe_set_delta(struct packing_data *pack,
++				struct object_entry *e,
++				struct object_entry *delta)
++{
++	if (delta)
++		e->delta_idx = (delta - pack->objects) + 1;
++	else
++		e->delta_idx = 0;
++}
++
++static inline struct object_entry *oe_delta_sibling(
++		const struct packing_data *pack,
++		const struct object_entry *e)
++{
++	if (e->delta_sibling_idx)
++		return &pack->objects[e->delta_sibling_idx - 1];
++	return NULL;
++}
++
++static inline struct object_entry *oe_delta_child(
++		const struct packing_data *pack,
++		const struct object_entry *e)
++{
++	if (e->delta_child_idx)
++		return &pack->objects[e->delta_child_idx - 1];
++	return NULL;
++}
++
++static inline void oe_set_delta_child(struct packing_data *pack,
++				      struct object_entry *e,
++				      struct object_entry *delta)
++{
++	if (delta)
++		e->delta_child_idx = (delta - pack->objects) + 1;
++	else
++		e->delta_child_idx = 0;
++}
++
++static inline void oe_set_delta_sibling(struct packing_data *pack,
++					struct object_entry *e,
++					struct object_entry *delta)
++{
++	if (delta)
++		e->delta_sibling_idx = (delta - pack->objects) + 1;
++	else
++		e->delta_sibling_idx = 0;
++}
++
++static inline void oe_set_size(struct packing_data *pack,
++			       struct object_entry *e,
++			       unsigned long size)
++{
++	if (size < pack->oe_size_limit) {
++		e->size_ = size;
++		e->size_valid = 1;
++	} else {
++		e->size_valid = 0;
++		if (oe_get_size_slow(pack, e) != size)
++			BUG("'size' is supposed to be the object size!");
++	}
++}
++
++static inline void oe_set_delta_size(struct packing_data *pack,
++				     struct object_entry *e,
++				     unsigned long size)
++{
++	if (size < pack->oe_delta_size_limit) {
++		e->delta_size_ = size;
++		e->delta_size_valid = 1;
++	} else {
++		packing_data_lock(pack);
++		if (!pack->delta_size)
++			ALLOC_ARRAY(pack->delta_size, pack->nr_alloc);
++		packing_data_unlock(pack);
++
++		pack->delta_size[e - pack->objects] = size;
++		e->delta_size_valid = 0;
++	}
++}
++
+ #define IN_PACK(obj) oe_in_pack(&to_pack, obj)
+ #define SIZE(obj) oe_size(&to_pack, obj)
+ #define SET_SIZE(obj,size) oe_set_size(&to_pack, obj, size)
+@@ -56,13 +184,6 @@ static const char *pack_usage[] = {
+ 	NULL
+ };
+ 
+-/*
+- * Objects we are going to pack are collected in the `to_pack` structure.
+- * It contains an array (dynamically expanded) of the object data, and a map
+- * that can resolve SHA1s to their position in the array.
+- */
+-static struct packing_data to_pack;
+-
+ static struct pack_idx_entry **written_list;
+ static uint32_t nr_result, nr_written, nr_seen;
+ static struct bitmap_index *bitmap_git;
+@@ -301,6 +422,17 @@ static void copy_pack_data(struct hashfile *f,
+ 	}
+ }
+ 
++static inline int oe_size_greater_than(struct packing_data *pack,
++				       const struct object_entry *lhs,
++				       unsigned long rhs)
++{
++	if (lhs->size_valid)
++		return lhs->size_ > rhs;
++	if (rhs < pack->oe_size_limit) /* rhs < 2^x <= lhs ? */
++		return 1;
++	return oe_get_size_slow(pack, lhs) > rhs;
++}
++
+ /* Return 0 if we will bust the pack-size limit */
+ static unsigned long write_no_reuse_object(struct hashfile *f, struct object_entry *entry,
+ 					   unsigned long limit, int usable_delta)
+@@ -642,6 +774,14 @@ static int mark_tagged(const char *path, const struct object_id *oid, int flag,
+ 	return 0;
+ }
+ 
++static inline unsigned char oe_layer(struct packing_data *pack,
++				     struct object_entry *e)
++{
++	if (!pack->layer)
++		return 0;
++	return pack->layer[e - pack->objects];
++}
++
+ static inline void add_to_write_order(struct object_entry **wo,
+ 			       unsigned int *endp,
+ 			       struct object_entry *e)
+@@ -2231,6 +2371,26 @@ static pthread_mutex_t progress_mutex;
+  * progress_mutex for protection.
+  */
+ 
++static inline int oe_size_less_than(struct packing_data *pack,
++				    const struct object_entry *lhs,
++				    unsigned long rhs)
++{
++	if (lhs->size_valid)
++		return lhs->size_ < rhs;
++	if (rhs < pack->oe_size_limit) /* rhs < 2^x <= lhs ? */
++		return 0;
++	return oe_get_size_slow(pack, lhs) < rhs;
++}
++
++static inline void oe_set_tree_depth(struct packing_data *pack,
++				     struct object_entry *e,
++				     unsigned int tree_depth)
++{
++	if (!pack->tree_depth)
++		CALLOC_ARRAY(pack->tree_depth, pack->nr_alloc);
++	pack->tree_depth[e - pack->objects] = tree_depth;
++}
++
+ /*
+  * Return the size of the object without doing any delta
+  * reconstruction (so non-deltas are true object sizes, but deltas
+diff --git a/pack-objects.h b/pack-objects.h
+index 9d88e3e518f..dca2351ef94 100644
+--- a/pack-objects.h
++++ b/pack-objects.h
+@@ -268,152 +268,10 @@ static inline void oe_set_in_pack(struct packing_data *pack,
+ 	pack->in_pack[e - pack->objects] = p;
+ }
+ 
+-static inline struct object_entry *oe_delta(
+-		const struct packing_data *pack,
+-		const struct object_entry *e)
+-{
+-	if (!e->delta_idx)
+-		return NULL;
+-	if (e->ext_base)
+-		return &pack->ext_bases[e->delta_idx - 1];
+-	else
+-		return &pack->objects[e->delta_idx - 1];
+-}
+-
+-static inline void oe_set_delta(struct packing_data *pack,
+-				struct object_entry *e,
+-				struct object_entry *delta)
+-{
+-	if (delta)
+-		e->delta_idx = (delta - pack->objects) + 1;
+-	else
+-		e->delta_idx = 0;
+-}
+-
+ void oe_set_delta_ext(struct packing_data *pack,
+ 		      struct object_entry *e,
+ 		      const struct object_id *oid);
+ 
+-static inline struct object_entry *oe_delta_child(
+-		const struct packing_data *pack,
+-		const struct object_entry *e)
+-{
+-	if (e->delta_child_idx)
+-		return &pack->objects[e->delta_child_idx - 1];
+-	return NULL;
+-}
+-
+-static inline void oe_set_delta_child(struct packing_data *pack,
+-				      struct object_entry *e,
+-				      struct object_entry *delta)
+-{
+-	if (delta)
+-		e->delta_child_idx = (delta - pack->objects) + 1;
+-	else
+-		e->delta_child_idx = 0;
+-}
+-
+-static inline struct object_entry *oe_delta_sibling(
+-		const struct packing_data *pack,
+-		const struct object_entry *e)
+-{
+-	if (e->delta_sibling_idx)
+-		return &pack->objects[e->delta_sibling_idx - 1];
+-	return NULL;
+-}
+-
+-static inline void oe_set_delta_sibling(struct packing_data *pack,
+-					struct object_entry *e,
+-					struct object_entry *delta)
+-{
+-	if (delta)
+-		e->delta_sibling_idx = (delta - pack->objects) + 1;
+-	else
+-		e->delta_sibling_idx = 0;
+-}
+-
+-unsigned long oe_get_size_slow(struct packing_data *pack,
+-			       const struct object_entry *e);
+-static inline unsigned long oe_size(struct packing_data *pack,
+-				    const struct object_entry *e)
+-{
+-	if (e->size_valid)
+-		return e->size_;
+-
+-	return oe_get_size_slow(pack, e);
+-}
+-
+-static inline int oe_size_less_than(struct packing_data *pack,
+-				    const struct object_entry *lhs,
+-				    unsigned long rhs)
+-{
+-	if (lhs->size_valid)
+-		return lhs->size_ < rhs;
+-	if (rhs < pack->oe_size_limit) /* rhs < 2^x <= lhs ? */
+-		return 0;
+-	return oe_get_size_slow(pack, lhs) < rhs;
+-}
+-
+-static inline int oe_size_greater_than(struct packing_data *pack,
+-				       const struct object_entry *lhs,
+-				       unsigned long rhs)
+-{
+-	if (lhs->size_valid)
+-		return lhs->size_ > rhs;
+-	if (rhs < pack->oe_size_limit) /* rhs < 2^x <= lhs ? */
+-		return 1;
+-	return oe_get_size_slow(pack, lhs) > rhs;
+-}
+-
+-static inline void oe_set_size(struct packing_data *pack,
+-			       struct object_entry *e,
+-			       unsigned long size)
+-{
+-	if (size < pack->oe_size_limit) {
+-		e->size_ = size;
+-		e->size_valid = 1;
+-	} else {
+-		e->size_valid = 0;
+-		if (oe_get_size_slow(pack, e) != size)
+-			BUG("'size' is supposed to be the object size!");
+-	}
+-}
+-
+-static inline unsigned long oe_delta_size(struct packing_data *pack,
+-					  const struct object_entry *e)
+-{
+-	if (e->delta_size_valid)
+-		return e->delta_size_;
+-
+-	/*
+-	 * pack->delta_size[] can't be NULL because oe_set_delta_size()
+-	 * must have been called when a new delta is saved with
+-	 * oe_set_delta().
+-	 * If oe_delta() returns NULL (i.e. default state, which means
+-	 * delta_size_valid is also false), then the caller must never
+-	 * call oe_delta_size().
+-	 */
+-	return pack->delta_size[e - pack->objects];
+-}
+-
+-static inline void oe_set_delta_size(struct packing_data *pack,
+-				     struct object_entry *e,
+-				     unsigned long size)
+-{
+-	if (size < pack->oe_delta_size_limit) {
+-		e->delta_size_ = size;
+-		e->delta_size_valid = 1;
+-	} else {
+-		packing_data_lock(pack);
+-		if (!pack->delta_size)
+-			ALLOC_ARRAY(pack->delta_size, pack->nr_alloc);
+-		packing_data_unlock(pack);
+-
+-		pack->delta_size[e - pack->objects] = size;
+-		e->delta_size_valid = 0;
+-	}
+-}
+-
+ static inline unsigned int oe_tree_depth(struct packing_data *pack,
+ 					 struct object_entry *e)
+ {
+@@ -422,23 +280,6 @@ static inline unsigned int oe_tree_depth(struct packing_data *pack,
+ 	return pack->tree_depth[e - pack->objects];
+ }
+ 
+-static inline void oe_set_tree_depth(struct packing_data *pack,
+-				     struct object_entry *e,
+-				     unsigned int tree_depth)
+-{
+-	if (!pack->tree_depth)
+-		CALLOC_ARRAY(pack->tree_depth, pack->nr_alloc);
+-	pack->tree_depth[e - pack->objects] = tree_depth;
+-}
+-
+-static inline unsigned char oe_layer(struct packing_data *pack,
+-				     struct object_entry *e)
+-{
+-	if (!pack->layer)
+-		return 0;
+-	return pack->layer[e - pack->objects];
+-}
+-
+ static inline void oe_set_layer(struct packing_data *pack,
+ 				struct object_entry *e,
+ 				unsigned char layer)
+-- 
+2.32.0.rc1.413.g73297d74493
+
