@@ -4,12 +4,93 @@ In-Reply-To: <87lf80l1m6.fsf@evledraar.gmail.com>
 References: <87lf80l1m6.fsf@evledraar.gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Fri, 28 May 2021 13:05:15 +0200
-Subject: [PATCH 00/31] *** SUBJECT HERE ***
+Subject: [PATCH 00/31] minimal restart of "config-based-hooks"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+After suggesting[1] an another round that the config-based-hook
+topic[2] should take a more incremental approach to reach its end goal
+I thought I'd try hacking that up.
+
+So this is a proposed restart of that topic which if the consensus
+favors it should replace it, and the config-based hooks topic should
+be rebased on top of this.
+
+As noted in [1] there are no user-visible behavior changes here. All
+that's being done is to consolidate hook dispatch into the new
+hook.[ch] library, and the "git hook run" command (used by
+git-send-email and git-p4).
+
+The range-diff below is scary, I recommend just reading this from
+scratch. Some incomplete notes on changed things from Emily's v9:
+
+ * There's no config via hooks, design doc etc. in this series. It's
+   meant as a basis on which to build that. We still only support
+   running .git/hook/<hook>, and we run those with .jobs=1 by
+   definition.
+
+ * There's absolutely no behavior change in how we run these hooks,
+   unlike in Emily's version. E.g. sometimes we'd always pass absolute
+   paths when before we didn't, now we just do that for "git worktree"
+   via a flag as on the current "master". The only test changes are
+   the addition of more and missing tests.
+
+ * This has been re-arranged as much as possible to start using
+   minimal bits of the library as soon as we can. E.g. in Emily's the
+   whole of hook.c is implemented before any hook is migrated over to
+   it.
+
+   In this version we barely know how to do anything yet (no stdin
+   handling etc.) when we can move the pre-auto-gc hook over, we then
+   do a few more hooks and add stdin support, migrate the hooks that
+   need that etc.
+
+ * In Emily's there's a mid-series switch from the run_command() API
+   to run_processes_parallel_tr2() as we learn parallel execution. I
+   thought this was more complex to read and just reflected the past
+   evolution of the topic.
+
+   That's now squashed together, we always have the parallel API use,
+   we just have .jobs=1 throughout.
+
+ * I tried as much as possible to similarly squash together
+   e.g. removing an unused API along with the commit that removes the
+   last user of it, not introducing APIs without simultaneously
+   introducing users of them etc.
+
+ * The "git hook run" command now takes arguments as:
+
+        git hook run a-hook -- some arg u ments
+
+   Not:
+
+        git hook run -a some -a arg -a u -a ments a-hook
+
+    The "-e" for "pass this env variable" is also gone, nothing
+    actually made use of it. If we need it in the future surely we can
+    just set them in the environment instead, and ask the relevant
+    command run APIs not to clobber things. I think the -- (or
+    --end-of-options) is easier to work with.
+
+    Changing this allowed removing the whole parse-options-strvec part
+    of Emily's series. It's now replaced with PARSE_OPT_KEEP_DASHDASH
+    + 2-4 lines of code around that in builtin/hook.c.
+
+ * Even though this extracted the "config based hooks" part, and .jobs
+   != 1 support I've tried as much as possible to keep the same code
+   layout, to the point where hooks e.g. set .jobs=1 still if they
+   insist that one job should be run. It should thus be fairly drop-in
+   compatible for building .jobs > 1 support on top, config-based hooks
+   etc.
+
+ * The two last patches are new, a couple of minor bugfixes of mine
+   that I noticed while hacking on this.
+   
+
+1. https://lore.kernel.org/git/87lf80l1m6.fsf@evledraar.gmail.com/
+2. https://lore.kernel.org/git/20210527000856.695702-1-emilyshaffer@google.com/
+
 
 Emily Shaffer (25):
   hook: add 'run' subcommand
