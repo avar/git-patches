@@ -1,0 +1,239 @@
+From 9f21bc6e6f2a655e0ac7981b55a895de18812a0d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.13-9f21bc6e6f2-20210528T092228Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20210528T092228Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20210524T074932Z-avarab@gmail.com>
+	<cover-00.13-00000000000-20210528T092228Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Apr 2021 10:04:53 +0200
+Subject: [PATCH v5 10/13] send-email: lazily load modules for a big speedup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Optimize the time git-send-email takes to do even the simplest of
+things (such as serving up "-h") from around ~150ms to ~80ms-~90ms by
+lazily loading the modules it requires.
+
+Before this change Devel::TraceUse would report 99/97 used modules
+under NO_GETTEXT=[|Y], respectively. Now it's 52/37. It now takes ~15s
+to run t9001-send-email.sh, down from ~20s.
+
+Changing File::Spec::Functions::{catdir,catfile} to invoking class
+methods on File::Spec itself is idiomatic. See [1] for a more
+elaborate explanation, the resulting code behaves the same way, just
+without the now-pointless function wrapper.
+
+1. http://lore.kernel.org/git/8735u8mmj9.fsf@evledraar.gmail.com
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl | 71 +++++++++++++++++++++++++--------------------
+ 1 file changed, 39 insertions(+), 32 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index cc1027d8774..a8949c9d313 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -19,20 +19,10 @@
+ use 5.008;
+ use strict;
+ use warnings $ENV{GIT_PERL_FATAL_WARNINGS} ? qw(FATAL all) : ();
+-use POSIX qw/strftime/;
+-use Term::ReadLine;
+ use Getopt::Long;
+-use Text::ParseWords;
+-use Term::ANSIColor;
+-use File::Temp qw/ tempdir tempfile /;
+-use File::Spec::Functions qw(catdir catfile);
+ use Git::LoadCPAN::Error qw(:try);
+-use Cwd qw(abs_path cwd);
+ use Git;
+ use Git::I18N;
+-use Net::Domain ();
+-use Net::SMTP ();
+-use Git::LoadCPAN::Mail::Address;
+ 
+ Getopt::Long::Configure qw/ pass_through /;
+ 
+@@ -166,7 +156,6 @@ sub format_2822_time {
+ 		       );
+ }
+ 
+-my $have_email_valid = eval { require Email::Valid; 1 };
+ my $smtp;
+ my $auth;
+ my $num_sent = 0;
+@@ -192,14 +181,6 @@ sub format_2822_time {
+ 
+ my $repo = eval { Git->repository() };
+ my @repo = $repo ? ($repo) : ();
+-my $term = eval {
+-	$ENV{"GIT_SEND_EMAIL_NOTTY"}
+-		? Term::ReadLine->new('git-send-email', \*STDIN, \*STDOUT)
+-		: Term::ReadLine->new('git-send-email');
+-};
+-if ($@) {
+-	$term = FakeTerm->new("$@: going non-interactive");
+-}
+ 
+ # Behavior modification variables
+ my ($quiet, $dry_run) = (0, 0);
+@@ -319,9 +300,9 @@ sub do_edit {
+ 
+ # Handle Uncouth Termination
+ sub signal_handler {
+-
+ 	# Make text normal
+-	print color("reset"), "\n";
++	require Term::ANSIColor;
++	print Term::ANSIColor::color("reset"), "\n";
+ 
+ 	# SMTP password masked
+ 	system "stty echo";
+@@ -602,11 +583,13 @@ sub config_regexp {
+ }
+ 
+ sub parse_address_line {
++	require Git::LoadCPAN::Mail::Address;
+ 	return map { $_->format } Mail::Address->parse($_[0]);
+ }
+ 
+ sub split_addrs {
+-	return quotewords('\s*,\s*', 1, @_);
++	require Text::ParseWords;
++	return Text::ParseWords::quotewords('\s*,\s*', 1, @_);
+ }
+ 
+ my %aliases;
+@@ -655,10 +638,11 @@ sub parse_sendmail_aliases {
+ 			s/\\"/"/g foreach @addr;
+ 			$aliases{$alias} = \@addr
+ 		}}},
+-	mailrc => sub { my $fh = shift; while (<$fh>) {
++	mailrc => sub {	my $fh = shift; while (<$fh>) {
+ 		if (/^alias\s+(\S+)\s+(.*?)\s*$/) {
++			require Text::ParseWords;
+ 			# spaces delimit multiple addresses
+-			$aliases{$1} = [ quotewords('\s+', 0, $2) ];
++			$aliases{$1} = [ Text::ParseWords::quotewords('\s+', 0, $2) ];
+ 		}}},
+ 	pine => sub { my $fh = shift; my $f='\t[^\t]*';
+ 	        for (my $x = ''; defined($x); $x = $_) {
+@@ -730,7 +714,8 @@ sub is_format_patch_arg {
+ 		opendir my $dh, $f
+ 			or die sprintf(__("Failed to opendir %s: %s"), $f, $!);
+ 
+-		push @files, grep { -f $_ } map { catfile($f, $_) }
++		require File::Spec;
++		push @files, grep { -f $_ } map { File::Spec->catfile($f, $_) }
+ 				sort readdir $dh;
+ 		closedir $dh;
+ 	} elsif ((-f $f or -p $f) and !is_format_patch_arg($f)) {
+@@ -743,7 +728,8 @@ sub is_format_patch_arg {
+ if (@rev_list_opts) {
+ 	die __("Cannot run git format-patch from outside a repository\n")
+ 		unless $repo;
+-	push @files, $repo->command('format-patch', '-o', tempdir(CLEANUP => 1), @rev_list_opts);
++	require File::Temp;
++	push @files, $repo->command('format-patch', '-o', File::Temp::tempdir(CLEANUP => 1), @rev_list_opts);
+ }
+ 
+ @files = handle_backup_files(@files);
+@@ -780,9 +766,10 @@ sub get_patch_subject {
+ if ($compose) {
+ 	# Note that this does not need to be secure, but we will make a small
+ 	# effort to have it be unique
++	require File::Temp;
+ 	$compose_filename = ($repo ?
+-		tempfile(".gitsendemail.msg.XXXXXX", DIR => $repo->repo_path()) :
+-		tempfile(".gitsendemail.msg.XXXXXX", DIR => "."))[1];
++		File::Temp::tempfile(".gitsendemail.msg.XXXXXX", DIR => $repo->repo_path()) :
++		File::Temp::tempfile(".gitsendemail.msg.XXXXXX", DIR => "."))[1];
+ 	open my $c, ">", $compose_filename
+ 		or die sprintf(__("Failed to open for writing %s: %s"), $compose_filename, $!);
+ 
+@@ -889,6 +876,19 @@ sub get_patch_subject {
+ 	do_edit(@files);
+ }
+ 
++sub term {
++	my $term = eval {
++		require Term::ReadLine;
++		$ENV{"GIT_SEND_EMAIL_NOTTY"}
++			? Term::ReadLine->new('git-send-email', \*STDIN, \*STDOUT)
++			: Term::ReadLine->new('git-send-email');
++	};
++	if ($@) {
++		$term = FakeTerm->new("$@: going non-interactive");
++	}
++	return $term;
++}
++
+ sub ask {
+ 	my ($prompt, %arg) = @_;
+ 	my $valid_re = $arg{valid_re};
+@@ -896,6 +896,7 @@ sub ask {
+ 	my $confirm_only = $arg{confirm_only};
+ 	my $resp;
+ 	my $i = 0;
++	my $term = term();
+ 	return defined $default ? $default : undef
+ 		unless defined $term->IN and defined fileno($term->IN) and
+ 		       defined $term->OUT and defined fileno($term->OUT);
+@@ -1076,6 +1077,7 @@ sub extract_valid_address {
+ 	return $address if ($address =~ /^($local_part_regexp)$/);
+ 
+ 	$address =~ s/^\s*<(.*)>\s*$/$1/;
++	my $have_email_valid = eval { require Email::Valid; 1 };
+ 	if ($have_email_valid) {
+ 		return scalar Email::Valid->address($address);
+ 	}
+@@ -1135,7 +1137,8 @@ sub validate_address_list {
+ sub make_message_id {
+ 	my $uniq;
+ 	if (!defined $message_id_stamp) {
+-		$message_id_stamp = strftime("%Y%m%d%H%M%S.$$", gmtime(time));
++		require POSIX;
++		$message_id_stamp = POSIX::strftime("%Y%m%d%H%M%S.$$", gmtime(time));
+ 		$message_id_serial = 0;
+ 	}
+ 	$message_id_serial++;
+@@ -1305,6 +1308,7 @@ sub valid_fqdn {
+ sub maildomain_net {
+ 	my $maildomain;
+ 
++	require Net::Domain;
+ 	my $domain = Net::Domain::domainname();
+ 	$maildomain = $domain if valid_fqdn($domain);
+ 
+@@ -1315,6 +1319,7 @@ sub maildomain_mta {
+ 	my $maildomain;
+ 
+ 	for my $host (qw(mailhost localhost)) {
++		require Net::SMTP;
+ 		my $smtp = Net::SMTP->new($host);
+ 		if (defined $smtp) {
+ 			my $domain = $smtp->domain;
+@@ -1994,13 +1999,15 @@ sub validate_patch {
+ 
+ 	if ($repo) {
+ 		my $hooks_path = $repo->command_oneline('rev-parse', '--git-path', 'hooks');
+-		my $validate_hook = catfile($hooks_path,
++		require File::Spec;
++		my $validate_hook = File::Spec->catfile($hooks_path,
+ 					    'sendemail-validate');
+ 		my $hook_error;
+ 		if (-x $validate_hook) {
+-			my $target = abs_path($fn);
++			require Cwd;
++			my $target = Cwd::abs_path($fn);
+ 			# The hook needs a correct cwd and GIT_DIR.
+-			my $cwd_save = cwd();
++			my $cwd_save = Cwd::cwd();
+ 			chdir($repo->wc_path() or $repo->repo_path())
+ 				or die("chdir: $!");
+ 			local $ENV{"GIT_DIR"} = $repo->repo_path();
+-- 
+2.32.0.rc1.458.gd885d4f985c
+

@@ -1,0 +1,139 @@
+From aa3a2de7047f2e12097e56319af8e49155823a14 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-00.13-00000000000-20210528T092228Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20210524T074932Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20210524T074932Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 28 May 2021 11:22:28 +0200
+Subject: [PATCH v5 00/13] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (13):
+  send-email tests: support GIT_TEST_PERL_FATAL_WARNINGS=true
+  send-email tests: test for boolean variables without a value
+  send-email: remove non-working support for "sendemail.smtpssl"
+  send-email: refactor sendemail.smtpencryption config parsing
+  send-email: copy "config_regxp" into git-send-email.perl
+  send-email: lazily load config for a big speedup
+  send-email: lazily shell out to "git var"
+  send-email: use function syntax instead of barewords
+  send-email: get rid of indirect object syntax
+  send-email: lazily load modules for a big speedup
+  perl: lazily load some common Git.pm setup code
+  send-email: move trivial config handling to Perl
+  perl: nano-optimize by replacing Cwd::cwd() with Cwd::getcwd()
+
+ Documentation/config/sendemail.txt |   3 -
+ git-send-email.perl                | 174 +++++++++++++++++++----------
+ perl/Git.pm                        |  32 +++---
+ t/t9001-send-email.sh              |  29 +++++
+ 4 files changed, 159 insertions(+), 79 deletions(-)
+
+Range-diff against v4:
+ 1:  7140847367c =  1:  81025b48f1c send-email tests: support GIT_TEST_PERL_FATAL_WARNINGS=true
+ 2:  d27f3b48f85 =  2:  16277bd1082 send-email tests: test for boolean variables without a value
+ 3:  a7a21b75f2e =  3:  e3e3e6415d2 send-email: remove non-working support for "sendemail.smtpssl"
+ 4:  7356a528589 =  4:  961ca4c2b2a send-email: refactor sendemail.smtpencryption config parsing
+ 5:  cce0f89143b =  5:  f2bd12728a1 send-email: copy "config_regxp" into git-send-email.perl
+ 6:  8afe8661761 =  6:  4cf70c6f97e send-email: lazily load config for a big speedup
+ 7:  491eefde6a2 =  7:  bd0d9535718 send-email: lazily shell out to "git var"
+ 8:  860156013f8 =  8:  f1a879a8ae9 send-email: use function syntax instead of barewords
+ 9:  dd24f1249f5 =  9:  881b1093409 send-email: get rid of indirect object syntax
+10:  61e3e3c93c5 ! 10:  9f21bc6e6f2 send-email: lazily load modules for a big speedup
+    @@ Commit message
+         under NO_GETTEXT=[|Y], respectively. Now it's 52/37. It now takes ~15s
+         to run t9001-send-email.sh, down from ~20s.
+     
+    +    Changing File::Spec::Functions::{catdir,catfile} to invoking class
+    +    methods on File::Spec itself is idiomatic. See [1] for a more
+    +    elaborate explanation, the resulting code behaves the same way, just
+    +    without the now-pointless function wrapper.
+    +
+    +    1. http://lore.kernel.org/git/8735u8mmj9.fsf@evledraar.gmail.com
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## git-send-email.perl ##
+    @@ git-send-email.perl: sub maildomain_mta {
+      		if (defined $smtp) {
+      			my $domain = $smtp->domain;
+     @@ git-send-email.perl: sub validate_patch {
+    - 	my ($fn, $xfer_encoding) = @_;
+      
+      	if ($repo) {
+    --		my $validate_hook = catfile($repo->hooks_path(),
+    + 		my $hooks_path = $repo->command_oneline('rev-parse', '--git-path', 'hooks');
+    +-		my $validate_hook = catfile($hooks_path,
+     +		require File::Spec;
+    -+		my $validate_hook = File::Spec->catfile($repo->hooks_path(),
+    ++		my $validate_hook = File::Spec->catfile($hooks_path,
+      					    'sendemail-validate');
+      		my $hook_error;
+      		if (-x $validate_hook) {
+11:  ada34374286 ! 11:  66f68e38c16 perl: lazily load some common Git.pm setup code
+    @@ perl/Git.pm: sub get_tz_offset {
+      	my $sign = qw( + + - )[ $gm <=> $t ];
+      	return sprintf("%s%02d%02d", $sign, (gmtime(abs($t - $gm)))[2,1]);
+      }
+    -@@ perl/Git.pm: sub hooks_path {
+    - 	my ($self) = @_;
+    - 
+    - 	my $dir = $self->command_oneline('rev-parse', '--git-path', 'hooks');
+    --	my $abs = abs_path($dir);
+    -+	require Cwd;
+    -+	my $abs = Cwd::abs_path($dir);
+    - 	return $abs;
+    - }
+    - 
+     @@ perl/Git.pm: sub _temp_cache {
+      		my $n = $name;
+      		$n =~ s/\W/_/g; # no strange chars
+12:  3818000bfba ! 12:  f605b5ae49f send-email: move trivial config handling to Perl
+    @@ Commit message
+         "undef" or "" case (true and false, respectively), let's just punt on
+         those and others and have "git config --type=bool" handle it.
+     
+    +    The "grep { defined } @values" here covers a rather subtle case. For
+    +    list values such as sendemail.to it is possible as with any other
+    +    config key to provide a plain "-c sendemail.to", i.e. to set the key
+    +    as a boolean true. In that case the Git::config() API will return an
+    +    empty string, but this new parser will correctly return "undef".
+    +
+    +    However, that means we can end up with "undef" in the middle of a
+    +    list. E.g. for sendemail.smtpserveroption in conjuction with
+    +    sendemail.smtpserver as a path this would have produce a warning. For
+    +    most of the other keys we'd behave the same despite the subtle change
+    +    in the value, e.g. sendemail.to would behave the same because
+    +    Mail::Address->parse() happens to return an empty list if fed
+    +    "undef". For the boolean values we were already prepared to handle
+    +    these variables being initialized as undef anyway.
+    +
+         This brings the runtime of "git send-email" from ~60-~70ms to a very
+         steady ~40ms on my test box. We now run just one "git config"
+         invocation on startup instead of 8, the exact number will differ based
+    @@ git-send-email.perl: sub read_config {
+     -			my @values = Git::config(@repo, $key);
+     -			next unless @values;
+     +			my @values = @{$known_keys->{$key}};
+    ++			@values = grep { defined } @values;
+      			next if $configured->{$setting}++;
+      			@$target = @values;
+      		}
+      		else {
+     -			my $v = Git::config(@repo, $key);
+    --			next unless defined $v;
+     +			my $v = $known_keys->{$key}->[0];
+    + 			next unless defined $v;
+      			next if $configured->{$setting}++;
+      			$$target = $v;
+    - 		}
+     @@ git-send-email.perl: sub config_regexp {
+      	my ($regex) = @_;
+      	my @ret;
+13:  d36b57e429f = 13:  aa3a2de7047 perl: nano-optimize by replacing Cwd::cwd() with Cwd::getcwd()
+-- 
+2.32.0.rc1.458.gd885d4f985c
+
