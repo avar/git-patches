@@ -1,0 +1,58 @@
+From 1e5e7f16b3a20c7b166e3c81a9f037dc34563ae3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.31-1e5e7f16b3a-20210528T110028Z-avarab@gmail.com>
+In-Reply-To: <cover-00.31-00000000000-20210528T110027Z-avarab@gmail.com>
+References: <87lf80l1m6.fsf@evledraar.gmail.com>
+	<cover-00.31-00000000000-20210528T110027Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:38 -0700
+Subject: [PATCH 10/31] merge: use config-based hooks for post-merge hook
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Teach post-merge to use the hook.h library instead of the run-command.h
+library to run hooks. This means that post-merge hooks can come from the
+config as well as from the hookdir. post-merge is invoked only from
+builtin/merge.c.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/merge.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/merge.c b/builtin/merge.c
+index 5a10f6e3c96..a9363b94065 100644
+--- a/builtin/merge.c
++++ b/builtin/merge.c
+@@ -448,6 +448,7 @@ static void finish(struct commit *head_commit,
+ 		   const struct object_id *new_head, const char *msg)
+ {
+ 	struct strbuf reflog_message = STRBUF_INIT;
++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
+ 	const struct object_id *head = &head_commit->object.oid;
+ 
+ 	if (!msg)
+@@ -489,7 +490,9 @@ static void finish(struct commit *head_commit,
+ 	}
+ 
+ 	/* Run a post-merge hook */
+-	run_hook_le(NULL, "post-merge", squash ? "1" : "0", NULL);
++	strvec_push(&opt.args, squash ? "1" : "0");
++	run_hooks("post-merge", &opt);
++	run_hooks_opt_clear(&opt);
+ 
+ 	apply_autostash(git_path_merge_autostash(the_repository));
+ 	strbuf_release(&reflog_message);
+@@ -849,7 +852,7 @@ static void prepare_to_commit(struct commit_list *remoteheads)
+ 	 * and write it out as a tree.  We must do this before we invoke
+ 	 * the editor and after we invoke run_status above.
+ 	 */
+-	if (find_hook("pre-merge-commit"))
++	if (hook_exists("pre-merge-commit"))
+ 		discard_cache();
+ 	read_cache_from(index_file);
+ 	strbuf_addbuf(&msg, &merge_msg);
+-- 
+2.32.0.rc1.458.gd885d4f985c
+

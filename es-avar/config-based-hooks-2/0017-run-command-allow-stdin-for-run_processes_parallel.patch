@@ -1,0 +1,59 @@
+From c2f3e4a56d60635d577406444cf53b12cb4ab1a2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-17.31-c2f3e4a56d6-20210528T110028Z-avarab@gmail.com>
+In-Reply-To: <cover-00.31-00000000000-20210528T110027Z-avarab@gmail.com>
+References: <87lf80l1m6.fsf@evledraar.gmail.com>
+	<cover-00.31-00000000000-20210528T110027Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:29 -0700
+Subject: [PATCH 17/31] run-command: allow stdin for run_processes_parallel
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+While it makes sense not to inherit stdin from the parent process to
+avoid deadlocking, it's not necessary to completely ban stdin to
+children. An informed user should be able to configure stdin safely. By
+setting `some_child.process.no_stdin=1` before calling `get_next_task()`
+we provide a reasonable default behavior but enable users to set up
+stdin streaming for themselves during the callback.
+
+`some_child.process.stdout_to_stderr`, however, remains unmodifiable by
+`get_next_task()` - the rest of the run_processes_parallel() API depends
+on child output in stderr.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/run-command.c b/run-command.c
+index 95c950a4a2b..0bf771845e4 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1628,6 +1628,14 @@ static int pp_start_one(struct parallel_processes *pp)
+ 	if (i == pp->max_processes)
+ 		BUG("bookkeeping is hard");
+ 
++	/*
++	 * By default, do not inherit stdin from the parent process - otherwise,
++	 * all children would share stdin! Users may overwrite this to provide
++	 * something to the child's stdin by having their 'get_next_task'
++	 * callback assign 0 to .no_stdin and an appropriate integer to .in.
++	 */
++	pp->children[i].process.no_stdin = 1;
++
+ 	code = pp->get_next_task(&pp->children[i].process,
+ 				 &pp->children[i].err,
+ 				 pp->data,
+@@ -1639,7 +1647,6 @@ static int pp_start_one(struct parallel_processes *pp)
+ 	}
+ 	pp->children[i].process.err = -1;
+ 	pp->children[i].process.stdout_to_stderr = 1;
+-	pp->children[i].process.no_stdin = 1;
+ 
+ 	if (start_command(&pp->children[i].process)) {
+ 		code = pp->start_failure(&pp->children[i].err,
+-- 
+2.32.0.rc1.458.gd885d4f985c
+

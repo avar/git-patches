@@ -1,0 +1,81 @@
+From eb37693f7dc4dbe8c7c75548c93b0c4afb3bbe0e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.31-eb37693f7dc-20210528T110027Z-avarab@gmail.com>
+In-Reply-To: <cover-00.31-00000000000-20210528T110027Z-avarab@gmail.com>
+References: <87lf80l1m6.fsf@evledraar.gmail.com>
+	<cover-00.31-00000000000-20210528T110027Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 28 May 2021 01:24:01 +0200
+Subject: [PATCH 02/31] gc tests: add a test for the "pre-auto-gc" hook
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a missing test for the behavior of the pre-auto-gc hook added in
+0b85d92661e (Documentation/hooks: add pre-auto-gc hook, 2008-04-02).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6500-gc.sh | 46 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 46 insertions(+)
+
+diff --git a/t/t6500-gc.sh b/t/t6500-gc.sh
+index 60d961b5260..10c7ae7f09c 100755
+--- a/t/t6500-gc.sh
++++ b/t/t6500-gc.sh
+@@ -95,6 +95,52 @@ test_expect_success 'gc --keep-largest-pack' '
+ 	)
+ '
+ 
++test_expect_success 'pre-auto-gc hook can stop auto gc' '
++	cat >err.expect <<-\EOF &&
++	no gc for you
++	EOF
++
++	git init pre-auto-gc-hook &&
++	(
++		cd pre-auto-gc-hook &&
++		write_script ".git/hooks/pre-auto-gc" <<-\EOF &&
++		echo >&2 no gc for you &&
++		exit 1
++		EOF
++
++		git config gc.auto 3 &&
++		git config gc.autoDetach false &&
++
++		# We need to create two object whose sha1s start with 17
++		# since this is what git gc counts.  As it happens, these
++		# two blobs will do so.
++		test_commit "$(test_oid obj1)" &&
++		test_commit "$(test_oid obj2)" &&
++
++		git gc --auto >../out.actual 2>../err.actual
++	) &&
++	test_must_be_empty out.actual &&
++	test_cmp err.expect err.actual &&
++
++	cat >err.expect <<-\EOF &&
++	will gc for you
++	Auto packing the repository for optimum performance.
++	See "git help gc" for manual housekeeping.
++	EOF
++
++	(
++		cd pre-auto-gc-hook &&
++		write_script ".git/hooks/pre-auto-gc" <<-\EOF &&
++		echo >&2 will gc for you &&
++		exit 0
++		EOF
++		git gc --auto >../out.actual 2>../err.actual
++	) &&
++
++	test_must_be_empty out.actual &&
++	test_cmp err.expect err.actual
++'
++
+ test_expect_success 'auto gc with too many loose objects does not attempt to create bitmaps' '
+ 	test_config gc.auto 3 &&
+ 	test_config gc.autodetach false &&
+-- 
+2.32.0.rc1.458.gd885d4f985c
+

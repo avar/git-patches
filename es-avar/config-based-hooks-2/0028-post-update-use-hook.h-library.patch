@@ -1,0 +1,69 @@
+From 85a209cfd4457559c35e325696cb97302ff320b7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-28.31-85a209cfd44-20210528T110028Z-avarab@gmail.com>
+In-Reply-To: <cover-00.31-00000000000-20210528T110027Z-avarab@gmail.com>
+References: <87lf80l1m6.fsf@evledraar.gmail.com>
+	<cover-00.31-00000000000-20210528T110027Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:50 -0700
+Subject: [PATCH 28/31] post-update: use hook.h library
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+By using run_hooks() instead of run_hook_le(), 'post-update' hooks can
+be specified in the config as well as the hookdir.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/receive-pack.c | 26 +++++++-------------------
+ 1 file changed, 7 insertions(+), 19 deletions(-)
+
+diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+index 378f8f6b5d1..b2ccdb66daa 100644
+--- a/builtin/receive-pack.c
++++ b/builtin/receive-pack.c
+@@ -1657,33 +1657,21 @@ static const char *update(struct command *cmd, struct shallow_info *si)
+ static void run_update_post_hook(struct command *commands)
+ {
+ 	struct command *cmd;
+-	struct child_process proc = CHILD_PROCESS_INIT;
+-	const char *hook;
+-
+-	hook = find_hook("post-update");
+-	if (!hook)
+-		return;
++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
+ 
+ 	for (cmd = commands; cmd; cmd = cmd->next) {
+ 		if (cmd->error_string || cmd->did_not_exist)
+ 			continue;
+-		if (!proc.args.nr)
+-			strvec_push(&proc.args, hook);
+-		strvec_push(&proc.args, cmd->ref_name);
++		strvec_push(&opt.args, cmd->ref_name);
+ 	}
+-	if (!proc.args.nr)
++	if (!opt.args.nr)
+ 		return;
+ 
+-	proc.no_stdin = 1;
+-	proc.stdout_to_stderr = 1;
+-	proc.err = use_sideband ? -1 : 0;
+-	proc.trace2_hook_name = "post-update";
++	if (use_sideband)
++		opt.consume_sideband = hook_output_to_sideband;
+ 
+-	if (!start_command(&proc)) {
+-		if (use_sideband)
+-			copy_to_sideband(proc.err, -1, NULL);
+-		finish_command(&proc);
+-	}
++	run_hooks("post-update", &opt);
++	run_hooks_opt_clear(&opt);
+ }
+ 
+ static void check_aliased_update_internal(struct command *cmd,
+-- 
+2.32.0.rc1.458.gd885d4f985c
+
