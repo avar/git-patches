@@ -1,0 +1,68 @@
+From 042f5988268e61ba9c3ae8b2e00e88299653da31 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-042f598826-20210607T144206Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-0000000000-20210607T144206Z-avarab@gmail.com>
+References: <cover-0.2-0000000000-20210607T144206Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 May 2021 12:44:48 +0200
+Subject: [PATCH 2/2] read-cache: fix incorrect count and progress bar stalling
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a potential incorrect display of the number of items (off by one)
+and stalling of the progress bar in refresh_index().
+
+The off-by-one error is minor, we should say we're processing the 1st
+item, not the 0th. This along with the next change also allows us to
+remove the last display_progress() call outside the loop, as we'll
+always have reached 100% now.
+
+Let's also move the display_progress() call to the very start of the
+loop refresh_index() loop. In the loop we first check whether e.g. we
+ignore submodules and the entry we're processing is a submodule,
+whether we ignore certain paths etc.. Thus we could have a
+pathological case where we have a huge index consisting of such
+ignored entries, and we'd stall on the progress bar.
+
+See ae9af12287 (status: show progress bar if refreshing the index
+takes too long, 2018-09-15) for the initial addition of this progress
+bar to refresh_index().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ read-cache.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/read-cache.c b/read-cache.c
+index 470f800855..8b0073a839 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -1594,6 +1594,8 @@ int refresh_index(struct index_state *istate, unsigned int flags,
+ 		int t2_did_lstat = 0;
+ 		int t2_did_scan = 0;
+ 
++		display_progress(progress, i + 1);
++
+ 		ce = istate->cache[i];
+ 		if (ignore_submodules && S_ISGITLINK(ce->ce_mode))
+ 			continue;
+@@ -1627,7 +1629,6 @@ int refresh_index(struct index_state *istate, unsigned int flags,
+ 		t2_sum_scan += t2_did_scan;
+ 		if (new_entry == ce)
+ 			continue;
+-		display_progress(progress, i);
+ 		if (!new_entry) {
+ 			const char *fmt;
+ 
+@@ -1662,7 +1663,6 @@ int refresh_index(struct index_state *istate, unsigned int flags,
+ 	trace2_data_intmax("index", NULL, "refresh/sum_lstat", t2_sum_lstat);
+ 	trace2_data_intmax("index", NULL, "refresh/sum_scan", t2_sum_scan);
+ 	trace2_region_leave("index", "refresh", NULL);
+-	display_progress(progress, istate->cache_nr);
+ 	stop_progress(&progress);
+ 	trace_performance_leave("refresh index");
+ 	return has_errors;
+-- 
+2.32.0.rc3.434.gd8aed1f08a7
+
