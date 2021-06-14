@@ -1,0 +1,83 @@
+From 8db7029086da1faff7307d00b6d1197c7e00ddb1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.4-8db7029086d-20210614T171626Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20210614T171626Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20210614T171626Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 2 Apr 2021 17:31:55 +0200
+Subject: [PATCH 3/4] show-branch: fix and test --color output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix the "show-branch --color" output so it doesn't needlessly color
+and reset each time it emits a space character.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/show-branch.c  |  9 ++++++---
+ t/t3202-show-branch.sh | 30 ++++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/show-branch.c b/builtin/show-branch.c
+index d6d2dabeca8..d77ce7aeb38 100644
+--- a/builtin/show-branch.c
++++ b/builtin/show-branch.c
+@@ -939,9 +939,12 @@ int cmd_show_branch(int ac, const char **av, const char *prefix)
+ 					mark = '*';
+ 				else
+ 					mark = '+';
+-				printf("%s%c%s",
+-				       get_color_code(i),
+-				       mark, get_color_reset_code());
++				if (mark == ' ')
++					putchar(mark);
++				else
++					printf("%s%c%s",
++					       get_color_code(i),
++					       mark, get_color_reset_code());
+ 			}
+ 			putchar(' ');
+ 		}
+diff --git a/t/t3202-show-branch.sh b/t/t3202-show-branch.sh
+index 7b06048905a..54025f03379 100755
+--- a/t/t3202-show-branch.sh
++++ b/t/t3202-show-branch.sh
+@@ -55,4 +55,34 @@ test_expect_success 'show-branch with showbranch.default' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'show-branch --color output' '
++	sed "s/^> //" >expect <<-\EOF &&
++	> <RED>!<RESET> [branch1] branch1
++	>  <GREEN>!<RESET> [branch2] branch2
++	>   <YELLOW>!<RESET> [branch3] branch3
++	>    <BLUE>!<RESET> [branch4] branch4
++	>     <MAGENTA>!<RESET> [branch5] branch5
++	>      <CYAN>!<RESET> [branch6] branch6
++	>       <BOLD;RED>!<RESET> [branch7] branch7
++	>        <BOLD;GREEN>!<RESET> [branch8] branch8
++	>         <BOLD;YELLOW>!<RESET> [branch9] branch9
++	>          <BOLD;BLUE>*<RESET> [branch10] branch10
++	> ----------
++	>          <BOLD;BLUE>*<RESET> [branch10] branch10
++	>         <BOLD;YELLOW>+<RESET>  [branch9] branch9
++	>        <BOLD;GREEN>+<RESET>   [branch8] branch8
++	>       <BOLD;RED>+<RESET>    [branch7] branch7
++	>      <CYAN>+<RESET>     [branch6] branch6
++	>     <MAGENTA>+<RESET>      [branch5] branch5
++	>    <BLUE>+<RESET>       [branch4] branch4
++	>   <YELLOW>+<RESET>        [branch3] branch3
++	>  <GREEN>+<RESET>         [branch2] branch2
++	> <RED>+<RESET>          [branch1] branch1
++	> <RED>+<RESET><GREEN>+<RESET><YELLOW>+<RESET><BLUE>+<RESET><MAGENTA>+<RESET><CYAN>+<RESET><BOLD;RED>+<RESET><BOLD;GREEN>+<RESET><BOLD;YELLOW>+<RESET><BOLD;BLUE>*<RESET> [branch10^] initial
++	EOF
++	git show-branch --color=always $(cat branches.sorted) >actual.raw &&
++	test_decode_color <actual.raw >actual &&
++	test_cmp expect actual
++'
++
+ test_done
+-- 
+2.32.0.555.g0268d380f7b
+
