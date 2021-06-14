@@ -1,0 +1,152 @@
+From 2edf9dea41a7e3e236e78195168f500cc7576d2b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-20.30-2edf9dea41a-20210614T101731Z-avarab@gmail.com>
+In-Reply-To: <cover-00.30-00000000000-20210614T101731Z-avarab@gmail.com>
+References: <cover-00.31-00000000000-20210528T110515Z-avarab@gmail.com>
+	<cover-00.30-00000000000-20210614T101731Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:33 -0700
+Subject: [PATCH 20/30] hook: provide stdin by string_list or callback
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In cases where a hook requires only a small amount of information via
+stdin, it should be simple for users to provide a string_list alone. But
+in more complicated cases where the stdin is too large to hold in
+memory, let's instead provide a callback the users can populate line
+after line.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ hook.c | 33 +++++++++++++++++++++++++++++++--
+ hook.h | 27 +++++++++++++++++++++++++++
+ 2 files changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/hook.c b/hook.c
+index 5f6335bac3f..ac5e3988fec 100644
+--- a/hook.c
++++ b/hook.c
+@@ -47,6 +47,29 @@ void run_hooks_opt_clear(struct run_hooks_opt *o)
+ 	strvec_clear(&o->args);
+ }
+ 
++int pipe_from_string_list(struct strbuf *pipe, void *pp_cb, void *pp_task_cb)
++{
++	int *item_idx;
++	struct hook *ctx = pp_task_cb;
++	struct hook_cb_data *hook_cb = pp_cb;
++	struct string_list *to_pipe = hook_cb->options->feed_pipe_ctx;
++
++	/* Bootstrap the state manager if necessary. */
++	if (!ctx->feed_pipe_cb_data) {
++		ctx->feed_pipe_cb_data = xmalloc(sizeof(unsigned int));
++		*(int*)ctx->feed_pipe_cb_data = 0;
++	}
++
++	item_idx = ctx->feed_pipe_cb_data;
++
++	if (*item_idx < to_pipe->nr) {
++		strbuf_addf(pipe, "%s\n", to_pipe->items[*item_idx].string);
++		(*item_idx)++;
++		return 0;
++	}
++	return 1;
++}
++
+ static int pick_next_hook(struct child_process *cp,
+ 			  struct strbuf *out,
+ 			  void *pp_cb,
+@@ -62,6 +85,10 @@ static int pick_next_hook(struct child_process *cp,
+ 	if (hook_cb->options->path_to_stdin) {
+ 		cp->no_stdin = 0;
+ 		cp->in = xopen(hook_cb->options->path_to_stdin, O_RDONLY);
++	} else if (hook_cb->options->feed_pipe) {
++		/* ask for start_command() to make a pipe for us */
++		cp->in = -1;
++		cp->no_stdin = 0;
+ 	} else {
+ 		cp->no_stdin = 1;
+ 	}
+@@ -114,7 +141,6 @@ static int notify_hook_finished(int result,
+ 	return 1;
+ }
+ 
+-
+ int run_found_hooks(const char *hook_name, const char *hook_path,
+ 		    struct run_hooks_opt *options)
+ {
+@@ -139,7 +165,7 @@ int run_found_hooks(const char *hook_name, const char *hook_path,
+ 	run_processes_parallel_tr2(options->jobs,
+ 				   pick_next_hook,
+ 				   notify_start_failure,
+-				   NULL,
++				   options->feed_pipe,
+ 				   notify_hook_finished,
+ 				   &cb_data,
+ 				   "hook",
+@@ -157,6 +183,9 @@ int run_hooks(const char *hook_name, struct run_hooks_opt *options)
+ 	if (!options)
+ 		BUG("a struct run_hooks_opt must be provided to run_hooks");
+ 
++	if (options->path_to_stdin && options->feed_pipe)
++		BUG("choose only one method to populate stdin");
++
+ 	hook_path = find_hook(hook_name);
+ 
+ 	/* Care about nonexistence? Use run_found_hooks() */
+diff --git a/hook.h b/hook.h
+index 74a8c76a94c..ff1697d1087 100644
+--- a/hook.h
++++ b/hook.h
+@@ -7,6 +7,12 @@
+ struct hook {
+ 	/* The path to the hook */
+ 	const char *hook_path;
++
++	/*
++	 * Use this to keep state for your feed_pipe_fn if you are using
++	 * run_hooks_opt.feed_pipe. Otherwise, do not touch it.
++	 */
++	void *feed_pipe_cb_data;
+ };
+ 
+ struct run_hooks_opt
+@@ -30,6 +36,19 @@ struct run_hooks_opt
+ 
+ 	/* Path to file which should be piped to stdin for each hook */
+ 	const char *path_to_stdin;
++
++	/*
++	 * Callback and state pointer to ask for more content to pipe to stdin.
++	 * Will be called repeatedly, for each hook. See
++	 * hook.c:pipe_from_stdin() for an example. Keep per-hook state in
++	 * hook.feed_pipe_cb_data (per process). Keep initialization context in
++	 * feed_pipe_ctx (shared by all processes).
++	 *
++	 * See 'pipe_from_string_list()' for info about how to specify a
++	 * string_list as the stdin input instead of writing your own handler.
++	 */
++	feed_pipe_fn feed_pipe;
++	void *feed_pipe_ctx;
+ };
+ 
+ #define RUN_HOOKS_OPT_INIT { \
+@@ -38,6 +57,14 @@ struct run_hooks_opt
+ 	.args = STRVEC_INIT, \
+ }
+ 
++/*
++ * To specify a 'struct string_list', set 'run_hooks_opt.feed_pipe_ctx' to the
++ * string_list and set 'run_hooks_opt.feed_pipe' to 'pipe_from_string_list()'.
++ * This will pipe each string in the list to stdin, separated by newlines.  (Do
++ * not inject your own newlines.)
++ */
++int pipe_from_string_list(struct strbuf *pipe, void *pp_cb, void *pp_task_cb);
++
+ /*
+  * Callback provided to feed_pipe_fn and consume_sideband_fn.
+  */
+-- 
+2.32.0.rc3.434.gd8aed1f08a7
+

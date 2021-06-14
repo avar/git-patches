@@ -1,0 +1,85 @@
+From 0300607a9b420d6879b49a8294b4403eb6a49526 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-13.30-0300607a9b4-20210614T101731Z-avarab@gmail.com>
+In-Reply-To: <cover-00.30-00000000000-20210614T101731Z-avarab@gmail.com>
+References: <cover-00.31-00000000000-20210528T110515Z-avarab@gmail.com>
+	<cover-00.30-00000000000-20210614T101731Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:41 -0700
+Subject: [PATCH 13/30] read-cache: convert post-index-change hook to use
+ config
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+By using hook.h instead of run-command.h to run, post-index-change hooks
+can now be specified in the config in addition to the hookdir.
+post-index-change is not run anywhere besides in read-cache.c.
+
+This removes the last direct user of run_hook_ve(), so we can make the
+function static now. It'll be removed entirely soon.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ read-cache.c  | 11 ++++++++---
+ run-command.c |  2 +-
+ run-command.h |  1 -
+ 3 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/read-cache.c b/read-cache.c
+index af5b97104cf..f801313cc95 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -3063,6 +3063,7 @@ static int do_write_locked_index(struct index_state *istate, struct lock_file *l
+ {
+ 	int ret;
+ 	int was_full = !istate->sparse_index;
++	struct run_hooks_opt hook_opt = RUN_HOOKS_OPT_INIT;
+ 
+ 	ret = convert_to_sparse(istate);
+ 
+@@ -3091,9 +3092,13 @@ static int do_write_locked_index(struct index_state *istate, struct lock_file *l
+ 	else
+ 		ret = close_lock_file_gently(lock);
+ 
+-	run_hook_le(NULL, "post-index-change",
+-			istate->updated_workdir ? "1" : "0",
+-			istate->updated_skipworktree ? "1" : "0", NULL);
++	strvec_pushl(&hook_opt.args,
++		     istate->updated_workdir ? "1" : "0",
++		     istate->updated_skipworktree ? "1" : "0",
++		     NULL);
++	run_hooks("post-index-change", &hook_opt);
++	run_hooks_opt_clear(&hook_opt);
++
+ 	istate->updated_workdir = 0;
+ 	istate->updated_skipworktree = 0;
+ 
+diff --git a/run-command.c b/run-command.c
+index 82fdf296569..eecdef5a0c8 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1321,7 +1321,7 @@ int async_with_fork(void)
+ #endif
+ }
+ 
+-int run_hook_ve(const char *const *env, const char *name, va_list args)
++static int run_hook_ve(const char *const *env, const char *name, va_list args)
+ {
+ 	struct child_process hook = CHILD_PROCESS_INIT;
+ 	const char *p;
+diff --git a/run-command.h b/run-command.h
+index b58531a7eb3..24ab5d63c4c 100644
+--- a/run-command.h
++++ b/run-command.h
+@@ -216,7 +216,6 @@ int run_command(struct child_process *);
+  */
+ LAST_ARG_MUST_BE_NULL
+ int run_hook_le(const char *const *env, const char *name, ...);
+-int run_hook_ve(const char *const *env, const char *name, va_list args);
+ 
+ /*
+  * Trigger an auto-gc
+-- 
+2.32.0.rc3.434.gd8aed1f08a7
+

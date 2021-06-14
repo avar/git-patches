@@ -1,0 +1,281 @@
+From 85195a78cfb2313458e035e92f18d8ca4b5c93b2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.30-85195a78cfb-20210614T101731Z-avarab@gmail.com>
+In-Reply-To: <cover-00.30-00000000000-20210614T101731Z-avarab@gmail.com>
+References: <cover-00.31-00000000000-20210528T110515Z-avarab@gmail.com>
+	<cover-00.30-00000000000-20210614T101731Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 28 May 2021 02:37:40 +0200
+Subject: [PATCH 02/30] run-command.h: move find_hook() to hook.h
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the find_hook() command to hook.h. Eventually all the hook
+related code will live there, let's move this function over as-is.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c           |  1 +
+ builtin/bugreport.c    |  2 +-
+ builtin/commit.c       |  1 +
+ builtin/merge.c        |  1 +
+ builtin/receive-pack.c |  1 +
+ builtin/worktree.c     |  1 +
+ hook.c                 | 36 ++++++++++++++++++++++++++++++++++++
+ hook.h                 |  7 +++++++
+ refs.c                 |  1 +
+ run-command.c          | 35 +----------------------------------
+ run-command.h          |  7 -------
+ sequencer.c            |  1 +
+ transport.c            |  1 +
+ 13 files changed, 53 insertions(+), 42 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 0b2d886c81b..1c8a5489035 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -11,6 +11,7 @@
+ #include "parse-options.h"
+ #include "dir.h"
+ #include "run-command.h"
++#include "hook.h"
+ #include "quote.h"
+ #include "tempfile.h"
+ #include "lockfile.h"
+diff --git a/builtin/bugreport.c b/builtin/bugreport.c
+index 9915a5841de..596f079a7f9 100644
+--- a/builtin/bugreport.c
++++ b/builtin/bugreport.c
+@@ -3,7 +3,7 @@
+ #include "strbuf.h"
+ #include "help.h"
+ #include "compat/compiler.h"
+-#include "run-command.h"
++#include "hook.h"
+ 
+ 
+ static void get_system_info(struct strbuf *sys_info)
+diff --git a/builtin/commit.c b/builtin/commit.c
+index 190d215d43b..f1aafd67d46 100644
+--- a/builtin/commit.c
++++ b/builtin/commit.c
+@@ -19,6 +19,7 @@
+ #include "revision.h"
+ #include "wt-status.h"
+ #include "run-command.h"
++#include "hook.h"
+ #include "refs.h"
+ #include "log-tree.h"
+ #include "strbuf.h"
+diff --git a/builtin/merge.c b/builtin/merge.c
+index a8a843b1f54..be98d66b0a8 100644
+--- a/builtin/merge.c
++++ b/builtin/merge.c
+@@ -13,6 +13,7 @@
+ #include "builtin.h"
+ #include "lockfile.h"
+ #include "run-command.h"
++#include "hook.h"
+ #include "diff.h"
+ #include "diff-merges.h"
+ #include "refs.h"
+diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+index a34742513ac..1e0e04c62fc 100644
+--- a/builtin/receive-pack.c
++++ b/builtin/receive-pack.c
+@@ -7,6 +7,7 @@
+ #include "pkt-line.h"
+ #include "sideband.h"
+ #include "run-command.h"
++#include "hook.h"
+ #include "exec-cmd.h"
+ #include "commit.h"
+ #include "object.h"
+diff --git a/builtin/worktree.c b/builtin/worktree.c
+index 976bf8ed063..b1350640fed 100644
+--- a/builtin/worktree.c
++++ b/builtin/worktree.c
+@@ -8,6 +8,7 @@
+ #include "branch.h"
+ #include "refs.h"
+ #include "run-command.h"
++#include "hook.h"
+ #include "sigchain.h"
+ #include "submodule.h"
+ #include "utf8.h"
+diff --git a/hook.c b/hook.c
+index aa66c968186..06842f50e5c 100644
+--- a/hook.c
++++ b/hook.c
+@@ -2,6 +2,42 @@
+ #include "hook.h"
+ #include "run-command.h"
+ 
++const char *find_hook(const char *name)
++{
++	static struct strbuf path = STRBUF_INIT;
++
++	strbuf_reset(&path);
++	strbuf_git_path(&path, "hooks/%s", name);
++	if (access(path.buf, X_OK) < 0) {
++		int err = errno;
++
++#ifdef STRIP_EXTENSION
++		strbuf_addstr(&path, STRIP_EXTENSION);
++		if (access(path.buf, X_OK) >= 0)
++			return path.buf;
++		if (errno == EACCES)
++			err = errno;
++#endif
++
++		if (err == EACCES && advice_ignored_hook) {
++			static struct string_list advise_given = STRING_LIST_INIT_DUP;
++
++			if (!string_list_lookup(&advise_given, name)) {
++				string_list_insert(&advise_given, name);
++				advise(_("The '%s' hook was ignored because "
++					 "it's not set as executable.\n"
++					 "You can disable this warning with "
++					 "`git config advice.ignoredHook false`."),
++				       path.buf);
++			}
++		}
++		return NULL;
++	}
++	return path.buf;
++}
++
++
++
+ void run_hooks_opt_clear(struct run_hooks_opt *o)
+ {
+ 	strvec_clear(&o->env);
+diff --git a/hook.h b/hook.h
+index ebfee26bcf2..291ee19469a 100644
+--- a/hook.h
++++ b/hook.h
+@@ -37,6 +37,13 @@ struct hook_cb_data {
+ 	struct run_hooks_opt *options;
+ };
+ 
++/*
++ * Returns the path to the hook file, or NULL if the hook is missing
++ * or disabled. Note that this points to static storage that will be
++ * overwritten by further calls to find_hook and run_hook_*.
++ */
++const char *find_hook(const char *name);
++
+ void run_hooks_opt_clear(struct run_hooks_opt *o);
+ 
+ /*
+diff --git a/refs.c b/refs.c
+index 8c9490235ea..59be29cf081 100644
+--- a/refs.c
++++ b/refs.c
+@@ -10,6 +10,7 @@
+ #include "refs.h"
+ #include "refs/refs-internal.h"
+ #include "run-command.h"
++#include "hook.h"
+ #include "object-store.h"
+ #include "object.h"
+ #include "tag.h"
+diff --git a/run-command.c b/run-command.c
+index be6bc128cd9..82fdf296569 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -8,6 +8,7 @@
+ #include "string-list.h"
+ #include "quote.h"
+ #include "config.h"
++#include "hook.h"
+ 
+ void child_process_init(struct child_process *child)
+ {
+@@ -1320,40 +1321,6 @@ int async_with_fork(void)
+ #endif
+ }
+ 
+-const char *find_hook(const char *name)
+-{
+-	static struct strbuf path = STRBUF_INIT;
+-
+-	strbuf_reset(&path);
+-	strbuf_git_path(&path, "hooks/%s", name);
+-	if (access(path.buf, X_OK) < 0) {
+-		int err = errno;
+-
+-#ifdef STRIP_EXTENSION
+-		strbuf_addstr(&path, STRIP_EXTENSION);
+-		if (access(path.buf, X_OK) >= 0)
+-			return path.buf;
+-		if (errno == EACCES)
+-			err = errno;
+-#endif
+-
+-		if (err == EACCES && advice_ignored_hook) {
+-			static struct string_list advise_given = STRING_LIST_INIT_DUP;
+-
+-			if (!string_list_lookup(&advise_given, name)) {
+-				string_list_insert(&advise_given, name);
+-				advise(_("The '%s' hook was ignored because "
+-					 "it's not set as executable.\n"
+-					 "You can disable this warning with "
+-					 "`git config advice.ignoredHook false`."),
+-				       path.buf);
+-			}
+-		}
+-		return NULL;
+-	}
+-	return path.buf;
+-}
+-
+ int run_hook_ve(const char *const *env, const char *name, va_list args)
+ {
+ 	struct child_process hook = CHILD_PROCESS_INIT;
+diff --git a/run-command.h b/run-command.h
+index d08414a92e7..b58531a7eb3 100644
+--- a/run-command.h
++++ b/run-command.h
+@@ -201,13 +201,6 @@ int finish_command_in_signal(struct child_process *);
+  */
+ int run_command(struct child_process *);
+ 
+-/*
+- * Returns the path to the hook file, or NULL if the hook is missing
+- * or disabled. Note that this points to static storage that will be
+- * overwritten by further calls to find_hook and run_hook_*.
+- */
+-const char *find_hook(const char *name);
+-
+ /**
+  * Run a hook.
+  * The first argument is a pathname to an index file, or NULL
+diff --git a/sequencer.c b/sequencer.c
+index 0bec01cf38e..3de479f90e1 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -8,6 +8,7 @@
+ #include "sequencer.h"
+ #include "tag.h"
+ #include "run-command.h"
++#include "hook.h"
+ #include "exec-cmd.h"
+ #include "utf8.h"
+ #include "cache-tree.h"
+diff --git a/transport.c b/transport.c
+index 50f5830eb6b..2ed270171f0 100644
+--- a/transport.c
++++ b/transport.c
+@@ -2,6 +2,7 @@
+ #include "config.h"
+ #include "transport.h"
+ #include "run-command.h"
++#include "hook.h"
+ #include "pkt-line.h"
+ #include "fetch-pack.h"
+ #include "remote.h"
+-- 
+2.32.0.rc3.434.gd8aed1f08a7
+

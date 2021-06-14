@@ -1,0 +1,69 @@
+From d2f3b26d4647b1b5eda0412ef2036831ac1621ba Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.30-d2f3b26d464-20210614T101731Z-avarab@gmail.com>
+In-Reply-To: <cover-00.30-00000000000-20210614T101731Z-avarab@gmail.com>
+References: <cover-00.31-00000000000-20210528T110515Z-avarab@gmail.com>
+	<cover-00.30-00000000000-20210614T101731Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:37 -0700
+Subject: [PATCH 06/30] am: convert applypatch hooks to use config
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Teach pre-applypatch, post-applypatch, and applypatch-msg to use the
+hook.h library instead of the run-command.h library.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 1c8a5489035..9e9c1b5e9f2 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -445,9 +445,12 @@ static void am_destroy(const struct am_state *state)
+ static int run_applypatch_msg_hook(struct am_state *state)
+ {
+ 	int ret;
++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
+ 
+ 	assert(state->msg);
+-	ret = run_hook_le(NULL, "applypatch-msg", am_path(state, "final-commit"), NULL);
++	strvec_push(&opt.args, am_path(state, "final-commit"));
++	ret = run_hooks("applypatch-msg", &opt);
++	run_hooks_opt_clear(&opt);
+ 
+ 	if (!ret) {
+ 		FREE_AND_NULL(state->msg);
+@@ -1607,9 +1610,13 @@ static void do_commit(const struct am_state *state)
+ 	struct commit_list *parents = NULL;
+ 	const char *reflog_msg, *author, *committer = NULL;
+ 	struct strbuf sb = STRBUF_INIT;
++	struct run_hooks_opt hook_opt_pre = RUN_HOOKS_OPT_INIT;
++	struct run_hooks_opt hook_opt_post = RUN_HOOKS_OPT_INIT;
+ 
+-	if (run_hook_le(NULL, "pre-applypatch", NULL))
++	if (run_hooks("pre-applypatch", &hook_opt_pre)) {
++		run_hooks_opt_clear(&hook_opt_pre);
+ 		exit(1);
++	}
+ 
+ 	if (write_cache_as_tree(&tree, 0, NULL))
+ 		die(_("git write-tree failed to write a tree"));
+@@ -1660,8 +1667,10 @@ static void do_commit(const struct am_state *state)
+ 		fclose(fp);
+ 	}
+ 
+-	run_hook_le(NULL, "post-applypatch", NULL);
++	run_hooks("post-applypatch", &hook_opt_post);
+ 
++	run_hooks_opt_clear(&hook_opt_pre);
++	run_hooks_opt_clear(&hook_opt_post);
+ 	strbuf_release(&sb);
+ }
+ 
+-- 
+2.32.0.rc3.434.gd8aed1f08a7
+
