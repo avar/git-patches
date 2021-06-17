@@ -1,0 +1,60 @@
+From e9a1e7cf61e35f1c7c057af1710a0472ae2845cb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.27-e9a1e7cf61-20210617T101217Z-avarab@gmail.com>
+In-Reply-To: <cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
+References: <cover-00.30-00000000000-20210614T101920Z-avarab@gmail.com>
+	<cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:40 -0700
+Subject: [PATCH 03/27] rebase: teach pre-rebase to use hook.h
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the pre-rebase hook away from run-command.h to and over to the
+new hook.h library.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index 12f093121d..2081f6fa8d 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -28,6 +28,7 @@
+ #include "sequencer.h"
+ #include "rebase-interactive.h"
+ #include "reset.h"
++#include "hook.h"
+ 
+ #define DEFAULT_REFLOG_ACTION "rebase"
+ 
+@@ -1313,6 +1314,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 	char *squash_onto_name = NULL;
+ 	int reschedule_failed_exec = -1;
+ 	int allow_preemptive_ff = 1;
++	struct run_hooks_opt hook_opt = RUN_HOOKS_OPT_INIT;
+ 	struct option builtin_rebase_options[] = {
+ 		OPT_STRING(0, "onto", &options.onto_name,
+ 			   N_("revision"),
+@@ -2022,10 +2024,13 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 	}
+ 
+ 	/* If a hook exists, give it a chance to interrupt*/
++	strvec_pushl(&hook_opt.args, options.upstream_arg, argc ? argv[0] : NULL, NULL);
+ 	if (!ok_to_skip_pre_rebase &&
+-	    run_hook_le(NULL, "pre-rebase", options.upstream_arg,
+-			argc ? argv[0] : NULL, NULL))
++	    run_hooks("pre-rebase", &hook_opt)) {
++		run_hooks_opt_clear(&hook_opt);
+ 		die(_("The pre-rebase hook refused to rebase."));
++	}
++	run_hooks_opt_clear(&hook_opt);
+ 
+ 	if (options.flags & REBASE_DIFFSTAT) {
+ 		struct diff_options opts;
+-- 
+2.32.0.576.g59759b6ca7d
+

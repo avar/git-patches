@@ -1,0 +1,60 @@
+From e4ef3f4548a5f74261c2578757676a6de73c3a82 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-12.27-e4ef3f4548-20210617T101217Z-avarab@gmail.com>
+In-Reply-To: <cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
+References: <cover-00.30-00000000000-20210614T101920Z-avarab@gmail.com>
+	<cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:42 -0700
+Subject: [PATCH 12/27] receive-pack: convert push-to-checkout hook to hook.h
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+By using hook.h instead of run-command.h to invoke push-to-checkout,
+hooks can now be specified in the config as well as in the hookdir.
+push-to-checkout is not called anywhere but in builtin/receive-pack.c.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/receive-pack.c | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+index 1e0e04c62f..5248228ebf 100644
+--- a/builtin/receive-pack.c
++++ b/builtin/receive-pack.c
+@@ -1436,12 +1436,18 @@ static const char *push_to_checkout(unsigned char *hash,
+ 				    struct strvec *env,
+ 				    const char *work_tree)
+ {
++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
++
+ 	strvec_pushf(env, "GIT_WORK_TREE=%s", absolute_path(work_tree));
+-	if (run_hook_le(env->v, push_to_checkout_hook,
+-			hash_to_hex(hash), NULL))
++	strvec_pushv(&opt.env, env->v);
++	strvec_push(&opt.args, hash_to_hex(hash));
++	if (run_hooks(push_to_checkout_hook, &opt)) {
++		run_hooks_opt_clear(&opt);
+ 		return "push-to-checkout hook declined";
+-	else
++	} else {
++		run_hooks_opt_clear(&opt);
+ 		return NULL;
++	}
+ }
+ 
+ static const char *update_worktree(unsigned char *sha1, const struct worktree *worktree)
+@@ -1465,7 +1471,7 @@ static const char *update_worktree(unsigned char *sha1, const struct worktree *w
+ 
+ 	strvec_pushf(&env, "GIT_DIR=%s", absolute_path(git_dir));
+ 
+-	if (!find_hook(push_to_checkout_hook))
++	if (!hook_exists(push_to_checkout_hook))
+ 		retval = push_to_deploy(sha1, &env, work_tree);
+ 	else
+ 		retval = push_to_checkout(sha1, &env, work_tree);
+-- 
+2.32.0.576.g59759b6ca7d
+
