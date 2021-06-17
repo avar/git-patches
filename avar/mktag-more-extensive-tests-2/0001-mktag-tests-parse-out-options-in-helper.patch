@@ -1,0 +1,121 @@
+From d49549973d39df77bd800516a9cae33bdbc629e9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.6-d49549973d-20210617T103855Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-0000000000-20210617T103855Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210614T172422Z-avarab@gmail.com>
+	<cover-0.6-0000000000-20210617T103855Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 1 Apr 2021 15:00:34 +0200
+Subject: [PATCH 1/6] mktag tests: parse out options in helper
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change check_verify_failure() helper to parse out options from
+$@. This makes it easier to add new options in the future. See
+06ce79152be (mktag: add a --[no-]strict option, 2021-01-06) for the
+initial implementation.
+
+Let's also replace "" quotes with '' for the test body, the varables
+we need are eval'd into the body, so there's no need for the quoting
+confusion.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3800-mktag.sh | 43 +++++++++++++++++++++++++++++++------------
+ 1 file changed, 31 insertions(+), 12 deletions(-)
+
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 6275c98523..e9008744e3 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -12,15 +12,29 @@ test_description='git mktag: tag object verify test'
+ # given in the expect.pat file.
+ 
+ check_verify_failure () {
+-	test_expect_success "$1" "
+-		test_must_fail git mktag <tag.sig 2>message &&
+-		grep '$2' message &&
+-		if test '$3' != '--no-strict'
++	subject=$1 &&
++	message=$2 &&
++	shift 2 &&
++
++	no_strict= &&
++	while test $# != 0
++	do
++		case "$1" in
++		--no-strict)
++			no_strict=yes
++			;;
++		esac &&
++		shift
++	done &&
++
++	test_expect_success "fail with [--[no-]strict]: $subject" '
++		test_must_fail git mktag <tag.sig 2>err &&
++		if test -z "$no_strict"
+ 		then
+-			test_must_fail git mktag --no-strict <tag.sig 2>message.no-strict &&
+-			grep '$2' message.no-strict
++			test_must_fail git mktag <tag.sig 2>err2 &&
++			test_cmp err err2
+ 		fi
+-	"
++	'
+ }
+ 
+ test_expect_mktag_success() {
+@@ -243,7 +257,8 @@ tagger . <> 0 +0000
+ EOF
+ 
+ check_verify_failure 'verify tag-name check' \
+-	'^error:.* badTagName:' '--no-strict'
++	'^error:.* badTagName:' \
++	--no-strict
+ 
+ ############################################################
+ # 11. tagger line label check #1
+@@ -257,7 +272,8 @@ This is filler
+ EOF
+ 
+ check_verify_failure '"tagger" line label check #1' \
+-	'^error:.* missingTaggerEntry:' '--no-strict'
++	'^error:.* missingTaggerEntry:' \
++	--no-strict
+ 
+ ############################################################
+ # 12. tagger line label check #2
+@@ -272,7 +288,8 @@ This is filler
+ EOF
+ 
+ check_verify_failure '"tagger" line label check #2' \
+-	'^error:.* missingTaggerEntry:' '--no-strict'
++	'^error:.* missingTaggerEntry:' \
++	--no-strict
+ 
+ ############################################################
+ # 13. allow missing tag author name like fsck
+@@ -301,7 +318,8 @@ tagger T A Gger <
+ EOF
+ 
+ check_verify_failure 'disallow malformed tagger' \
+-	'^error:.* badEmail:' '--no-strict'
++	'^error:.* badEmail:' \
++	--no-strict
+ 
+ ############################################################
+ # 15. allow empty tag email
+@@ -425,7 +443,8 @@ this line should not be here
+ EOF
+ 
+ check_verify_failure 'detect invalid header entry' \
+-	'^error:.* extraHeaderEntry:' '--no-strict'
++	'^error:.* extraHeaderEntry:' \
++	--no-strict
+ 
+ test_expect_success 'invalid header entry config & fsck' '
+ 	test_must_fail git mktag <tag.sig &&
+-- 
+2.32.0.571.gdba276db2c
+

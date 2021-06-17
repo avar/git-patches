@@ -1,0 +1,71 @@
+From a1d95c81eaa3401de6278c5e2104e3a228b6e455 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.6-a1d95c81ea-20210617T103855Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-0000000000-20210617T103855Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210614T172422Z-avarab@gmail.com>
+	<cover-0.6-0000000000-20210617T103855Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Apr 2021 09:39:16 +0200
+Subject: [PATCH 4/6] mktag tests: test update-ref and reachable fsck
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the mktag tests to pass the created bad tag through update-ref
+and fsck.
+
+The reason for passing it through update-ref is to guard against it
+having a segfault as for-each-ref did before c6854508808 (ref-filter:
+fix NULL check for parse object failure, 2021-04-01).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3800-mktag.sh | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index 78c6f64e36..67f6ecbe88 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -44,11 +44,13 @@ check_verify_failure () {
+ 	'
+ 
+ 	test_expect_success "setup: $subject" '
++		tag_ref=refs/tags/bad_tag &&
++
+ 		# Reset any leftover state from the last $subject
+ 		rm -rf bad-tag &&
+ 
+ 		git init --bare bad-tag &&
+-		git -C bad-tag hash-object -t tag -w --stdin --literally <tag.sig
++		bad_tag=$(git -C bad-tag hash-object -t tag -w --stdin --literally <tag.sig)
+ 	'
+ 
+ 	test_expect_success "hash-object & fsck unreachable: $subject" '
+@@ -59,6 +61,23 @@ check_verify_failure () {
+ 			test_must_fail git -C bad-tag fsck
+ 		fi
+ 	'
++
++	test_expect_success "update-ref & fsck reachable: $subject" '
++		# Make sure the earlier test created it for us
++		git rev-parse "$bad_tag" &&
++
++		# The update-ref of the bad content will fail, do it
++		# anyway to see if it segfaults
++		test_might_fail git -C bad-tag update-ref "$tag_ref" "$bad_tag" &&
++
++		# Manually create the broken, we cannot do it with
++		# update-ref
++		echo "$bad_tag" >"bad-tag/$tag_ref" &&
++
++		# Unlike fsck-ing unreachable content above, this
++		# will always fail.
++		test_must_fail git -C bad-tag fsck
++	'
+ }
+ 
+ test_expect_mktag_success() {
+-- 
+2.32.0.571.gdba276db2c
+
