@@ -1,0 +1,149 @@
+From 9d9cb5aaf9e159e042226ac0564d3ac77aff3d49 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.3-00000000000-20210621T151357Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-0000000000-20210617T111934Z-avarab@gmail.com>
+References: <cover-0.3-0000000000-20210617T111934Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 21 Jun 2021 17:13:57 +0200
+Subject: [PATCH v2 0/3] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (3):
+  bundle cmd: stop leaking memory from parse_options_cmd_bundle()
+  bundle.c: use a temporary variable for OIDs and names
+  bundle: remove "ref_list" in favor of string-list.c API
+
+ builtin/bundle.c | 91 ++++++++++++++++++++++++++++++++----------------
+ bundle.c         | 74 ++++++++++++++++++++++-----------------
+ bundle.h         | 20 +++++------
+ transport.c      | 12 +++++--
+ 4 files changed, 122 insertions(+), 75 deletions(-)
+
+Range-diff against v1:
+1:  f4191088ac3 = 1:  932c0883ce0 bundle cmd: stop leaking memory from parse_options_cmd_bundle()
+2:  f297fd0432a ! 2:  7e0d57951e5 bundle.c: use a temporary variable for OIDs and names
+    @@ bundle.c: int verify_bundle(struct repository *r,
+      	for (i = 0; i < p->nr; i++) {
+      		struct ref_list_entry *e = p->list + i;
+     -		struct object *o = parse_object(r, &e->oid);
+    ++		const char *name = e->name;
+     +		struct object_id *oid = &e->oid;
+     +		struct object *o = parse_object(r, oid);
+      		if (o) {
+      			o->flags |= PREREQ_MARK;
+    - 			add_pending_object(&revs, o, e->name);
+    -@@ bundle.c: int verify_bundle(struct repository *r,
+    +-			add_pending_object(&revs, o, e->name);
+    ++			add_pending_object(&revs, o, name);
+    + 			continue;
+      		}
+      		if (++ret == 1)
+      			error("%s", message);
+     -		error("%s %s", oid_to_hex(&e->oid), e->name);
+    -+		error("%s %s", oid_to_hex(oid), e->name);
+    ++		error("%s %s", oid_to_hex(oid), name);
+      	}
+      	if (revs.pending.nr != p->nr)
+      		return ret;
+    @@ bundle.c: int verify_bundle(struct repository *r,
+      	for (i = 0; i < p->nr; i++) {
+      		struct ref_list_entry *e = p->list + i;
+     -		struct object *o = parse_object(r, &e->oid);
+    ++		const char *name = e->name;
+     +		struct object_id *oid = &e->oid;
+     +		struct object *o = parse_object(r, oid);
+      		assert(o); /* otherwise we'd have returned early */
+    @@ bundle.c: int verify_bundle(struct repository *r,
+      		if (++ret == 1)
+      			error("%s", message);
+     -		error("%s %s", oid_to_hex(&e->oid), e->name);
+    -+		error("%s %s", oid_to_hex(oid), e->name);
+    ++		error("%s %s", oid_to_hex(oid), name);
+      	}
+      
+      	/* Clean up objects used, as they will be reused. */
+    @@ bundle.c: int verify_bundle(struct repository *r,
+     
+      ## transport.c ##
+     @@ transport.c: static struct ref *get_refs_from_bundle(struct transport *transport,
+    + 
+      	for (i = 0; i < data->header.references.nr; i++) {
+      		struct ref_list_entry *e = data->header.references.list + i;
+    - 		struct ref *ref = alloc_ref(e->name);
+    +-		struct ref *ref = alloc_ref(e->name);
+     -		oidcpy(&ref->old_oid, &e->oid);
+    ++		const char *name = e->name;
+    ++		struct ref *ref = alloc_ref(name);
+     +		struct object_id *oid = &e->oid;
+     +		oidcpy(&ref->old_oid, oid);
+      		ref->next = result;
+3:  887313d3b02 ! 3:  9d9cb5aaf9e bundle: remove "ref_list" in favor of string-list.c API
+    @@ bundle.c: int verify_bundle(struct repository *r,
+      	repo_init_revisions(r, &revs, NULL);
+      	for (i = 0; i < p->nr; i++) {
+     -		struct ref_list_entry *e = p->list + i;
+    +-		const char *name = e->name;
+     -		struct object_id *oid = &e->oid;
+     +		struct string_list_item *e = p->items + i;
+    ++		const char *name = e->string;
+     +		struct object_id *oid = e->util;
+      		struct object *o = parse_object(r, oid);
+      		if (o) {
+      			o->flags |= PREREQ_MARK;
+    --			add_pending_object(&revs, o, e->name);
+    -+			add_pending_object(&revs, o, e->string);
+    - 			continue;
+    - 		}
+    - 		if (++ret == 1)
+    - 			error("%s", message);
+    --		error("%s %s", oid_to_hex(oid), e->name);
+    -+		error("%s %s", oid_to_hex(oid), e->string);
+    - 	}
+    - 	if (revs.pending.nr != p->nr)
+    - 		return ret;
+     @@ bundle.c: int verify_bundle(struct repository *r,
+      			i--;
+      
+      	for (i = 0; i < p->nr; i++) {
+     -		struct ref_list_entry *e = p->list + i;
+    +-		const char *name = e->name;
+     -		struct object_id *oid = &e->oid;
+     +		struct string_list_item *e = p->items + i;
+    ++		const char *name = e->string;
+     +		const struct object_id *oid = e->util;
+      		struct object *o = parse_object(r, oid);
+      		assert(o); /* otherwise we'd have returned early */
+      		if (o->flags & SHOWN)
+    - 			continue;
+    - 		if (++ret == 1)
+    - 			error("%s", message);
+    --		error("%s %s", oid_to_hex(oid), e->name);
+    -+		error("%s %s", oid_to_hex(oid), e->string);
+    - 	}
+    +@@ bundle.c: int verify_bundle(struct repository *r,
+      
+      	/* Clean up objects used, as they will be reused. */
+      	for (i = 0; i < p->nr; i++) {
+    @@ transport.c: static struct ref *get_refs_from_bundle(struct transport *transport
+      
+      	for (i = 0; i < data->header.references.nr; i++) {
+     -		struct ref_list_entry *e = data->header.references.list + i;
+    --		struct ref *ref = alloc_ref(e->name);
+    --		struct object_id *oid = &e->oid;
+    +-		const char *name = e->name;
+     +		struct string_list_item *e = data->header.references.items + i;
+    -+		struct ref *ref = alloc_ref(e->string);
+    -+		const struct object_id *oid = e->util;
+    ++		const char *name = e->string;
+    + 		struct ref *ref = alloc_ref(name);
+    +-		struct object_id *oid = &e->oid;
+    ++		struct object_id *oid = e->util;
+      		oidcpy(&ref->old_oid, oid);
+      		ref->next = result;
+      		result = ref;
+-- 
+2.32.0.599.g3967b4fa4ac
+
