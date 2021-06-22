@@ -1,0 +1,80 @@
+From 3521bf90557d0458c050150630a3e147f25ce2e7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.3-3521bf90557-20210622T141811Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210622T141811Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20210622T141811Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Jun 2021 14:24:52 +0200
+Subject: [PATCH 3/3] Makfile: don't use "FORCE" for tags targets
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the "FORCE" dependency from the "tags", "TAGS" and "cscope.out"
+targets, instead make them depend on whether or not the relevant
+source files have changed.
+
+I'm also removing the "-o" option from them, that seems to have been
+cargo-culted when they were initially added in f81e7c626f3 (Makefile:
+Add TAGS and tags targets, 2006-03-18). It would make sense to use
+that option if we had been appending to tag files, it doesn't make any
+sense that it was used after we'd just removed the files file being
+appended to.
+
+This will potentially cause a partial file to be left behind if the
+command dies, but my in-flight series to use the ".DELETE_ON_ERROR"
+flag in the Makefile[1] will make that problem go away. I think even
+without that it's not problem we need to worry about in these cases.
+
+1. https://lore.kernel.org/git/patch-1.1-9420448e74f-20210622T141100Z-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 21 +++++++++++----------
+ 1 file changed, 11 insertions(+), 10 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 25d2a3e5ddc..89d261230fb 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2727,18 +2727,19 @@ FIND_SOURCE_FILES = ( \
+ 		| sed -e 's|^\./||' \
+ 	)
+ 
+-$(ETAGS_TARGET): FORCE
+-	$(QUIET_GEN)$(RM) "$(ETAGS_TARGET)+" && \
+-	$(FIND_SOURCE_FILES) | xargs etags -a -o "$(ETAGS_TARGET)+" && \
+-	mv "$(ETAGS_TARGET)+" "$(ETAGS_TARGET)"
++FOUND_SOURCE_FILES = $(shell $(FIND_SOURCE_FILES))
+ 
+-tags: FORCE
+-	$(QUIET_GEN)$(RM) tags+ && \
+-	$(FIND_SOURCE_FILES) | xargs ctags -a -o tags+ && \
+-	mv tags+ tags
++$(ETAGS_TARGET): $(FOUND_SOURCE_FILES)
++	$(QUIET_GEN)echo $(FOUND_SOURCE_FILES) | \
++	xargs etags -o $@
++
++tags: $(FOUND_SOURCE_FILES)
++	$(QUIET_GEN)echo $(FOUND_SOURCE_FILES) | \
++	xargs ctags -o $@
+ 
+ cscope.out:
+-	$(FIND_SOURCE_FILES) | xargs cscope -f$@ -b
++	$(QUIET_GEN)echo $(FOUND_SOURCE_FILES) | \
++	xargs cscope -f$@ -b
+ 
+ .PHONY: cscope
+ cscope: cscope.out
+@@ -2922,7 +2923,7 @@ check: config-list.h command-list.h
+ 		exit 1; \
+ 	fi
+ 
+-FOUND_C_SOURCES = $(filter %.c,$(shell $(FIND_SOURCE_FILES)))
++FOUND_C_SOURCES = $(filter %.c,$(FOUND_SOURCE_FILES))
+ COCCI_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES),$(FOUND_C_SOURCES))
+ 
+ %.cocci.patch: %.cocci $(COCCI_SOURCES)
+-- 
+2.32.0.599.g3967b4fa4ac
+
