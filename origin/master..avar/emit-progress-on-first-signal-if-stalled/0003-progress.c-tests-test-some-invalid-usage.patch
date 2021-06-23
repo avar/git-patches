@@ -1,0 +1,68 @@
+From 397291e0f6538284b3febba9e34bf0372a1512a3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.15-397291e0f65-20210623T074718Z-avarab@gmail.com>
+In-Reply-To: <cover-00.15-00000000000-20210623T074718Z-avarab@gmail.com>
+References: <874kds3tdn.fsf@evledraar.gmail.com>
+	<cover-00.15-00000000000-20210623T074718Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Jun 2021 00:01:44 +0200
+Subject: [PATCH 03/15] progress.c tests: test some invalid usage
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Test what happens when we "stop" without a "start", omit the "stop"
+after a "start", or try to start two concurrent progress bars. This
+extends the trace2 tests added in 98a13647408 (trace2: log progress
+time and throughput, 2020-05-12).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0500-progress-display.sh | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/t/t0500-progress-display.sh b/t/t0500-progress-display.sh
+index ce6c3434673..50eced31f03 100755
+--- a/t/t0500-progress-display.sh
++++ b/t/t0500-progress-display.sh
+@@ -328,4 +328,37 @@ test_expect_success 'progress generates traces' '
+ 	grep "\"key\":\"total_bytes\",\"value\":\"409600\"" trace.event
+ '
+ 
++test_expect_success 'progress generates traces: stop / start' '
++	cat >in <<-\EOF &&
++	start
++	stop
++	EOF
++
++	GIT_TRACE2_EVENT="$(pwd)/trace-startstop.event" test-tool progress \
++		<in 2>stderr &&
++	test_region progress "Working hard" trace-startstop.event
++'
++
++test_expect_success 'progress generates traces: start without stop' '
++	cat >in <<-\EOF &&
++	start
++	EOF
++
++	GIT_TRACE2_EVENT="$(pwd)/trace-start.event" test-tool progress \
++		<in 2>stderr &&
++	grep region_enter.*progress trace-start.event &&
++	! grep region_leave.*progress trace-start.event
++'
++
++test_expect_success 'progress generates traces: stop without start' '
++	cat >in <<-\EOF &&
++	stop
++	EOF
++
++	GIT_TRACE2_EVENT="$(pwd)/trace-stop.event" test-tool progress \
++		<in 2>stderr &&
++	! grep region_enter.*progress trace-stop.event &&
++	! grep region_leave.*progress trace-stop.event
++'
++
+ test_done
+-- 
+2.32.0.599.g3967b4fa4ac
+
