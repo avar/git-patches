@@ -1,0 +1,186 @@
+From 66e4909580b9e2b984499aee5b8b10189421dee9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.25-66e4909580b-20210623T154234Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+References: <YNKWsTsQgB2Ijxu7@nand.local>
+	<cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 May 2021 11:44:50 +0200
+Subject: [PATCH 10/25] progress.c: remove the "sparse" mode nano-optimization
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Revert the code added in 9d81ecb52b5 (progress: add sparse mode to
+force 100% complete message, 2019-03-21) for the "sparse" progress
+mode, and change its only user added in 430efb8a74b (midx: add
+progress indicators in multi-pack-index verify, 2019-03-21) to use the
+normal non-sparse progress.c API instead.
+
+The reason for checking the SPARSE_PROGRESS_INTERVAL for every 2^12
+objects is to improve performance. It does that, but only in an
+isolated and artificial benchmark. In the case of the
+"verify_midx_file" user we're in a loop doing various other OID/object
+work, the cost of calling display_progress() is entirely lost in the
+noise.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ midx.c     | 26 +++++++-------------------
+ progress.c | 38 +++-----------------------------------
+ 2 files changed, 10 insertions(+), 54 deletions(-)
+
+diff --git a/midx.c b/midx.c
+index 21d6a05e887..d80e68998b8 100644
+--- a/midx.c
++++ b/midx.c
+@@ -1186,18 +1186,6 @@ static int compare_pair_pos_vs_id(const void *_a, const void *_b)
+ 	return b->pack_int_id - a->pack_int_id;
+ }
+ 
+-/*
+- * Limit calls to display_progress() for performance reasons.
+- * The interval here was arbitrarily chosen.
+- */
+-#define SPARSE_PROGRESS_INTERVAL (1 << 12)
+-#define midx_display_sparse_progress(progress, n) \
+-	do { \
+-		uint64_t _n = (n); \
+-		if ((_n & (SPARSE_PROGRESS_INTERVAL - 1)) == 0) \
+-			display_progress(progress, _n); \
+-	} while (0)
+-
+ int verify_midx_file(struct repository *r, const char *object_dir, unsigned flags)
+ {
+ 	struct pair_pos_vs_id *pairs = NULL;
+@@ -1248,8 +1236,8 @@ int verify_midx_file(struct repository *r, const char *object_dir, unsigned flag
+ 	}
+ 
+ 	if (flags & MIDX_PROGRESS)
+-		progress = start_sparse_progress(_("Verifying OID order in multi-pack-index"),
+-						 m->num_objects - 1);
++		progress = start_progress(_("Verifying OID order in multi-pack-index"),
++					  m->num_objects - 1);
+ 	for (i = 0; i < m->num_objects - 1; i++) {
+ 		struct object_id oid1, oid2;
+ 
+@@ -1260,7 +1248,7 @@ int verify_midx_file(struct repository *r, const char *object_dir, unsigned flag
+ 			midx_report(_("oid lookup out of order: oid[%d] = %s >= %s = oid[%d]"),
+ 				    i, oid_to_hex(&oid1), oid_to_hex(&oid2), i + 1);
+ 
+-		midx_display_sparse_progress(progress, i + 1);
++		display_progress(progress, i + 1);
+ 	}
+ 	stop_progress(&progress);
+ 
+@@ -1277,14 +1265,14 @@ int verify_midx_file(struct repository *r, const char *object_dir, unsigned flag
+ 	}
+ 
+ 	if (flags & MIDX_PROGRESS)
+-		progress = start_sparse_progress(_("Sorting objects by packfile"),
+-						 m->num_objects);
++		progress = start_progress(_("Sorting objects by packfile"),
++					  m->num_objects);
+ 	display_progress(progress, 0); /* TODO: Measure QSORT() progress */
+ 	QSORT(pairs, m->num_objects, compare_pair_pos_vs_id);
+ 	stop_progress(&progress);
+ 
+ 	if (flags & MIDX_PROGRESS)
+-		progress = start_sparse_progress(_("Verifying object offsets"), m->num_objects);
++		progress = start_progress(_("Verifying object offsets"), m->num_objects);
+ 	for (i = 0; i < m->num_objects; i++) {
+ 		struct object_id oid;
+ 		struct pack_entry e;
+@@ -1318,7 +1306,7 @@ int verify_midx_file(struct repository *r, const char *object_dir, unsigned flag
+ 			midx_report(_("incorrect object offset for oid[%d] = %s: %"PRIx64" != %"PRIx64),
+ 				    pairs[i].pos, oid_to_hex(&oid), m_offset, p_offset);
+ 
+-		midx_display_sparse_progress(progress, i + 1);
++		display_progress(progress, i + 1);
+ 	}
+ 	stop_progress(&progress);
+ 
+diff --git a/progress.c b/progress.c
+index 1ab7d19deb8..912edd4c818 100644
+--- a/progress.c
++++ b/progress.c
+@@ -37,7 +37,6 @@ struct progress {
+ 	uint64_t total;
+ 	unsigned last_percent;
+ 	unsigned delay;
+-	unsigned sparse;
+ 	struct throughput *throughput;
+ 	uint64_t start_ns;
+ 	struct strbuf counters_sb;
+@@ -256,7 +255,7 @@ static void clear_progress_signal(void)
+ }
+ 
+ static struct progress *start_progress_delay(const char *title, uint64_t total,
+-					     unsigned delay, unsigned sparse)
++					     unsigned delay)
+ {
+ 	struct progress *progress = xmalloc(sizeof(*progress));
+ 	progress->title = title;
+@@ -264,7 +263,6 @@ static struct progress *start_progress_delay(const char *title, uint64_t total,
+ 	progress->last_value = -1;
+ 	progress->last_percent = -1;
+ 	progress->delay = delay;
+-	progress->sparse = sparse;
+ 	progress->throughput = NULL;
+ 	progress->start_ns = getnanotime();
+ 	strbuf_init(&progress->counters_sb, 0);
+@@ -287,40 +285,12 @@ static int get_default_delay(void)
+ 
+ struct progress *start_delayed_progress(const char *title, uint64_t total)
+ {
+-	return start_progress_delay(title, total, get_default_delay(), 0);
++	return start_progress_delay(title, total, get_default_delay());
+ }
+ 
+ struct progress *start_progress(const char *title, uint64_t total)
+ {
+-	return start_progress_delay(title, total, 0, 0);
+-}
+-
+-/*
+- * Here "sparse" means that the caller might use some sampling criteria to
+- * decide when to call display_progress() rather than calling it for every
+- * integer value in[0 .. total).  In particular, the caller might not call
+- * display_progress() for the last value in the range.
+- *
+- * When "sparse" is set, stop_progress() will automatically force the done
+- * message to show 100%.
+- */
+-struct progress *start_sparse_progress(const char *title, uint64_t total)
+-{
+-	return start_progress_delay(title, total, 0, 1);
+-}
+-
+-struct progress *start_delayed_sparse_progress(const char *title,
+-					       uint64_t total)
+-{
+-	return start_progress_delay(title, total, get_default_delay(), 1);
+-}
+-
+-static void finish_if_sparse(struct progress *progress)
+-{
+-	if (progress &&
+-	    progress->sparse &&
+-	    progress->last_value != progress->total)
+-		display_progress(progress, progress->total);
++	return start_progress_delay(title, total, 0);
+ }
+ 
+ void stop_progress(struct progress **p_progress)
+@@ -328,8 +298,6 @@ void stop_progress(struct progress **p_progress)
+ 	if (!p_progress)
+ 		BUG("don't provide NULL to stop_progress");
+ 
+-	finish_if_sparse(*p_progress);
+-
+ 	if (*p_progress) {
+ 		struct progress *progress = *p_progress;
+ 		trace2_data_intmax("progress", the_repository, "total_objects",
+-- 
+2.32.0.599.g3967b4fa4ac
+

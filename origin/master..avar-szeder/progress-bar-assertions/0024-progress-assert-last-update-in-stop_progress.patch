@@ -1,0 +1,147 @@
+From 4675709371a9802a8a2bc1867bccdc934ca34180 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-24.25-4675709371a-20210623T154234Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+References: <YNKWsTsQgB2Ijxu7@nand.local>
+	<cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+From: =?UTF-8?q?SZEDER=20G=C3=A1bor?= <szeder.dev@gmail.com>
+Date: Sun, 20 Jun 2021 22:02:57 +0200
+Subject: [PATCH 24/25] progress: assert last update in stop_progress()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We had to fix a couple of buggy progress lines in the past, where the
+progress counter's final value didn't match the expected total [1],
+e.g.:
+
+  Expanding reachable commits in commit graph: 138606% (824706/595), done.
+  Writing out commit graph in 3 passes: 166% (4187845/2512707), done.
+
+Let's do better, and, instead of waiting for someone to notice such
+issues by mere chance, start verifying progress counters in the test
+suite. Let's track what the last display_progress() value was, and if
+it doesn't match the total at the end invoke BUG().
+
+We need to introduce a "last_update" distinct from "last_value" for
+this, since the "last_value" really means "last displayed value", and
+the logic in display() relies on it having those semantics.
+
+Using the "last_value" would also leave us with a subtle case where
+this assertion wouldn't catch broken API uses, as an earlier version
+of this change did.
+
+Even if that was not the case we couldn't rely on it for the purposes
+of this assertion. In the case of a delayed progress the variable
+holding the value of the progress counter
+('progress->last_value') is only updated after that delay is up, and,
+consequently, we can't compare the progress counter with the expected
+total in stop_progress() in these cases. Thus this check will cover
+progress lines that are too fast to be shown, because the repositories
+used in our tests are tiny and most of our progress lines are delayed.
+
+What it can't cover is code that doesn't start the progress bar at
+all, e.g. due to its own isatty() check, so progress that is only
+started and shown when standard error is not a terminal won't be
+covered by our tests.
+
+[1] c4ff24bbb3 (commit-graph.c: display correct number of chunks when
+                writing, 2021-02-24)
+    1cbdbf3bef (commit-graph: drop count_distinct_commits() function,
+                2020-12-07), though this didn't actually fixed, but
+                instead removed a buggy progress line.
+    150cd3b61d (commit-graph: fix "Writing out commit graph" progress
+                counter, 2020-07-09)
+    67fa6aac5a (commit-graph: don't show progress percentages while
+                expanding reachable commits, 2019-09-07)
+    531e6daa03 (prune-packed: advanced progress even for non-existing
+                fan-out directories, 2009-04-27)
+
+Signed-off-by: SZEDER Gábor <szeder.dev@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ progress.c                  |  8 ++++++++
+ t/t0500-progress-display.sh | 30 +++++++++++++++++++++++++++++-
+ 2 files changed, 37 insertions(+), 1 deletion(-)
+
+diff --git a/progress.c b/progress.c
+index c1cb01ba975..40043bf6601 100644
+--- a/progress.c
++++ b/progress.c
+@@ -325,6 +325,7 @@ static struct progress *start_progress_delay(const char *title, uint64_t total,
+ 
+ 	progress->total = total;
+ 	progress->last_value = -1;
++	progress->last_update = -1;
+ 	progress->last_percent = -1;
+ 	progress->delay = delay;
+ 	progress->throughput = NULL;
+@@ -393,6 +394,13 @@ void stop_progress_msg(struct progress **p_progress, const char *msg)
+ 	if (!progress)
+ 		return;
+ 	*p_progress = NULL;
++
++	if (progress->total &&
++	    progress->total != progress->last_update)
++		BUG("total progress does not match for \"%*s\": expected: %"PRIuMAX" got: %"PRIuMAX,
++		    (int)(progress->status_len_utf8), progress->title.buf,
++		    (uintmax_t)progress->total,
++		    (uintmax_t)progress->last_update);
+ 	if (progress->last_value != -1) {
+ 		/* Force the last update */
+ 		struct throughput *tp = progress->throughput;
+diff --git a/t/t0500-progress-display.sh b/t/t0500-progress-display.sh
+index bc458cfc28b..3f00e52ce46 100755
+--- a/t/t0500-progress-display.sh
++++ b/t/t0500-progress-display.sh
+@@ -96,7 +96,8 @@ Working hard.......2.........3.........4.........5.........6.........7:
+     0% (0/100), stalled.<CR>
+     1% (1/100)          <CR>
+    50% (50/100)<CR>
+-   50% (50/100), done.
++  100% (100/100)<CR>
++  100% (100/100), done.
+ EOF
+ 
+ 	cat >in <<-\EOF &&
+@@ -104,6 +105,7 @@ EOF
+ 	signal
+ 	progress 1
+ 	progress 50
++	progress 100
+ 	stop
+ 	EOF
+ 	test-tool progress <in 2>stderr &&
+@@ -423,4 +425,30 @@ test_expect_success 'BUG: start two concurrent progress bars' '
+ 	grep -E "^BUG: .*: should have no global_progress in set_progress_signal\(\)$" stderr
+ '
+ 
++test_expect_success 'BUG: display_progress() goes past declared "total"' '
++	cat >in <<-\EOF &&
++	start 3
++	progress 1
++	progress 2
++	progress 4
++	stop
++	EOF
++
++	test_must_fail test-tool progress <in 2>stderr &&
++	grep "BUG:.*total progress does not match" stderr
++'
++
++test_expect_success 'BUG: display_progress() does not reach declared "total"' '
++	cat >in <<-\EOF &&
++	start 5
++	progress 1
++	progress 2
++	progress 4
++	stop
++	EOF
++
++	test_must_fail test-tool progress <in 2>stderr &&
++	grep "BUG:.*total progress does not match" stderr
++'
++
+ test_done
+-- 
+2.32.0.599.g3967b4fa4ac
+

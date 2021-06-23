@@ -1,0 +1,184 @@
+From f2e84e3a3f2ce722ace031448da64ec5fd8340fc Mon Sep 17 00:00:00 2001
+Message-Id: <patch-13.25-f2e84e3a3f2-20210623T154234Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+References: <YNKWsTsQgB2Ijxu7@nand.local>
+	<cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Jun 2021 00:54:34 +0200
+Subject: [PATCH 13/25] progress.[ch]: move the "struct progress" to the header
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the definition of the "struct progress" to the progress.h
+header. Even though its contents are meant to be "private" this
+pattern has resulted in forward declarations of it in various places,
+as other functions have a need to pass it around.
+
+Let's just define it in the header instead. It's part of our own
+internal code, so we're not at much risk of someone tweaking the
+internal fields manually. While doing that rename the "TP_IDX_MAX"
+macro to the more clearly namespaced "PROGRESS_THROUGHPUT_IDX_MAX".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ cache.h             |  1 -
+ csum-file.h         |  2 --
+ pack.h              |  1 -
+ parallel-checkout.h |  1 -
+ progress.c          | 29 +----------------------------
+ progress.h          | 28 +++++++++++++++++++++++++++-
+ reachable.h         |  1 -
+ 7 files changed, 28 insertions(+), 35 deletions(-)
+
+diff --git a/cache.h b/cache.h
+index ba04ff8bd36..7e03a181f68 100644
+--- a/cache.h
++++ b/cache.h
+@@ -308,7 +308,6 @@ static inline unsigned int canon_mode(unsigned int mode)
+ 
+ struct split_index;
+ struct untracked_cache;
+-struct progress;
+ struct pattern_list;
+ 
+ struct index_state {
+diff --git a/csum-file.h b/csum-file.h
+index 3044bd19ab6..3de0de653e8 100644
+--- a/csum-file.h
++++ b/csum-file.h
+@@ -3,8 +3,6 @@
+ 
+ #include "hash.h"
+ 
+-struct progress;
+-
+ /* A SHA1-protected file */
+ struct hashfile {
+ 	int fd;
+diff --git a/pack.h b/pack.h
+index fa139545262..8df04f4937a 100644
+--- a/pack.h
++++ b/pack.h
+@@ -77,7 +77,6 @@ struct pack_idx_entry {
+ };
+ 
+ 
+-struct progress;
+ /* Note, the data argument could be NULL if object type is blob */
+ typedef int (*verify_fn)(const struct object_id *, enum object_type, unsigned long, void*, int*);
+ 
+diff --git a/parallel-checkout.h b/parallel-checkout.h
+index 80f539bcb77..193f76398d6 100644
+--- a/parallel-checkout.h
++++ b/parallel-checkout.h
+@@ -5,7 +5,6 @@
+ 
+ struct cache_entry;
+ struct checkout;
+-struct progress;
+ 
+ /****************************************************************
+  * Users of parallel checkout
+diff --git a/progress.c b/progress.c
+index e1b50ef7882..aff9af9ee8b 100644
+--- a/progress.c
++++ b/progress.c
+@@ -17,33 +17,6 @@
+ #include "utf8.h"
+ #include "config.h"
+ 
+-#define TP_IDX_MAX      8
+-
+-struct throughput {
+-	off_t curr_total;
+-	off_t prev_total;
+-	uint64_t prev_ns;
+-	unsigned int avg_bytes;
+-	unsigned int avg_misecs;
+-	unsigned int last_bytes[TP_IDX_MAX];
+-	unsigned int last_misecs[TP_IDX_MAX];
+-	unsigned int idx;
+-	struct strbuf display;
+-};
+-
+-struct progress {
+-	const char *title;
+-	uint64_t last_value;
+-	uint64_t total;
+-	unsigned last_percent;
+-	unsigned delay;
+-	struct throughput *throughput;
+-	uint64_t start_ns;
+-	struct strbuf counters_sb;
+-	int title_len;
+-	int split;
+-};
+-
+ static volatile sig_atomic_t progress_update;
+ static struct progress *global_progress;
+ 
+@@ -194,7 +167,7 @@ void display_throughput(struct progress *progress, uint64_t total)
+ 	tp->avg_misecs -= tp->last_misecs[tp->idx];
+ 	tp->last_bytes[tp->idx] = count;
+ 	tp->last_misecs[tp->idx] = misecs;
+-	tp->idx = (tp->idx + 1) % TP_IDX_MAX;
++	tp->idx = (tp->idx + 1) % PROGRESS_THROUGHPUT_IDX_MAX;
+ 
+ 	throughput_string(&tp->display, total, rate);
+ 	if (progress->last_value != -1 && progress_update)
+diff --git a/progress.h b/progress.h
+index f1913acf73f..4fb2b483d36 100644
+--- a/progress.h
++++ b/progress.h
+@@ -1,7 +1,33 @@
+ #ifndef PROGRESS_H
+ #define PROGRESS_H
++#include "strbuf.h"
+ 
+-struct progress;
++#define PROGRESS_THROUGHPUT_IDX_MAX      8
++
++struct throughput {
++	off_t curr_total;
++	off_t prev_total;
++	uint64_t prev_ns;
++	unsigned int avg_bytes;
++	unsigned int avg_misecs;
++	unsigned int last_bytes[PROGRESS_THROUGHPUT_IDX_MAX];
++	unsigned int last_misecs[PROGRESS_THROUGHPUT_IDX_MAX];
++	unsigned int idx;
++	struct strbuf display;
++};
++
++struct progress {
++	const char *title;
++	uint64_t last_value;
++	uint64_t total;
++	unsigned last_percent;
++	unsigned delay;
++	struct throughput *throughput;
++	uint64_t start_ns;
++	struct strbuf counters_sb;
++	int title_len;
++	int split;
++};
+ 
+ #ifdef GIT_TEST_PROGRESS_ONLY
+ 
+diff --git a/reachable.h b/reachable.h
+index 5df932ad8f5..7e1ddddbc63 100644
+--- a/reachable.h
++++ b/reachable.h
+@@ -1,7 +1,6 @@
+ #ifndef REACHEABLE_H
+ #define REACHEABLE_H
+ 
+-struct progress;
+ struct rev_info;
+ 
+ int add_unseen_recent_objects_to_traversal(struct rev_info *revs,
+-- 
+2.32.0.599.g3967b4fa4ac
+

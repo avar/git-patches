@@ -1,0 +1,51 @@
+From ed5cc15d7614750892a353d5d3f825860d3448c0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-23.25-ed5cc15d761-20210623T154234Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+References: <YNKWsTsQgB2Ijxu7@nand.local>
+	<cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 23 Jun 2021 13:49:07 +0200
+Subject: [PATCH 23/25] entry: deal with unexpected "Filtering content" total
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "Filtering content" end total does not match the expected total in
+cases such as the 'missing file in delayed checkout' test in
+'t0021-conversion.sh'.
+
+If we encounter errors we can't accurately estimate the end state of
+the progress bar. This is because the test involves a purposefully
+buggy filter process that doesn't process any paths, so the progress
+counter doesn't have a chance to reach the expected total.
+
+See the preceding commit for why we'd want a stop_progress_early() in
+this case, as opposed to leaking memory here, or not providing a
+"total" estimate to begin with.
+
+Signed-off-by: SZEDER Gábor <szeder.dev@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ entry.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/entry.c b/entry.c
+index bc4b8fcc980..e79a13daa51 100644
+--- a/entry.c
++++ b/entry.c
+@@ -232,7 +232,10 @@ int finish_delayed_checkout(struct checkout *state, int *nr_checkouts)
+ 		}
+ 		string_list_remove_empty_items(&dco->filters, 0);
+ 	}
+-	stop_progress(&progress);
++	if (!errs && !dco->paths.nr)
++		stop_progress(&progress);
++	else
++		stop_progress_early(&progress);
+ 	string_list_clear(&dco->filters, 0);
+ 
+ 	/* At this point we should not have any delayed paths anymore. */
+-- 
+2.32.0.599.g3967b4fa4ac
+

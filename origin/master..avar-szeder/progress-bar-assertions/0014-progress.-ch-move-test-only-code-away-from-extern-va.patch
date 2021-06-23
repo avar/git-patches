@@ -1,0 +1,229 @@
+From 88d864c373a1a951aa8352fae97dd3fb6fe5a0c9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-14.25-88d864c373a-20210623T154234Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+References: <YNKWsTsQgB2Ijxu7@nand.local>
+	<cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Jun 2021 00:43:11 +0200
+Subject: [PATCH 14/25] progress.[ch]: move test-only code away from "extern"
+ variables
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since the test-only support code was added in 2bb74b53a49 (Test the
+progress display, 2019-09-16) we've had to define
+GIT_TEST_PROGRESS_ONLY more widely as part of the bugfix in
+3cacb9aaf46 (progress.c: silence cgcc suggestion about internal
+linkage, 2020-04-27).
+
+So the only thing we were getting out of this indirection was keeping
+GIT_TEST_PROGRESS_ONLY from being defined in progress.h itself,
+i.e. so the likes of csum-file.h wouldn't have access to them, we'd
+still compile them in progress.o.
+
+Let's just always define and compile them without this needless slight
+of hand, the linking and strip step will take care of removing these
+unused symbols, if needed.
+
+We now expose a start_progress_testing() function instead, which'll
+set a "test_mode" member, which the test of the code can check.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ progress.c               | 34 ++++++++++++++--------------------
+ progress.h               | 21 ++++++++++++++-------
+ t/helper/test-progress.c | 11 +++++------
+ 3 files changed, 33 insertions(+), 33 deletions(-)
+
+diff --git a/progress.c b/progress.c
+index aff9af9ee8b..39d7f6bd86b 100644
+--- a/progress.c
++++ b/progress.c
+@@ -8,7 +8,6 @@
+  * published by the Free Software Foundation.
+  */
+ 
+-#define GIT_TEST_PROGRESS_ONLY
+ #include "cache.h"
+ #include "gettext.h"
+ #include "progress.h"
+@@ -20,13 +19,6 @@
+ static volatile sig_atomic_t progress_update;
+ static struct progress *global_progress;
+ 
+-/*
+- * These are only intended for testing the progress output, i.e. exclusively
+- * for 'test-tool progress'.
+- */
+-int progress_testing;
+-uint64_t progress_test_ns = 0;
+-
+ static int is_foreground_fd(int fd)
+ {
+ 	int tpgrp = tcgetpgrp(fd);
+@@ -108,8 +100,8 @@ static void throughput_string(struct strbuf *buf, uint64_t total,
+ 
+ static uint64_t progress_getnanotime(struct progress *progress)
+ {
+-	if (progress_testing)
+-		return progress->start_ns + progress_test_ns;
++	if (progress->test_getnanotime)
++		return progress->start_ns + progress->test_getnanotime;
+ 	else
+ 		return getnanotime();
+ }
+@@ -185,11 +177,7 @@ static void progress_interval(int signum)
+ 	progress_update = 1;
+ }
+ 
+-/*
+- * The progress_test_force_update() function is intended for testing
+- * the progress output, i.e. exclusively for 'test-tool progress'.
+- */
+-void progress_test_force_update(void)
++void test_progress_force_update(void)
+ {
+ 	progress_interval(SIGALRM);
+ }
+@@ -203,7 +191,7 @@ static void set_progress_signal(struct progress *progress)
+ 		BUG("should have no global_progress in set_progress_signal()");
+ 	global_progress = progress;
+ 
+-	if (progress_testing)
++	if (progress->test_mode)
+ 		return;
+ 
+ 	progress_update = 0;
+@@ -228,7 +216,7 @@ static void clear_progress_signal(struct progress *progress)
+ 		BUG("should have a global_progress in clear_progress_signal()");
+ 	global_progress = NULL;
+ 
+-	if (progress_testing)
++	if (progress->test_mode)
+ 		return;
+ 
+ 	setitimer(ITIMER_REAL, &v, NULL);
+@@ -237,7 +225,7 @@ static void clear_progress_signal(struct progress *progress)
+ }
+ 
+ static struct progress *start_progress_delay(const char *title, uint64_t total,
+-					     unsigned delay)
++					     unsigned delay, int testing)
+ {
+ 	struct progress *progress = xmalloc(sizeof(*progress));
+ 	progress->title = title;
+@@ -250,11 +238,17 @@ static struct progress *start_progress_delay(const char *title, uint64_t total,
+ 	strbuf_init(&progress->counters_sb, 0);
+ 	progress->title_len = utf8_strwidth(title);
+ 	progress->split = 0;
++	progress->test_mode = testing;
+ 	set_progress_signal(progress);
+ 	trace2_region_enter("progress", title, the_repository);
+ 	return progress;
+ }
+ 
++struct progress *start_progress_testing(const char *title, uint64_t total)
++{
++	return start_progress_delay(title, total, 0, 1);
++}
++
+ static int get_default_delay(void)
+ {
+ 	static int delay_in_secs = -1;
+@@ -267,12 +261,12 @@ static int get_default_delay(void)
+ 
+ struct progress *start_delayed_progress(const char *title, uint64_t total)
+ {
+-	return start_progress_delay(title, total, get_default_delay());
++	return start_progress_delay(title, total, get_default_delay(), 0);
+ }
+ 
+ struct progress *start_progress(const char *title, uint64_t total)
+ {
+-	return start_progress_delay(title, total, 0);
++	return start_progress_delay(title, total, 0, 0);
+ }
+ 
+ void stop_progress(struct progress **p_progress)
+diff --git a/progress.h b/progress.h
+index 4fb2b483d36..4693dddb6c5 100644
+--- a/progress.h
++++ b/progress.h
+@@ -27,15 +27,22 @@ struct progress {
+ 	struct strbuf counters_sb;
+ 	int title_len;
+ 	int split;
+-};
+-
+-#ifdef GIT_TEST_PROGRESS_ONLY
+ 
+-extern int progress_testing;
+-extern uint64_t progress_test_ns;
+-void progress_test_force_update(void);
++	/*
++	 * The test_* members are are only intended for testing the
++	 * progress output, i.e. exclusively for 'test-tool progress'.
++	 */
++	int test_mode;
++	uint64_t test_getnanotime;
++};
+ 
+-#endif
++/*
++ * *_testing() functions are only for use in
++ * t/helper/test-progress.c. Do not use them elsewhere!
++ */
++void test_progress_force_update(void);
++struct progress *start_progress_testing(const char *title, uint64_t total);
++void test_progress_setnanotime(struct progress *progress, uint64_t time);
+ 
+ void display_throughput(struct progress *progress, uint64_t total);
+ void display_progress(struct progress *progress, uint64_t n);
+diff --git a/t/helper/test-progress.c b/t/helper/test-progress.c
+index 7ca58a3ee78..40dbacb0557 100644
+--- a/t/helper/test-progress.c
++++ b/t/helper/test-progress.c
+@@ -46,21 +46,20 @@ int cmd__progress(int argc, const char **argv)
+ 	if (argc)
+ 		usage_with_options(usage, options);
+ 
+-	progress_testing = 1;
+ 	while (strbuf_getline(&line, stdin) != EOF) {
+ 		char *end;
+ 
+ 		if (!strcmp(line.buf, "start")) {
+-			progress = start_progress(default_title, 0);
++			progress = start_progress_testing(default_title, 0);
+ 		} else if (skip_prefix(line.buf, "start ", (const char **) &end)) {
+ 			uint64_t total = strtoull(end, &end, 10);
+ 			if (*end == '\0') {
+-				progress = start_progress(default_title, total);
++				progress = start_progress_testing(default_title, total);
+ 			} else if (*end == ' ') {
+ 				if (detached_title)
+ 					free(detached_title);
+ 				detached_title = strbuf_detach(&line, NULL);
+-				progress = start_progress(end + 1, total);
++				progress = start_progress_testing(end + 1, total);
+ 			} else {
+ 				die("invalid input: '%s'\n", line.buf);
+ 			}
+@@ -79,11 +78,11 @@ int cmd__progress(int argc, const char **argv)
+ 			test_ms = strtoull(end + 1, &end, 10);
+ 			if (*end != '\0')
+ 				die("invalid input: '%s'\n", line.buf);
+-			progress_test_ns = test_ms * 1000 * 1000;
++			progress->test_getnanotime = test_ms * 1000 * 1000;
+ 			display_throughput(progress, byte_count);
+ 		} else if (!strcmp(line.buf, "update") ||
+ 			   !strcmp(line.buf, "signal")) {
+-			progress_test_force_update();
++			test_progress_force_update();
+ 		} else if (!strcmp(line.buf, "stop")) {
+ 			stop_progress(&progress);
+ 		} else {
+-- 
+2.32.0.599.g3967b4fa4ac
+

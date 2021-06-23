@@ -1,0 +1,134 @@
+From c4e7179e957548e86af28559b6645c535fc8ff21 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-12.25-c4e7179e957-20210623T154234Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+References: <YNKWsTsQgB2Ijxu7@nand.local>
+	<cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Jun 2021 00:08:19 +0200
+Subject: [PATCH 12/25] progress.c: add & assert a "global_progress" variable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The progress.c code makes a hard assumption that only one progress bar
+be active at a time (see [1] for a bug where this wasn't the case),
+but nothing has asserted that that's the case. Let's add a BUG()
+that'll trigger if two progress bars are active at the same time.
+
+There's an alternate test-only approach to doing the same thing[2],
+but by doing this for all progress bars we'll have a canary to check
+if we have any unexpected interaction between the "sig_atomic_t
+progress_update" variable and this global struct.
+
+I am then planning on using this scaffolding in the future to fix a
+limitation in the progress output, namely the current limitation of
+the progress.c bar code that any update must pro-actively go through
+the likes of display_progress().
+
+If we e.g. hang forever before the first display_progress(), or in the
+middle of a loop that would call display_progress() the user will only
+see either no output, or output frozen at the last display_progress()
+that would have done an update (e.g. in cases where progress_update
+was "1" due to an earlier signal).
+
+This change does not fix that, but sets up the structure for solving
+that and other related problems by juggling this "global_progress"
+struct. Later changes will make more use of the "global_progress" than
+only using it for these assertions.
+
+1. 6f9d5f2fda1 (commit-graph: fix progress of reachable commits, 2020-07-09)
+2. https://lore.kernel.org/git/20210620200303.2328957-3-szeder.dev@gmail.com
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ progress.c                  | 17 +++++++++++++----
+ t/t0500-progress-display.sh | 11 +++++++++++
+ 2 files changed, 24 insertions(+), 4 deletions(-)
+
+diff --git a/progress.c b/progress.c
+index 912edd4c818..e1b50ef7882 100644
+--- a/progress.c
++++ b/progress.c
+@@ -45,6 +45,7 @@ struct progress {
+ };
+ 
+ static volatile sig_atomic_t progress_update;
++static struct progress *global_progress;
+ 
+ /*
+  * These are only intended for testing the progress output, i.e. exclusively
+@@ -220,11 +221,15 @@ void progress_test_force_update(void)
+ 	progress_interval(SIGALRM);
+ }
+ 
+-static void set_progress_signal(void)
++static void set_progress_signal(struct progress *progress)
+ {
+ 	struct sigaction sa;
+ 	struct itimerval v;
+ 
++	if (global_progress)
++		BUG("should have no global_progress in set_progress_signal()");
++	global_progress = progress;
++
+ 	if (progress_testing)
+ 		return;
+ 
+@@ -242,10 +247,14 @@ static void set_progress_signal(void)
+ 	setitimer(ITIMER_REAL, &v, NULL);
+ }
+ 
+-static void clear_progress_signal(void)
++static void clear_progress_signal(struct progress *progress)
+ {
+ 	struct itimerval v = {{0,},};
+ 
++	if (!global_progress)
++		BUG("should have a global_progress in clear_progress_signal()");
++	global_progress = NULL;
++
+ 	if (progress_testing)
+ 		return;
+ 
+@@ -268,7 +277,7 @@ static struct progress *start_progress_delay(const char *title, uint64_t total,
+ 	strbuf_init(&progress->counters_sb, 0);
+ 	progress->title_len = utf8_strwidth(title);
+ 	progress->split = 0;
+-	set_progress_signal();
++	set_progress_signal(progress);
+ 	trace2_region_enter("progress", title, the_repository);
+ 	return progress;
+ }
+@@ -342,7 +351,7 @@ void stop_progress_msg(struct progress **p_progress, const char *msg)
+ 		display(progress, progress->last_value, buf);
+ 		free(buf);
+ 	}
+-	clear_progress_signal();
++	clear_progress_signal(progress);
+ 	strbuf_release(&progress->counters_sb);
+ 	if (progress->throughput)
+ 		strbuf_release(&progress->throughput->display);
+diff --git a/t/t0500-progress-display.sh b/t/t0500-progress-display.sh
+index 66c1989b176..476a31222a3 100755
+--- a/t/t0500-progress-display.sh
++++ b/t/t0500-progress-display.sh
+@@ -361,4 +361,15 @@ test_expect_success 'progress generates traces: stop without start' '
+ 	! grep region_leave.*progress trace-stop.event
+ '
+ 
++test_expect_success 'BUG: start two concurrent progress bars' '
++	cat >in <<-\EOF &&
++	start 0 one
++	start 0 two
++	EOF
++
++	test_must_fail test-tool progress \
++		<in 2>stderr &&
++	grep -E "^BUG: .*: should have no global_progress in set_progress_signal\(\)$" stderr
++'
++
+ test_done
+-- 
+2.32.0.599.g3967b4fa4ac
+

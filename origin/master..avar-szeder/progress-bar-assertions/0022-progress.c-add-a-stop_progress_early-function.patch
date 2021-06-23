@@ -1,0 +1,89 @@
+From a7bbe5bf58022d6d65f30d416d2b7c6303afd530 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-22.25-a7bbe5bf580-20210623T154234Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+References: <YNKWsTsQgB2Ijxu7@nand.local>
+	<cover-00.25-00000000000-20210623T154234Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 23 Jun 2021 13:51:42 +0200
+Subject: [PATCH 22/25] progress.c: add a stop_progress_early() function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In cases where we error out during processing or otherwise miss
+initial "total" estimate we'll still want to show a "done" message and
+end our trace2 region, but it won't be true that our total ==
+last_update at the end.
+
+So let's add a "last_update" and this stop_progress_early() function
+to handle that edge case, this will be used in a subsequent commit.
+
+We could also use a total=0 in such cases, but that would make the
+progress output worse for the common non-erroring case. Let's instead
+note that we didn't reach the total count, and snap the progress bar
+to "100%, done" at the end.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ progress.c | 20 ++++++++++++++++++++
+ progress.h |  2 ++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/progress.c b/progress.c
+index 35847d3a7f2..c1cb01ba975 100644
+--- a/progress.c
++++ b/progress.c
+@@ -40,6 +40,8 @@ static void display(struct progress *progress, uint64_t n,
+ 	const char *tp;
+ 	int show_update = 0;
+ 
++	progress->last_update = n;
++
+ 	if (progress->delay && (!progress_update || --progress->delay))
+ 		return;
+ 
+@@ -413,3 +415,21 @@ void stop_progress_msg(struct progress **p_progress, const char *msg)
+ 	free(progress->throughput);
+ 	free(progress);
+ }
++
++void stop_progress_early(struct progress **p_progress)
++{
++	struct progress *progress;
++	struct strbuf sb = STRBUF_INIT;
++
++	if (!p_progress)
++		BUG("don't provide NULL to stop_progress_early");
++	progress = *p_progress;
++	if (!progress)
++		return;
++
++	strbuf_addf(&sb, _(", done at %"PRIuMAX" items, expected %"PRIuMAX"."),
++		    progress->total, progress->last_update);
++	progress->total = progress->last_update;
++	stop_progress_msg(p_progress, sb.buf);
++	strbuf_release(&sb);
++}
+diff --git a/progress.h b/progress.h
+index ba38447d104..5c5d027d1a0 100644
+--- a/progress.h
++++ b/progress.h
+@@ -23,6 +23,7 @@ struct progress {
+ 	struct strbuf status;
+ 	size_t status_len_utf8;
+ 
++	uint64_t last_update;
+ 	uint64_t last_value;
+ 	uint64_t total;
+ 	unsigned last_percent;
+@@ -56,5 +57,6 @@ struct progress *start_delayed_sparse_progress(const char *title,
+ 					       uint64_t total);
+ void stop_progress(struct progress **progress);
+ void stop_progress_msg(struct progress **progress, const char *msg);
++void stop_progress_early(struct progress **p_progress);
+ 
+ #endif
+-- 
+2.32.0.599.g3967b4fa4ac
+
