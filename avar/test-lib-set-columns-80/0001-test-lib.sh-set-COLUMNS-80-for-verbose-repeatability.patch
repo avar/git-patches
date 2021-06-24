@@ -1,0 +1,70 @@
+From 765c279312205e64c1ce27c53d27759030731973 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-765c2793122-20210624T101839Z-avarab@gmail.com>
+In-Reply-To: <patch-1.1-cba5d88ca35-20210621T070114Z-avarab@gmail.com>
+References: <patch-1.1-cba5d88ca35-20210621T070114Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 24 Jun 2021 11:31:17 +0200
+Subject: [PATCH] test-lib.sh: set COLUMNS=80 for --verbose repeatability
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Some tests will fail under --verbose because while we've unset COLUMNS
+since b1d645b58ac (tests: unset COLUMNS inherited from environment,
+2012-03-27), we also look for the columns with an ioctl(..,
+TIOCGWINSZ, ...) on some platforms. By setting COLUMNS again we
+preempt the TIOCGWINSZ lookup in pager.c's term_columns(), it'll take
+COLUMNS over TIOCGWINSZ,
+
+This fixes the t0500-progress-display.sh test when run as:
+
+    ./t0500-progress-display.sh --verbose
+
+It broke because of a combination of the this issue and the progress
+output reacting to the column width since 545dc345ebd (progress: break
+too long progress bar lines, 2019-04-12). The
+t5324-split-commit-graph.sh fails in a similar manner due to progress
+output, see [1] for details.
+
+A more narrow fix here would be to only do this in the --verbose mode,
+but there's no harm in setting this for everything. If we're not
+connected to a TTY the COLUMNS setting won't matter.
+
+See ea77e675e56 (Make "git help" react to window size correctly,
+2005-12-18) and ad6c3739a33 (pager: find out the terminal width before
+spawning the pager, 2012-02-12) for how the TIOCGWINSZ code ended up
+in pager.c
+
+1. http://lore.kernel.org/git/20210624051253.GG6312@szeder.dev
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 54938c64279..1a6ca772d6c 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -406,14 +406,15 @@ LANG=C
+ LC_ALL=C
+ PAGER=cat
+ TZ=UTC
+-export LANG LC_ALL PAGER TZ
++COLUMNS=80
++export LANG LC_ALL PAGER TZ COLUMNS
+ EDITOR=:
+ 
+ # A call to "unset" with no arguments causes at least Solaris 10
+ # /usr/xpg4/bin/sh and /bin/ksh to bail out.  So keep the unsets
+ # deriving from the command substitution clustered with the other
+ # ones.
+-unset VISUAL EMAIL LANGUAGE COLUMNS $("$PERL_PATH" -e '
++unset VISUAL EMAIL LANGUAGE $("$PERL_PATH" -e '
+ 	my @env = keys %ENV;
+ 	my $ok = join("|", qw(
+ 		TRACE
+-- 
+2.32.0.605.g06ef811e153
+
