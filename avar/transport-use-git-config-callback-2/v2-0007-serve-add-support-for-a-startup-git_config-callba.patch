@@ -1,12 +1,12 @@
-From 33a2b70d8603dd9e6fc1e276eab315fee1bd83b8 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-6.8-33a2b70d860-20210628T191406Z-avarab@gmail.com>
-In-Reply-To: <cover-0.8-00000000000-20210628T191406Z-avarab@gmail.com>
+From 0a4fb01ae38c2f2fe34d2085505c6910bfab465c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-7.8-0a4fb01ae38-20210628T191634Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20210628T191634Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20210616T141332Z-avarab@gmail.com>
-	<cover-0.8-00000000000-20210628T191406Z-avarab@gmail.com>
+	<cover-0.8-00000000000-20210628T191634Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Wed, 24 Mar 2021 15:08:57 +0100
-Subject: [PATCH v2 6/8] serve: add support for a "startup" git_config()
+Subject: [PATCH v2 7/8] serve: add support for a "startup" git_config()
  callback
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -46,8 +46,8 @@ Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
  ls-refs.c | 42 ++++++++++++++----------------------------
  ls-refs.h |  1 +
- serve.c   | 40 ++++++++++++++++++++++++++++++++++++++--
- 3 files changed, 53 insertions(+), 30 deletions(-)
+ serve.c   | 42 ++++++++++++++++++++++++++++++++++++++++--
+ 3 files changed, 55 insertions(+), 30 deletions(-)
 
 diff --git a/ls-refs.c b/ls-refs.c
 index 88f6c3f60d8..02fbcfd9bde 100644
@@ -135,7 +135,7 @@ index a99e4be0bdd..5fcab0d1dca 100644
  
  #endif /* LS_REFS_H */
 diff --git a/serve.c b/serve.c
-index 85cd3eab26e..38da8efbad7 100644
+index 6dbd05248b9..cce96dd5a81 100644
 --- a/serve.c
 +++ b/serve.c
 @@ -33,6 +33,13 @@ static int object_format_advertise(struct repository *r,
@@ -193,7 +193,7 @@ index 85cd3eab26e..38da8efbad7 100644
  		.advertise = session_id_advertise,
  	},
  	{
-@@ -108,9 +135,19 @@ static struct protocol_capability capabilities[] = {
+@@ -108,6 +135,15 @@ static struct protocol_capability capabilities[] = {
  	},
  };
  
@@ -209,19 +209,25 @@ index 85cd3eab26e..38da8efbad7 100644
  static int call_advertise(struct protocol_capability *command,
  			  struct repository *r, struct strbuf *value)
  {
-+	read_startup_config(command);
- 	return command->advertise(r, value);
- }
+@@ -115,6 +151,8 @@ static int call_advertise(struct protocol_capability *command,
+ 	struct strbuf sb = STRBUF_INIT;
+ 	const char *msg;
  
-@@ -118,6 +155,7 @@ static int call_command(struct protocol_capability *command,
- 			struct repository *r, struct strvec *keys,
- 			struct packet_reader *request)
- {
 +	read_startup_config(command);
- 	return command->command(r, keys, request);
- }
++
+ 	strbuf_addf(&sb, "advertise/%s", command->name);
+ 	trace2_region_enter("serve", sb.buf, r);
+ 	ret = command->advertise(r, value);
+@@ -132,6 +170,8 @@ static int call_command(struct protocol_capability *command,
+ 	int ret;
+ 	struct strbuf sb = STRBUF_INIT;
  
-@@ -318,8 +356,6 @@ static int process_request(void)
++	read_startup_config(command);
++
+ 	strbuf_addf(&sb, "command/%s", command->name);
+ 	trace2_region_enter("serve", sb.buf, r);
+ 	ret = command->command(r, keys, request);
+@@ -338,8 +378,6 @@ static int process_request(void)
  /* Main serve loop for protocol version 2 */
  void serve(struct serve_options *options)
  {

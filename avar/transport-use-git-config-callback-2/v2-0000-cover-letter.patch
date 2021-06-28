@@ -1,9 +1,9 @@
-From 4865a73c5bbe7448e5036cf90129121dc4c48134 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-0.8-00000000000-20210628T191406Z-avarab@gmail.com>
+From 9fd6138aa62f9a20359508f062382aafa63be643 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.8-00000000000-20210628T191634Z-avarab@gmail.com>
 In-Reply-To: <cover-0.5-00000000000-20210616T141332Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20210616T141332Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Mon, 28 Jun 2021 21:14:06 +0200
+Date: Mon, 28 Jun 2021 21:16:34 +0200
 Subject: [PATCH v2 0/8] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -17,8 +17,8 @@ Content-Transfer-Encoding: 8bit
   transport: use designated initializers
   serve: use designated initializers
   serve.c: add call_{advertise,command}() indirection
-  serve: add support for a "startup" git_config() callback
   serve.c: add trace2 regions for advertise & command
+  serve: add support for a "startup" git_config() callback
   upload-pack.c: convert to new serve.c "startup" config cb
 
  ls-refs.c                             |  42 +++-----
@@ -51,7 +51,8 @@ Range-diff against v1:
 3:  369efe0eed5 = 3:  766045e5f1d transport: use designated initializers
 4:  8e97412d584 = 4:  bd920de1629 serve: use designated initializers
 -:  ----------- > 5:  d0b02aa0c7d serve.c: add call_{advertise,command}() indirection
-5:  c8625025125 ! 6:  33a2b70d860 serve: add support for a git_config() callback
+-:  ----------- > 6:  baeee6539ad serve.c: add trace2 regions for advertise & command
+5:  c8625025125 ! 7:  0a4fb01ae38 serve: add support for a git_config() callback
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -290,18 +291,24 @@ Range-diff against v1:
     + 			  struct repository *r, struct strbuf *value)
       {
     - 	struct strbuf capability = STRBUF_INIT;
-    ++	read_startup_config(command);
-    + 	return command->advertise(r, value);
-    + }
+    +@@ serve.c: static int call_advertise(struct protocol_capability *command,
+    + 	struct strbuf sb = STRBUF_INIT;
+    + 	const char *msg;
     + 
+    ++	read_startup_config(command);
+    ++
+    + 	strbuf_addf(&sb, "advertise/%s", command->name);
+    + 	trace2_region_enter("serve", sb.buf, r);
+    + 	ret = command->advertise(r, value);
     +@@ serve.c: static int call_command(struct protocol_capability *command,
-    + 			struct repository *r, struct strvec *keys,
-    + 			struct packet_reader *request)
-    + {
-    ++	read_startup_config(command);
-    + 	return command->command(r, keys, request);
-    + }
+    + 	int ret;
+    + 	struct strbuf sb = STRBUF_INIT;
     + 
+    ++	read_startup_config(command);
+    ++
+    + 	strbuf_addf(&sb, "command/%s", command->name);
+    + 	trace2_region_enter("serve", sb.buf, r);
+    + 	ret = command->command(r, keys, request);
      @@ serve.c: static int process_request(void)
       /* Main serve loop for protocol version 2 */
       void serve(struct serve_options *options)
@@ -313,8 +320,7 @@ Range-diff against v1:
       	if (options->advertise_capabilities || !options->stateless_rpc) {
       		/* serve by default supports v2 */
     + 		packet_write_fmt(1, "version 2\n");
--:  ----------- > 7:  1083891267a serve.c: add trace2 regions for advertise & command
--:  ----------- > 8:  4865a73c5bb upload-pack.c: convert to new serve.c "startup" config cb
+-:  ----------- > 8:  9fd6138aa62 upload-pack.c: convert to new serve.c "startup" config cb
 -- 
 2.32.0.611.gd4a17395dfa
 
