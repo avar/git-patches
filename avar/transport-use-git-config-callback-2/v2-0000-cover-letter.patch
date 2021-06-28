@@ -1,0 +1,320 @@
+From 4865a73c5bbe7448e5036cf90129121dc4c48134 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.8-00000000000-20210628T190606Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210616T141332Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210616T141332Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 28 Jun 2021 21:06:06 +0200
+Subject: [PATCH v2 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (8):
+  serve: mark has_capability() as static
+  transport: rename "fetch" in transport_vtable to "fetch_refs"
+  transport: use designated initializers
+  serve: use designated initializers
+  serve.c: add call_{advertise,command}() indirection
+  serve: add support for a "startup" git_config() callback
+  serve.c: add trace2 regions for advertise & command
+  upload-pack.c: convert to new serve.c "startup" config cb
+
+ ls-refs.c                             |  42 +++-----
+ ls-refs.h                             |   1 +
+ serve.c                               | 138 +++++++++++++++++++++----
+ serve.h                               |   4 -
+ t/t5705-session-id-in-capabilities.sh |  16 ++-
+ transport-helper.c                    |  18 ++--
+ transport-internal.h                  |   2 +-
+ transport.c                           |  32 +++---
+ upload-pack.c                         | 139 +++++++++++++++-----------
+ upload-pack.h                         |   2 +
+ 10 files changed, 255 insertions(+), 139 deletions(-)
+
+Range-diff against v1:
+1:  4f74d7d34c4 ! 1:  fdb0c5f4df1 serve: mark has_capability() as static
+    @@ serve.c: static int is_command(const char *key, struct protocol_capability **com
+     
+      ## serve.h ##
+     @@
+    + #ifndef SERVE_H
+      #define SERVE_H
+      
+    - struct strvec;
+    +-struct strvec;
+     -int has_capability(const struct strvec *keys, const char *capability,
+     -		   const char **value);
+     -
+2:  c6720d1bf33 = 2:  7b8101dca71 transport: rename "fetch" in transport_vtable to "fetch_refs"
+3:  369efe0eed5 = 3:  766045e5f1d transport: use designated initializers
+4:  8e97412d584 = 4:  bd920de1629 serve: use designated initializers
+-:  ----------- > 5:  d0b02aa0c7d serve.c: add call_{advertise,command}() indirection
+5:  c8625025125 ! 6:  33a2b70d860 serve: add support for a git_config() callback
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    serve: add support for a git_config() callback
+    +    serve: add support for a "startup" git_config() callback
+     
+         Since the introduction of serve.c we've added git_config() callbacks
+         and other config reading for capabilities in the following commits:
+     
+         - e20b4192a37 (upload-pack: support hidden refs with protocol v2, 2018-12-18)
+    -    - 59e1205d167 (ls-refs: report unborn targets of symrefs, 2021-02-05)
+    +    - 08450ef7918 (upload-pack: clear filter_options for each v2 fetch command, 2020-05-08)
+         - 6b5b6e422ee (serve: advertise session ID in v2 capabilities, 2020-11-11)
+    +    - 59e1205d167 (ls-refs: report unborn targets of symrefs, 2021-02-05)
+     
+    -    This code can be simplified by simply adding support to serve.c itself
+    -    for reading config at the right time before the capability is
+    -    called. In particular the ensure_config_read() function being gone
+    -    makes this whole thing much simpler.
+    +    Of these 08450ef7918 fixed code that needed to read config on a
+    +    per-request basis, whereas most of the config reading just wants to
+    +    check if we've enabled one semi-static config variable or other. We'd
+    +    like to re-read that value eventually, but from request-to-request
+    +    it's OK if we retain the old one, and it isn't impacted by other
+    +    request data.
+     
+    -    A behavior change here is that we're eagerly doing the configuration
+    -    for all our capabilities regardless of which one we end up serving,
+    -    whereas before we'd defer it until the point where we were processing
+    -    the specific command.
+    +    So let's support this common pattern as a "startup_config" callback,
+    +    making use of our recently added "call_{advertise,command}()"
+    +    functions. This allows us to simplify e.g. the "ensure_config_read()"
+    +    function added in 59e1205d167 (ls-refs: report unborn targets of
+    +    symrefs, 2021-02-05).
+     
+    -    We could try to be more lazy here and only read the config if we find
+    -    out that we're serving "ls-refs" or "session-id", but it's just a fast
+    -    git_config() callback, I think in this case simplicity trumps a
+    -    premature optimization.
+    +    We could read all the config for all the protocol capabilities, but
+    +    let's do it one callback at a time in anticipation that some won't be
+    +    called at all, and that some might be more expensive than others in
+    +    the future.
+    +
+    +    I'm not migrating over the code in the upload_pack_v2 function in
+    +    upload-pack.c yet, that case is more complex since it deals with both
+    +    v1 and v2. It will be dealt with in a code a subsequent commit.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ ls-refs.c
+     -static int config_read;
+     -static int advertise_unborn;
+     -static int allow_unborn;
+    --
+    ++/* "unborn" is on by default if there's no lsrefs.unborn config */
+    ++static int advertise_unborn = 1;
+    ++static int allow_unborn = 1;
+    + 
+     -static void ensure_config_read(void)
+    --{
+    ++int ls_refs_startup_config(const char *var, const char *value, void *data)
+    + {
+     -	const char *str = NULL;
+     -
+     -	if (config_read)
+    @@ ls-refs.c
+     -	} else {
+     -		if (!strcmp(str, "advertise")) {
+     -			advertise_unborn = 1;
+    --			allow_unborn = 1;
+    --		} else if (!strcmp(str, "allow")) {
+    --			allow_unborn = 1;
+    --		} else if (!strcmp(str, "ignore")) {
+    --			/* do nothing */
+    --		} else {
+    --			die(_("invalid value '%s' for lsrefs.unborn"), str);
+    --		}
+    --	}
+    --	config_read = 1;
+    --}
+    -+/* "unborn" is on by default if there's no lsrefs.unborn config */
+    -+static int advertise_unborn = 1;
+    -+static int allow_unborn = 1;
+    - 
+    - /*
+    -  * Check if one of the prefixes is a prefix of the ref.
+    -@@ ls-refs.c: static void send_possibly_unborn_head(struct ls_refs_data *data)
+    - 	strbuf_release(&namespaced);
+    - }
+    - 
+    --static int ls_refs_config(const char *var, const char *value, void *data)
+    -+int ls_refs_configure(const char *var, const char *value, void *data)
+    - {
+     +	if (!strcmp(var, "lsrefs.unborn")) {
+     +		if (!strcmp(value, "advertise")) {
+     +			/* Allowed and advertised by default */
+     +		} else if (!strcmp(value, "allow")) {
+     +			advertise_unborn = 0;
+    -+			allow_unborn = 1;
+    + 			allow_unborn = 1;
+    +-		} else if (!strcmp(str, "allow")) {
+    +-			allow_unborn = 1;
+    +-		} else if (!strcmp(str, "ignore")) {
+    +-			/* do nothing */
+     +		} else if (!strcmp(value, "ignore")) {
+     +			advertise_unborn = 0;
+     +			allow_unborn = 0;
+    -+		} else {
+    + 		} else {
+    +-			die(_("invalid value '%s' for lsrefs.unborn"), str);
+     +			die(_("invalid value '%s' for lsrefs.unborn"), value);
+    -+		}
+    -+	}
+    -+
+    - 	/*
+    - 	 * We only serve fetches over v2 for now, so respect only "uploadpack"
+    - 	 * config. This may need to eventually be expanded to "receive", but we
+    + 		}
+    + 	}
+    +-	config_read = 1;
+    ++	return 0;
+    + }
+    + 
+    + /*
+     @@ ls-refs.c: int ls_refs(struct repository *r, struct strvec *keys,
+    + 
+      	memset(&data, 0, sizeof(data));
+      	strvec_init(&data.prefixes);
+    - 
+    --	ensure_config_read();
+    --	git_config(ls_refs_config, NULL);
+     -
+    +-	ensure_config_read();
+    + 	git_config(ls_refs_config, NULL);
+    + 
+      	while (packet_reader_read(request) == PACKET_READ_NORMAL) {
+    - 		const char *arg = request->line;
+    - 		const char *out;
+     @@ ls-refs.c: int ls_refs(struct repository *r, struct strvec *keys,
+      int ls_refs_advertise(struct repository *r, struct strbuf *value)
+      {
+    @@ ls-refs.h: struct strvec;
+      struct packet_reader;
+      int ls_refs(struct repository *r, struct strvec *keys,
+      	    struct packet_reader *request);
+    -+int ls_refs_configure(const char *var, const char *value, void *data);
+    ++int ls_refs_startup_config(const char *var, const char *value, void *data);
+      int ls_refs_advertise(struct repository *r, struct strbuf *value);
+      
+      #endif /* LS_REFS_H */
+    @@ serve.c: static int object_format_advertise(struct repository *r,
+      	return 1;
+      }
+      
+    -+static int session_id_configure(const char *var, const char *value, void *data)
+    ++static int session_id_startup_config(const char *var, const char *value, void *data)
+     +{
+     +	if (!strcmp(var, "transfer.advertisesid"))
+     +		advertise_sid = git_config_bool(var, value);
+    @@ serve.c: struct protocol_capability {
+      	const char *name;
+      
+     +	/*
+    -+	 * A git_config() callback. If defined it'll be dispatched too
+    -+	 * sometime before the other functions are called, giving the
+    -+	 * capability a chance to configure itself.
+    ++	 * A git_config() callback that'll be called only once for the
+    ++	 * lifetime of the process, possibly over many different
+    ++	 * requests. Used for reading config that's expected to be
+    ++	 * static.
+    ++	 *
+    ++	 * The "command" or "advertise" callbacks themselves are
+    ++	 * expected to read config that needs to be more current than
+    ++	 * that, or which is dependent on request data.
+     +	 */
+    -+	int (*configure)(const char *var, const char *value, void *data);
+    ++	int (*startup_config)(const char *var, const char *value, void *data);
+    ++
+    ++	/*
+    ++	 * A boolean to check if we've called our "startup_config"
+    ++	 * callback.
+    ++	 */
+    ++	int have_startup_config;
+     +
+      	/*
+      	 * Function queried to see if a capability should be advertised.
+    @@ serve.c: static struct protocol_capability capabilities[] = {
+      	},
+      	{
+      		.name = "ls-refs",
+    -+		.configure = ls_refs_configure,
+    ++		.startup_config = ls_refs_startup_config,
+      		.advertise = ls_refs_advertise,
+      		.command = ls_refs,
+      	},
+    @@ serve.c: static struct protocol_capability capabilities[] = {
+      	},
+      	{
+      		.name = "session-id",
+    -+		.configure = session_id_configure,
+    ++		.startup_config = session_id_startup_config,
+      		.advertise = session_id_advertise,
+      	},
+      	{
+    @@ serve.c: static struct protocol_capability capabilities[] = {
+      	},
+      };
+      
+    -+static int git_serve_config(const char *var, const char *value, void *data)
+    ++static void read_startup_config(struct protocol_capability *command)
+     +{
+    -+	int i;
+    -+	for (i = 0; i < ARRAY_SIZE(capabilities); i++) {
+    -+		struct protocol_capability *c = &capabilities[i];
+    -+		config_fn_t fn = c->configure;
+    -+		int ret;
+    -+		if (!fn)
+    -+			continue;
+    -+		ret = fn(var, value, data);
+    -+		if (ret)
+    -+			return ret;
+    -+	}
+    -+	return 0;
+    ++	if (!command->startup_config)
+    ++		return;
+    ++	if (command->have_startup_config++)
+    ++		return;
+    ++	git_config(command->startup_config, NULL);
+     +}
+     +
+    - static void advertise_capabilities(void)
+    + static int call_advertise(struct protocol_capability *command,
+    + 			  struct repository *r, struct strbuf *value)
+      {
+    - 	struct strbuf capability = STRBUF_INIT;
+    ++	read_startup_config(command);
+    + 	return command->advertise(r, value);
+    + }
+    + 
+    +@@ serve.c: static int call_command(struct protocol_capability *command,
+    + 			struct repository *r, struct strvec *keys,
+    + 			struct packet_reader *request)
+    + {
+    ++	read_startup_config(command);
+    + 	return command->command(r, keys, request);
+    + }
+    + 
+     @@ serve.c: static int process_request(void)
+      /* Main serve loop for protocol version 2 */
+      void serve(struct serve_options *options)
+      {
+     -	git_config_get_bool("transfer.advertisesid", &advertise_sid);
+    -+	git_config(git_serve_config, NULL);
+    - 
+    +-
+      	if (options->advertise_capabilities || !options->stateless_rpc) {
+      		/* serve by default supports v2 */
+    + 		packet_write_fmt(1, "version 2\n");
+-:  ----------- > 7:  1083891267a serve.c: add trace2 regions for advertise & command
+-:  ----------- > 8:  4865a73c5bb upload-pack.c: convert to new serve.c "startup" config cb
+-- 
+2.32.0.611.gd4a17395dfa
+

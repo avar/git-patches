@@ -1,0 +1,106 @@
+From 1083891267a419be21363e475c948cb6240e3e93 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-7.8-1083891267a-20210628T190606Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20210628T190606Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210616T141332Z-avarab@gmail.com>
+	<cover-0.8-00000000000-20210628T190606Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Jun 2021 20:27:12 +0200
+Subject: [PATCH v2 7/8] serve.c: add trace2 regions for advertise & command
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Now that we've factored out "call_{advertise,command}()" in a
+preceding commit it becomes easy to trace all these callbacks with
+trace2. Let's do that. As the tests demonstrate there's no v2 push
+protocol, which the tests assert.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ serve.c                               | 26 ++++++++++++++++++++++++--
+ t/t5705-session-id-in-capabilities.sh | 16 ++++++++++++++--
+ 2 files changed, 38 insertions(+), 4 deletions(-)
+
+diff --git a/serve.c b/serve.c
+index 38da8efbad7..cce96dd5a81 100644
+--- a/serve.c
++++ b/serve.c
+@@ -147,16 +147,38 @@ static void read_startup_config(struct protocol_capability *command)
+ static int call_advertise(struct protocol_capability *command,
+ 			  struct repository *r, struct strbuf *value)
+ {
++	int ret;
++	struct strbuf sb = STRBUF_INIT;
++	const char *msg;
++
+ 	read_startup_config(command);
+-	return command->advertise(r, value);
++
++	strbuf_addf(&sb, "advertise/%s", command->name);
++	trace2_region_enter("serve", sb.buf, r);
++	ret = command->advertise(r, value);
++	msg = ret ? "advertised" : "hidden";
++	trace2_region_leave_printf("serve", sb.buf, r, "%s", msg);
++	strbuf_release(&sb);
++
++	return ret;
+ }
+ 
+ static int call_command(struct protocol_capability *command,
+ 			struct repository *r, struct strvec *keys,
+ 			struct packet_reader *request)
+ {
++	int ret;
++	struct strbuf sb = STRBUF_INIT;
++
+ 	read_startup_config(command);
+-	return command->command(r, keys, request);
++
++	strbuf_addf(&sb, "command/%s", command->name);
++	trace2_region_enter("serve", sb.buf, r);
++	ret = command->command(r, keys, request);
++	trace2_region_leave("serve", sb.buf, r);
++	strbuf_release(&sb);
++
++	return ret;
+ }
+ 
+ static void advertise_capabilities(void)
+diff --git a/t/t5705-session-id-in-capabilities.sh b/t/t5705-session-id-in-capabilities.sh
+index f1d189d5bcc..cda78fa7a1d 100755
+--- a/t/t5705-session-id-in-capabilities.sh
++++ b/t/t5705-session-id-in-capabilities.sh
+@@ -57,7 +57,13 @@ do
+ 			--upload-pack "GIT_TRACE2_EVENT=\"$(pwd)/tr2-server-events\" git-upload-pack" \
+ 			origin &&
+ 		grep \"key\":\"server-sid\" tr2-client-events &&
+-		grep \"key\":\"client-sid\" tr2-server-events
++		grep \"key\":\"client-sid\" tr2-server-events &&
++
++		if test "$PROTO" = 2
++		then
++			grep \"event\":\"region_enter\".*\"category\":\"serve\" tr2-server-events &&
++			grep \"event\":\"region_leave\".*\"category\":\"serve\" tr2-server-events
++		fi
+ 	'
+ 
+ 	test_expect_success "session IDs advertised (push v${PROTO})" '
+@@ -71,7 +77,13 @@ do
+ 			--receive-pack "GIT_TRACE2_EVENT=\"$(pwd)/tr2-server-events\" git-receive-pack" \
+ 			origin HEAD:new-branch &&
+ 		grep \"key\":\"server-sid\" tr2-client-events &&
+-		grep \"key\":\"client-sid\" tr2-server-events
++		grep \"key\":\"client-sid\" tr2-server-events &&
++
++		if test "$PROTO" = 2
++		then
++			! grep \"event\":\"region_enter\".*\"category\":\"serve\" tr2-server-events &&
++			! grep \"event\":\"region_leave\".*\"category\":\"serve\" tr2-server-events
++		fi
+ 	'
+ done
+ 
+-- 
+2.32.0.611.gd4a17395dfa
+
