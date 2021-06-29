@@ -1,9 +1,9 @@
 From 5195d99e25c2f6f95ee464ddd7ed5f67259b42c9 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-0.5-0000000000-20210629T110811Z-avarab@gmail.com>
+Message-Id: <cover-0.5-0000000000-20210629T110837Z-avarab@gmail.com>
 In-Reply-To: <cover-0.3-00000000000-20210622T141844Z-avarab@gmail.com>
 References: <cover-0.3-00000000000-20210622T141844Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 29 Jun 2021 13:08:11 +0200
+Date: Tue, 29 Jun 2021 13:08:37 +0200
 Subject: [PATCH v2 0/5] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -22,6 +22,105 @@ Content-Transfer-Encoding: 8bit
  Makefile   | 34 ++++++++++++++++++++--------------
  2 files changed, 21 insertions(+), 15 deletions(-)
 
+Range-diff against v1:
+1:  383a90c8ac = 1:  dd6cfd6022 Makefile: move ".PHONY: cscope" near its target
+-:  ---------- > 2:  56daa09738 Makefile: add QUIET_GEN to "cscope" target
+2:  ea39f1f5cd ! 3:  35c8b83904 Makefile: fix "cscope" target to refer to cscope.out
+    @@ Commit message
+     
+         The cscope target added in a2a9150bf06 (makefile: Add a cscope target,
+         2007-10-06) has for some reason been referring to cscope* instead of
+    -    cscope.out. Let's generate the cscope.out file directly so we don't
+    -    need to speculate.
+    +    cscope.out.
+     
+    -    The "-fcscope.out" (note, no whitespace) argument is enabled by
+    -    default on my system's cscope 15.9, but let's provide it explicitly
+    -    for good measure.
+    +    Let's generate the cscope.out file directly so we don't need to
+    +    speculate. The "-fcscope.out" (note, no whitespace) argument is
+    +    enabled by default on my system's cscope 15.9, but let's provide it
+    +    explicitly for good measure.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ Makefile: tags: FORCE
+      	mv tags+ tags
+      
+     +cscope.out:
+    ++	$(QUIET_GEN)$(RM) cscope.out && \
+     +	$(FIND_SOURCE_FILES) | xargs cscope -f$@ -b
+     +
+      .PHONY: cscope
+     -cscope:
+    --	$(RM) cscope*
+    +-	$(QUIET_GEN)$(RM) cscope* && \
+     -	$(FIND_SOURCE_FILES) | xargs cscope -b
+     +cscope: cscope.out
+      
+3:  67fc87665d ! 4:  b924cc3f56 Makefile: don't use "FORCE" for tags targets
+    @@ Commit message
+         targets, instead make them depend on whether or not the relevant
+         source files have changed.
+     
+    -    I'm also removing the "-o" option from them, that seems to have been
+    -    cargo-culted when they were initially added in f81e7c626f3 (Makefile:
+    -    Add TAGS and tags targets, 2006-03-18). It would make sense to use
+    -    that option if we had been appending to tag files, it doesn't make any
+    -    sense that it was used after we'd just removed the files file being
+    -    appended to.
+    -
+    -    This will potentially cause a partial file to be left behind if the
+    -    command dies, but my in-flight series to use the ".DELETE_ON_ERROR"
+    -    flag in the Makefile[1] will make that problem go away. I think even
+    -    without that it's not problem we need to worry about in these cases.
+    -
+    -    1. https://lore.kernel.org/git/patch-1.1-9420448e74f-20210622T141100Z-avarab@gmail.com/
+    -
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Makefile ##
+    @@ Makefile: FIND_SOURCE_FILES = ( \
+      	)
+      
+     -$(ETAGS_TARGET): FORCE
+    --	$(QUIET_GEN)$(RM) "$(ETAGS_TARGET)+" && \
+    --	$(FIND_SOURCE_FILES) | xargs etags -a -o "$(ETAGS_TARGET)+" && \
+    --	mv "$(ETAGS_TARGET)+" "$(ETAGS_TARGET)"
+     +FOUND_SOURCE_FILES = $(shell $(FIND_SOURCE_FILES))
+    ++
+    ++$(ETAGS_TARGET): $(FOUND_SOURCE_FILES)
+    + 	$(QUIET_GEN)$(RM) "$(ETAGS_TARGET)+" && \
+    + 	$(FIND_SOURCE_FILES) | xargs etags -a -o "$(ETAGS_TARGET)+" && \
+    + 	mv "$(ETAGS_TARGET)+" "$(ETAGS_TARGET)"
+      
+     -tags: FORCE
+    --	$(QUIET_GEN)$(RM) tags+ && \
+    --	$(FIND_SOURCE_FILES) | xargs ctags -a -o tags+ && \
+    --	mv tags+ tags
+    -+$(ETAGS_TARGET): $(FOUND_SOURCE_FILES)
+    -+	$(QUIET_GEN)echo $(FOUND_SOURCE_FILES) | \
+    -+	xargs etags -o $@
+    -+
+     +tags: $(FOUND_SOURCE_FILES)
+    -+	$(QUIET_GEN)echo $(FOUND_SOURCE_FILES) | \
+    -+	xargs ctags -o $@
+    + 	$(QUIET_GEN)$(RM) tags+ && \
+    + 	$(FIND_SOURCE_FILES) | xargs ctags -a -o tags+ && \
+    + 	mv tags+ tags
+      
+    - cscope.out:
+    +-cscope.out:
+    ++cscope.out: $(FOUND_SOURCE_FILES)
+    + 	$(QUIET_GEN)$(RM) cscope.out && \
+     -	$(FIND_SOURCE_FILES) | xargs cscope -f$@ -b
+    -+	$(QUIET_GEN)echo $(FOUND_SOURCE_FILES) | \
+    -+	xargs cscope -f$@ -b
+    ++	echo $(FOUND_SOURCE_FILES) | xargs cscope -f$@ -b
+      
+      .PHONY: cscope
+      cscope: cscope.out
+-:  ---------- > 5:  5195d99e25 Makefile: normalize clobbering & xargs for tags targets
 -- 
 2.32.0.613.g20d5ce26552
 
