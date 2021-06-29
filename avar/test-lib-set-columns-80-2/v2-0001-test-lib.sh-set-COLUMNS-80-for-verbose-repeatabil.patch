@@ -1,5 +1,5 @@
-From bc072f7a54c5b1b0300fbde9c9da20cb314374ef Mon Sep 17 00:00:00 2001
-Message-Id: <patch-1.1-bc072f7a54-20210629T112641Z-avarab@gmail.com>
+From bd2bd89a2b2276ff25aa59925b5f278281a690d4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-bd2bd89a2b-20210629T112910Z-avarab@gmail.com>
 In-Reply-To: <patch-1.1-765c2793122-20210624T101839Z-avarab@gmail.com>
 References: <patch-1.1-765c2793122-20210624T101839Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -13,25 +13,19 @@ Content-Transfer-Encoding: 8bit
 Some tests will fail under --verbose because while we've unset COLUMNS
 since b1d645b58ac (tests: unset COLUMNS inherited from environment,
 2012-03-27), we also look for the columns with an ioctl(..,
-TIOCGWINSZ, ...) on some platforms.
+TIOCGWINSZ, ...) on some platforms. By setting COLUMNS again we
+preempt the TIOCGWINSZ lookup in pager.c's term_columns(), it'll take
+COLUMNS over TIOCGWINSZ,
 
-By setting COLUMNS again we preempt the TIOCGWINSZ lookup in pager.c's
-term_columns(), it'll take COLUMNS over TIOCGWINSZ,
+This fixes t0500-progress-display.sh., which broke because of a
+combination of the this issue and the progress output reacting to the
+column width since 545dc345ebd (progress: break too long progress bar
+lines, 2019-04-12). The t5324-split-commit-graph.sh fails in a similar
+manner due to progress output, see [1] for details.
 
-This tests like such as t0500-progress-display.sh test when run under
---verbose:
-
-    ./t0500-progress-display.sh --verbose
-
-That test broke because of a combination of the this issue and the
-progress output reacting to the column width since
-545dc345ebd (progress: break too long progress bar lines,
-2019-04-12). The t5324-split-commit-graph.sh fails in a similar manner
-due to progress output, see [1] for details.
-
-But the issue is not specific to progress.c, the diff code also checks
+The issue is not specific to progress.c, the diff code also checks
 COLUMNS and some of its tests can be made to fail in a similar
-manner[2].
+manner[2], anything that invokes a pager is potentially affected.
 
 See ea77e675e56 (Make "git help" react to window size correctly,
 2005-12-18) and ad6c3739a33 (pager: find out the terminal width before
@@ -44,42 +38,32 @@ in pager.c
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
 Range-diff against v1:
-1:  765c279312 ! 1:  bc072f7a54 test-lib.sh: set COLUMNS=80 for --verbose repeatability
+1:  765c279312 ! 1:  bd2bd89a2b test-lib.sh: set COLUMNS=80 for --verbose repeatability
     @@ Commit message
-         Some tests will fail under --verbose because while we've unset COLUMNS
-         since b1d645b58ac (tests: unset COLUMNS inherited from environment,
-         2012-03-27), we also look for the columns with an ioctl(..,
-    -    TIOCGWINSZ, ...) on some platforms. By setting COLUMNS again we
-    -    preempt the TIOCGWINSZ lookup in pager.c's term_columns(), it'll take
-    -    COLUMNS over TIOCGWINSZ,
-    +    TIOCGWINSZ, ...) on some platforms.
+         preempt the TIOCGWINSZ lookup in pager.c's term_columns(), it'll take
+         COLUMNS over TIOCGWINSZ,
      
     -    This fixes the t0500-progress-display.sh test when run as:
-    +    By setting COLUMNS again we preempt the TIOCGWINSZ lookup in pager.c's
-    +    term_columns(), it'll take COLUMNS over TIOCGWINSZ,
-    +
-    +    This tests like such as t0500-progress-display.sh test when run under
-    +    --verbose:
+    +    This fixes t0500-progress-display.sh., which broke because of a
+    +    combination of the this issue and the progress output reacting to the
+    +    column width since 545dc345ebd (progress: break too long progress bar
+    +    lines, 2019-04-12). The t5324-split-commit-graph.sh fails in a similar
+    +    manner due to progress output, see [1] for details.
      
-             ./t0500-progress-display.sh --verbose
-     
+    -        ./t0500-progress-display.sh --verbose
+    -
     -    It broke because of a combination of the this issue and the progress
     -    output reacting to the column width since 545dc345ebd (progress: break
     -    too long progress bar lines, 2019-04-12). The
     -    t5324-split-commit-graph.sh fails in a similar manner due to progress
     -    output, see [1] for details.
-    +    That test broke because of a combination of the this issue and the
-    +    progress output reacting to the column width since
-    +    545dc345ebd (progress: break too long progress bar lines,
-    +    2019-04-12). The t5324-split-commit-graph.sh fails in a similar manner
-    +    due to progress output, see [1] for details.
-     
+    -
     -    A more narrow fix here would be to only do this in the --verbose mode,
     -    but there's no harm in setting this for everything. If we're not
     -    connected to a TTY the COLUMNS setting won't matter.
-    +    But the issue is not specific to progress.c, the diff code also checks
+    +    The issue is not specific to progress.c, the diff code also checks
     +    COLUMNS and some of its tests can be made to fail in a similar
-    +    manner[2].
+    +    manner[2], anything that invokes a pager is potentially affected.
      
          See ea77e675e56 (Make "git help" react to window size correctly,
          2005-12-18) and ad6c3739a33 (pager: find out the terminal width before
