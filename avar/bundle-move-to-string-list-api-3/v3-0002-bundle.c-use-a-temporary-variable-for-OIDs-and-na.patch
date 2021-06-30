@@ -1,0 +1,118 @@
+From e47646d3a98b13e43c1ca6c4d08016bc6f2748e8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.3-e47646d3a98-20210630T140339Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210630T140339Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20210621T151357Z-avarab@gmail.com>
+	<cover-0.3-00000000000-20210630T140339Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 17 Jun 2021 13:05:04 +0200
+Subject: [PATCH v3 2/3] bundle.c: use a temporary variable for OIDs and names
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In preparation for moving away from accessing the OID and name via the
+"oid" and "name" slots in a subsequent commit, change the code that
+accesses it to use named variables. This makes the subsequent change
+smaller.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ bundle.c    | 26 ++++++++++++++++++--------
+ transport.c |  6 ++++--
+ 2 files changed, 22 insertions(+), 10 deletions(-)
+
+diff --git a/bundle.c b/bundle.c
+index 693d6195514..7210e5e7105 100644
+--- a/bundle.c
++++ b/bundle.c
+@@ -156,6 +156,9 @@ static int list_refs(struct ref_list *r, int argc, const char **argv)
+ 	int i;
+ 
+ 	for (i = 0; i < r->nr; i++) {
++		struct object_id *oid;
++		const char *name;
++
+ 		if (argc > 1) {
+ 			int j;
+ 			for (j = 1; j < argc; j++)
+@@ -164,8 +167,10 @@ static int list_refs(struct ref_list *r, int argc, const char **argv)
+ 			if (j == argc)
+ 				continue;
+ 		}
+-		printf("%s %s\n", oid_to_hex(&r->list[i].oid),
+-				r->list[i].name);
++
++		oid = &r->list[i].oid;
++		name = r->list[i].name;
++		printf("%s %s\n", oid_to_hex(oid), name);
+ 	}
+ 	return 0;
+ }
+@@ -194,15 +199,17 @@ int verify_bundle(struct repository *r,
+ 	repo_init_revisions(r, &revs, NULL);
+ 	for (i = 0; i < p->nr; i++) {
+ 		struct ref_list_entry *e = p->list + i;
+-		struct object *o = parse_object(r, &e->oid);
++		const char *name = e->name;
++		struct object_id *oid = &e->oid;
++		struct object *o = parse_object(r, oid);
+ 		if (o) {
+ 			o->flags |= PREREQ_MARK;
+-			add_pending_object(&revs, o, e->name);
++			add_pending_object(&revs, o, name);
+ 			continue;
+ 		}
+ 		if (++ret == 1)
+ 			error("%s", message);
+-		error("%s %s", oid_to_hex(&e->oid), e->name);
++		error("%s %s", oid_to_hex(oid), name);
+ 	}
+ 	if (revs.pending.nr != p->nr)
+ 		return ret;
+@@ -219,19 +226,22 @@ int verify_bundle(struct repository *r,
+ 
+ 	for (i = 0; i < p->nr; i++) {
+ 		struct ref_list_entry *e = p->list + i;
+-		struct object *o = parse_object(r, &e->oid);
++		const char *name = e->name;
++		struct object_id *oid = &e->oid;
++		struct object *o = parse_object(r, oid);
+ 		assert(o); /* otherwise we'd have returned early */
+ 		if (o->flags & SHOWN)
+ 			continue;
+ 		if (++ret == 1)
+ 			error("%s", message);
+-		error("%s %s", oid_to_hex(&e->oid), e->name);
++		error("%s %s", oid_to_hex(oid), name);
+ 	}
+ 
+ 	/* Clean up objects used, as they will be reused. */
+ 	for (i = 0; i < p->nr; i++) {
+ 		struct ref_list_entry *e = p->list + i;
+-		commit = lookup_commit_reference_gently(r, &e->oid, 1);
++		struct object_id *oid = &e->oid;
++		commit = lookup_commit_reference_gently(r, oid, 1);
+ 		if (commit)
+ 			clear_commit_marks(commit, ALL_REV_FLAGS);
+ 	}
+diff --git a/transport.c b/transport.c
+index 50f5830eb6b..95c1138e9ae 100644
+--- a/transport.c
++++ b/transport.c
+@@ -148,8 +148,10 @@ static struct ref *get_refs_from_bundle(struct transport *transport,
+ 
+ 	for (i = 0; i < data->header.references.nr; i++) {
+ 		struct ref_list_entry *e = data->header.references.list + i;
+-		struct ref *ref = alloc_ref(e->name);
+-		oidcpy(&ref->old_oid, &e->oid);
++		const char *name = e->name;
++		struct ref *ref = alloc_ref(name);
++		struct object_id *oid = &e->oid;
++		oidcpy(&ref->old_oid, oid);
+ 		ref->next = result;
+ 		result = ref;
+ 	}
+-- 
+2.32.0.613.g8e17abc2eb
+
