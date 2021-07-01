@@ -1,0 +1,133 @@
+From 955dbd1693d98e920ed66147d03d743353c49b50 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.5-955dbd1693d-20210701T104753Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210701T104753Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210701T104753Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 1 Jul 2021 11:18:05 +0200
+Subject: [PATCH 2/5] *.c *_init(): define in terms of corresponding *_INIT
+ macro
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the common patter in the codebase of duplicating the
+initialization logic between an *_INIT macro and a
+corresponding *_init() function to use the macro as the canonical
+source of truth.
+
+Now we no longer need to keep the function up-to-date with the macro
+version. This implements a suggestion by Jeff King who found that
+under -O2 [1] modern compilers will init new version in place without
+the extra copy[1]. The performance of a single *_init() won't matter
+in most cases, but even if it does we're going to be producing
+efficient machine code to perform these operations.
+
+1. https://lore.kernel.org/git/YNyrDxUO1PlGJvCn@coredump.intra.peff.net/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ credential.c  | 4 ++--
+ json-writer.c | 6 ++----
+ run-command.c | 5 ++---
+ strbuf.c      | 4 ++--
+ strmap.c      | 3 ++-
+ strvec.c      | 5 ++---
+ 6 files changed, 12 insertions(+), 15 deletions(-)
+
+diff --git a/credential.c b/credential.c
+index e5202fbef26..3c05c7c6691 100644
+--- a/credential.c
++++ b/credential.c
+@@ -10,8 +10,8 @@
+ 
+ void credential_init(struct credential *c)
+ {
+-	memset(c, 0, sizeof(*c));
+-	c->helpers.strdup_strings = 1;
++	struct credential blank = CREDENTIAL_INIT;
++	memcpy(c, &blank, sizeof(*c));
+ }
+ 
+ void credential_clear(struct credential *c)
+diff --git a/json-writer.c b/json-writer.c
+index aadb9dbddc3..f1cfd8fa8c6 100644
+--- a/json-writer.c
++++ b/json-writer.c
+@@ -3,10 +3,8 @@
+ 
+ void jw_init(struct json_writer *jw)
+ {
+-	strbuf_init(&jw->json, 0);
+-	strbuf_init(&jw->open_stack, 0);
+-	jw->need_comma = 0;
+-	jw->pretty = 0;
++	struct json_writer blank = JSON_WRITER_INIT;
++	memcpy(jw, &blank, sizeof(*jw));;
+ }
+ 
+ void jw_release(struct json_writer *jw)
+diff --git a/run-command.c b/run-command.c
+index be6bc128cd9..8750df16d89 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -11,9 +11,8 @@
+ 
+ void child_process_init(struct child_process *child)
+ {
+-	memset(child, 0, sizeof(*child));
+-	strvec_init(&child->args);
+-	strvec_init(&child->env_array);
++	struct child_process blank = CHILD_PROCESS_INIT;
++	memcpy(child, &blank, sizeof(*child));
+ }
+ 
+ void child_process_clear(struct child_process *child)
+diff --git a/strbuf.c b/strbuf.c
+index 4df30b45494..c8a5789694c 100644
+--- a/strbuf.c
++++ b/strbuf.c
+@@ -52,8 +52,8 @@ char strbuf_slopbuf[1];
+ 
+ void strbuf_init(struct strbuf *sb, size_t hint)
+ {
+-	sb->alloc = sb->len = 0;
+-	sb->buf = strbuf_slopbuf;
++	struct strbuf blank = STRBUF_INIT;
++	memcpy(sb, &blank, sizeof(*sb));
+ 	if (hint)
+ 		strbuf_grow(sb, hint);
+ }
+diff --git a/strmap.c b/strmap.c
+index 4fb9f6100ec..ee486357082 100644
+--- a/strmap.c
++++ b/strmap.c
+@@ -25,7 +25,8 @@ static struct strmap_entry *find_strmap_entry(struct strmap *map,
+ 
+ void strmap_init(struct strmap *map)
+ {
+-	strmap_init_with_options(map, NULL, 1);
++	struct strmap blank = STRMAP_INIT;
++	memcpy(map, &blank, sizeof(*map));
+ }
+ 
+ void strmap_init_with_options(struct strmap *map,
+diff --git a/strvec.c b/strvec.c
+index 21dce0a7a4d..61a76ce6cb9 100644
+--- a/strvec.c
++++ b/strvec.c
+@@ -6,9 +6,8 @@ const char *empty_strvec[] = { NULL };
+ 
+ void strvec_init(struct strvec *array)
+ {
+-	array->v = empty_strvec;
+-	array->nr = 0;
+-	array->alloc = 0;
++	struct strvec blank = STRVEC_INIT;
++	memcpy(array, &blank, sizeof(*array));
+ }
+ 
+ static void strvec_push_nodup(struct strvec *array, const char *value)
+-- 
+2.32.0.623.ge833f40cd87
+
