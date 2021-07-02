@@ -1,0 +1,72 @@
+From 911881ce19f48ce387806adcb15174f2a87564a2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-911881ce19f-20210702T115601Z-avarab@gmail.com>
+In-Reply-To: <cover-0.1-00000000000-20210702T115601Z-avarab@gmail.com>
+References: <874kdn1j6i.fsf@evledraar.gmail.com>
+	<cover-0.1-00000000000-20210702T115601Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 2 Jul 2021 13:05:16 +0200
+Subject: [PATCH 1/1] Documentation/Makefile: don't re-build on 'git version'
+ changes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since 9a71722b4df (Doc: auto-detect changed build flags, 2019-03-17)
+we've been eagerly re-building the documentation whenever the output
+of "git version" (via the GIT-VERSION file) changed. This was never
+the intention, and was a regression on what we intended in
+7b8a74f39cb (Documentation: Replace @@GIT_VERSION@@ in documentation,
+2007-03-25).
+
+So let's add an ASCIIDOC_MANVERSION variable that we exclude from
+ASCIIDOC_COMMON. The change in 9a71722b4df was only intending to catch
+cases where we e.g. switched between asciidoc and asciidoctor, not to
+undo the logic in 7b8a74f39cb and force a re-build every time our HEAD
+changed in the repository.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/Makefile | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/Makefile b/Documentation/Makefile
+index f5605b7767f..6b3f0bb6c8b 100644
+--- a/Documentation/Makefile
++++ b/Documentation/Makefile
+@@ -137,11 +137,12 @@ ASCIIDOC_HTML = xhtml11
+ ASCIIDOC_DOCBOOK = docbook
+ ASCIIDOC_CONF = -f asciidoc.conf
+ ASCIIDOC_COMMON = $(ASCIIDOC) $(ASCIIDOC_EXTRA) $(ASCIIDOC_CONF) \
+-		-amanversion=$(GIT_VERSION) \
+ 		-amanmanual='Git Manual' -amansource='Git'
++ASCIIDOC_MANVERSION = -amanversion=$(GIT_VERSION)
++ASCIIDOC_ALL = $(ASCIIDOC_COMMON) $(ASCIIDOC_MANVERSION)
+ ASCIIDOC_DEPS = asciidoc.conf GIT-ASCIIDOCFLAGS
+-TXT_TO_HTML = $(ASCIIDOC_COMMON) -b $(ASCIIDOC_HTML)
+-TXT_TO_XML = $(ASCIIDOC_COMMON) -b $(ASCIIDOC_DOCBOOK)
++TXT_TO_HTML = $(ASCIIDOC_ALL) -b $(ASCIIDOC_HTML)
++TXT_TO_XML = $(ASCIIDOC_ALL) -b $(ASCIIDOC_DOCBOOK)
+ MANPAGE_XSL = manpage-normal.xsl
+ XMLTO = xmlto
+ XMLTO_EXTRA =
+@@ -333,6 +334,16 @@ mergetools-list.made: ../git-mergetool--lib.sh $(wildcard ../mergetools/*)
+ 		show_tool_names can_merge "* " || :' >mergetools-merge.txt && \
+ 	date >$@
+ 
++# We use $(ASCIIDOC_COMMON) here, and not $(ASCIIDOC_ALL). We don't
++# want to include $(ASCIIDOC_MANVERSION) and have the documentation
++# re-built every time HEAD changes.
++#
++# This is a trade-off requiring a "clean" build of the documentation
++# for release purposes, in the future we might include the version if
++# there's a cheaper way to re-insert the "Source" version during
++# re-builds. If we detect that that's the only thing we changed we
++# could insert it with a cheap search/replacement against the existing
++# files.
+ TRACK_ASCIIDOCFLAGS = $(subst ','\'',$(ASCIIDOC_COMMON):$(ASCIIDOC_HTML):$(ASCIIDOC_DOCBOOK))
+ 
+ GIT-ASCIIDOCFLAGS: FORCE
+-- 
+2.32.0.634.g284ac724283
+
