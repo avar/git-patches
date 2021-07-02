@@ -1,0 +1,82 @@
+From 3e5972e418422bf0ad5b6decc542ac2c4260b32b Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.3-00000000000-20210702T095450Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210630T140339Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20210630T140339Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 2 Jul 2021 11:54:50 +0200
+Subject: [PATCH v4 0/3] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (3):
+  bundle cmd: stop leaking memory from parse_options_cmd_bundle()
+  bundle.c: use a temporary variable for OIDs and names
+  bundle: remove "ref_list" in favor of string-list.c API
+
+ builtin/bundle.c | 74 ++++++++++++++++++++++++++++++------------------
+ bundle.c         | 64 +++++++++++++++++++++++++----------------
+ bundle.h         | 21 +++++++-------
+ transport.c      | 10 +++++--
+ 4 files changed, 104 insertions(+), 65 deletions(-)
+
+Range-diff against v3:
+1:  3d0d7a8e8b5 ! 1:  8e1d08113e5 bundle cmd: stop leaking memory from parse_options_cmd_bundle()
+    @@ Commit message
+         about those fixes if valgrind runs cleanly at the end without any
+         leaks whatsoever.
+     
+    -    An earlier version of this change went out of its way to not leak
+    -    memory on the die() codepaths here, but that was deemed too verbose to
+    -    worry about in a built-in that's dying anyway. The only reason we'd
+    -    need that is to appease a mode like SANITIZE=leak within the scope of
+    -    an entire test file.
+    +    An earlier version of this change[1] went out of its way to not leak
+    +    memory on the die() codepaths here, but doing so will only avoid
+    +    reports of potential leaks under heap-only leak trackers such as
+    +    valgrind, not the SANITIZE=leak mode.
+    +
+    +    Avoiding those leaks as well might be useful to enable us to run
+    +    cleanly under the likes of valgrind in the future. But for now the
+    +    relative verbosity of the resulting code, and the fact that we don't
+    +    have some valgrind or SANITIZE=leak mode as part of our CI (it's only
+    +    run ad-hoc, see [2]), means we're not worrying about that for now.
+    +
+    +    1. https://lore.kernel.org/git/87v95vdxrc.fsf@evledraar.gmail.com/
+    +    2. https://lore.kernel.org/git/87czsv2idy.fsf@evledraar.gmail.com/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+2:  e47646d3a98 = 2:  5ce376682b3 bundle.c: use a temporary variable for OIDs and names
+3:  f1066ee1b9a ! 3:  3e5972e4184 bundle: remove "ref_list" in favor of string-list.c API
+    @@ Commit message
+         Before this the add_to_ref_list() would leak memory, now e.g. "bundle
+         list-heads" reports no memory leaks at all under valgrind.
+     
+    +    In the bundle_header_init() function we're using a clever trick to
+    +    memcpy() what we'd get from the corresponding
+    +    BUNDLE_HEADER_INIT. There is a concurrent series to make use of that
+    +    pattern more generally, see [1].
+    +
+    +    1. https://lore.kernel.org/git/cover-0.5-00000000000-20210701T104855Z-avarab@gmail.com/
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/bundle.c ##
+    @@ bundle.c: static struct {
+     -	oidcpy(&list->list[list->nr].oid, oid);
+     -	list->list[list->nr].name = xstrdup(name);
+     -	list->nr++;
+    -+	memset(header, 0, sizeof(*header));
+    -+	string_list_init(&header->prerequisites, 1);
+    -+	string_list_init(&header->references, 1);
+    ++	struct bundle_header blank = BUNDLE_HEADER_INIT;
+    ++	memcpy(header, &blank, sizeof(*header));
+     +}
+     +
+     +void bundle_header_release(struct bundle_header *header)
+-- 
+2.32.0.632.g49a94b9226d
+
