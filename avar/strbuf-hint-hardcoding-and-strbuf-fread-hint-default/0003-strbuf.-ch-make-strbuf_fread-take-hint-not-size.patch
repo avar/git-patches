@@ -1,0 +1,90 @@
+From 46c65a7ae12d4aed9c90f723ae4139b8e5e969b8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.3-46c65a7ae12-20210707T103712Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210707T103712Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20210707T103712Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 6 Jul 2021 14:41:52 +0200
+Subject: [PATCH 3/3] strbuf.[ch]: make strbuf_fread() take hint, not size
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the strbuf_fread() function to take a "size_t hint" instead of
+a "size_t size", for consistency with e.g. strbuf_read(). We can then
+change callers that explicitly passed in our default hint of 8192.
+
+The strbuf_fread() has not taken a hint ever since it was added in
+b449f4cfc97 (Rework strbuf API and semantics., 2007-09-06), it was
+left out when strbuf_read() learned to do it in f1696ee398e (Strbuf
+API extensions and fixes., 2007-09-10).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c | 4 ++--
+ strbuf.c     | 3 ++-
+ strbuf.h     | 3 ++-
+ 3 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 0b2d886c81b..295b9c4080c 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -781,7 +781,7 @@ static int stgit_patch_to_mail(FILE *out, FILE *in, int keep_cr)
+ 	}
+ 
+ 	strbuf_reset(&sb);
+-	while (strbuf_fread(&sb, 8192, in) > 0) {
++	while (strbuf_fread(&sb, 0, in) > 0) {
+ 		fwrite(sb.buf, 1, sb.len, out);
+ 		strbuf_reset(&sb);
+ 	}
+@@ -898,7 +898,7 @@ static int hg_patch_to_mail(FILE *out, FILE *in, int keep_cr)
+ 	}
+ 
+ 	strbuf_reset(&sb);
+-	while (strbuf_fread(&sb, 8192, in) > 0) {
++	while (strbuf_fread(&sb, 0, in) > 0) {
+ 		fwrite(sb.buf, 1, sb.len, out);
+ 		strbuf_reset(&sb);
+ 	}
+diff --git a/strbuf.c b/strbuf.c
+index 7e9f5fdc4de..af3af7622d1 100644
+--- a/strbuf.c
++++ b/strbuf.c
+@@ -498,10 +498,11 @@ void strbuf_add_percentencode(struct strbuf *dst, const char *src, int flags)
+ 	}
+ }
+ 
+-size_t strbuf_fread(struct strbuf *sb, size_t size, FILE *f)
++size_t strbuf_fread(struct strbuf *sb, size_t hint, FILE *f)
+ {
+ 	size_t res;
+ 	size_t oldalloc = sb->alloc;
++	size_t size = strbuf_hint(hint);
+ 
+ 	strbuf_grow(sb, size);
+ 	res = fread(sb->buf + sb->len, 1, size, f);
+diff --git a/strbuf.h b/strbuf.h
+index ca3c47966a0..7d178e3c8de 100644
+--- a/strbuf.h
++++ b/strbuf.h
+@@ -442,13 +442,14 @@ void strbuf_addftime(struct strbuf *sb, const char *fmt,
+ 
+ /**
+  * Read a given size of data from a FILE* pointer to the buffer.
++ * if the size is 0 the default hint is used.
+  *
+  * NOTE: The buffer is rewound if the read fails. If -1 is returned,
+  * `errno` must be consulted, like you would do for `read(3)`.
+  * `strbuf_read()`, `strbuf_read_file()` and `strbuf_getline_*()`
+  * family of functions have the same behaviour as well.
+  */
+-size_t strbuf_fread(struct strbuf *sb, size_t size, FILE *file);
++size_t strbuf_fread(struct strbuf *sb, size_t hint, FILE *file);
+ 
+ /**
+  * Read the contents of a given file descriptor. The third argument can be
+-- 
+2.32.0.636.g43e71d69cff
+
