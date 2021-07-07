@@ -1,0 +1,63 @@
+From ee64a64449fe9f37e029f0ef14af8c0e95f15297 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-ee64a64449f-20210707T090458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 6 Jul 2021 14:45:38 +0200
+Subject: [PATCH] imap-send.c: use less verbose strbuf_fread() idiom
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When looking for things that hardcoded a non-zero "hint" parameter to
+strbuf_fread() I discovered that since f2561fda364 (Add git-imap-send,
+derived from isync 1.0.1., 2006-03-10) we've been passing a hardcoded
+4096 in imap-send.c to read stdin.
+
+Since we're not doing anything unusual here let's use a less verbose
+pattern used in a lot of other places (the hint of "0" will default to
+8192). We don't need to take a FILE * here either, so we can use "0"
+instead of "stdin". While we're at it improve the error message if we
+can't read the input to use error_errno().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ imap-send.c | 16 ++--------------
+ 1 file changed, 2 insertions(+), 14 deletions(-)
+
+diff --git a/imap-send.c b/imap-send.c
+index bb085d66d10..9d06ef7cd25 100644
+--- a/imap-send.c
++++ b/imap-send.c
+@@ -1266,18 +1266,6 @@ static void wrap_in_html(struct strbuf *msg)
+ 	*msg = buf;
+ }
+ 
+-#define CHUNKSIZE 0x1000
+-
+-static int read_message(FILE *f, struct strbuf *all_msgs)
+-{
+-	do {
+-		if (strbuf_fread(all_msgs, CHUNKSIZE, f) <= 0)
+-			break;
+-	} while (!feof(f));
+-
+-	return ferror(f) ? -1 : 0;
+-}
+-
+ static int count_messages(struct strbuf *all_msgs)
+ {
+ 	int count = 0;
+@@ -1582,8 +1570,8 @@ int cmd_main(int argc, const char **argv)
+ 	}
+ 
+ 	/* read the messages */
+-	if (read_message(stdin, &all_msgs)) {
+-		fprintf(stderr, "error reading input\n");
++	if (strbuf_read(&all_msgs, 0, 0) < 0) {
++		error_errno(_("could not read from stdin"));
+ 		return 1;
+ 	}
+ 
+-- 
+2.32.0.636.g43e71d69cff
+
