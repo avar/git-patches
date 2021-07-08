@@ -1,0 +1,73 @@
+From 491d72c35a0b0ec6200c69a2b7bbb536d237c750 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.3-491d72c35a0-20210708T105018Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210708T105018Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20210630T163329Z-avarab@gmail.com>
+	<cover-0.3-00000000000-20210708T105018Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 30 Jun 2021 17:24:09 +0200
+Subject: [PATCH v2 3/3] fetch: fix segfault in --negotiate-only without
+ --negotiation-tip=*
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The recent --negotiate-only option would segfault in the call to
+oid_array_for_each() in negotiate_using_fetch() unless one or more
+--negotiation-tip=* options were provided.
+
+All of the other tests for the feature combine both, but nothing was
+checking this assumption, let's do that and add a test for it. Fixes a
+bug in 9c1e657a8fd (fetch: teach independent negotiation (no
+packfile), 2021-05-04).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/fetch.c        |  3 +++
+ t/t5702-protocol-v2.sh | 16 ++++++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/builtin/fetch.c b/builtin/fetch.c
+index 9191620e50c..25740c13df1 100644
+--- a/builtin/fetch.c
++++ b/builtin/fetch.c
+@@ -1990,6 +1990,9 @@ int cmd_fetch(int argc, const char **argv, const char *prefix)
+ 		fetch_config_from_gitmodules(sfjc, rs);
+ 	}
+ 
++	if (negotiate_only && !negotiation_tip.nr)
++		die(_("--negotiate-only needs one or more --negotiate-tip=*"));
++
+ 	if (deepen_relative) {
+ 		if (deepen_relative < 0)
+ 			die(_("Negative depth in --deepen is not supported"));
+diff --git a/t/t5702-protocol-v2.sh b/t/t5702-protocol-v2.sh
+index 66af411057c..78de1ff2ad5 100755
+--- a/t/t5702-protocol-v2.sh
++++ b/t/t5702-protocol-v2.sh
+@@ -599,6 +599,22 @@ setup_negotiate_only () {
+ 	test_commit -C client three
+ }
+ 
++test_expect_success 'usage: --negotiate-only without --negotiation-tip' '
++	SERVER="server" &&
++	URI="file://$(pwd)/server" &&
++
++	setup_negotiate_only "$SERVER" "$URI" &&
++
++	cat >err.expect <<-\EOF &&
++	fatal: --negotiate-only needs one or more --negotiate-tip=*
++	EOF
++
++	test_must_fail git -c protocol.version=2 -C client fetch \
++		--negotiate-only \
++		origin 2>err.actual &&
++	test_cmp err.expect err.actual
++'
++
+ test_expect_success 'file:// --negotiate-only' '
+ 	SERVER="server" &&
+ 	URI="file://$(pwd)/server" &&
+-- 
+2.32.0.636.g43e71d69cff
+
