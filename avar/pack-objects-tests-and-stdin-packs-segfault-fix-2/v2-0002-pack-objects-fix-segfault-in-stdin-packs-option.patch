@@ -1,0 +1,112 @@
+From c7315f2b378234fbd8f71b9b0e47858fa27c92a7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-c7315f2b378-20210709T101015Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20210709T101014Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20210621T145819Z-avarab@gmail.com>
+	<cover-0.2-00000000000-20210709T101014Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 21 Jun 2021 13:34:39 +0200
+Subject: [PATCH v2 2/2] pack-objects: fix segfault in --stdin-packs option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a segfault in the --stdin-packs option added in
+339bce27f4f (builtin/pack-objects.c: add '--stdin-packs' option,
+2021-02-22).
+
+The read_packs_list_from_stdin() function didn't check that the lines
+it was reading were valid packs, and thus when doing the QSORT() with
+pack_mtime_cmp() we'd have a NULL "util" field. The "util" field is
+used to associate the names of included/excluded packs with the
+packed_git structs they correspond to.
+
+The logic error was in assuming that we could iterate all packs and
+annotate the excluded and included packs we got, as opposed to
+checking the lines we got on stdin. There was a check for excluded
+packs, but included packs were simply assumed to be valid.
+
+As noted in the test we'll not report the first bad line, but whatever
+line sorted first according to the string-list.c API. In this case I
+think that's fine. There was further discussion of alternate
+approaches in [1].
+
+Even though we're being lazy let's assert the line we do expect to get
+in the test, since whoever changes this code in the future might miss
+this case, and would want to update the test and comments.
+
+1. http://lore.kernel.org/git/YND3h2l10PlnSNGJ@nand.local
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/pack-objects.c | 23 ++++++++++++++++++++---
+ t/t5300-pack-object.sh | 19 +++++++++++++++++++
+ 2 files changed, 39 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index de00adbb9e0..df49f656b96 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -3311,9 +3311,26 @@ static void read_packs_list_from_stdin(void)
+ 	}
+ 
+ 	/*
+-	 * First handle all of the excluded packs, marking them as kept in-core
+-	 * so that later calls to add_object_entry() discards any objects that
+-	 * are also found in excluded packs.
++	 * Arguments we got on stdin may not even be packs. First
++	 * check that to avoid segfaulting later on in
++	 * e.g. pack_mtime_cmp(), excluded packs are handled below.
++	 *
++	 * Since we first parsed our STDIN and then sorted the input
++	 * lines the pack we error on will be whatever line happens to
++	 * sort first. This is lazy, it's enough that we report one
++	 * bad case here, we don't need to report the first/last one,
++	 * or all of them.
++	 */
++	for_each_string_list_item(item, &include_packs) {
++		struct packed_git *p = item->util;
++		if (!p)
++			die(_("could not find pack '%s'"), item->string);
++	}
++
++	/*
++	 * Then, handle all of the excluded packs, marking them as
++	 * kept in-core so that later calls to add_object_entry()
++	 * discards any objects that are also found in excluded packs.
+ 	 */
+ 	for_each_string_list_item(item, &exclude_packs) {
+ 		struct packed_git *p = item->util;
+diff --git a/t/t5300-pack-object.sh b/t/t5300-pack-object.sh
+index 65e991e3706..e13a8842075 100755
+--- a/t/t5300-pack-object.sh
++++ b/t/t5300-pack-object.sh
+@@ -119,6 +119,25 @@ test_expect_success 'pack-object <stdin parsing: [|--revs] with --stdin' '
+ 	test_cmp err.expect err.actual
+ '
+ 
++test_expect_success 'pack-object <stdin parsing: --stdin-packs handles garbage' '
++	cat >in <<-EOF &&
++	$(git -C pack-object-stdin rev-parse one)
++	$(git -C pack-object-stdin rev-parse two)
++	EOF
++
++	# That we get "two" and not "one" has to do with OID
++	# ordering. It happens to be the same here under SHA-1 and
++	# SHA-256. See commentary in pack-objects.c
++	cat >err.expect <<-EOF &&
++	fatal: could not find pack '"'"'$(git -C pack-object-stdin rev-parse two)'"'"'
++	EOF
++	test_must_fail git \
++		-C pack-object-stdin \
++		pack-objects stdin-with-stdin-option --stdin-packs \
++		<in 2>err.actual &&
++	test_cmp err.expect err.actual
++'
++
+ # usage: check_deltas <stderr_from_pack_objects> <cmp_op> <nr_deltas>
+ # e.g.: check_deltas stderr -gt 0
+ check_deltas() {
+-- 
+2.32.0.636.g43e71d69cff
+
