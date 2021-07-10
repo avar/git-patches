@@ -1,0 +1,58 @@
+From e33aacfc852e74cb47713105b1380281ab32bb8d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.6-e33aacfc852-20210710T084415Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210710T084415Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210710T084415Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Jul 2021 09:46:29 +0200
+Subject: [PATCH 5/6] bugreport.c: tweak cmd_bugreport() to use
+ __attribute__((printf)) check
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in the preceding commit we had no __attribute__((format))
+check for strbuf_addftime(), and furthermore had no in-tree user that
+passed it a fixed string.
+
+Let's tweak this codepath added in 238b439d698 (bugreport: add tool to
+generate debugging info, 2020-04-16) to make use of the compile-time
+check.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bugreport.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/bugreport.c b/builtin/bugreport.c
+index 9915a5841de..02edfb9a047 100644
+--- a/builtin/bugreport.c
++++ b/builtin/bugreport.c
+@@ -127,7 +127,7 @@ int cmd_bugreport(int argc, const char **argv, const char *prefix)
+ 	time_t now = time(NULL);
+ 	struct tm tm;
+ 	char *option_output = NULL;
+-	char *option_suffix = "%Y-%m-%d-%H%M";
++	char *option_suffix = NULL;
+ 	const char *user_relative_path = NULL;
+ 	char *prefixed_filename;
+ 
+@@ -149,7 +149,14 @@ int cmd_bugreport(int argc, const char **argv, const char *prefix)
+ 	strbuf_complete(&report_path, '/');
+ 
+ 	strbuf_addstr(&report_path, "git-bugreport-");
+-	strbuf_addftime(&report_path, option_suffix, localtime_r(&now, &tm), 0, 0);
++	/*
++	 * This is an if/else for the benefit of the compile-time
++	 * strftime() format checking we have for strbuf_addftime().
++	 */
++	if (option_suffix)
++		strbuf_addftime(&report_path, option_suffix, localtime_r(&now, &tm), 0, 0);
++	else
++		strbuf_addftime(&report_path, "%Y-%m-%d-%H%M", localtime_r(&now, &tm), 0, 0);
+ 	strbuf_addstr(&report_path, ".txt");
+ 
+ 	switch (safe_create_leading_directories(report_path.buf)) {
+-- 
+2.32.0.636.g43e71d69cff
+

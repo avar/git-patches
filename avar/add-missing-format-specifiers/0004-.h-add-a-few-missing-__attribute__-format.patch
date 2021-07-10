@@ -1,0 +1,128 @@
+From 3bf8637c16ae2ec2076a3a45724344a693e86486 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.6-3bf8637c16a-20210710T084415Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210710T084415Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210710T084415Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 6 Jul 2021 22:33:49 +0200
+Subject: [PATCH 4/6] *.h: add a few missing  __attribute__((format))
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add missing format attributes to those function that were missing
+them.
+
+In the case of advice_enabled() this revealed a trivial issue
+introduced in b3b18d16213 (advice: revamp advise API, 2020-03-02). We
+treated the argv[1] as a format string, but did not intend to do
+so. Let's use "%s" and pass argv[1] as an argument instead.
+
+For strbuf_addftime() let's add a strftime() format checker. Our
+function understands the non-portable %z and %Z, see
+c3fbf81a853 (strbuf: let strbuf_addftime handle %z and %Z itself,
+2017-06-15).
+
+That might be an issue in theory, but in practice we have existing
+codepath that supplies a fixed string to strbuf_addftime(). We're
+unlikely to run into the "%z" and "%Z" case at all, since it's used by
+date.c and passed via e.g. "git log --date=<format>".
+
+In fact, we had no in-tree user of strbuf_addftime() with an inline
+fixed format string at all. A subsequent commit will tweak an existing
+one to use the format checking.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ advice.h               | 1 +
+ cache.h                | 1 +
+ compat/win32/syslog.h  | 1 +
+ quote.h                | 1 +
+ strbuf.h               | 2 ++
+ t/helper/test-advise.c | 2 +-
+ 6 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/advice.h b/advice.h
+index bd26c385d00..9f8ffc73546 100644
+--- a/advice.h
++++ b/advice.h
+@@ -90,6 +90,7 @@ int advice_enabled(enum advice_type type);
+ /**
+  * Checks the visibility of the advice before printing.
+  */
++__attribute__((format (printf, 2, 3)))
+ void advise_if_enabled(enum advice_type type, const char *advice, ...);
+ 
+ int error_resolve_conflict(const char *me);
+diff --git a/cache.h b/cache.h
+index ba04ff8bd36..f9aed2d45c7 100644
+--- a/cache.h
++++ b/cache.h
+@@ -1385,6 +1385,7 @@ enum get_oid_result {
+ };
+ 
+ int repo_get_oid(struct repository *r, const char *str, struct object_id *oid);
++__attribute__((format (printf, 2, 3)))
+ int get_oidf(struct object_id *oid, const char *fmt, ...);
+ int repo_get_oid_commit(struct repository *r, const char *str, struct object_id *oid);
+ int repo_get_oid_committish(struct repository *r, const char *str, struct object_id *oid);
+diff --git a/compat/win32/syslog.h b/compat/win32/syslog.h
+index 70daa7c08b8..28e2c96c52d 100644
+--- a/compat/win32/syslog.h
++++ b/compat/win32/syslog.h
+@@ -15,6 +15,7 @@
+ #define LOG_DAEMON  (3<<3)
+ 
+ void openlog(const char *ident, int logopt, int facility);
++__attribute__((format (printf, 2, 3)))
+ void syslog(int priority, const char *fmt, ...);
+ 
+ #endif /* SYSLOG_H */
+diff --git a/quote.h b/quote.h
+index 768cc6338e2..049d8dd0b3d 100644
+--- a/quote.h
++++ b/quote.h
+@@ -31,6 +31,7 @@ struct strbuf;
+ 
+ void sq_quote_buf(struct strbuf *, const char *src);
+ void sq_quote_argv(struct strbuf *, const char **argv);
++__attribute__((format (printf, 2, 3)))
+ void sq_quotef(struct strbuf *, const char *fmt, ...);
+ 
+ /*
+diff --git a/strbuf.h b/strbuf.h
+index 223ee2094af..215fbdd64bc 100644
+--- a/strbuf.h
++++ b/strbuf.h
+@@ -263,6 +263,7 @@ static inline void strbuf_insertstr(struct strbuf *sb, size_t pos,
+ void strbuf_vinsertf(struct strbuf *sb, size_t pos, const char *fmt,
+ 		     va_list ap);
+ 
++__attribute__((format (printf, 3, 4)))
+ void strbuf_insertf(struct strbuf *sb, size_t pos, const char *fmt, ...);
+ 
+ /**
+@@ -425,6 +426,7 @@ void strbuf_vaddf(struct strbuf *sb, const char *fmt, va_list ap);
+  * `suppress_tz_name`, when set, expands %Z internally to the empty
+  * string rather than passing it to `strftime`.
+  */
++__attribute__((format (strftime, 2, 0)))
+ void strbuf_addftime(struct strbuf *sb, const char *fmt,
+ 		    const struct tm *tm, int tz_offset,
+ 		    int suppress_tz_name);
+diff --git a/t/helper/test-advise.c b/t/helper/test-advise.c
+index a7043df1d38..cb881139f73 100644
+--- a/t/helper/test-advise.c
++++ b/t/helper/test-advise.c
+@@ -16,7 +16,7 @@ int cmd__advise_if_enabled(int argc, const char **argv)
+ 	 * selected here and in t0018 where this command is being
+ 	 * executed.
+ 	 */
+-	advise_if_enabled(ADVICE_NESTED_TAG, argv[1]);
++	advise_if_enabled(ADVICE_NESTED_TAG, "%s", argv[1]);
+ 
+ 	return 0;
+ }
+-- 
+2.32.0.636.g43e71d69cff
+
