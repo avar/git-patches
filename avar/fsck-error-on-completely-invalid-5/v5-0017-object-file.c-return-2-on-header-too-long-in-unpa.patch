@@ -1,0 +1,119 @@
+From 7e101f976466a41bb1e8e95f1404b70fff347ffb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-17.21-7e101f97646-20210710T133203Z-avarab@gmail.com>
+In-Reply-To: <cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+References: <cover-00.21-00000000000-20210624T191754Z-avarab@gmail.com>
+	<cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 18 May 2021 13:57:27 +0200
+Subject: [PATCH v5 17/21] object-file.c: return -2 on "header too long" in
+ unpack_loose_header()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Split up the return code for "header too long" from the generic
+negative return value unpack_loose_header() returns, and report via
+error() if we exceed MAX_HEADER_LEN.
+
+As a test added earlier in this series in t1006-cat-file.sh shows
+we'll correctly emit zlib errors from zlib.c already in this case, so
+we have no need to carry those return codes further down the
+stack. Let's instead just return -2 saying we ran into the
+MAX_HEADER_LEN limit, or other negative values for "unable to unpack
+<OID> header".
+
+I tried setting up an enum just for these three return values, but I
+think the result was less readable. Let's consider doing that if we
+gain even more return values. For now let's do the next best thing and
+enumerate our known return values, and BUG() if we encounter one we
+don't know about.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-file.c       | 16 +++++++++++++---
+ object-store.h      |  6 ++++--
+ t/t1006-cat-file.sh |  2 +-
+ 3 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index 956ca260518..1866115a1c5 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1243,7 +1243,7 @@ int unpack_loose_header(git_zstream *stream,
+ 	 * --allow-unknown-type".
+ 	 */
+ 	if (!header)
+-		return -1;
++		return -2;
+ 
+ 	/*
+ 	 * buffer[0..bufsiz] was not large enough.  Copy the partial
+@@ -1264,7 +1264,7 @@ int unpack_loose_header(git_zstream *stream,
+ 		stream->next_out = buffer;
+ 		stream->avail_out = bufsiz;
+ 	} while (status != Z_STREAM_END);
+-	return -1;
++	return -2;
+ }
+ 
+ static void *unpack_loose_rest(git_zstream *stream,
+@@ -1433,9 +1433,19 @@ static int loose_object_info(struct repository *r,
+ 
+ 	hdr_ret = unpack_loose_header(&stream, map, mapsize, hdr, sizeof(hdr),
+ 				      allow_unknown ? &hdrbuf : NULL);
+-	if (hdr_ret < 0) {
++	switch (hdr_ret) {
++	case 0:
++		break;
++	case -1:
+ 		status = error(_("unable to unpack %s header"),
+ 			       oid_to_hex(oid));
++		break;
++	case -2:
++		status = error(_("header for %s too long, exceeds %d bytes"),
++			       oid_to_hex(oid), MAX_HEADER_LEN);
++		break;
++	default:
++		BUG("unknown hdr_ret value %d", hdr_ret);
+ 	}
+ 	if (!status) {
+ 		if (!parse_loose_header(hdrbuf.len ? hdrbuf.buf : hdr, oi))
+diff --git a/object-store.h b/object-store.h
+index 65a8e4dc6a8..1151ce8e820 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -481,13 +481,15 @@ int for_each_packed_object(each_packed_object_fn, void *,
+  * unpack_loose_header() initializes the data stream needed to unpack
+  * a loose object header.
+  *
+- * Returns 0 on success. Returns negative values on error.
++ * Returns 0 on success. Returns negative values on error. If the
++ * header exceeds MAX_HEADER_LEN -2 will be returned.
+  *
+  * It will only parse up to MAX_HEADER_LEN bytes unless an optional
+  * "hdrbuf" argument is non-NULL. This is intended for use with
+  * OBJECT_INFO_ALLOW_UNKNOWN_TYPE to extract the bad type for (error)
+  * reporting. The full header will be extracted to "hdrbuf" for use
+- * with parse_loose_header().
++ * with parse_loose_header(), -2 will still be returned from this
++ * function to indicate that the header was too long.
+  */
+ int unpack_loose_header(git_zstream *stream, unsigned char *map,
+ 			unsigned long mapsize, void *buffer,
+diff --git a/t/t1006-cat-file.sh b/t/t1006-cat-file.sh
+index 86fd2a90ca7..06d38e1fae6 100755
+--- a/t/t1006-cat-file.sh
++++ b/t/t1006-cat-file.sh
+@@ -440,7 +440,7 @@ bogus_sha1=$(echo_without_newline "$bogus_content" | git hash-object -t $bogus_t
+ 
+ test_expect_success 'die on broken object with large type under -t and -s without --allow-unknown-type' '
+ 	cat >err.expect <<-EOF &&
+-	error: unable to unpack $bogus_sha1 header
++	error: header for $bogus_sha1 too long, exceeds 32 bytes
+ 	fatal: git cat-file: could not get object info
+ 	EOF
+ 
+-- 
+2.32.0.636.g43e71d69cff
+

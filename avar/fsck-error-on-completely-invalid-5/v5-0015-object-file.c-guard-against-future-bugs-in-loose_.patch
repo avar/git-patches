@@ -1,0 +1,77 @@
+From 13d4141a21bed964b520370e6731873fe34bd1a5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-15.21-13d4141a21b-20210710T133203Z-avarab@gmail.com>
+In-Reply-To: <cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+References: <cover-00.21-00000000000-20210624T191754Z-avarab@gmail.com>
+	<cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 24 Jun 2021 17:16:48 +0200
+Subject: [PATCH v5 15/21] object-file.c: guard against future bugs in
+ loose_object_info()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+An earlier version of the preceding commit had a subtle bug where our
+"type_scratch" (later assigned to "oi->typep") would be uninitialized
+and used in the "!allow_unknown" case, at which point it would contain
+a nonsensical value if we'd failed to call parse_loose_header().
+
+The preceding commit introduced "parsed_header" variable to check for
+this case, but I think we can do better, let's carry a "oi_header"
+variable initially set to NULL, and only set it to "oi" once we're
+past parse_loose_header().
+
+This is functionally the same thing, but hopefully makes it even more
+obvious in the future that we must not access the "typep" and
+"sizep" (or "type_name") unless parse_loose_header() succeeds, but
+that accessing other fields set earlier (such as the "disk_sizep" set
+earlier) is OK.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-file.c | 14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index 31263335af9..d41f444e6cc 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1393,7 +1393,7 @@ static int loose_object_info(struct repository *r,
+ 	struct strbuf hdrbuf = STRBUF_INIT;
+ 	unsigned long size_scratch;
+ 	enum object_type type_scratch;
+-	int parsed_header = 0;
++	struct object_info *oi_header = NULL;
+ 	int allow_unknown = flags & OBJECT_INFO_ALLOW_UNKNOWN_TYPE;
+ 
+ 	if (oi->delta_base_oid)
+@@ -1441,18 +1441,20 @@ static int loose_object_info(struct repository *r,
+ 		if (!parse_loose_header(hdrbuf.len ? hdrbuf.buf : hdr, oi))
+ 			/*
+ 			 * oi->{sizep,typep} are meaningless unless
+-			 * parse_loose_header() returns >= 0.
++			 * parse_loose_header() returns >= 0. Let's
++			 * access them as "oi_header" (just an alias
++			 * for "oi") below to make that intent clear.
+ 			 */
+-			parsed_header = 1;
++			oi_header = oi;
+ 		else
+ 			status = error(_("unable to parse %s header"), oid_to_hex(oid));
+ 	}
+-	if (!allow_unknown && parsed_header && *oi->typep < 0)
++	if (!allow_unknown && oi_header && *oi_header->typep < 0)
+ 		die(_("invalid object type"));
+ 
+-	if (parsed_header && oi->contentp) {
++	if (oi_header && oi->contentp) {
+ 		*oi->contentp = unpack_loose_rest(&stream, hdr,
+-						  *oi->sizep, oid);
++						  *oi_header->sizep, oid);
+ 		if (!*oi->contentp) {
+ 			git_inflate_end(&stream);
+ 			status = -1;
+-- 
+2.32.0.636.g43e71d69cff
+

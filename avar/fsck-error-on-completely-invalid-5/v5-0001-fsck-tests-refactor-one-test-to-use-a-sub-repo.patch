@@ -1,0 +1,79 @@
+From a1259cdedcb68a83e6500183c89958028460a9b2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.21-a1259cdedcb-20210710T133203Z-avarab@gmail.com>
+In-Reply-To: <cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+References: <cover-00.21-00000000000-20210624T191754Z-avarab@gmail.com>
+	<cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 27 Mar 2021 17:08:15 +0100
+Subject: [PATCH v5 01/21] fsck tests: refactor one test to use a sub-repo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor one of the fsck tests to use a throwaway repository. It's a
+pervasive pattern in t1450-fsck.sh to spend a lot of effort on the
+teardown of a tests so we're not leaving corrupt content for the next
+test.
+
+We should instead simply use something like this test_create_repo
+pattern. It's both less verbose, and makes things easier to debug as a
+failing test can have their state left behind under -d without
+damaging the state for other tests.
+
+But let's punt on that general refactoring and just change this one
+test, I'm going to change it further in subsequent commits.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1450-fsck.sh | 34 ++++++++++++++++------------------
+ 1 file changed, 16 insertions(+), 18 deletions(-)
+
+diff --git a/t/t1450-fsck.sh b/t/t1450-fsck.sh
+index 5071ac63a5b..7becab5ba1e 100755
+--- a/t/t1450-fsck.sh
++++ b/t/t1450-fsck.sh
+@@ -48,24 +48,22 @@ remove_object () {
+ 	rm "$(sha1_file "$1")"
+ }
+ 
+-test_expect_success 'object with bad sha1' '
+-	sha=$(echo blob | git hash-object -w --stdin) &&
+-	old=$(test_oid_to_path "$sha") &&
+-	new=$(dirname $old)/$(test_oid ff_2) &&
+-	sha="$(dirname $new)$(basename $new)" &&
+-	mv .git/objects/$old .git/objects/$new &&
+-	test_when_finished "remove_object $sha" &&
+-	git update-index --add --cacheinfo 100644 $sha foo &&
+-	test_when_finished "git read-tree -u --reset HEAD" &&
+-	tree=$(git write-tree) &&
+-	test_when_finished "remove_object $tree" &&
+-	cmt=$(echo bogus | git commit-tree $tree) &&
+-	test_when_finished "remove_object $cmt" &&
+-	git update-ref refs/heads/bogus $cmt &&
+-	test_when_finished "git update-ref -d refs/heads/bogus" &&
+-
+-	test_must_fail git fsck 2>out &&
+-	test_i18ngrep "$sha.*corrupt" out
++test_expect_success 'object with hash mismatch' '
++	git init --bare hash-mismatch &&
++	(
++		cd hash-mismatch &&
++		oid=$(echo blob | git hash-object -w --stdin) &&
++		old=$(test_oid_to_path "$oid") &&
++		new=$(dirname $old)/$(test_oid ff_2) &&
++		oid="$(dirname $new)$(basename $new)" &&
++		mv objects/$old objects/$new &&
++		git update-index --add --cacheinfo 100644 $oid foo &&
++		tree=$(git write-tree) &&
++		cmt=$(echo bogus | git commit-tree $tree) &&
++		git update-ref refs/heads/bogus $cmt &&
++		test_must_fail git fsck 2>out &&
++		test_i18ngrep "$oid.*corrupt" out
++	)
+ '
+ 
+ test_expect_success 'branch pointing to non-commit' '
+-- 
+2.32.0.636.g43e71d69cff
+

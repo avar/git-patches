@@ -1,0 +1,78 @@
+From 50a20741e86c67c4aa1d72c86746ca49f164ee17 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-04.21-50a20741e86-20210710T133203Z-avarab@gmail.com>
+In-Reply-To: <cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+References: <cover-00.21-00000000000-20210624T191754Z-avarab@gmail.com>
+	<cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 18 May 2021 11:58:26 +0200
+Subject: [PATCH v5 04/21] cat-file tests: test that --allow-unknown-type isn't
+ on by default
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a blindspot in the tests for the --allow-unknown-type feature
+added in 39e4ae38804 (cat-file: teach cat-file a
+'--allow-unknown-type' option, 2015-05-03). We should check that
+--allow-unknown-type isn't on by default.
+
+Before this change all the tests would succeed if --allow-unknown-type
+was on by default, let's fix that by asserting that -t and -s die on a
+"garbage" type without --allow-unknown-type.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1006-cat-file.sh | 29 +++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/t/t1006-cat-file.sh b/t/t1006-cat-file.sh
+index b71ef94329e..dc01d7c4a9a 100755
+--- a/t/t1006-cat-file.sh
++++ b/t/t1006-cat-file.sh
+@@ -347,6 +347,20 @@ bogus_content="bogus"
+ bogus_size=$(strlen "$bogus_content")
+ bogus_sha1=$(echo_without_newline "$bogus_content" | git hash-object -t $bogus_type --literally -w --stdin)
+ 
++test_expect_success 'die on broken object under -t and -s without --allow-unknown-type' '
++	cat >err.expect <<-\EOF &&
++	fatal: invalid object type
++	EOF
++
++	test_must_fail git cat-file -t $bogus_sha1 >out.actual 2>err.actual &&
++	test_cmp err.expect err.actual &&
++	test_must_be_empty out.actual &&
++
++	test_must_fail git cat-file -s $bogus_sha1 >out.actual 2>err.actual &&
++	test_cmp err.expect err.actual &&
++	test_must_be_empty out.actual
++'
++
+ test_expect_success "Type of broken object is correct" '
+ 	echo $bogus_type >expect &&
+ 	git cat-file -t --allow-unknown-type $bogus_sha1 >actual &&
+@@ -363,6 +377,21 @@ bogus_content="bogus"
+ bogus_size=$(strlen "$bogus_content")
+ bogus_sha1=$(echo_without_newline "$bogus_content" | git hash-object -t $bogus_type --literally -w --stdin)
+ 
++test_expect_success 'die on broken object with large type under -t and -s without --allow-unknown-type' '
++	cat >err.expect <<-EOF &&
++	error: unable to unpack $bogus_sha1 header
++	fatal: git cat-file: could not get object info
++	EOF
++
++	test_must_fail git cat-file -t $bogus_sha1 >out.actual 2>err.actual &&
++	test_cmp err.expect err.actual &&
++	test_must_be_empty out.actual &&
++
++	test_must_fail git cat-file -s $bogus_sha1 >out.actual 2>err.actual &&
++	test_cmp err.expect err.actual &&
++	test_must_be_empty out.actual
++'
++
+ test_expect_success "Type of broken object is correct when type is large" '
+ 	echo $bogus_type >expect &&
+ 	git cat-file -t --allow-unknown-type $bogus_sha1 >actual &&
+-- 
+2.32.0.636.g43e71d69cff
+

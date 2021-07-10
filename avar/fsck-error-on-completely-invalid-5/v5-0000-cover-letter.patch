@@ -1,0 +1,128 @@
+From 730e0a6f8055ec18a7e9d234e7484fc0685ae840 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+In-Reply-To: <cover-00.21-00000000000-20210624T191754Z-avarab@gmail.com>
+References: <cover-00.21-00000000000-20210624T191754Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Sat, 10 Jul 2021 15:32:03 +0200
+Subject: [PATCH v5 00/21] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (21):
+  fsck tests: refactor one test to use a sub-repo
+  fsck tests: add test for fsck-ing an unknown type
+  cat-file tests: test for missing object with -t and -s
+  cat-file tests: test that --allow-unknown-type isn't on by default
+  rev-list tests: test for behavior with invalid object types
+  cat-file tests: add corrupt loose object test
+  cat-file tests: test for current --allow-unknown-type behavior
+  cache.h: move object functions to object-store.h
+  object-file.c: don't set "typep" when returning non-zero
+  object-file.c: make parse_loose_header_extended() public
+  object-file.c: add missing braces to loose_object_info()
+  object-file.c: simplify unpack_loose_short_header()
+  object-file.c: split up ternary in parse_loose_header()
+  object-file.c: stop dying in parse_loose_header()
+  object-file.c: guard against future bugs in loose_object_info()
+  object-file.c: return -1, not "status" from unpack_loose_header()
+  object-file.c: return -2 on "header too long" in unpack_loose_header()
+  fsck: don't hard die on invalid object types
+  object-store.h: move read_loose_object() below 'struct object_info'
+  fsck: report invalid types recorded in objects
+  fsck: report invalid object type-path combinations
+
+ builtin/fast-export.c  |   2 +-
+ builtin/fsck.c         |  28 ++++++-
+ builtin/index-pack.c   |   2 +-
+ builtin/mktag.c        |   3 +-
+ cache.h                |  10 ---
+ object-file.c          | 178 +++++++++++++++++++++--------------------
+ object-store.h         |  62 +++++++++++---
+ object.c               |   4 +-
+ pack-check.c           |   3 +-
+ streaming.c            |  10 ++-
+ t/t1006-cat-file.sh    | 169 ++++++++++++++++++++++++++++++++++++++
+ t/t1450-fsck.sh        |  64 +++++++++++----
+ t/t6115-rev-list-du.sh |  11 +++
+ 13 files changed, 407 insertions(+), 139 deletions(-)
+
+Range-diff against v4:
+ 1:  2e37971c016 !  1:  a1259cdedcb fsck tests: refactor one test to use a sub-repo
+    @@ t/t1450-fsck.sh: remove_object () {
+     -	test_must_fail git fsck 2>out &&
+     -	test_i18ngrep "$sha.*corrupt" out
+     +test_expect_success 'object with hash mismatch' '
+    -+	test_create_repo hash-mismatch &&
+    ++	git init --bare hash-mismatch &&
+     +	(
+     +		cd hash-mismatch &&
+     +		oid=$(echo blob | git hash-object -w --stdin) &&
+     +		old=$(test_oid_to_path "$oid") &&
+     +		new=$(dirname $old)/$(test_oid ff_2) &&
+     +		oid="$(dirname $new)$(basename $new)" &&
+    -+		mv .git/objects/$old .git/objects/$new &&
+    ++		mv objects/$old objects/$new &&
+     +		git update-index --add --cacheinfo 100644 $oid foo &&
+     +		tree=$(git write-tree) &&
+     +		cmt=$(echo bogus | git commit-tree $tree) &&
+ 2:  79630a99433 !  2:  634f991d7c6 fsck tests: add test for fsck-ing an unknown type
+    @@ t/t1450-fsck.sh: test_expect_success 'detect corrupt index file in fsck' '
+      '
+      
+     +test_expect_success 'fsck hard errors on an invalid object type' '
+    -+	test_create_repo garbage-type &&
+    ++	git init --bare garbage-type &&
+     +	empty_blob=$(git -C garbage-type hash-object --stdin -w -t blob </dev/null) &&
+     +	garbage_blob=$(git -C garbage-type hash-object --stdin -w -t garbage --literally </dev/null) &&
+     +	cat >err.expect <<-\EOF &&
+ 3:  2b5366bfb9d =  3:  ce9dcc423e9 cat-file tests: test for missing object with -t and -s
+ 4:  ea9a5ef0920 =  4:  50a20741e86 cat-file tests: test that --allow-unknown-type isn't on by default
+ 5:  8eaf0e6ddda =  5:  f8d0b630d0a rev-list tests: test for behavior with invalid object types
+ 6:  f0e9d92414e =  6:  43335e653b8 cat-file tests: add corrupt loose object test
+ 7:  d797d2e8e9d =  7:  a00dfea3fb8 cat-file tests: test for current --allow-unknown-type behavior
+ 8:  96310a0bb59 =  8:  387d7f08e61 cache.h: move object functions to object-store.h
+ 9:  54fb9189408 =  9:  e9520953956 object-file.c: don't set "typep" when returning non-zero
+10:  9d36fcbc44a = 10:  a8b408eefe6 object-file.c: make parse_loose_header_extended() public
+11:  74c308adc19 = 11:  31eee4da0e1 object-file.c: add missing braces to loose_object_info()
+12:  3f52149bfde = 12:  dae5cfabd57 object-file.c: simplify unpack_loose_short_header()
+13:  ba632be1520 = 13:  0d8385d8d12 object-file.c: split up ternary in parse_loose_header()
+14:  ea4f446f5b1 = 14:  d1522291aee object-file.c: stop dying in parse_loose_header()
+15:  aacef784eab = 15:  13d4141a21b object-file.c: guard against future bugs in loose_object_info()
+16:  050cfc7808c = 16:  912c9edf362 object-file.c: return -1, not "status" from unpack_loose_header()
+17:  78e3152fd94 = 17:  7e101f97646 object-file.c: return -2 on "header too long" in unpack_loose_header()
+18:  f9bb1b799ac ! 18:  3c04065b0b0 fsck: don't hard die on invalid object types
+    @@ t/t1450-fsck.sh: test_expect_success 'detect corrupt index file in fsck' '
+      
+     -test_expect_success 'fsck hard errors on an invalid object type' '
+     +test_expect_success 'fsck error and recovery on invalid object type' '
+    - 	test_create_repo garbage-type &&
+    + 	git init --bare garbage-type &&
+      	empty_blob=$(git -C garbage-type hash-object --stdin -w -t blob </dev/null) &&
+      	garbage_blob=$(git -C garbage-type hash-object --stdin -w -t garbage --literally </dev/null) &&
+     -	cat >err.expect <<-\EOF &&
+19:  acbea7e2a2a = 19:  ad920362594 object-store.h: move read_loose_object() below 'struct object_info'
+20:  edc28de229d ! 20:  02a148af5cf fsck: report invalid types recorded in objects
+    @@ t/t1450-fsck.sh: test_expect_success 'object with hash mismatch' '
+      '
+      
+     +test_expect_success 'object with hash and type mismatch' '
+    -+	test_create_repo hash-type-mismatch &&
+    ++	git init --bare hash-type-mismatch &&
+     +	(
+     +		cd hash-type-mismatch &&
+     +		oid=$(echo blob | git hash-object -w --stdin -t garbage --literally) &&
+     +		old=$(test_oid_to_path "$oid") &&
+     +		new=$(dirname $old)/$(test_oid ff_2) &&
+     +		oid="$(dirname $new)$(basename $new)" &&
+    -+		mv .git/objects/$old .git/objects/$new &&
+    ++		mv objects/$old objects/$new &&
+     +		git update-index --add --cacheinfo 100644 $oid foo &&
+     +		tree=$(git write-tree) &&
+     +		cmt=$(echo bogus | git commit-tree $tree) &&
+21:  e588c05f461 = 21:  730e0a6f805 fsck: report invalid object type-path combinations
+-- 
+2.32.0.636.g43e71d69cff
+
