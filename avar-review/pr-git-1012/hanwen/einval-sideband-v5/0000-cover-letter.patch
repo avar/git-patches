@@ -1,9 +1,9 @@
 From 5bf3aad038292db66035e2f837389631f9653bca Mon Sep 17 00:00:00 2001
-Message-Id: <cover-00.17-00000000000-20210711T161212Z-avarab@gmail.com>
+Message-Id: <cover-00.17-00000000000-20210711T161433Z-avarab@gmail.com>
 In-Reply-To: <pull.1012.v5.git.git.1625684869.gitgitgadget@gmail.com>
 References: <pull.1012.v5.git.git.1625684869.gitgitgadget@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Sun, 11 Jul 2021 18:12:12 +0200
+Date: Sun, 11 Jul 2021 18:14:33 +0200
 Subject: [PATCH v6? 00/17] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -548,8 +548,94 @@ Range-diff:
       }
       
       int parse_loose_ref_contents(const char *buf, struct object_id *oid,
- 6:  85a14bde904 <  -:  ----------- refs: make errno output explicit for refs_resolve_ref_unsafe
- -:  ----------- >  7:  b7da2e751d5 refs: make errno output explicit for refs_resolve_ref_unsafe
+ 6:  85a14bde904 !  7:  b7da2e751d5 refs: make errno output explicit for refs_resolve_ref_unsafe
+    @@ Commit message
+         that needs error information to make logic decisions, so update that caller
+     
+         Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
+    -    Reviewed-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +
+    + ## refs.c ##
+    +@@ refs.c: int refs_read_raw_ref(struct ref_store *ref_store, const char *refname,
+    + 					   type, failure_errno);
+    + }
+    + 
+    +-static const char *refs_resolve_ref_unsafe_with_errno(struct ref_store *refs,
+    ++const char *refs_resolve_ref_unsafe_with_errno(struct ref_store *refs,
+    + 					       const char *refname,
+    + 					       int resolve_flags,
+    + 					       struct object_id *oid,
+    +
+    + ## refs.h ##
+    +@@ refs.h: const char *refs_resolve_ref_unsafe(struct ref_store *refs,
+    + 				    int resolve_flags,
+    + 				    struct object_id *oid,
+    + 				    int *flags);
+    ++/**
+    ++ * refs_resolve_ref_unsafe_with_errno() is like
+    ++ * refs_resolve_ref_unsafe(), but provide access to errno code that
+    ++ * lead to a failure. We guarantee that errno is set to a meaningful
+    ++ * value on non-zero return.
+    ++ */
+    ++const char *refs_resolve_ref_unsafe_with_errno(struct ref_store *refs,
+    ++					       const char *refname,
+    ++					       int resolve_flags,
+    ++					       struct object_id *oid,
+    ++					       int *flags, int *failure_errno);
+    + const char *resolve_ref_unsafe(const char *refname, int resolve_flags,
+    + 			       struct object_id *oid, int *flags);
+    + 
+     
+      ## refs/files-backend.c ##
+     @@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+    @@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_re
+     @@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+      						     &lock->old_oid, type);
+      	}
+    - 	if (!resolved) {
+    --		int last_errno = errno;
+    --		if (last_errno != ENOTDIR ||
+    -+		if (resolve_errno != ENOTDIR ||
+    - 		    /* in case of D/F conflict, try to generate a better error
+    - 		     * message. If that fails, fall back to strerror(ENOTDIR).
+    - 		     */
+    - 		    !refs_verify_refname_available(&refs->base, refname, extras,
+    - 						   skip, err))
+    - 			strbuf_addf(err, "unable to resolve reference '%s': %s",
+    --				    refname, strerror(last_errno));
+    -+				    refname, strerror(resolve_errno));
+    - 
+    + 	if (!resolved &&
+    +-	    (errno != ENOTDIR ||
+    ++	    (resolve_errno != ENOTDIR ||
+    + 	     /* in case of D/F conflict, try to generate a better error
+    + 	      * message. If that fails, fall back to strerror(ENOTDIR).
+    + 	      */
+    + 	     !refs_verify_refname_available(&refs->base, refname, extras,
+    + 					    skip, err))) {
+    + 		strbuf_addf(err, "unable to resolve reference '%s': %s",
+    +-			    refname, strerror(errno));
+    ++			    refname, strerror(resolve_errno));
+      		goto error_return;
+      	}
+    -
+    - ## refs/refs-internal.h ##
+    -@@ refs/refs-internal.h: int refs_read_raw_ref(struct ref_store *ref_store, const char *refname,
+    - 		      struct object_id *oid, struct strbuf *referent,
+    - 		      unsigned int *type, int *failure_errno);
+      
+    -+/* Like refs_resolve_ref_unsafe, but provide access to errno code that lead to a
+    -+ * failure. */
+    -+const char *refs_resolve_ref_unsafe_with_errno(struct ref_store *refs,
+    -+					       const char *refname,
+    -+					       int resolve_flags,
+    -+					       struct object_id *oid,
+    -+					       int *flags, int *failure_errno);
+    -+
+    - /*
+    -  * Write an error to `err` and return a nonzero value iff the same
+    -  * refname appears multiple times in `refnames`. `refnames` must be
  -:  ----------- >  8:  fa32543edf9 refs: make errno ignoring explicit in lock_ref_oid_basic()
  -:  ----------- >  9:  50ca1155e1f refs file-backend.c: deal with errno directly in verify_lock()
  -:  ----------- > 10:  520fca100db refs API: remove refs_read_ref_full() wrapper
