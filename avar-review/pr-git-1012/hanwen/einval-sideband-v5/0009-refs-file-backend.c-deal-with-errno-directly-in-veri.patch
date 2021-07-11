@@ -1,0 +1,50 @@
+From 15c6bcb13a0a5a778659580a60c6e2ccd0523b44 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.17-15c6bcb13a0-20210711T153247Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+References: <pull.1012.v5.git.git.1625684869.gitgitgadget@gmail.com>
+	<cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 11 Jul 2021 16:09:52 +0200
+Subject: [PATCH v6? 09/17] refs file-backend.c: deal with errno directly in
+ verify_lock()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Instead of using the refs_read_ref_full() wrapper function let's use
+the refs_resolve_ref_unsafe_with_errno() function it resolves to (note
+the inverted return values).
+
+Per a preceding change to remove an "errno" assignment from
+verify_lock() we can explicitly ignore errno here, we use the strbuf
+"err" API instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 3617949d35c..f0a494de92a 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -870,11 +870,12 @@ static int verify_lock(struct ref_store *ref_store, struct ref_lock *lock,
+ 		       const struct object_id *old_oid, int mustexist,
+ 		       struct strbuf *err)
+ {
++	int ignore_errno;
+ 	assert(err);
+ 
+-	if (refs_read_ref_full(ref_store, lock->ref_name,
+-			       mustexist ? RESOLVE_REF_READING : 0,
+-			       &lock->old_oid, NULL)) {
++	if (!refs_resolve_ref_unsafe_with_errno(ref_store, lock->ref_name,
++						mustexist ? RESOLVE_REF_READING : 0,
++						&lock->old_oid, NULL, &ignore_errno)) {
+ 		if (old_oid) {
+ 			strbuf_addf(err, "can't verify ref '%s'", lock->ref_name);
+ 			return -1;
+-- 
+2.32.0-dev
+

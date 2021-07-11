@@ -1,0 +1,77 @@
+From e9ac846fe348b925b0a0b35fe13bb18f4f5ebd1b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-15.17-e9ac846fe34-20210711T153247Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+References: <pull.1012.v5.git.git.1625684869.gitgitgadget@gmail.com>
+	<cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 11 Jul 2021 17:10:48 +0200
+Subject: [PATCH v6? 15/17] refs API: make resolve_ref_unsafe() not set errno
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the resolve_ref_unsafe() wrapper function to use
+refs_resolve_ref_unsafe_with_errno() directly.
+
+From a reading of the callers I determined that the only one who cared
+about errno was a sequencer.c caller added in e47c6cafcb5 (commit:
+move print_commit_summary() to libgit, 2017-11-24), I'm migrating it
+to using refs_resolve_ref_unsafe_with_errno() directly.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c      |  7 +++++--
+ sequencer.c | 10 ++++++++--
+ 2 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index 0364b68f8fa..1d44027497e 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1811,8 +1811,11 @@ int refs_init_db(struct strbuf *err)
+ const char *resolve_ref_unsafe(const char *refname, int resolve_flags,
+ 			       struct object_id *oid, int *flags)
+ {
+-	return refs_resolve_ref_unsafe(get_main_ref_store(the_repository), refname,
+-				       resolve_flags, oid, flags);
++	struct ref_store *refs = get_main_ref_store(the_repository);
++	int ignore_errno;
++
++	return refs_resolve_ref_unsafe_with_errno(refs, refname, resolve_flags,
++						  oid, flags, &ignore_errno);
+ }
+ 
+ int resolve_gitlink_ref(const char *submodule, const char *refname,
+diff --git a/sequencer.c b/sequencer.c
+index 0bec01cf38e..c4772413b86 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -1267,6 +1267,8 @@ void print_commit_summary(struct repository *r,
+ 	struct pretty_print_context pctx = {0};
+ 	struct strbuf author_ident = STRBUF_INIT;
+ 	struct strbuf committer_ident = STRBUF_INIT;
++	struct ref_store *refs;
++	int resolve_errno;
+ 
+ 	commit = lookup_commit(r, oid);
+ 	if (!commit)
+@@ -1316,9 +1318,13 @@ void print_commit_summary(struct repository *r,
+ 	rev.diffopt.break_opt = 0;
+ 	diff_setup_done(&rev.diffopt);
+ 
+-	head = resolve_ref_unsafe("HEAD", 0, NULL, NULL);
+-	if (!head)
++	refs = get_main_ref_store(the_repository);
++	head = refs_resolve_ref_unsafe_with_errno(refs, "HEAD", 0, NULL, NULL,
++						  &resolve_errno);
++	if (!head) {
++		errno = resolve_errno;
+ 		die_errno(_("unable to resolve HEAD after creating commit"));
++	}
+ 	if (!strcmp(head, "HEAD"))
+ 		head = _("detached HEAD");
+ 	else
+-- 
+2.32.0-dev
+

@@ -1,0 +1,55 @@
+From 3b6b894796edbf12cf693c91238353a8be55ccda Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.17-3b6b894796e-20210711T153247Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+References: <pull.1012.v5.git.git.1625684869.gitgitgadget@gmail.com>
+	<cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 11 Jul 2021 16:05:11 +0200
+Subject: [PATCH v6? 01/17] refs file-backend.c: stop setting "EBUSY" in
+ verify_lock()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This EBUSY was set in 835e3c992fd (refs.c: verify_lock should set
+errno to something meaningful, 2014-06-20) to fix a bug in code that
+was later refactored in cd94f765720 (fetch.c: change s_update_ref to
+use a ref transaction, 2014-04-28) to not use errno at all, the two
+were a part of the same series.
+
+So this was only ever needed for an intra-series bugfix, and we kept
+it around for no reason. Removing it makes subsequent commits where we
+refactor code surrounding verify_lock() (which may use errno) easier
+to reason about.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 677b7e4cdd2..222404eba68 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -869,9 +869,7 @@ static int verify_lock(struct ref_store *ref_store, struct ref_lock *lock,
+ 			       mustexist ? RESOLVE_REF_READING : 0,
+ 			       &lock->old_oid, NULL)) {
+ 		if (old_oid) {
+-			int save_errno = errno;
+ 			strbuf_addf(err, "can't verify ref '%s'", lock->ref_name);
+-			errno = save_errno;
+ 			return -1;
+ 		} else {
+ 			oidclr(&lock->old_oid);
+@@ -883,7 +881,6 @@ static int verify_lock(struct ref_store *ref_store, struct ref_lock *lock,
+ 			    lock->ref_name,
+ 			    oid_to_hex(&lock->old_oid),
+ 			    oid_to_hex(old_oid));
+-		errno = EBUSY;
+ 		return -1;
+ 	}
+ 	return 0;
+-- 
+2.32.0-dev
+

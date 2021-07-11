@@ -1,0 +1,137 @@
+From 8666238d507253547c6de73dc935ea36571a3e8d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.17-8666238d507-20210711T153247Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+References: <pull.1012.v5.git.git.1625684869.gitgitgadget@gmail.com>
+	<cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+From: Han-Wen Nienhuys <hanwen@google.com>
+Date: Fri, 23 Apr 2021 16:22:38 +0200
+Subject: [PATCH v6? 03/17] refs/files-backend: stop setting errno from
+ lock_ref_oid_basic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+refs/files-backend.c::lock_ref_oid_basic() tries to signal how it failed
+to its callers using errno.
+
+It is safe to stop setting errno here, because the callers of this
+file-scope static function are
+
+* files_copy_or_rename_ref()
+* files_create_symref()
+* files_reflog_expire()
+
+None of them looks at errno after seeing a negative return from
+lock_ref_oid_basic() to make any decision, and no caller of these three
+functions looks at errno after they signal a failure by returning a
+negative value. In particular,
+
+* files_copy_or_rename_ref() - here, calls are followed by error()
+(which performs I/O) or write_ref_to_lockfile() (which calls
+parse_object() which may perform I/O)
+
+* files_create_symref() - here, calls are followed by error() or
+create_symref_locked() (which performs I/O and does not inspect
+errno)
+
+* files_reflog_expire() - here, calls are followed by error() or
+refs_reflog_exists() (which calls a function in a vtable that is not
+documented to use and/or preserve errno)
+
+In the case of the "errno != ENOTDIR" case that originates in 5b2d8d6f218
+(lock_ref_sha1_basic(): improve diagnostics for ref D/F conflicts,
+2015-05-11), there the "last_errno" was saved away to return it from
+lock_ref_oid_basic(), now that we're no longer doing that we can skip
+that entirely and use "errno" directly. A follow-up change will
+extract the specific errno we want earlier in this function.
+
+Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 24 +++++++++---------------
+ 1 file changed, 9 insertions(+), 15 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 222404eba68..bb1e5971511 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -907,7 +907,6 @@ static int create_reflock(const char *path, void *cb)
+ 
+ /*
+  * Locks a ref returning the lock on success and NULL on failure.
+- * On failure errno is set to something meaningful.
+  */
+ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 					   const char *refname,
+@@ -919,7 +918,6 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ {
+ 	struct strbuf ref_file = STRBUF_INIT;
+ 	struct ref_lock *lock;
+-	int last_errno = 0;
+ 	int mustexist = (old_oid && !is_null_oid(old_oid));
+ 	int resolve_flags = RESOLVE_REF_NO_RECURSE;
+ 	int resolved;
+@@ -946,7 +944,6 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 		 * to remain.
+ 		 */
+ 		if (remove_empty_directories(&ref_file)) {
+-			last_errno = errno;
+ 			if (!refs_verify_refname_available(
+ 					    &refs->base,
+ 					    refname, extras, skip, err))
+@@ -958,14 +955,15 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 						     refname, resolve_flags,
+ 						     &lock->old_oid, type);
+ 	}
+-	if (!resolved) {
+-		last_errno = errno;
+-		if (last_errno != ENOTDIR ||
+-		    !refs_verify_refname_available(&refs->base, refname,
+-						   extras, skip, err))
+-			strbuf_addf(err, "unable to resolve reference '%s': %s",
+-				    refname, strerror(last_errno));
+-
++	if (!resolved &&
++	    (errno != ENOTDIR ||
++	     /* in case of D/F conflict, try to generate a better error
++	      * message. If that fails, fall back to strerror(ENOTDIR).
++	      */
++	     !refs_verify_refname_available(&refs->base, refname, extras,
++					    skip, err))) {
++		strbuf_addf(err, "unable to resolve reference '%s': %s",
++			    refname, strerror(errno));
+ 		goto error_return;
+ 	}
+ 
+@@ -978,20 +976,17 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 	if (is_null_oid(&lock->old_oid) &&
+ 	    refs_verify_refname_available(refs->packed_ref_store, refname,
+ 					  extras, skip, err)) {
+-		last_errno = ENOTDIR;
+ 		goto error_return;
+ 	}
+ 
+ 	lock->ref_name = xstrdup(refname);
+ 
+ 	if (raceproof_create_file(ref_file.buf, create_reflock, &lock->lk)) {
+-		last_errno = errno;
+ 		unable_to_lock_message(ref_file.buf, errno, err);
+ 		goto error_return;
+ 	}
+ 
+ 	if (verify_lock(&refs->base, lock, old_oid, mustexist, err)) {
+-		last_errno = errno;
+ 		goto error_return;
+ 	}
+ 	goto out;
+@@ -1002,7 +997,6 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 
+  out:
+ 	strbuf_release(&ref_file);
+-	errno = last_errno;
+ 	return lock;
+ }
+ 
+-- 
+2.32.0-dev
+
