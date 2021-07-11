@@ -1,8 +1,8 @@
-From 44155ad45064d1ec9a575d988079afb876e8fbaf Mon Sep 17 00:00:00 2001
-Message-Id: <patch-06.17-44155ad4506-20210711T153247Z-avarab@gmail.com>
-In-Reply-To: <cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+From d874cbc965ee3ea28aa9c9e8df078f42beb10876 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.17-d874cbc965e-20210711T161212Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20210711T161212Z-avarab@gmail.com>
 References: <pull.1012.v5.git.git.1625684869.gitgitgadget@gmail.com>
-	<cover-00.17-00000000000-20210711T153247Z-avarab@gmail.com>
+	<cover-00.17-00000000000-20210711T161212Z-avarab@gmail.com>
 From: Han-Wen Nienhuys <hanwen@google.com>
 Date: Tue, 6 Jul 2021 11:33:05 +0200
 Subject: [PATCH v6? 06/17] refs: explicitly return failure_errno from
@@ -33,9 +33,9 @@ Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
  refs.c               |  8 +++++---
- refs/files-backend.c | 28 +++++++++++++++++-----------
+ refs/files-backend.c | 30 +++++++++++++++++++-----------
  refs/refs-internal.h |  6 ++++--
- 3 files changed, 26 insertions(+), 16 deletions(-)
+ 3 files changed, 28 insertions(+), 16 deletions(-)
 
 diff --git a/refs.c b/refs.c
 index 406e27213b8..af01a692cb9 100644
@@ -71,7 +71,7 @@ index 406e27213b8..af01a692cb9 100644
  
  	return ref_store->be->read_raw_ref(ref_store, refname, oid, referent,
 diff --git a/refs/files-backend.c b/refs/files-backend.c
-index 6e0471b11be..539e97304ee 100644
+index ac5307a19da..62bcef2f45f 100644
 --- a/refs/files-backend.c
 +++ b/refs/files-backend.c
 @@ -355,6 +355,7 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
@@ -82,12 +82,13 @@ index 6e0471b11be..539e97304ee 100644
  
  	*type = 0;
  	strbuf_reset(&sb_path);
-@@ -382,11 +383,12 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+@@ -382,11 +383,13 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
  
  	if (lstat(path, &st) < 0) {
  		int ignore_errno;
 -		if (errno != ENOENT)
 +		myerr = errno;
++		errno = 0;
 +		if (myerr != ENOENT)
  			goto out;
  		if (refs_read_raw_ref(refs->packed_ref_store, refname, oid,
@@ -97,26 +98,27 @@ index 6e0471b11be..539e97304ee 100644
  			goto out;
  		}
  		ret = 0;
-@@ -397,7 +399,8 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+@@ -397,7 +400,9 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
  	if (S_ISLNK(st.st_mode)) {
  		strbuf_reset(&sb_contents);
  		if (strbuf_readlink(&sb_contents, path, st.st_size) < 0) {
 -			if (errno == ENOENT || errno == EINVAL)
 +			myerr = errno;
++			errno = 0;
 +			if (myerr == ENOENT || myerr == EINVAL)
  				/* inconsistent with lstat; retry */
  				goto stat_ref;
  			else
-@@ -427,7 +430,7 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+@@ -427,7 +432,7 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
  		 */
  		if (refs_read_raw_ref(refs->packed_ref_store, refname, oid,
  				      referent, type, &ignore_errno)) {
 -			errno = EISDIR;
-+			myerr = errno = EISDIR;
++			myerr = EISDIR;
  			goto out;
  		}
  		ret = 0;
-@@ -440,7 +443,8 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+@@ -440,7 +445,8 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
  	 */
  	fd = open(path, O_RDONLY);
  	if (fd < 0) {
@@ -126,7 +128,7 @@ index 6e0471b11be..539e97304ee 100644
  			/* inconsistent with lstat; retry */
  			goto stat_ref;
  		else
-@@ -448,26 +452,28 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+@@ -448,26 +454,28 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
  	}
  	strbuf_reset(&sb_contents);
  	if (strbuf_read(&sb_contents, fd, 256) < 0) {
@@ -160,7 +162,7 @@ index 6e0471b11be..539e97304ee 100644
  {
  	const char *p;
  	if (skip_prefix(buf, "ref:", &buf)) {
-@@ -486,7 +492,7 @@ int parse_loose_ref_contents(const char *buf, struct object_id *oid,
+@@ -486,7 +494,7 @@ int parse_loose_ref_contents(const char *buf, struct object_id *oid,
  	if (parse_oid_hex(buf, oid, &p) ||
  	    (*p != '\0' && !isspace(*p))) {
  		*type |= REF_ISBROKEN;
