@@ -1,9 +1,9 @@
 From 91b390d42804f0bde05ad0d7497d147afa2d3f65 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-0.6-0000000000-20210713T074741Z-avarab@gmail.com>
+Message-Id: <cover-0.6-0000000000-20210713T074810Z-avarab@gmail.com>
 In-Reply-To: <cover-0.6-00000000000-20210710T084445Z-avarab@gmail.com>
 References: <cover-0.6-00000000000-20210710T084445Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 13 Jul 2021 09:47:41 +0200
+Date: Tue, 13 Jul 2021 09:48:10 +0200
 Subject: [PATCH v2 0/6] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -49,7 +49,109 @@ Content-Transfer-Encoding: 8bit
 
 Range-diff against v1:
 -:  ---------- > 1:  a855bfceb2 *.c static functions: don't forward-declare __attribute__
--:  ---------- > 2:  9c1492b006 sequencer.c: move static function to avoid forward decl
+2:  daca344a16 ! 2:  9c1492b006 bugreport.c: tweak cmd_bugreport() to use __attribute__((printf))
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    bugreport.c: tweak cmd_bugreport() to use __attribute__((printf))
+    +    sequencer.c: move static function to avoid forward decl
+     
+    -    As noted in the preceding commit we had no __attribute__((format))
+    -    check for strbuf_addftime(), and furthermore had no in-tree user that
+    -    passed it a fixed string.
+    -
+    -    Let's tweak this codepath added in 238b439d698 (bugreport: add tool to
+    -    generate debugging info, 2020-04-16) to make use of the compile-time
+    -    check.
+    +    Move the reflog_message() function added in
+    +    96e832a5fd6 (sequencer (rebase -i): refactor setting the reflog
+    +    message, 2017-01-02), it gained another user in
+    +    9055e401dd6 (sequencer: introduce new commands to reset the revision,
+    +    2018-04-25). Let's move it around and remove the forward declaration
+    +    added in the latter commit.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## builtin/bugreport.c ##
+    -@@ builtin/bugreport.c: int cmd_bugreport(int argc, const char **argv, const char *prefix)
+    - 	time_t now = time(NULL);
+    - 	struct tm tm;
+    - 	char *option_output = NULL;
+    --	char *option_suffix = "%Y-%m-%d-%H%M";
+    -+	char *option_suffix = NULL;
+    - 	const char *user_relative_path = NULL;
+    - 	char *prefixed_filename;
+    + ## sequencer.c ##
+    +@@ sequencer.c: static int do_label(struct repository *r, const char *name, int len)
+    + }
+      
+    -@@ builtin/bugreport.c: int cmd_bugreport(int argc, const char **argv, const char *prefix)
+    - 	strbuf_complete(&report_path, '/');
+    + static const char *reflog_message(struct replay_opts *opts,
+    +-	const char *sub_action, const char *fmt, ...);
+    ++	const char *sub_action, const char *fmt, ...)
+    ++{
+    ++	va_list ap;
+    ++	static struct strbuf buf = STRBUF_INIT;
+    ++	char *reflog_action = getenv(GIT_REFLOG_ACTION);
+    ++
+    ++	va_start(ap, fmt);
+    ++	strbuf_reset(&buf);
+    ++	strbuf_addstr(&buf, reflog_action ? reflog_action : action_name(opts));
+    ++	if (sub_action)
+    ++		strbuf_addf(&buf, " (%s)", sub_action);
+    ++	if (fmt) {
+    ++		strbuf_addstr(&buf, ": ");
+    ++		strbuf_vaddf(&buf, fmt, ap);
+    ++	}
+    ++	va_end(ap);
+    ++
+    ++	return buf.buf;
+    ++}
+      
+    - 	strbuf_addstr(&report_path, "git-bugreport-");
+    --	strbuf_addftime(&report_path, option_suffix, localtime_r(&now, &tm), 0, 0);
+    -+	/*
+    -+	 * This is an if/else for the benefit of the compile-time
+    -+	 * strftime() format checking we have for strbuf_addftime().
+    -+	 */
+    -+	if (option_suffix)
+    -+		strbuf_addftime(&report_path, option_suffix, localtime_r(&now, &tm), 0, 0);
+    -+	else
+    -+		strbuf_addftime(&report_path, "%Y-%m-%d-%H%M", localtime_r(&now, &tm), 0, 0);
+    - 	strbuf_addstr(&report_path, ".txt");
+    + static int do_reset(struct repository *r,
+    + 		    const char *name, int len,
+    +@@ sequencer.c: int apply_autostash_oid(const char *stash_oid)
+    + 	return apply_save_autostash_oid(stash_oid, 1);
+    + }
+      
+    - 	switch (safe_create_leading_directories(report_path.buf)) {
+    +-static const char *reflog_message(struct replay_opts *opts,
+    +-	const char *sub_action, const char *fmt, ...)
+    +-{
+    +-	va_list ap;
+    +-	static struct strbuf buf = STRBUF_INIT;
+    +-	char *reflog_action = getenv(GIT_REFLOG_ACTION);
+    +-
+    +-	va_start(ap, fmt);
+    +-	strbuf_reset(&buf);
+    +-	strbuf_addstr(&buf, reflog_action ? reflog_action : action_name(opts));
+    +-	if (sub_action)
+    +-		strbuf_addf(&buf, " (%s)", sub_action);
+    +-	if (fmt) {
+    +-		strbuf_addstr(&buf, ": ");
+    +-		strbuf_vaddf(&buf, fmt, ap);
+    +-	}
+    +-	va_end(ap);
+    +-
+    +-	return buf.buf;
+    +-}
+    +-
+    + static int run_git_checkout(struct repository *r, struct replay_opts *opts,
+    + 			    const char *commit, const char *action)
+    + {
 -:  ---------- > 3:  bc3fee3b7a *.c static functions: add missing __attribute__((format))
 1:  3bf8637c16 ! 4:  82ad4762bd *.h: add a few missing  __attribute__((format))
     @@ Metadata
@@ -118,7 +220,6 @@ Range-diff against v1:
     - 
     - 	return 0;
     - }
-2:  daca344a16 < -:  ---------- bugreport.c: tweak cmd_bugreport() to use __attribute__((printf))
 3:  365c5cf50b < -:  ---------- git-compat-util.h: add __attribute__((printf)) to git_*printf*
 -:  ---------- > 5:  372103fcba advice.h: add missing __attribute__((format)) & fix usage
 -:  ---------- > 6:  91b390d428 strbuf.h: add a comment about "missing" strftime() checking
