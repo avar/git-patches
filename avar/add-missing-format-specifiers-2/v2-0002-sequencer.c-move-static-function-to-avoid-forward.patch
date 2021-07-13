@@ -1,0 +1,88 @@
+From 9c1492b00696815b9fc289b4f35833e54c2a416c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.6-9c1492b006-20210713T074741Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-0000000000-20210713T074741Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210710T084445Z-avarab@gmail.com>
+	<cover-0.6-0000000000-20210713T074741Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 7 Jul 2021 10:14:40 +0200
+Subject: [PATCH v2 2/6] sequencer.c: move static function to avoid forward
+ decl
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the reflog_message() function added in
+96e832a5fd6 (sequencer (rebase -i): refactor setting the reflog
+message, 2017-01-02), it gained another user in
+9055e401dd6 (sequencer: introduce new commands to reset the revision,
+2018-04-25). Let's move it around and remove the forward declaration
+added in the latter commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 41 +++++++++++++++++++----------------------
+ 1 file changed, 19 insertions(+), 22 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index 0bec01cf38..c316d8374a 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -3599,7 +3599,25 @@ static int do_label(struct repository *r, const char *name, int len)
+ }
+ 
+ static const char *reflog_message(struct replay_opts *opts,
+-	const char *sub_action, const char *fmt, ...);
++	const char *sub_action, const char *fmt, ...)
++{
++	va_list ap;
++	static struct strbuf buf = STRBUF_INIT;
++	char *reflog_action = getenv(GIT_REFLOG_ACTION);
++
++	va_start(ap, fmt);
++	strbuf_reset(&buf);
++	strbuf_addstr(&buf, reflog_action ? reflog_action : action_name(opts));
++	if (sub_action)
++		strbuf_addf(&buf, " (%s)", sub_action);
++	if (fmt) {
++		strbuf_addstr(&buf, ": ");
++		strbuf_vaddf(&buf, fmt, ap);
++	}
++	va_end(ap);
++
++	return buf.buf;
++}
+ 
+ static int do_reset(struct repository *r,
+ 		    const char *name, int len,
+@@ -4178,27 +4196,6 @@ int apply_autostash_oid(const char *stash_oid)
+ 	return apply_save_autostash_oid(stash_oid, 1);
+ }
+ 
+-static const char *reflog_message(struct replay_opts *opts,
+-	const char *sub_action, const char *fmt, ...)
+-{
+-	va_list ap;
+-	static struct strbuf buf = STRBUF_INIT;
+-	char *reflog_action = getenv(GIT_REFLOG_ACTION);
+-
+-	va_start(ap, fmt);
+-	strbuf_reset(&buf);
+-	strbuf_addstr(&buf, reflog_action ? reflog_action : action_name(opts));
+-	if (sub_action)
+-		strbuf_addf(&buf, " (%s)", sub_action);
+-	if (fmt) {
+-		strbuf_addstr(&buf, ": ");
+-		strbuf_vaddf(&buf, fmt, ap);
+-	}
+-	va_end(ap);
+-
+-	return buf.buf;
+-}
+-
+ static int run_git_checkout(struct repository *r, struct replay_opts *opts,
+ 			    const char *commit, const char *action)
+ {
+-- 
+2.32.0-dev
+
