@@ -1,0 +1,102 @@
+From de0838fe996dfd42a335a506f1b632af76f0bc89 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Jul 2021 11:45:06 +0200
+Subject: [PATCH] refs file backend: remove dead "errno == EISDIR" code
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When we lock a reference like "foo" we need to handle the case where
+"foo" exists, but is an empty directory. That's what this code added
+in bc7127ef0f (ref locking: allow 'foo' when 'foo/bar' used to exist
+but not anymore., 2006-09-30) seems like it should be dealing with.
+
+Except it doesn't, and we never take this branch. The reason is that
+when bc7127ef0f was written this looked like:
+
+	ref = resolve_ref([...]);
+	if (!ref && errno == EISDIR) {
+	[...]
+
+And in resolve_ref() we had this code:
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return NULL;
+
+I.e. we would attempt to read "foo" with open(), which would fail with
+EISDIR and we'd return NULL. We'd then take this branch, call
+remove_empty_directories() and continue.
+
+Since a1c1d8170d (refs_resolve_ref_unsafe: handle d/f conflicts for
+writes, 2017-10-06) we don't, because our our callstack will look
+something like:
+
+    files_copy_or_rename_ref() -> lock_ref_oid_basic() -> refs_resolve_ref_unsafe()
+
+And then the refs_resolve_ref_unsafe() call here will in turn (in the
+code added in a1c1d8170d) do the equivalent of this (via a call to
+refs_read_raw_ref()):
+
+	/* Via refs_read_raw_ref() */
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		/* get errno == EISDIR */
+	/* later, in refs_resolve_ref_unsafe() */
+	if ([...] && errno != EISDIR)
+		return NULL;
+	[...]
+	/* returns the refs/heads/foo to the caller, even though it's a directory */
+	return refname;
+
+I.e. even though we got an "errno == EISDIR" we won't take this
+branch, since in cases of EISDIR "resolved" is always
+non-NULL. I.e. we pretend at this point as though everything's OK and
+there is no "foo" directory.
+
+We then proceed with the entire ref update and don't call
+remove_empty_directories() until we call commit_ref_update(). See
+5387c0d883 (commit_ref(): if there is an empty dir in the way, delete
+it, 2016-05-05) for the addition of that code.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 20 --------------------
+ 1 file changed, 20 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 677b7e4cdd..7e4963fd07 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -941,26 +941,6 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 	resolved = !!refs_resolve_ref_unsafe(&refs->base,
+ 					     refname, resolve_flags,
+ 					     &lock->old_oid, type);
+-	if (!resolved && errno == EISDIR) {
+-		/*
+-		 * we are trying to lock foo but we used to
+-		 * have foo/bar which now does not exist;
+-		 * it is normal for the empty directory 'foo'
+-		 * to remain.
+-		 */
+-		if (remove_empty_directories(&ref_file)) {
+-			last_errno = errno;
+-			if (!refs_verify_refname_available(
+-					    &refs->base,
+-					    refname, extras, skip, err))
+-				strbuf_addf(err, "there are still refs under '%s'",
+-					    refname);
+-			goto error_return;
+-		}
+-		resolved = !!refs_resolve_ref_unsafe(&refs->base,
+-						     refname, resolve_flags,
+-						     &lock->old_oid, type);
+-	}
+ 	if (!resolved) {
+ 		last_errno = errno;
+ 		if (last_errno != ENOTDIR ||
+-- 
+2.32.0.851.g0fc62a9785
+
