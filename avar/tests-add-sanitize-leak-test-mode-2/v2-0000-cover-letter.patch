@@ -1,0 +1,117 @@
+From c80778900e7d2cc3968b1afc7d5a6c0b61f78ea5 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.4-0000000000-20210714T141916Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-0000000000-20210714T001007Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210714T001007Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 14 Jul 2021 16:19:16 +0200
+Subject: [PATCH v2 0/4] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (4):
+  tests: add a test mode for SANITIZE=leak, run it in CI
+  SANITIZE tests: fix memory leaks in t13*config*, add to whitelist
+  SANITIZE tests: fix memory leaks in t5701*, add to whitelist
+  SANITIZE tests: fix leak in mailmap.c
+
+ .github/workflows/main.yml  |  6 ++++
+ Makefile                    |  5 +++
+ ci/install-dependencies.sh  |  4 +--
+ ci/lib.sh                   | 18 ++++++++---
+ ci/run-build-and-tests.sh   |  4 +--
+ config.c                    | 17 ++++++++---
+ mailmap.c                   |  2 ++
+ protocol-caps.c             |  5 +--
+ t/README                    | 16 ++++++++++
+ t/t0500-progress-display.sh |  3 +-
+ t/t1300-config.sh           | 16 ++++++----
+ t/t4203-mailmap.sh          |  6 ++++
+ t/t5701-git-serve.sh        |  3 +-
+ t/test-lib.sh               | 61 +++++++++++++++++++++++++++++++++++++
+ 14 files changed, 142 insertions(+), 24 deletions(-)
+
+Range-diff against v1:
+1:  b7948c408d ! 1:  84e9074621 tests: add a test mode for SANITIZE=leak, run it in CI
+    @@ .github/workflows/main.yml: jobs:
+     +            cc: clang
+     +            pool: ubuntu-latest
+     +          - jobname: linux-gcc-sanitize-leak
+    -+            cc: clang
+    ++            cc: gcc
+     +            pool: ubuntu-latest
+          env:
+            CC: ${{matrix.vector.cc}}
+    @@ ci/install-dependencies.sh: UBUNTU_COMMON_PKGS="make libssl-dev libcurl4-openssl
+      
+      case "$jobname" in
+     -linux-clang|linux-gcc)
+    -+linux-clang*|linux-gcc*)
+    ++linux-clang|linux-gcc|linux-clang-sanitize-leak|linux-gcc-sanitize-leak)
+      	sudo apt-add-repository -y "ppa:ubuntu-toolchain-r/test"
+      	sudo apt-get -q update
+      	sudo apt-get -q -y install language-pack-is libsvn-perl apache2 \
+      		$UBUNTU_COMMON_PKGS
+      	case "$jobname" in
+     -	linux-gcc)
+    -+	linux-gcc*)
+    ++	linux-gcc|linux-gcc-sanitize-leak)
+      		sudo apt-get -q -y install gcc-8
+      		;;
+      	esac
+    @@ ci/lib.sh: export GIT_TEST_CLONE_2GB=true
+     -linux-clang|linux-gcc)
+     -	if [ "$jobname" = linux-gcc ]
+     -	then
+    -+linux-clang*|linux-gcc*)
+    ++linux-clang|linux-gcc|linux-clang-sanitize-leak|linux-gcc-sanitize-leak)
+     +	case "$jobname" in
+    -+	linux-gcc*)
+    ++	linux-gcc|linux-gcc-sanitize-leak)
+      		export CC=gcc-8
+      		MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=/usr/bin/python3"
+     -	else
+    @@ ci/lib.sh: linux-musl)
+      esac
+      
+     +case "$jobname" in
+    -+linux-*-sanitize-leak)
+    ++linux-clang-sanitize-leak|linux-gcc-sanitize-leak)
+     +	export SANITIZE=leak
+     +	;;
+     +esac
+    @@ ci/run-build-and-tests.sh: esac
+      make
+      case "$jobname" in
+     -linux-gcc)
+    -+linux-gcc*)
+    ++linux-gcc|linux-gcc-sanitize-leak)
+      	export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+      	make test
+      	export GIT_TEST_SPLIT_INDEX=yes
+    @@ ci/run-build-and-tests.sh: linux-gcc)
+      	make test
+      	;;
+     -linux-clang)
+    -+linux-clang*)
+    ++linux-clang|linux-clang-sanitize-leak)
+      	export GIT_TEST_DEFAULT_HASH=sha1
+      	make test
+      	export GIT_TEST_DEFAULT_HASH=sha256
+2:  babcb1c289 = 2:  76d6fd06ec SANITIZE tests: fix memory leaks in t13*config*, add to whitelist
+3:  11aa2f3bb5 = 3:  a0198d9789 SANITIZE tests: fix memory leaks in t5701*, add to whitelist
+4:  7f4e433559 ! 4:  c80778900e SANITIZE tests: fix leak in mailmap.c
+    @@ Commit message
+         mailmap_entry structure, we didn't free the structure itself. The same
+         goes for the "mailmap_info" structure.
+     
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +
+      ## mailmap.c ##
+     @@ mailmap.c: static void free_mailmap_info(void *p, const char *s)
+      		 s, debug_str(mi->name), debug_str(mi->email));
+-- 
+2.32.0.853.g5a570c9bf9
+

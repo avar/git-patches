@@ -1,0 +1,68 @@
+From c80778900e7d2cc3968b1afc7d5a6c0b61f78ea5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.4-c80778900e-20210714T141916Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-0000000000-20210714T141916Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210714T001007Z-avarab@gmail.com>
+	<cover-0.4-0000000000-20210714T141916Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 13 Jul 2021 17:00:23 +0200
+Subject: [PATCH v2 4/4] SANITIZE tests: fix leak in mailmap.c
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Get closer to being able to run t4203-mailmap.sh by fixing a couple of
+memory leak in mailmap.c.
+
+In the free_mailmap_entry() code added in 0925ce4d49 (Add map_user()
+and clear_mailmap() to mailmap, 2009-02-08) the intent was clearly to
+clear the "me" structure, but while we freed parts of the
+mailmap_entry structure, we didn't free the structure itself. The same
+goes for the "mailmap_info" structure.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ mailmap.c          | 2 ++
+ t/t4203-mailmap.sh | 6 ++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/mailmap.c b/mailmap.c
+index d1f7c0d272..e1c8736093 100644
+--- a/mailmap.c
++++ b/mailmap.c
+@@ -36,6 +36,7 @@ static void free_mailmap_info(void *p, const char *s)
+ 		 s, debug_str(mi->name), debug_str(mi->email));
+ 	free(mi->name);
+ 	free(mi->email);
++	free(mi);
+ }
+ 
+ static void free_mailmap_entry(void *p, const char *s)
+@@ -51,6 +52,7 @@ static void free_mailmap_entry(void *p, const char *s)
+ 
+ 	me->namemap.strdup_strings = 1;
+ 	string_list_clear_func(&me->namemap, free_mailmap_info);
++	free(me);
+ }
+ 
+ /*
+diff --git a/t/t4203-mailmap.sh b/t/t4203-mailmap.sh
+index 0b2d21ec55..c7de4299cf 100755
+--- a/t/t4203-mailmap.sh
++++ b/t/t4203-mailmap.sh
+@@ -79,6 +79,12 @@ test_expect_success 'check-mailmap bogus contact --stdin' '
+ 	test_must_fail git check-mailmap --stdin bogus </dev/null
+ '
+ 
++if test_have_prereq SANITIZE_LEAK
++then
++	skip_all='skipping the rest of mailmap tests under SANITIZE_LEAK'
++	test_done
++fi
++
+ test_expect_success 'No mailmap' '
+ 	cat >expect <<-EOF &&
+ 	$GIT_AUTHOR_NAME (1):
+-- 
+2.32.0.853.g5a570c9bf9
+
