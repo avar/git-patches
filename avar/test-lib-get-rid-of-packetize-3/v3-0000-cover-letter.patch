@@ -1,0 +1,150 @@
+From 392775d5bef8b85dfe8379c93d8742376efd272d Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.5-0000000000-20210714T004651Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210712T164208Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210712T164208Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 14 Jul 2021 02:46:51 +0200
+Subject: [PATCH v3 0/5] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (5):
+  serve tests: add missing "extra delim" test
+  serve tests: use test_cmp in "protocol violations" test
+  tests: replace [de]packetize() shell+perl test-tool pkt-line
+  tests: replace remaining packetize() with "test-tool pkt-line"
+  test-lib-functions.sh: remove unused [de]packetize() functions
+
+ t/helper/test-pkt-line.c               | 12 +++++
+ t/t5410-receive-pack-alternates.sh     | 42 +++++++++++++-----
+ t/t5411/once-0010-report-status-v1.sh  | 20 ++++-----
+ t/t5500-fetch-pack.sh                  | 15 ++++---
+ t/t5530-upload-pack-error.sh           | 24 +++++-----
+ t/t5562-http-backend-content-length.sh | 15 ++++---
+ t/t5570-git-daemon.sh                  | 20 ++++++---
+ t/t5704-protocol-violations.sh         | 61 ++++++++++++++++++--------
+ t/test-lib-functions.sh                | 42 ------------------
+ 9 files changed, 137 insertions(+), 114 deletions(-)
+
+Range-diff against v2:
+-:  ---------- > 1:  67aa814115 serve tests: add missing "extra delim" test
+-:  ---------- > 2:  64dfd14865 serve tests: use test_cmp in "protocol violations" test
+1:  c33f344ab2 ! 3:  227adfc097 tests: replace [de]packetize() shell+perl test-tool pkt-line
+    @@ Commit message
+         more legible code, and for anyone who cares about efficiency it'll be
+         faster.
+     
+    +    The conversion away from extract_haves() in
+    +    t5410-receive-pack-alternates.sh and the "just pick out" logic in
+    +    t5570-git-daemon.sh isn't strictly required for this migration, but in
+    +    this case it's easy enough to test_cmp the whole output, so let's just
+    +    do that.
+    +
+    +    Similarly, there are cases here of changing "printf 0000" to a version
+    +    that'll emit a trailing newline after "0000", or where we can do away
+    +    with the "0000" trailer. Let's just always include, and include it in
+    +    the same way.
+    +
+         We can't convert all the users of packetize(), it has a feature the
+         test-tool is missing. This'll be addressed in the subsequent commit.
+     
+    @@ t/t5410-receive-pack-alternates.sh: test_expect_success 'with core.alternateRefs
+     
+      ## t/t5411/once-0010-report-status-v1.sh ##
+     @@ t/t5411/once-0010-report-status-v1.sh: test_expect_success "proc-receive: report status v1" '
+    + 			printf "%s %s refs/heads/main\0report-status object-format=$GIT_DEFAULT_HASH\n" \
+      				$A $B | packetize
+      		fi &&
+    - 		printf "%s %s refs/for/main/topic1\n" \
+    +-		printf "%s %s refs/for/main/topic1\n" \
+     -			$ZERO_OID $A | packetize &&
+    -+			$ZERO_OID $A | test-tool pkt-line pack &&
+    - 		printf "%s %s refs/heads/foo\n" \
+    +-		printf "%s %s refs/heads/foo\n" \
+     -			$ZERO_OID $A | packetize &&
+    -+			$ZERO_OID $A | test-tool pkt-line pack &&
+    - 		printf "%s %s refs/for/next/topic\n" \
+    +-		printf "%s %s refs/for/next/topic\n" \
+     -			$ZERO_OID $A | packetize &&
+    -+			$ZERO_OID $A | test-tool pkt-line pack &&
+    - 		printf "%s %s refs/for/main/topic2\n" \
+    +-		printf "%s %s refs/for/main/topic2\n" \
+     -			$ZERO_OID $A | packetize &&
+    -+			$ZERO_OID $A | test-tool pkt-line pack &&
+    - 		printf 0000 &&
+    +-		printf 0000 &&
+    ++		test-tool pkt-line pack <<-EOF &&
+    ++		$ZERO_OID $A refs/for/main/topic1
+    ++		$ZERO_OID $A refs/heads/foo
+    ++		$ZERO_OID $A refs/for/next/topic
+    ++		$ZERO_OID $A refs/for/main/topic2
+    ++		0000
+    ++		EOF
+      		printf "" | git -C "$upstream" pack-objects --stdout
+      	} | git receive-pack "$upstream" --stateless-rpc \
+    + 	>out 2>&1 &&
+     
+      ## t/t5500-fetch-pack.sh ##
+     @@ t/t5500-fetch-pack.sh: test_expect_success 'shallow since with commit graph and already-seen commit' '
+    @@ t/t5562-http-backend-content-length.sh: test_expect_success 'setup' '
+     +	0000
+     +	have $hash_prev
+     +	done
+    -+	0000
+     +	EOF
+      	test_copy_bytes 10 <fetch_body >fetch_body.trunc &&
+      	hash_next=$(git commit-tree -p HEAD -m next HEAD^{tree}) &&
+2:  a44e1790f2 ! 4:  7b7d2999c4 tests: replace remaining packetize() with "test-tool pkt-line"
+    @@ t/helper/test-pkt-line.c: static void pack(int argc, const char **argv)
+     +static void pack_raw_stdin(void)
+     +{
+     +	struct strbuf sb = STRBUF_INIT;
+    -+	strbuf_read(&sb, 0, 0);
+    ++
+     +	if (strbuf_read(&sb, 0, 0) < 0)
+     +		die_errno("failed to read from stdin");
+     +	packet_write(1, sb.buf, sb.len);
+    @@ t/t5411/once-0010-report-status-v1.sh: test_expect_success "proc-receive: report
+     -				$A $B | packetize
+     +				$A $B | test-tool pkt-line pack-raw-stdin
+      		fi &&
+    - 		printf "%s %s refs/for/main/topic1\n" \
+    - 			$ZERO_OID $A | test-tool pkt-line pack &&
+    + 		test-tool pkt-line pack <<-EOF &&
+    + 		$ZERO_OID $A refs/for/main/topic1
+     
+      ## t/t5562-http-backend-content-length.sh ##
+     @@ t/t5562-http-backend-content-length.sh: test_expect_success 'setup' '
+    @@ t/t5562-http-backend-content-length.sh: test_expect_success 'setup' '
+     
+      ## t/t5570-git-daemon.sh ##
+     @@ t/t5570-git-daemon.sh: test_expect_success 'hostname cannot break out of directory' '
+    - '
+      
+      test_expect_success FAKENC 'hostname interpolation works after LF-stripping' '
+    --	{
+    + 	{
+     -		printf "git-upload-pack /interp.git\n\0host=localhost" | packetize
+     -		printf "0000"
+    --	} >input &&
+    -+	printf "git-upload-pack /interp.git\n\0host=localhost" >has-null &&
+    -+	test-tool pkt-line pack-raw-stdin >input <has-null &&
+    -+	test-tool pkt-line pack >>input <<-\EOF &&
+    -+	0000
+    -+	EOF
+    ++		printf "git-upload-pack /interp.git\n\0host=localhost" |
+    ++		test-tool pkt-line pack-raw-stdin &&
+    ++		test-tool pkt-line pack <<-\EOF
+    ++		0000
+    ++		EOF
+    + 	} >input &&
+     +
+      	fake_nc "$GIT_DAEMON_HOST_PORT" <input >output &&
+      	test-tool pkt-line unpack <output >actual &&
+3:  cc91d15ef7 = 5:  392775d5be test-lib-functions.sh: remove unused [de]packetize() functions
+-- 
+2.32.0.788.ge724008458
+
