@@ -1,8 +1,8 @@
-From 627afc4f7e9e9a53b1cad2d3aaf61788577977fb Mon Sep 17 00:00:00 2001
-Message-Id: <patch-09.18-627afc4f7e9-20210716T132600Z-avarab@gmail.com>
-In-Reply-To: <cover-00.18-00000000000-20210716T132600Z-avarab@gmail.com>
+From 60d6cf342fce058242ee80d80c853701d75a1abd Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.18-60d6cf342fc-20210716T133920Z-avarab@gmail.com>
+In-Reply-To: <cover-00.18-00000000000-20210716T133920Z-avarab@gmail.com>
 References: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
-	<cover-00.18-00000000000-20210716T132600Z-avarab@gmail.com>
+	<cover-00.18-00000000000-20210716T133920Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 14 Mar 2019 00:07:53 +0100
@@ -24,11 +24,13 @@ to lock.
 
 This mostly mitigates a race condition where e.g. "git gc" will fail
 in a concurrently updated repository because the branch moved since
-"git reflog expire --all" was started.
+"git reflog expire --all" was started. I.e. with:
 
-This behavior was needed for an edge-case that I've untangled in this
-and preceding commits though, namely that we needed this OID because
-we'd:
+    error: cannot lock ref '<refname>': ref '<refname>' is at <OID-A> but expected <OID-B>
+
+This behavior of passing in an "oid" was needed for an edge-case that
+I've untangled in this and preceding commits though, namely that we
+needed this OID because we'd:
 
  1. Lookup the reflog name/OID via dwim_log()
  2. With that OID, lock the reflog
@@ -53,12 +55,11 @@ large discussion about this change in early 2019. In particular patch
 looked good to Michael Haggerty his[2], but that seems to not have
 made it to the ML archive, its content is quoted in full in my [3].
 
-I'm leaving behind now-unused code in the reflog builtin that hands
-the "OID" to reflog_expire(). I have set of changes on top of this to
-clean up builtin/reflog.c to account for this change, i.e. we don't
-need to pass the OID to these routines, but let's do this change at
-the API level for now and leave that cleanup for later. This will also
-address Michael Haggerty's comments about "prepare_fn" etc. in [2][3].
+I'm leaving behind now-unused code the refs API etc. that takes the
+now-NULL "oid" argument, and other code that can be simplified now
+that we never have on OID in that context, that'll be cleaned up in
+subsequent commits, but for now let's narrowly focus on fixing the
+"git gc" issue
 
 Unfortunately this sort of probabilistic contention is hard to turn
 into a test. I've tested this by running the following three subshells
@@ -92,11 +93,13 @@ in concurrent terminals:
     )
 
 Before this change the "reflog expire" would fail really quickly with
-a "but expected" error. After this change both the "pull" and "reflog
-expire" will run for a while, but eventually fail because I get
-unlucky with core.filesRefLockTimeout (the "reflog expire" is in a
-really tight loop). As noted above that can in turn be mitigated with
-higher values of core.filesRefLockTimeout than the 100ms default.
+a "but expected" error.
+
+After this change both the "pull" and "reflog expire" will run for a
+while, but eventually fail because I get unlucky with
+core.filesRefLockTimeout (the "reflog expire" is in a really tight
+loop). As noted above that can in turn be mitigated with higher values
+of core.filesRefLockTimeout than the 100ms default.
 
 As noted in the commentary added in the preceding commit there's also
 the case of branches being racily deleted, that can be tested by
@@ -109,6 +112,11 @@ adding this to the above:
             date
         done
     )
+
+With core.filesRefLockTimeout set to 10 seconds (it can probably be a
+lot lower) I managed to run all four of these concurrently for about
+an hour, and accumulated ~125k commits, auto-gc's and all, and didn't
+have a single failure.
 
 1. https://lore.kernel.org/git/87tvg7brlm.fsf@evledraar.gmail.com/
 2. http://lore.kernel.org/git/b870a17d-2103-41b8-3cbc-7389d5fff33a@alum.mit.edu
