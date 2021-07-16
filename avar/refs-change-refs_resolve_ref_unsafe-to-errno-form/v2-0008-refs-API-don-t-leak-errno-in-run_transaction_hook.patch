@@ -1,0 +1,43 @@
+From da9b8c5d4a70a2c5ce2d25658e23f2c244481088 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-8.8-da9b8c5d4a7-20210716T135438Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20210716T135438Z-avarab@gmail.com>
+References: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
+	<cover-0.8-00000000000-20210716T135438Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 11 Jul 2021 17:19:20 +0200
+Subject: [PATCH v2 8/8] refs API: don't leak "errno" in run_transaction_hook()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In run_transaction_hook() we've checked errno since 67541597670 (refs:
+implement reference transaction hook, 2020-06-19), let's reset errno
+afterwards to make sure nobody using refs.c directly or indirectly
+relies on it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/refs.c b/refs.c
+index b89abfeb863..9ce6e6d9f87 100644
+--- a/refs.c
++++ b/refs.c
+@@ -2109,8 +2109,11 @@ static int run_transaction_hook(struct ref_transaction *transaction,
+ 			    update->refname);
+ 
+ 		if (write_in_full(proc.in, buf.buf, buf.len) < 0) {
+-			if (errno != EPIPE)
++			if (errno != EPIPE) {
++				/* Don't leak errno outside this API */
++				errno = 0;
+ 				ret = -1;
++			}
+ 			break;
+ 		}
+ 	}
+-- 
+2.32.0.873.gb6f2f696497
+

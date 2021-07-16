@@ -1,0 +1,212 @@
+From 12b2d85f6ca73d75505a19e9c36337be5443f45a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.8-12b2d85f6ca-20210716T135438Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20210716T135438Z-avarab@gmail.com>
+References: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
+	<cover-0.8-00000000000-20210716T135438Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 11 Jul 2021 16:11:46 +0200
+Subject: [PATCH v2 1/8] refs API: remove refs_read_ref_full() wrapper
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the refs_read_ref_full() wrapper in favor of migrating various
+refs.c API users to the underlying
+refs_resolve_ref_unsafe_with_errno() function. A careful reading of
+these callers shows that the callers of this function did not care
+about "errno", by moving away from the refs_resolve_ref_unsafe()
+wrapper we can be sure that nothing relies on it anymore.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c               | 22 ++++++++++------------
+ refs.h               |  2 --
+ refs/files-backend.c | 36 ++++++++++++++++++++++--------------
+ worktree.c           |  9 +++++----
+ 4 files changed, 37 insertions(+), 32 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index 546e46bc728..6f5eef23dc3 100644
+--- a/refs.c
++++ b/refs.c
+@@ -294,20 +294,17 @@ struct ref_filter {
+ 	void *cb_data;
+ };
+ 
+-int refs_read_ref_full(struct ref_store *refs, const char *refname,
+-		       int resolve_flags, struct object_id *oid, int *flags)
++int read_ref_full(const char *refname, int resolve_flags, struct object_id *oid, int *flags)
+ {
+-	if (refs_resolve_ref_unsafe(refs, refname, resolve_flags, oid, flags))
++	int ignore_errno;
++	struct ref_store *refs = get_main_ref_store(the_repository);
++
++	if (refs_resolve_ref_unsafe_with_errno(refs, refname, resolve_flags,
++					       oid, flags, &ignore_errno))
+ 		return 0;
+ 	return -1;
+ }
+ 
+-int read_ref_full(const char *refname, int resolve_flags, struct object_id *oid, int *flags)
+-{
+-	return refs_read_ref_full(get_main_ref_store(the_repository), refname,
+-				  resolve_flags, oid, flags);
+-}
+-
+ int read_ref(const char *refname, struct object_id *oid)
+ {
+ 	return read_ref_full(refname, RESOLVE_REF_READING, oid, NULL);
+@@ -1399,9 +1396,10 @@ int refs_head_ref(struct ref_store *refs, each_ref_fn fn, void *cb_data)
+ {
+ 	struct object_id oid;
+ 	int flag;
+-
+-	if (!refs_read_ref_full(refs, "HEAD", RESOLVE_REF_READING,
+-				&oid, &flag))
++	int ignore_errno;
++	
++	if (refs_resolve_ref_unsafe_with_errno(refs, "HEAD", RESOLVE_REF_READING,
++					       &oid, &flag, &ignore_errno))
+ 		return fn("HEAD", &oid, flag, cb_data);
+ 
+ 	return 0;
+diff --git a/refs.h b/refs.h
+index 5ce365bc7d4..e6c51cc87a0 100644
+--- a/refs.h
++++ b/refs.h
+@@ -88,8 +88,6 @@ char *refs_resolve_refdup(struct ref_store *refs,
+ char *resolve_refdup(const char *refname, int resolve_flags,
+ 		     struct object_id *oid, int *flags);
+ 
+-int refs_read_ref_full(struct ref_store *refs, const char *refname,
+-		       int resolve_flags, struct object_id *oid, int *flags);
+ int read_ref_full(const char *refname, int resolve_flags,
+ 		  struct object_id *oid, int *flags);
+ int read_ref(const char *refname, struct object_id *oid);
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 5d90ddfa857..80cd3c57393 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -1002,6 +1002,7 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 	struct strbuf ref_file = STRBUF_INIT;
+ 	struct ref_lock *lock;
+ 	int resolve_errno = 0;
++	int ignore_errno;
+ 
+ 	files_assert_main_repository(refs, "lock_ref_oid_basic");
+ 	assert(err);
+@@ -1042,9 +1043,8 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 		goto error_return;
+ 	}
+ 
+-	if (refs_read_ref_full(&refs->base, lock->ref_name,
+-			       0,
+-			       &lock->old_oid, NULL))
++	if (!refs_resolve_ref_unsafe_with_errno(&refs->base, lock->ref_name, 0,
++						&lock->old_oid, NULL, &ignore_errno))
+ 		oidclr(&lock->old_oid);
+ 	goto out;
+ 
+@@ -1378,6 +1378,7 @@ static int files_copy_or_rename_ref(struct ref_store *ref_store,
+ 	struct strbuf tmp_renamed_log = STRBUF_INIT;
+ 	int log, ret;
+ 	struct strbuf err = STRBUF_INIT;
++	int ignore_errno;
+ 
+ 	files_reflog_path(refs, &sb_oldref, oldrefname);
+ 	files_reflog_path(refs, &sb_newref, newrefname);
+@@ -1435,9 +1436,9 @@ static int files_copy_or_rename_ref(struct ref_store *ref_store,
+ 	 * the safety anyway; we want to delete the reference whatever
+ 	 * its current value.
+ 	 */
+-	if (!copy && !refs_read_ref_full(&refs->base, newrefname,
+-				RESOLVE_REF_READING | RESOLVE_REF_NO_RECURSE,
+-				NULL, NULL) &&
++	if (!copy && refs_resolve_ref_unsafe_with_errno(&refs->base, newrefname,
++							RESOLVE_REF_READING | RESOLVE_REF_NO_RECURSE,
++							NULL, NULL, &ignore_errno) &&
+ 	    refs_delete_ref(&refs->base, NULL, newrefname,
+ 			    NULL, REF_NO_DEREF)) {
+ 		if (errno == EISDIR) {
+@@ -1849,9 +1850,12 @@ static void update_symref_reflog(struct files_ref_store *refs,
+ {
+ 	struct strbuf err = STRBUF_INIT;
+ 	struct object_id new_oid;
++	int ignore_errno;
++
+ 	if (logmsg &&
+-	    !refs_read_ref_full(&refs->base, target,
+-				RESOLVE_REF_READING, &new_oid, NULL) &&
++	    refs_resolve_ref_unsafe_with_errno(&refs->base, target,
++					       RESOLVE_REF_READING, &new_oid, NULL,
++					       &ignore_errno) &&
+ 	    files_log_ref_write(refs, refname, &lock->old_oid,
+ 				&new_oid, logmsg, 0, &err)) {
+ 		error("%s", err.buf);
+@@ -2125,6 +2129,7 @@ static int files_reflog_iterator_advance(struct ref_iterator *ref_iterator)
+ 		(struct files_reflog_iterator *)ref_iterator;
+ 	struct dir_iterator *diter = iter->dir_iterator;
+ 	int ok;
++	int ignore_errno;
+ 
+ 	while ((ok = dir_iterator_advance(diter)) == ITER_OK) {
+ 		int flags;
+@@ -2136,9 +2141,10 @@ static int files_reflog_iterator_advance(struct ref_iterator *ref_iterator)
+ 		if (ends_with(diter->basename, ".lock"))
+ 			continue;
+ 
+-		if (refs_read_ref_full(iter->ref_store,
+-				       diter->relative_path, 0,
+-				       &iter->oid, &flags)) {
++		if (!refs_resolve_ref_unsafe_with_errno(iter->ref_store,
++							diter->relative_path, 0,
++							&iter->oid, &flags,
++							&ignore_errno)) {
+ 			error("bad ref for %s", diter->path.buf);
+ 			continue;
+ 		}
+@@ -2482,9 +2488,11 @@ static int lock_ref_for_update(struct files_ref_store *refs,
+ 			 * the transaction, so we have to read it here
+ 			 * to record and possibly check old_oid:
+ 			 */
+-			if (refs_read_ref_full(&refs->base,
+-					       referent.buf, 0,
+-					       &lock->old_oid, NULL)) {
++			int ignore_errno;
++			if (!refs_resolve_ref_unsafe_with_errno(&refs->base,
++								referent.buf, 0,
++								&lock->old_oid, NULL,
++								&ignore_errno)) {
+ 				if (update->flags & REF_HAVE_OLD) {
+ 					strbuf_addf(err, "cannot lock ref '%s': "
+ 						    "error reading reference",
+diff --git a/worktree.c b/worktree.c
+index 237517baee6..1dcdb481d61 100644
+--- a/worktree.c
++++ b/worktree.c
+@@ -562,16 +562,17 @@ int other_head_refs(each_ref_fn fn, void *cb_data)
+ 		struct worktree *wt = *p;
+ 		struct object_id oid;
+ 		int flag;
++		int ignore_errno;
+ 
+ 		if (wt->is_current)
+ 			continue;
+ 
+ 		strbuf_reset(&refname);
+ 		strbuf_worktree_ref(wt, &refname, "HEAD");
+-		if (!refs_read_ref_full(get_main_ref_store(the_repository),
+-					refname.buf,
+-					RESOLVE_REF_READING,
+-					&oid, &flag))
++		if (refs_resolve_ref_unsafe_with_errno(get_main_ref_store(the_repository),
++						       refname.buf,
++						       RESOLVE_REF_READING,
++						       &oid, &flag, &ignore_errno))
+ 			ret = fn(refname.buf, &oid, flag, cb_data);
+ 		if (ret)
+ 			break;
+-- 
+2.32.0.873.gb6f2f696497
+
