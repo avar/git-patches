@@ -1,12 +1,12 @@
-From ea0e59d1885ba1ba5f74834cc8278c646ed6b30a Mon Sep 17 00:00:00 2001
-Message-Id: <patch-10.18-ea0e59d1885-20210716T121501Z-avarab@gmail.com>
-In-Reply-To: <cover-00.18-00000000000-20210716T121501Z-avarab@gmail.com>
+From 0782f412a9f8317ef2d2e9861b0fbd527f1e3856 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-14.18-0782f412a9f-20210716T132600Z-avarab@gmail.com>
+In-Reply-To: <cover-00.18-00000000000-20210716T132600Z-avarab@gmail.com>
 References: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
-	<cover-00.18-00000000000-20210716T121501Z-avarab@gmail.com>
+	<cover-00.18-00000000000-20210716T132600Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 15 Jul 2021 10:38:37 +0200
-Subject: [PATCH v2 10/18] reflog expire: refactor the cb_data passed to cb()
+Subject: [PATCH v2 14/18] reflog expire: refactor the cb_data passed to cb()
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -21,14 +21,14 @@ the "cmd" member.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- builtin/reflog.c | 30 ++++++++++++++++--------------
- 1 file changed, 16 insertions(+), 14 deletions(-)
+ builtin/reflog.c | 28 +++++++++++++++-------------
+ 1 file changed, 15 insertions(+), 13 deletions(-)
 
 diff --git a/builtin/reflog.c b/builtin/reflog.c
-index 8bffca20c0c..da96f56a1dd 100644
+index 2ea00467c9a..1171e1dbe1d 100644
 --- a/builtin/reflog.c
 +++ b/builtin/reflog.c
-@@ -543,7 +543,7 @@ static void set_reflog_expiry_param(struct cmd_reflog_expire_cb *cb, int slot, c
+@@ -541,7 +541,7 @@ static void set_reflog_expiry_param(struct cmd_reflog_expire_cb *cb, int slot, c
  
  static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
  {
@@ -37,7 +37,7 @@ index 8bffca20c0c..da96f56a1dd 100644
  	timestamp_t now = time(NULL);
  	int i, status, do_all, all_worktrees = 1;
  	int explicit_expiry = 0;
-@@ -555,10 +555,9 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+@@ -553,10 +553,9 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
  
  	save_commit_buffer = 0;
  	do_all = status = 0;
@@ -50,7 +50,7 @@ index 8bffca20c0c..da96f56a1dd 100644
  
  	for (i = 1; i < argc; i++) {
  		const char *arg = argv[i];
-@@ -566,17 +565,17 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+@@ -564,17 +563,17 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
  		if (!strcmp(arg, "--dry-run") || !strcmp(arg, "-n"))
  			flags |= EXPIRE_REFLOGS_DRY_RUN;
  		else if (skip_prefix(arg, "--expire=", &arg)) {
@@ -71,7 +71,7 @@ index 8bffca20c0c..da96f56a1dd 100644
  		else if (!strcmp(arg, "--rewrite"))
  			flags |= EXPIRE_REFLOGS_REWRITE;
  		else if (!strcmp(arg, "--updateref"))
-@@ -602,14 +601,14 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+@@ -600,14 +599,14 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
  	 * even in older repository.  We cannot trust what's reachable
  	 * from reflog if the repository was pruned with older git.
  	 */
@@ -92,29 +92,23 @@ index 8bffca20c0c..da96f56a1dd 100644
  		if (flags & EXPIRE_REFLOGS_VERBOSE)
  			putchar('\n');
  	}
-@@ -631,6 +630,7 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+@@ -629,6 +628,7 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
  		free_worktrees(worktrees);
  		for (i = 0; i < collected.nr; i++) {
  			struct collected_reflog *e = collected.e[i];
 +			struct expire_reflog_policy_cb cb = { .cmd = cmd };
  
  			set_reflog_expiry_param(&cb.cmd, explicit_expiry, e->reflog);
- 			status |= reflog_expire(e->reflog, NULL, flags,
-@@ -645,11 +645,13 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ 			status |= reflog_expire(e->reflog, flags,
+@@ -643,6 +643,8 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
  
  	for (; i < argc; i++) {
  		char *ref;
 +		struct expire_reflog_policy_cb cb = { .cmd = cmd };
 +
- 		if (!dwim_log(argv[i], strlen(argv[i]), &cb.oid, &ref)) {
+ 		if (!dwim_log(argv[i], strlen(argv[i]), NULL, &ref)) {
  			status |= error(_("%s points nowhere!"), argv[i]);
  			continue;
- 		}
--		set_reflog_expiry_param(&cb.cmd, explicit_expiry, ref);
-+		set_reflog_expiry_param(&cmd, explicit_expiry, ref);
- 		status |= reflog_expire(ref, NULL, flags,
- 					reflog_expiry_prepare,
- 					should_expire_reflog_ent,
 -- 
 2.32.0.870.g0e611300719
 

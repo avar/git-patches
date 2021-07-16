@@ -1,0 +1,116 @@
+From d3f02dc1481cbefa88c25935cf3674258bbb3042 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.18-d3f02dc1481-20210716T132600Z-avarab@gmail.com>
+In-Reply-To: <cover-00.18-00000000000-20210716T132600Z-avarab@gmail.com>
+References: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
+	<cover-00.18-00000000000-20210716T132600Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Jul 2021 14:27:52 +0200
+Subject: [PATCH v2 07/18] refs API: pass the "lock OID" to reflog "prepare"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Don't pass the object ID we pass into reflog_expire() back to the
+caller, but rather our locked OID.
+
+As the assert shows these two were the same thing in practice as we'd
+exit earlier in this function if we couldn't lock the desired OID, but
+as part of removing the passing of the OID to other functions further
+on I'm splitting up these concerns.
+
+As we'll see in a subsequent commit we don't actually want to assert
+that we locked a given OID, we want this API to do the locking and
+tell us what the OID is, but for now let's just setup the scaffolding
+for that.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reflog.c     | 4 ++--
+ refs.h               | 4 ++--
+ refs/debug.c         | 8 +++++---
+ refs/files-backend.c | 2 +-
+ 4 files changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index 09541d1c804..9f9e6bceb03 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -351,7 +351,7 @@ static int is_head(const char *refname)
+ }
+ 
+ static void reflog_expiry_prepare(const char *refname,
+-				  const struct object_id *oid,
++				  struct object_id *locked_oid,
+ 				  void *cb_data)
+ {
+ 	struct expire_reflog_policy_cb *cb = cb_data;
+@@ -361,7 +361,7 @@ static void reflog_expiry_prepare(const char *refname,
+ 		cb->unreachable_expire_kind = UE_HEAD;
+ 	} else {
+ 		cb->tip_commit = lookup_commit_reference_gently(the_repository,
+-								oid, 1);
++								locked_oid, 1);
+ 		if (!cb->tip_commit)
+ 			cb->unreachable_expire_kind = UE_ALWAYS;
+ 		else
+diff --git a/refs.h b/refs.h
+index 48970dfc7e0..c009707438d 100644
+--- a/refs.h
++++ b/refs.h
+@@ -796,7 +796,7 @@ enum expire_reflog_flags {
+  * expiration policy that is desired.
+  *
+  * reflog_expiry_prepare_fn -- Called once after the reference is
+- *     locked.
++ *     locked. Called with the OID of the locked reference.
+  *
+  * reflog_expiry_should_prune_fn -- Called once for each entry in the
+  *     existing reflog. It should return true iff that entry should be
+@@ -806,7 +806,7 @@ enum expire_reflog_flags {
+  *     unlocked again.
+  */
+ typedef void reflog_expiry_prepare_fn(const char *refname,
+-				      const struct object_id *oid,
++				      struct object_id *lock_oid,
+ 				      void *cb_data);
+ typedef int reflog_expiry_should_prune_fn(struct object_id *ooid,
+ 					  struct object_id *noid,
+diff --git a/refs/debug.c b/refs/debug.c
+index 449ac3e6cc8..18fd9bca595 100644
+--- a/refs/debug.c
++++ b/refs/debug.c
+@@ -364,12 +364,14 @@ struct debug_reflog_expiry_should_prune {
+ };
+ 
+ static void debug_reflog_expiry_prepare(const char *refname,
+-					const struct object_id *oid,
++					struct object_id *locked_oid,
+ 					void *cb_data)
+ {
+ 	struct debug_reflog_expiry_should_prune *prune = cb_data;
+-	trace_printf_key(&trace_refs, "reflog_expire_prepare: %s\n", refname);
+-	prune->prepare(refname, oid, prune->cb_data);
++	trace_printf_key(&trace_refs, "reflog_expire_prepare: %s locket at %s\n",
++			 refname,
++			 oid_to_hex(locked_oid));
++	prune->prepare(refname, locked_oid, prune->cb_data);
+ }
+ 
+ static int debug_reflog_expiry_should_prune_fn(struct object_id *ooid,
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index e6d54e59987..f73637fa087 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -3109,7 +3109,7 @@ static int files_reflog_expire(struct ref_store *ref_store,
+ 		}
+ 	}
+ 
+-	(*prepare_fn)(refname, oid, cb.policy_cb);
++	(*prepare_fn)(refname, &lock->old_oid, cb.policy_cb);
+ 	refs_for_each_reflog_ent(ref_store, refname, expire_reflog_ent, &cb);
+ 	(*cleanup_fn)(cb.policy_cb);
+ 
+-- 
+2.32.0.870.g0e611300719
+

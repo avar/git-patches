@@ -1,54 +1,37 @@
-From 66f5d484a023ecb5c5e841d12b95d84ac1b16d32 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-11.18-66f5d484a02-20210716T121501Z-avarab@gmail.com>
-In-Reply-To: <cover-00.18-00000000000-20210716T121501Z-avarab@gmail.com>
+From c8390b3a7792fd52b07d4f62f0e35cf306df6e2a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-12.18-c8390b3a779-20210716T132600Z-avarab@gmail.com>
+In-Reply-To: <cover-00.18-00000000000-20210716T132600Z-avarab@gmail.com>
 References: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
-	<cover-00.18-00000000000-20210716T121501Z-avarab@gmail.com>
+	<cover-00.18-00000000000-20210716T132600Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 15 Jul 2021 11:08:28 +0200
-Subject: [PATCH v2 11/18] refs API: remove OID argument to reflog_expire()
+Subject: [PATCH v2 12/18] refs API: remove OID argument to reflog_expire()
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-In the preceding commits we've migrated the last user of the "oid"
-parameter to use NULL, and before that changed files_reflog_expire()
-to not pass the old OID to lock_ref_oid_basic().
-
-So this parameter was already unused as the two assert() calls being
-removed here showed. New use of passing "oid" is unlikely to ever come
-back, so let's remove the parameter entirely.
+As noted in preceding commits the "oid" parameter to reflog_expire()
+is not used anymore, rather it passes down its locked OID. Let's
+remove the this already always-NULL parameter we passed in.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- builtin/reflog.c      | 8 +++-----
+ builtin/reflog.c      | 6 +++---
  refs.c                | 8 ++++----
- refs.h                | 8 +++-----
- refs/debug.c          | 7 +++----
- refs/files-backend.c  | 5 ++---
+ refs.h                | 7 +++----
+ refs/debug.c          | 4 ++--
+ refs/files-backend.c  | 2 +-
  refs/packed-backend.c | 2 +-
  refs/refs-internal.h  | 2 +-
- 7 files changed, 17 insertions(+), 23 deletions(-)
+ 7 files changed, 15 insertions(+), 16 deletions(-)
 
 diff --git a/builtin/reflog.c b/builtin/reflog.c
-index da96f56a1dd..cedb6f5c70b 100644
+index 4506852c471..dbbb754780a 100644
 --- a/builtin/reflog.c
 +++ b/builtin/reflog.c
-@@ -352,12 +352,10 @@ static int is_head(const char *refname)
- }
- 
- static void reflog_expiry_prepare(const char *refname,
--				  const struct object_id *oid,
- 				  void *cb_data)
- {
- 	struct expire_reflog_policy_cb *cb = cb_data;
- 
--	assert(!oid);
- 	if (!cb->cmd.expire_unreachable || is_head(refname)) {
- 		cb->tip_commit = NULL;
- 		cb->unreachable_expire_kind = UE_HEAD;
-@@ -633,7 +631,7 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
- 			struct expire_reflog_policy_cb cb = { .cmd = cmd };
+@@ -631,7 +631,7 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ 			struct collected_reflog *e = collected.e[i];
  
  			set_reflog_expiry_param(&cb.cmd, explicit_expiry, e->reflog);
 -			status |= reflog_expire(e->reflog, NULL, flags,
@@ -56,29 +39,29 @@ index da96f56a1dd..cedb6f5c70b 100644
  						reflog_expiry_prepare,
  						should_expire_reflog_ent,
  						reflog_expiry_cleanup,
-@@ -652,7 +650,7 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+@@ -648,7 +648,7 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
  			continue;
  		}
- 		set_reflog_expiry_param(&cmd, explicit_expiry, ref);
+ 		set_reflog_expiry_param(&cb.cmd, explicit_expiry, ref);
 -		status |= reflog_expire(ref, NULL, flags,
 +		status |= reflog_expire(ref, flags,
  					reflog_expiry_prepare,
  					should_expire_reflog_ent,
  					reflog_expiry_cleanup,
-@@ -728,7 +726,7 @@ static int cmd_reflog_delete(int argc, const char **argv, const char *prefix)
+@@ -723,7 +723,7 @@ static int cmd_reflog_delete(int argc, const char **argv, const char *prefix)
+ 			cb.cmd.expire_total = 0;
+ 		}
  
- 
- 		cb.cmd = cmd;
 -		status |= reflog_expire(ref, NULL, flags,
 +		status |= reflog_expire(ref, flags,
  					reflog_expiry_prepare,
  					should_expire_reflog_ent,
  					reflog_expiry_cleanup,
 diff --git a/refs.c b/refs.c
-index 8c9490235ea..8115934f2cc 100644
+index 5e2330bf78e..437ba9d6074 100644
 --- a/refs.c
 +++ b/refs.c
-@@ -2370,19 +2370,19 @@ int delete_reflog(const char *refname)
+@@ -2371,19 +2371,19 @@ int delete_reflog(const char *refname)
  }
  
  int refs_reflog_expire(struct ref_store *refs,
@@ -101,7 +84,7 @@ index 8c9490235ea..8115934f2cc 100644
  		  unsigned int flags,
  		  reflog_expiry_prepare_fn prepare_fn,
  		  reflog_expiry_should_prune_fn should_prune_fn,
-@@ -2390,7 +2390,7 @@ int reflog_expire(const char *refname, const struct object_id *oid,
+@@ -2391,7 +2391,7 @@ int reflog_expire(const char *refname, const struct object_id *oid,
  		  void *policy_cb_data)
  {
  	return refs_reflog_expire(get_main_ref_store(the_repository),
@@ -111,18 +94,10 @@ index 8c9490235ea..8115934f2cc 100644
  				  cleanup_fn, policy_cb_data);
  }
 diff --git a/refs.h b/refs.h
-index 48970dfc7e0..966eb09888a 100644
+index c009707438d..cf37b3387e2 100644
 --- a/refs.h
 +++ b/refs.h
-@@ -806,7 +806,6 @@ enum expire_reflog_flags {
-  *     unlocked again.
-  */
- typedef void reflog_expiry_prepare_fn(const char *refname,
--				      const struct object_id *oid,
- 				      void *cb_data);
- typedef int reflog_expiry_should_prune_fn(struct object_id *ooid,
- 					  struct object_id *noid,
-@@ -816,20 +815,19 @@ typedef int reflog_expiry_should_prune_fn(struct object_id *ooid,
+@@ -816,20 +816,19 @@ typedef int reflog_expiry_should_prune_fn(struct object_id *ooid,
  typedef void reflog_expiry_cleanup_fn(void *cb_data);
  
  /*
@@ -147,24 +122,10 @@ index 48970dfc7e0..966eb09888a 100644
  		  reflog_expiry_prepare_fn prepare_fn,
  		  reflog_expiry_should_prune_fn should_prune_fn,
 diff --git a/refs/debug.c b/refs/debug.c
-index 7db4abccc34..e1e65d0c53e 100644
+index 18fd9bca595..e1583171008 100644
 --- a/refs/debug.c
 +++ b/refs/debug.c
-@@ -364,12 +364,11 @@ struct debug_reflog_expiry_should_prune {
- };
- 
- static void debug_reflog_expiry_prepare(const char *refname,
--				    const struct object_id *oid,
- 				    void *cb_data)
- {
- 	struct debug_reflog_expiry_should_prune *prune = cb_data;
- 	trace_printf_key(&trace_refs, "reflog_expire_prepare: %s\n", refname);
--	prune->prepare(refname, oid, prune->cb_data);
-+	prune->prepare(refname, prune->cb_data);
- }
- 
- static int debug_reflog_expiry_should_prune_fn(struct object_id *ooid,
-@@ -391,7 +390,7 @@ static void debug_reflog_expiry_cleanup(void *cb_data)
+@@ -393,7 +393,7 @@ static void debug_reflog_expiry_cleanup(void *cb_data)
  }
  
  static int debug_reflog_expire(struct ref_store *ref_store, const char *refname,
@@ -173,7 +134,7 @@ index 7db4abccc34..e1e65d0c53e 100644
  			       reflog_expiry_prepare_fn prepare_fn,
  			       reflog_expiry_should_prune_fn should_prune_fn,
  			       reflog_expiry_cleanup_fn cleanup_fn,
-@@ -404,7 +403,7 @@ static int debug_reflog_expire(struct ref_store *ref_store, const char *refname,
+@@ -406,7 +406,7 @@ static int debug_reflog_expire(struct ref_store *ref_store, const char *refname,
  		.should_prune = should_prune_fn,
  		.cb_data = policy_cb_data,
  	};
@@ -183,7 +144,7 @@ index 7db4abccc34..e1e65d0c53e 100644
  						 &debug_reflog_expiry_should_prune_fn,
  						 &debug_reflog_expiry_cleanup,
 diff --git a/refs/files-backend.c b/refs/files-backend.c
-index 524be3924a4..f3d25d8cee6 100644
+index bd99bc570de..25248d77147 100644
 --- a/refs/files-backend.c
 +++ b/refs/files-backend.c
 @@ -2964,7 +2964,7 @@ static int expire_reflog_ent(struct object_id *ooid, struct object_id *noid,
@@ -195,28 +156,11 @@ index 524be3924a4..f3d25d8cee6 100644
  			       unsigned int flags,
  			       reflog_expiry_prepare_fn prepare_fn,
  			       reflog_expiry_should_prune_fn should_prune_fn,
-@@ -2992,7 +2992,6 @@ static int files_reflog_expire(struct ref_store *ref_store,
- 	 * reference itself, plus we might need to update the
- 	 * reference if --updateref was specified:
- 	 */
--	assert(!oid);
- 	lock = lock_ref_oid_basic(refs, refname, REF_NO_DEREF, &type, &err);
- 	if (!lock) {
- 		error("cannot lock ref '%s': %s", refname, err.buf);
-@@ -3040,7 +3039,7 @@ static int files_reflog_expire(struct ref_store *ref_store,
- 		}
- 	}
- 
--	(*prepare_fn)(refname, oid, cb.policy_cb);
-+	(*prepare_fn)(refname, cb.policy_cb);
- 	refs_for_each_reflog_ent(ref_store, refname, expire_reflog_ent, &cb);
- 	(*cleanup_fn)(cb.policy_cb);
- 
 diff --git a/refs/packed-backend.c b/refs/packed-backend.c
-index dfecdbc1db6..5732f1ea4cb 100644
+index 53d1ec27b60..7ad44ea6af1 100644
 --- a/refs/packed-backend.c
 +++ b/refs/packed-backend.c
-@@ -1631,7 +1631,7 @@ static int packed_delete_reflog(struct ref_store *ref_store,
+@@ -1635,7 +1635,7 @@ static int packed_delete_reflog(struct ref_store *ref_store,
  }
  
  static int packed_reflog_expire(struct ref_store *ref_store,
