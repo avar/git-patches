@@ -1,0 +1,102 @@
+From cb32b5c0526d4407eba644f361ddb1be982616c9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-7.7-cb32b5c0526-20210716T141458Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20210716T141458Z-avarab@gmail.com>
+References: <cover-0.6-0000000000-20210714T114301Z-avarab@gmail.com>
+	<cover-0.7-00000000000-20210716T141458Z-avarab@gmail.com>
+From: Han-Wen Nienhuys <hanwen@google.com>
+Date: Mon, 5 Jul 2021 21:19:02 +0200
+Subject: [PATCH v7 7/7] refs: make errno output explicit for
+ refs_resolve_ref_unsafe
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This introduces refs_resolve_ref_unsafe_with_errno(), which makes the API
+contract for the errno output explicit. The implementation still relies on
+the global errno variable to ensure no side effects of this refactoring.
+
+lock_ref_oid_basic() in files-backend.c is the only caller of refs_resolve_ref()
+that needs error information to make logic decisions, so update that caller
+
+Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c               |  2 +-
+ refs.h               | 11 +++++++++++
+ refs/files-backend.c | 12 +++++++-----
+ 3 files changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index ceaaccc1680..9e2592ee28a 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1688,7 +1688,7 @@ int refs_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ 					   type, failure_errno);
+ }
+ 
+-static const char *refs_resolve_ref_unsafe_with_errno(struct ref_store *refs,
++const char *refs_resolve_ref_unsafe_with_errno(struct ref_store *refs,
+ 					       const char *refname,
+ 					       int resolve_flags,
+ 					       struct object_id *oid,
+diff --git a/refs.h b/refs.h
+index c009707438d..ba09ba0687b 100644
+--- a/refs.h
++++ b/refs.h
+@@ -68,6 +68,17 @@ const char *refs_resolve_ref_unsafe(struct ref_store *refs,
+ 				    int resolve_flags,
+ 				    struct object_id *oid,
+ 				    int *flags);
++/**
++ * refs_resolve_ref_unsafe_with_errno() is like
++ * refs_resolve_ref_unsafe(), but provide access to errno code that
++ * lead to a failure. We guarantee that errno is set to a meaningful
++ * value on non-zero return.
++ */
++const char *refs_resolve_ref_unsafe_with_errno(struct ref_store *refs,
++					       const char *refname,
++					       int resolve_flags,
++					       struct object_id *oid,
++					       int *flags, int *failure_errno);
+ const char *resolve_ref_unsafe(const char *refname, int resolve_flags,
+ 			       struct object_id *oid, int *flags);
+ 
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 45d7c346dea..be5f386f64d 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -1001,6 +1001,7 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ {
+ 	struct strbuf ref_file = STRBUF_INIT;
+ 	struct ref_lock *lock;
++	int resolve_errno = 0;
+ 
+ 	files_assert_main_repository(refs, "lock_ref_oid_basic");
+ 	assert(err);
+@@ -1008,17 +1009,18 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 	CALLOC_ARRAY(lock, 1);
+ 
+ 	files_ref_path(refs, &ref_file, refname);
+-	if (!refs_resolve_ref_unsafe(&refs->base, refname,
+-				     RESOLVE_REF_NO_RECURSE,
+-				     &lock->old_oid, type) &&
+-	    (errno != ENOTDIR ||
++	if (!refs_resolve_ref_unsafe_with_errno(&refs->base, refname,
++						RESOLVE_REF_NO_RECURSE,
++						&lock->old_oid, type,
++						&resolve_errno) &&
++	    (resolve_errno != ENOTDIR ||
+ 	     /* in case of D/F conflict, try to generate a better error
+ 	      * message. If that fails, fall back to strerror(ENOTDIR).
+ 	      */
+ 	     !refs_verify_refname_available(&refs->base, refname, NULL,
+ 					    NULL, err))) {
+ 		strbuf_addf(err, "unable to resolve reference '%s': %s",
+-			    refname, strerror(errno));
++			    refname, strerror(resolve_errno));
+ 		goto error_return;
+ 	}
+ 
+-- 
+2.32.0.874.gfa1990a4f10
+
