@@ -1,9 +1,9 @@
 From 6c787e556d8e5ab7e96171e44118379b1ee8afe8 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-00.18-00000000000-20210716T121350Z-avarab@gmail.com>
+Message-Id: <cover-00.18-00000000000-20210716T121501Z-avarab@gmail.com>
 In-Reply-To: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
 References: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 16 Jul 2021 14:13:50 +0200
+Date: Fri, 16 Jul 2021 14:15:01 +0200
 Subject: [PATCH v2 00/18] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -42,14 +42,124 @@ Content-Transfer-Encoding: 8bit
  8 files changed, 150 insertions(+), 208 deletions(-)
 
 Range-diff against v1:
- 1:  de0838fe996 <  -:  ----------- refs file backend: remove dead "errno == EISDIR" code
  -:  ----------- >  1:  c5b2e49573d refs/files: remove unused REF_DELETING in lock_ref_oid_basic()
  -:  ----------- >  2:  6d701ff9c96 refs/files: remove unused "extras/skip" in lock_ref_oid_basic()
  -:  ----------- >  3:  50cd2ee2c48 refs/files: remove unused "skip" in lock_raw_ref() too
  -:  ----------- >  4:  14f6b5a5af9 refs/files: add a comment about refs_reflog_exists() call
  -:  ----------- >  5:  68c4076f2bb reflog expire: don't lock reflogs using previously seen OID
  -:  ----------- >  6:  cae6561d3b8 refs/files: remove unused "oid" in lock_ref_oid_basic()
- -:  ----------- >  7:  dc8c1ef6b23 refs/files: remove unused "errno == EISDIR" code
+ 1:  de0838fe996 !  7:  dc8c1ef6b23 refs file backend: remove dead "errno == EISDIR" code
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    refs file backend: remove dead "errno == EISDIR" code
+    +    refs/files: remove unused "errno == EISDIR" code
+     
+         When we lock a reference like "foo" we need to handle the case where
+         "foo" exists, but is an empty directory. That's what this code added
+    @@ Commit message
+         remove_empty_directories() and continue.
+     
+         Since a1c1d8170d (refs_resolve_ref_unsafe: handle d/f conflicts for
+    -    writes, 2017-10-06) we don't, because our our callstack will look
+    -    something like:
+    +    writes, 2017-10-06) we don't. E.g. in the case of
+    +    files_copy_or_rename_ref() our callstack will look something like:
+     
+    -        files_copy_or_rename_ref() -> lock_ref_oid_basic() -> refs_resolve_ref_unsafe()
+    +            [...] ->
+    +            files_copy_or_rename_ref() ->
+    +            lock_ref_oid_basic() ->
+    +            refs_resolve_ref_unsafe()
+     
+    -    And then the refs_resolve_ref_unsafe() call here will in turn (in the
+    -    code added in a1c1d8170d) do the equivalent of this (via a call to
+    -    refs_read_raw_ref()):
+    +    At that point the first (now only) refs_resolve_ref_unsafe() call in
+    +    lock_ref_oid_basic() would do the equivalent of this in the resulting
+    +    call to refs_read_raw_ref() in refs_resolve_ref_unsafe():
+     
+                 /* Via refs_read_raw_ref() */
+                 fd = open(path, O_RDONLY);
+    @@ Commit message
+         We then proceed with the entire ref update and don't call
+         remove_empty_directories() until we call commit_ref_update(). See
+         5387c0d883 (commit_ref(): if there is an empty dir in the way, delete
+    -    it, 2016-05-05) for the addition of that code.
+    +    it, 2016-05-05) for the addition of that code, and
+    +    a1c1d8170db (refs_resolve_ref_unsafe: handle d/f conflicts for writes,
+    +    2017-10-06) for the commit that changed the original codepath added in
+    +    bc7127ef0f to use this "EISDIR" handling.
+    +
+    +    Further historical commentary:
+    +
+    +    Before the two preceding commits the caller in files_reflog_expire()
+    +    was the only one out of our 4 callers that would pass non-NULL as an
+    +    oid. We would then set a (now gone) "resolve_flags" to
+    +    "RESOLVE_REF_READING" and just before that "errno != EISDIR" check do:
+    +
+    +            if (resolve_flags & RESOLVE_REF_READING)
+    +                    return NULL;
+    +
+    +    There may have been some case where this ended up mattering and we
+    +    couldn't safely make this change before we removed the "oid"
+    +    parameter, but I don't think there was, see [1] for some discussion on
+    +    that.
+    +
+    +    In any case, now that we've removed the "oid" parameter in a preceding
+    +    commit we can be sure that this code is redundant, so let's remove it.
+    +
+    +    1. http://lore.kernel.org/git/871r801yp6.fsf@evledraar.gmail.com
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## refs/files-backend.c ##
+     @@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+    - 	resolved = !!refs_resolve_ref_unsafe(&refs->base,
+    - 					     refname, resolve_flags,
+    - 					     &lock->old_oid, type);
+    + 	struct strbuf ref_file = STRBUF_INIT;
+    + 	struct ref_lock *lock;
+    + 	int last_errno = 0;
+    +-	int resolved;
+    + 
+    + 	files_assert_main_repository(refs, "lock_ref_oid_basic");
+    + 	assert(err);
+    +@@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+    + 	CALLOC_ARRAY(lock, 1);
+    + 
+    + 	files_ref_path(refs, &ref_file, refname);
+    +-	resolved = !!refs_resolve_ref_unsafe(&refs->base, refname,
+    +-					     RESOLVE_REF_NO_RECURSE,
+    +-					     &lock->old_oid, type);
+     -	if (!resolved && errno == EISDIR) {
+     -		/*
+     -		 * we are trying to lock foo but we used to
+    @@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_re
+     -			last_errno = errno;
+     -			if (!refs_verify_refname_available(
+     -					    &refs->base,
+    --					    refname, extras, skip, err))
+    +-					    refname, NULL, NULL, err))
+     -				strbuf_addf(err, "there are still refs under '%s'",
+     -					    refname);
+     -			goto error_return;
+     -		}
+    --		resolved = !!refs_resolve_ref_unsafe(&refs->base,
+    --						     refname, resolve_flags,
+    +-		resolved = !!refs_resolve_ref_unsafe(&refs->base, refname,
+    +-						     RESOLVE_REF_NO_RECURSE,
+     -						     &lock->old_oid, type);
+     -	}
+    - 	if (!resolved) {
+    +-	if (!resolved) {
+    ++	if (!refs_resolve_ref_unsafe(&refs->base, refname,
+    ++				     RESOLVE_REF_NO_RECURSE,
+    ++				     &lock->old_oid, type)) {
+      		last_errno = errno;
+      		if (last_errno != ENOTDIR ||
+    + 		    !refs_verify_refname_available(&refs->base, refname,
  -:  ----------- >  8:  93feefa0259 reflog expire: pass OID via cb_data, not reflog_expire()
  -:  ----------- >  9:  105e20dd8f6 reflog delete: refactor the cb_data passed to cb()
  -:  ----------- > 10:  ea0e59d1885 reflog expire: refactor the cb_data passed to cb()
