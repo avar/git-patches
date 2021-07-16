@@ -1,0 +1,158 @@
+From 6c787e556d8e5ab7e96171e44118379b1ee8afe8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-18.18-6c787e556d8-20210716T121350Z-avarab@gmail.com>
+In-Reply-To: <cover-00.18-00000000000-20210716T121350Z-avarab@gmail.com>
+References: <patch-1.1-de0838fe99-20210714T111351Z-avarab@gmail.com>
+	<cover-00.18-00000000000-20210716T121350Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Jul 2021 12:47:02 +0200
+Subject: [PATCH v2 18/18] refs/files + reflog expire: pass and use lock_oid in
+ "prepare"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the initial implementation of "git reflog" in 4264dc15e19 (git
+reflog expire, 2006-12-19) we had this
+lookup_commit_reference_gently().
+
+I don't think we've ever found tags that we need to recursively
+dereference in reflogs, so this should at least be changed to a
+"lookup commit" as I'm doing here, although I can't think of a way
+where it mattered in practice.
+
+As shown in the change that introduced roughly the current version of
+this code in 03cb91b18cc (reflog --expire-unreachable: special case
+entries in "HEAD" reflog, 2010-04-09) we don't actually care about
+"tip_commit" being looked up again here, we can use the OID we just
+locked, so let's extend the refs API to do that.
+
+This finally clears up a lot of confusion around what OID we are
+handling. Before the fixes in earlier commits we'd first look up an
+OID with dwim_log(), and then try to acquire a lock on that OID with
+lock_ref_oid_basic(), after the ref had possibly moved on, if that
+happened we wouldn't do any further processing.
+
+Then as an in-between state in previous commits I've looked up an OID
+with dwim_log(), but possibly locked on a different OID. Just like the
+deref_tag() case I don't think it mattered in practice, but now with
+in-between refactoring we've finally closed the door on that potential
+edge case, we now use the OID we locked.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reflog.c     | 10 +++++-----
+ refs.h               |  3 ++-
+ refs/debug.c         |  7 +++++--
+ refs/files-backend.c |  2 +-
+ 4 files changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index e8a0f3aeb8f..234be78c87f 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -46,7 +46,6 @@ struct expire_reflog_policy_cb {
+ 	struct cmd_reflog_expire_cb cmd;
+ 	struct commit *tip_commit;
+ 	struct commit_list *tips;
+-	struct object_id oid;
+ };
+ 
+ struct worktree_reflogs {
+@@ -350,17 +349,18 @@ static int is_head(const char *refname)
+ }
+ 
+ static void reflog_expiry_prepare(const char *refname,
++				  struct object_id *locked_oid,
+ 				  void *cb_data)
+ {
+ 	struct expire_reflog_policy_cb *cb = cb_data;
+ 	struct commit_list *elem;
+ 	struct commit *commit = NULL;
+ 
++	assert(locked_oid);
+ 	if (!cb->cmd.expire_unreachable || is_head(refname)) {
+ 		cb->unreachable_expire_kind = UE_HEAD;
+ 	} else {
+-		commit = lookup_commit_reference_gently(the_repository,
+-								&cb->oid, 1);
++		commit = lookup_commit(the_repository, locked_oid);
+ 		cb->unreachable_expire_kind = commit ? UE_NORMAL : UE_ALWAYS;
+ 	}
+ 
+@@ -643,7 +643,7 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ 		char *ref;
+ 		struct expire_reflog_policy_cb cb = { .cmd = cmd };
+ 
+-		if (!dwim_log(argv[i], strlen(argv[i]), &cb.oid, &ref)) {
++		if (!dwim_log(argv[i], strlen(argv[i]), NULL, &ref)) {
+ 			status |= error(_("%s points nowhere!"), argv[i]);
+ 			continue;
+ 		}
+@@ -707,7 +707,7 @@ static int cmd_reflog_delete(int argc, const char **argv, const char *prefix)
+ 			continue;
+ 		}
+ 
+-		if (!dwim_log(argv[i], spec - argv[i], &cb.oid, &ref)) {
++		if (!dwim_log(argv[i], spec - argv[i], NULL, &ref)) {
+ 			status |= error(_("no reflog for '%s'"), argv[i]);
+ 			continue;
+ 		}
+diff --git a/refs.h b/refs.h
+index 966eb09888a..cf37b3387e2 100644
+--- a/refs.h
++++ b/refs.h
+@@ -796,7 +796,7 @@ enum expire_reflog_flags {
+  * expiration policy that is desired.
+  *
+  * reflog_expiry_prepare_fn -- Called once after the reference is
+- *     locked.
++ *     locked. Called with the OID of the locked reference.
+  *
+  * reflog_expiry_should_prune_fn -- Called once for each entry in the
+  *     existing reflog. It should return true iff that entry should be
+@@ -806,6 +806,7 @@ enum expire_reflog_flags {
+  *     unlocked again.
+  */
+ typedef void reflog_expiry_prepare_fn(const char *refname,
++				      struct object_id *lock_oid,
+ 				      void *cb_data);
+ typedef int reflog_expiry_should_prune_fn(struct object_id *ooid,
+ 					  struct object_id *noid,
+diff --git a/refs/debug.c b/refs/debug.c
+index c6e496ecf25..e1583171008 100644
+--- a/refs/debug.c
++++ b/refs/debug.c
+@@ -364,11 +364,14 @@ struct debug_reflog_expiry_should_prune {
+ };
+ 
+ static void debug_reflog_expiry_prepare(const char *refname,
++					struct object_id *locked_oid,
+ 					void *cb_data)
+ {
+ 	struct debug_reflog_expiry_should_prune *prune = cb_data;
+-	trace_printf_key(&trace_refs, "reflog_expire_prepare: %s\n", refname);
+-	prune->prepare(refname, prune->cb_data);
++	trace_printf_key(&trace_refs, "reflog_expire_prepare: %s locket at %s\n",
++			 refname,
++			 oid_to_hex(locked_oid));
++	prune->prepare(refname, locked_oid, prune->cb_data);
+ }
+ 
+ static int debug_reflog_expiry_should_prune_fn(struct object_id *ooid,
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index f3d25d8cee6..25248d77147 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -3039,7 +3039,7 @@ static int files_reflog_expire(struct ref_store *ref_store,
+ 		}
+ 	}
+ 
+-	(*prepare_fn)(refname, cb.policy_cb);
++	(*prepare_fn)(refname, &lock->old_oid, cb.policy_cb);
+ 	refs_for_each_reflog_ent(ref_store, refname, expire_reflog_ent, &cb);
+ 	(*cleanup_fn)(cb.policy_cb);
+ 
+-- 
+2.32.0.870.g0e611300719
+
