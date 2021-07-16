@@ -1,0 +1,166 @@
+From b847c0d987100dedce1a7c6d46935b91616142ba Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-b847c0d9871-20210716T151913Z-avarab@gmail.com>
+In-Reply-To: <cover-0.1-00000000000-20210716T151912Z-avarab@gmail.com>
+References: <cover-0.5-0000000000-20210714T005115Z-avarab@gmail.com>
+	<cover-0.1-00000000000-20210716T151912Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 6 Jul 2021 15:37:11 +0200
+Subject: [PATCH v4 1/1] test-lib-functions: define [de]packetize() in terms of
+ test-tool
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The shell+perl "[de]packetize()" helper functions were added in
+4414a150025 (t/lib-git-daemon: add network-protocol helpers,
+2018-01-24), and around the same time we added the "pkt-line" helper
+in 74e70029615 (test-pkt-line: introduce a packet-line test helper,
+2018-03-14).
+
+For some reason it seems we've mostly used the shell+perl version
+instead of the helper since then. There were discussions around
+88124ab2636 (test-lib-functions: make packetize() more efficient,
+2020-03-27) and cacae4329fa (test-lib-functions: simplify packetize()
+stdin code, 2020-03-29) to improve them and make them more efficient.
+
+There was one good reason to do so, we needed an equivalent of
+"test-tool pkt-line pack", but that command wasn't capable of handling
+input with "\n" (a feature) or "\0" (just because it happens to be
+printf-based under the hood).
+
+Let's add a "pkt-line-raw" helper for that, and expose is at a
+packetize_raw() to go with the existing packetize() on the shell
+level, this gives us the smallest amount of change to the tests
+themselves.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-pkt-line.c               | 12 +++++++
+ t/t5411/once-0010-report-status-v1.sh  |  4 +--
+ t/t5562-http-backend-content-length.sh |  2 +-
+ t/test-lib-functions.sh                | 44 +++++---------------------
+ 4 files changed, 23 insertions(+), 39 deletions(-)
+
+diff --git a/t/helper/test-pkt-line.c b/t/helper/test-pkt-line.c
+index 5e638f0b970..c5e052e5378 100644
+--- a/t/helper/test-pkt-line.c
++++ b/t/helper/test-pkt-line.c
+@@ -26,6 +26,16 @@ static void pack(int argc, const char **argv)
+ 	}
+ }
+ 
++static void pack_raw_stdin(void)
++{
++	struct strbuf sb = STRBUF_INIT;
++
++	if (strbuf_read(&sb, 0, 0) < 0)
++		die_errno("failed to read from stdin");
++	packet_write(1, sb.buf, sb.len);
++	strbuf_release(&sb);
++}
++
+ static void unpack(void)
+ {
+ 	struct packet_reader reader;
+@@ -110,6 +120,8 @@ int cmd__pkt_line(int argc, const char **argv)
+ 
+ 	if (!strcmp(argv[1], "pack"))
+ 		pack(argc - 2, argv + 2);
++	else if (!strcmp(argv[1], "pack-raw-stdin"))
++		pack_raw_stdin();
+ 	else if (!strcmp(argv[1], "unpack"))
+ 		unpack();
+ 	else if (!strcmp(argv[1], "unpack-sideband"))
+diff --git a/t/t5411/once-0010-report-status-v1.sh b/t/t5411/once-0010-report-status-v1.sh
+index 1233a46eac5..297b10925d5 100644
+--- a/t/t5411/once-0010-report-status-v1.sh
++++ b/t/t5411/once-0010-report-status-v1.sh
+@@ -28,10 +28,10 @@ test_expect_success "proc-receive: report status v1" '
+ 		if test -z "$GIT_DEFAULT_HASH" || test "$GIT_DEFAULT_HASH" = "sha1"
+ 		then
+ 			printf "%s %s refs/heads/main\0report-status\n" \
+-				$A $B | packetize
++				$A $B | packetize_raw
+ 		else
+ 			printf "%s %s refs/heads/main\0report-status object-format=$GIT_DEFAULT_HASH\n" \
+-				$A $B | packetize
++				$A $B | packetize_raw
+ 		fi &&
+ 		printf "%s %s refs/for/main/topic1\n" \
+ 			$ZERO_OID $A | packetize &&
+diff --git a/t/t5562-http-backend-content-length.sh b/t/t5562-http-backend-content-length.sh
+index e5d3d15ba8d..05a58069b0c 100755
+--- a/t/t5562-http-backend-content-length.sh
++++ b/t/t5562-http-backend-content-length.sh
+@@ -63,7 +63,7 @@ test_expect_success 'setup' '
+ 	hash_next=$(git commit-tree -p HEAD -m next HEAD^{tree}) &&
+ 	{
+ 		printf "%s %s refs/heads/newbranch\\0report-status object-format=%s\\n" \
+-			"$ZERO_OID" "$hash_next" "$(test_oid algo)" | packetize &&
++			"$ZERO_OID" "$hash_next" "$(test_oid algo)" | packetize_raw
+ 		printf 0000 &&
+ 		echo "$hash_next" | git pack-objects --stdout
+ 	} >push_body &&
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index b2810478a21..bc6f6d7f48d 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -1453,46 +1453,18 @@ nongit () {
+ 	)
+ } 7>&2 2>&4
+ 
+-# convert function arguments or stdin (if not arguments given) to pktline
+-# representation. If multiple arguments are given, they are separated by
+-# whitespace and put in a single packet. Note that data containing NULs must be
+-# given on stdin, and that empty input becomes an empty packet, not a flush
+-# packet (for that you can just print 0000 yourself).
++# These functions are thin wrappers around "test-tool pkt-line pack"
++# for older tests. Use "test-tool pkt-line" directly for new code.
+ packetize () {
+-	if test $# -gt 0
+-	then
+-		packet="$*"
+-		printf '%04x%s' "$((4 + ${#packet}))" "$packet"
+-	else
+-		perl -e '
+-			my $packet = do { local $/; <STDIN> };
+-			printf "%04x%s", 4 + length($packet), $packet;
+-		'
+-	fi
++	test-tool pkt-line pack
++}
++
++packetize_raw () {
++	test-tool pkt-line pack-raw-stdin
+ }
+ 
+-# Parse the input as a series of pktlines, writing the result to stdout.
+-# Sideband markers are removed automatically, and the output is routed to
+-# stderr if appropriate.
+-#
+-# NUL bytes are converted to "\\0" for ease of parsing with text tools.
+ depacketize () {
+-	perl -e '
+-		while (read(STDIN, $len, 4) == 4) {
+-			if ($len eq "0000") {
+-				print "FLUSH\n";
+-			} else {
+-				read(STDIN, $buf, hex($len) - 4);
+-				$buf =~ s/\0/\\0/g;
+-				if ($buf =~ s/^[\x2\x3]//) {
+-					print STDERR $buf;
+-				} else {
+-					$buf =~ s/^\x1//;
+-					print $buf;
+-				}
+-			}
+-		}
+-	'
++	test-tool pkt-line unpack
+ }
+ 
+ # Converts base-16 data into base-8. The output is given as a sequence of
+-- 
+2.32.0.874.gfa1990a4f10
+
