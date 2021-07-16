@@ -1,9 +1,9 @@
 From b847c0d987100dedce1a7c6d46935b91616142ba Mon Sep 17 00:00:00 2001
-Message-Id: <cover-0.1-00000000000-20210716T151912Z-avarab@gmail.com>
+Message-Id: <cover-0.1-00000000000-20210716T151926Z-avarab@gmail.com>
 In-Reply-To: <cover-0.5-0000000000-20210714T005115Z-avarab@gmail.com>
 References: <cover-0.5-0000000000-20210714T005115Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 16 Jul 2021 17:19:12 +0200
+Date: Fri, 16 Jul 2021 17:19:26 +0200
 Subject: [PATCH v4 0/1] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -23,10 +23,148 @@ Content-Transfer-Encoding: 8bit
 Range-diff against v3:
 1:  67aa8141153 < -:  ----------- serve tests: add missing "extra delim" test
 2:  64dfd14865c < -:  ----------- serve tests: use test_cmp in "protocol violations" test
-3:  c33f344ab20 < -:  ----------- tests: replace [de]packetize() shell+perl test-tool pkt-line
-4:  a44e1790f2a < -:  ----------- tests: replace remaining packetize() with "test-tool pkt-line"
-5:  cc91d15ef70 < -:  ----------- test-lib-functions.sh: remove unused [de]packetize() functions
--:  ----------- > 1:  b847c0d9871 test-lib-functions: define [de]packetize() in terms of test-tool
+3:  92bfd8a87b8 < -:  ----------- tests: replace [de]packetize() shell+perl test-tool pkt-line
+4:  9842c85d1f3 ! 1:  b847c0d9871 tests: replace remaining packetize() with "test-tool pkt-line"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    tests: replace remaining packetize() with "test-tool pkt-line"
+    +    test-lib-functions: define [de]packetize() in terms of test-tool
+     
+    -    Move the only remaining users of "packetize()" over to "test-tool
+    -    pkt-line", for this we need a new "pack-raw-stdin" subcommand in the
+    -    test-tool. The "pack" command takes input on stdin, but splits it by
+    -    "\n", furthermore we'll format the output using C-strings, so the
+    -    embedded "\0" being tested for here would cause the string to be
+    -    truncated.
+    +    The shell+perl "[de]packetize()" helper functions were added in
+    +    4414a150025 (t/lib-git-daemon: add network-protocol helpers,
+    +    2018-01-24), and around the same time we added the "pkt-line" helper
+    +    in 74e70029615 (test-pkt-line: introduce a packet-line test helper,
+    +    2018-03-14).
+     
+    -    So we need another mode that just calls packet_write() on the raw
+    -    input we got on stdin.
+    +    For some reason it seems we've mostly used the shell+perl version
+    +    instead of the helper since then. There were discussions around
+    +    88124ab2636 (test-lib-functions: make packetize() more efficient,
+    +    2020-03-27) and cacae4329fa (test-lib-functions: simplify packetize()
+    +    stdin code, 2020-03-29) to improve them and make them more efficient.
+    +
+    +    There was one good reason to do so, we needed an equivalent of
+    +    "test-tool pkt-line pack", but that command wasn't capable of handling
+    +    input with "\n" (a feature) or "\0" (just because it happens to be
+    +    printf-based under the hood).
+    +
+    +    Let's add a "pkt-line-raw" helper for that, and expose is at a
+    +    packetize_raw() to go with the existing packetize() on the shell
+    +    level, this gives us the smallest amount of change to the tests
+    +    themselves.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ t/t5411/once-0010-report-status-v1.sh: test_expect_success "proc-receive: report
+      		then
+      			printf "%s %s refs/heads/main\0report-status\n" \
+     -				$A $B | packetize
+    -+				$A $B | test-tool pkt-line pack-raw-stdin
+    ++				$A $B | packetize_raw
+      		else
+      			printf "%s %s refs/heads/main\0report-status object-format=$GIT_DEFAULT_HASH\n" \
+     -				$A $B | packetize
+    -+				$A $B | test-tool pkt-line pack-raw-stdin
+    ++				$A $B | packetize_raw
+      		fi &&
+    - 		test-tool pkt-line pack <<-EOF &&
+    - 		$ZERO_OID $A refs/for/main/topic1
+    + 		printf "%s %s refs/for/main/topic1\n" \
+    + 			$ZERO_OID $A | packetize &&
+     
+      ## t/t5562-http-backend-content-length.sh ##
+     @@ t/t5562-http-backend-content-length.sh: test_expect_success 'setup' '
+    @@ t/t5562-http-backend-content-length.sh: test_expect_success 'setup' '
+      	{
+      		printf "%s %s refs/heads/newbranch\\0report-status object-format=%s\\n" \
+     -			"$ZERO_OID" "$hash_next" "$(test_oid algo)" | packetize &&
+    -+			"$ZERO_OID" "$hash_next" "$(test_oid algo)" |
+    -+			test-tool pkt-line pack-raw-stdin &&
+    ++			"$ZERO_OID" "$hash_next" "$(test_oid algo)" | packetize_raw
+      		printf 0000 &&
+      		echo "$hash_next" | git pack-objects --stdout
+      	} >push_body &&
+     
+    - ## t/t5570-git-daemon.sh ##
+    -@@ t/t5570-git-daemon.sh: test_expect_success 'hostname cannot break out of directory' '
+    + ## t/test-lib-functions.sh ##
+    +@@ t/test-lib-functions.sh: nongit () {
+    + 	)
+    + } 7>&2 2>&4
+      
+    - test_expect_success FAKENC 'hostname interpolation works after LF-stripping' '
+    - 	{
+    --		printf "git-upload-pack /interp.git\n\0host=localhost" | packetize
+    --		printf "0000"
+    -+		printf "git-upload-pack /interp.git\n\0host=localhost" |
+    -+		test-tool pkt-line pack-raw-stdin &&
+    -+		test-tool pkt-line pack <<-\EOF
+    -+		0000
+    -+		EOF
+    - 	} >input &&
+    +-# convert function arguments or stdin (if not arguments given) to pktline
+    +-# representation. If multiple arguments are given, they are separated by
+    +-# whitespace and put in a single packet. Note that data containing NULs must be
+    +-# given on stdin, and that empty input becomes an empty packet, not a flush
+    +-# packet (for that you can just print 0000 yourself).
+    ++# These functions are thin wrappers around "test-tool pkt-line pack"
+    ++# for older tests. Use "test-tool pkt-line" directly for new code.
+    + packetize () {
+    +-	if test $# -gt 0
+    +-	then
+    +-		packet="$*"
+    +-		printf '%04x%s' "$((4 + ${#packet}))" "$packet"
+    +-	else
+    +-		perl -e '
+    +-			my $packet = do { local $/; <STDIN> };
+    +-			printf "%04x%s", 4 + length($packet), $packet;
+    +-		'
+    +-	fi
+    ++	test-tool pkt-line pack
+    ++}
+     +
+    - 	fake_nc "$GIT_DAEMON_HOST_PORT" <input >output &&
+    - 	test-tool pkt-line unpack <output >actual &&
+    ++packetize_raw () {
+    ++	test-tool pkt-line pack-raw-stdin
+    + }
+    + 
+    +-# Parse the input as a series of pktlines, writing the result to stdout.
+    +-# Sideband markers are removed automatically, and the output is routed to
+    +-# stderr if appropriate.
+    +-#
+    +-# NUL bytes are converted to "\\0" for ease of parsing with text tools.
+    + depacketize () {
+    +-	perl -e '
+    +-		while (read(STDIN, $len, 4) == 4) {
+    +-			if ($len eq "0000") {
+    +-				print "FLUSH\n";
+    +-			} else {
+    +-				read(STDIN, $buf, hex($len) - 4);
+    +-				$buf =~ s/\0/\\0/g;
+    +-				if ($buf =~ s/^[\x2\x3]//) {
+    +-					print STDERR $buf;
+    +-				} else {
+    +-					$buf =~ s/^\x1//;
+    +-					print $buf;
+    +-				}
+    +-			}
+    +-		}
+    +-	'
+    ++	test-tool pkt-line unpack
+    + }
+      
+    + # Converts base-16 data into base-8. The output is given as a sequence of
+5:  7ca83c5a551 < -:  ----------- test-lib-functions.sh: remove unused [de]packetize() functions
 -- 
 2.32.0.874.gfa1990a4f10
 
