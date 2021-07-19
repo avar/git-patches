@@ -1,0 +1,99 @@
+From 2d8f3e59e1fd3ab14a09ef8ebf25674fb1647588 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-2d8f3e59e1f-20210719T142808Z-avarab@gmail.com>
+In-Reply-To: <8636b96be256b47d207e543995abbecde9ca5055.camel@fnusa.cz>
+References: <8636b96be256b47d207e543995abbecde9ca5055.camel@fnusa.cz>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 19 Jul 2021 16:20:39 +0200
+Subject: [PATCH] pull, fetch: fix segfault in --set-upstream option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a segfault in the --set-upstream option added in
+24bc1a12926 (pull, fetch: add --set-upstream option, 2019-08-19) added
+in v2.24.0.
+
+The code added there did not do the same checking we do for "git
+branch" itself since 8efb8899cfe (branch: segfault fixes and
+validation, 2013-02-23), which in turn fixed the same sort of segfault
+I'm fixing now in "git branch --set-upstream-to", see
+6183d826ba6 (branch: introduce --set-upstream-to, 2012-08-20).
+
+The error message I'm adding here is an amalgamation of the error
+added for "git branch" in 8efb8899cfe, and the error output
+install_branch_config() itself emits, i.e. it trims "refs/heads/" from
+the name and says "branch X on remote", not "branch refs/heads/X on
+remote".
+
+Reported-by: Clemens Fruhwirth <clemens@endorphin.org>
+Reported-by: Jan Pokorný <poki@fnusa.cz>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/fetch.c         | 11 +++++++++++
+ t/t5553-set-upstream.sh | 22 ++++++++++++++++++++++
+ 2 files changed, 33 insertions(+)
+
+diff --git a/builtin/fetch.c b/builtin/fetch.c
+index 9191620e50c..c2eac8f15e5 100644
+--- a/builtin/fetch.c
++++ b/builtin/fetch.c
+@@ -1623,6 +1623,17 @@ static int do_fetch(struct transport *transport,
+ 			}
+ 		}
+ 		if (source_ref) {
++			if (!branch) {
++				const char *shortname = NULL;
++				if (!skip_prefix(source_ref->name,
++						 "refs/heads/", &shortname))
++					shortname = source_ref->name;
++				    
++				die(_("could not set upstream of HEAD to '%s' from '%s' when "
++				      "it does not point to any branch."),
++				    shortname, transport->remote->name);
++			}
++
+ 			if (!strcmp(source_ref->name, "HEAD") ||
+ 			    starts_with(source_ref->name, "refs/heads/"))
+ 				install_branch_config(0,
+diff --git a/t/t5553-set-upstream.sh b/t/t5553-set-upstream.sh
+index b1d614ce18c..ae90554645e 100755
+--- a/t/t5553-set-upstream.sh
++++ b/t/t5553-set-upstream.sh
+@@ -91,6 +91,17 @@ test_expect_success 'fetch --set-upstream with valid URL sets upstream to URL' '
+ 	check_config_missing other2
+ '
+ 
++test_expect_success 'fetch --set-upstream with a detached HEAD' '
++	git checkout HEAD^0 &&
++	test_when_finished "git checkout -" &&
++	cat >expect <<-\EOF &&
++	fatal: could not set upstream of HEAD to '"'"'main'"'"' from '"'"'upstream'"'"' when it does not point to any branch.
++	EOF
++	test_must_fail git fetch --set-upstream upstream main 2>actual.raw &&
++	grep ^fatal: actual.raw >actual &&
++	test_cmp expect actual
++'
++
+ # tests for pull --set-upstream
+ 
+ test_expect_success 'setup bare parent pull' '
+@@ -178,4 +189,15 @@ test_expect_success 'pull --set-upstream with valid URL and branch sets branch'
+ 	check_config_missing other2
+ '
+ 
++test_expect_success 'pull --set-upstream with a detached HEAD' '
++	git checkout HEAD^0 &&
++	test_when_finished "git checkout -" &&
++	cat >expect <<-\EOF &&
++	fatal: could not set upstream of HEAD to '"'"'main'"'"' from '"'"'upstream'"'"' when it does not point to any branch.
++	EOF
++	test_must_fail git pull --set-upstream upstream main 2>actual.raw &&
++	grep ^fatal: actual.raw >actual &&
++	test_cmp expect actual
++'
++
+ test_done
+-- 
+2.32.0.874.ge7a9d58bfcf
+
