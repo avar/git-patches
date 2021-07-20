@@ -1,0 +1,71 @@
+From e45ec439db02395ff4eadb23792d217bf3781da0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.12-e45ec439db0-20210720T101859Z-avarab@gmail.com>
+In-Reply-To: <cover-00.12-00000000000-20210720T101859Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20210716T140631Z-avarab@gmail.com>
+	<cover-00.12-00000000000-20210720T101859Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Jul 2021 12:02:43 +0200
+Subject: [PATCH v3 07/12] refs: make repo_dwim_log() accept a NULL oid
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the repo_dwim_log() function initially added as dwim_log() in
+eb3a48221fd (log --reflog: use dwim_log, 2007-02-09) to accept a NULL
+oid parameter. The refs_resolve_ref_unsafe() function it invokes
+already deals with it, but it didn't.
+
+This allows for a bit more clarity in a reflog-walk.c codepath added
+in f2eba66d4d1 (Enable HEAD@{...} and make it independent from the
+current branch, 2007-02-03). We'll shortly use this in
+builtin/reflog.c as well.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ reflog-walk.c | 3 +--
+ refs.c        | 5 +++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/reflog-walk.c b/reflog-walk.c
+index e9cd3283694..8ac4b284b6b 100644
+--- a/reflog-walk.c
++++ b/reflog-walk.c
+@@ -158,10 +158,9 @@ int add_reflog_for_walk(struct reflog_walk_info *info,
+ 		}
+ 		reflogs = read_complete_reflog(branch);
+ 		if (!reflogs || reflogs->nr == 0) {
+-			struct object_id oid;
+ 			char *b;
+ 			int ret = dwim_log(branch, strlen(branch),
+-					   &oid, &b);
++					   NULL, &b);
+ 			if (ret > 1)
+ 				free(b);
+ 			else if (ret == 1) {
+diff --git a/refs.c b/refs.c
+index 8b9f7c3a80a..d9635436759 100644
+--- a/refs.c
++++ b/refs.c
+@@ -698,7 +698,7 @@ int repo_dwim_log(struct repository *r, const char *str, int len,
+ 		strbuf_addf(&path, *p, len, str);
+ 		ref = refs_resolve_ref_unsafe(refs, path.buf,
+ 					      RESOLVE_REF_READING,
+-					      &hash, NULL);
++					      oid ? &hash : NULL, NULL);
+ 		if (!ref)
+ 			continue;
+ 		if (refs_reflog_exists(refs, path.buf))
+@@ -710,7 +710,8 @@ int repo_dwim_log(struct repository *r, const char *str, int len,
+ 			continue;
+ 		if (!logs_found++) {
+ 			*log = xstrdup(it);
+-			oidcpy(oid, &hash);
++			if (oid)
++				oidcpy(oid, &hash);
+ 		}
+ 		if (!warn_ambiguous_refs)
+ 			break;
+-- 
+2.32.0.874.ge7a9d58bfcf
+
