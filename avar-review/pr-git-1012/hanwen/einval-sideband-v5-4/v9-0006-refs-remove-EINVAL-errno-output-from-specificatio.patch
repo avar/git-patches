@@ -1,0 +1,73 @@
+From 8d01e5a0f8a371c3de1b11277673db171b967484 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.11-8d01e5a0f8a-20210720T102615Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20210720T102615Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20210716T142032Z-avarab@gmail.com>
+	<cover-00.11-00000000000-20210720T102615Z-avarab@gmail.com>
+From: Han-Wen Nienhuys <hanwen@google.com>
+Date: Fri, 23 Apr 2021 12:02:03 +0200
+Subject: [PATCH v9 06/11] refs: remove EINVAL errno output from specification
+ of read_raw_ref_fn
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This commit does not change code; it documents the fact that an alternate ref
+backend does not need to return EINVAL from read_raw_ref_fn to function
+properly.
+
+This is correct, because refs_read_raw_ref is only called from;
+
+* resolve_ref_unsafe(), which does not care for the EINVAL errno result.
+
+* refs_verify_refname_available(), which does not inspect errno.
+
+* files-backend.c, where errno is overwritten on failure.
+
+* packed-backend.c (is_packed_transaction_needed), which calls it for the
+  packed ref backend, which never emits EINVAL.
+
+A grep for EINVAL */*c reveals that no code checks errno against EINVAL after
+reading references. In addition, the refs.h file does not mention errno at all.
+
+A grep over resolve_ref_unsafe() turned up the following callers that inspect
+errno:
+
+* sequencer.c::print_commit_summary, which uses it for die_errno
+
+* lock_ref_oid_basic(), which only treats EISDIR and ENOTDIR specially.
+
+The files ref backend does use EINVAL. The files backend does not call into
+the generic API (refs_read_raw), but into the files-specific function
+(files_read_raw_ref), which we are not changing in this commit.
+
+As the errno sideband is unintuitive and error-prone, remove EINVAL
+value, as a step towards getting rid of the errno sideband altogether.
+
+Spotted by Ævar Arnfjörð Bjarmason <avarab@gmail.com>.
+
+Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/refs-internal.h | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/refs/refs-internal.h b/refs/refs-internal.h
+index 3155708345f..dc0d826c3ac 100644
+--- a/refs/refs-internal.h
++++ b/refs/refs-internal.h
+@@ -622,9 +622,9 @@ typedef int reflog_expire_fn(struct ref_store *ref_store,
+  *
+  * Return 0 on success. If the ref doesn't exist, set errno to ENOENT
+  * and return -1. If the ref exists but is neither a symbolic ref nor
+- * an object ID, it is broken; set REF_ISBROKEN in type, set errno to
+- * EINVAL, and return -1. If there is another error reading the ref,
+- * set errno appropriately and return -1.
++ * an object ID, it is broken; set REF_ISBROKEN in type, and return -1
++ * (errno should not be ENOENT) If there is another error reading the
++ * ref, set errno appropriately and return -1.
+  *
+  * Backend-specific flags might be set in type as well, regardless of
+  * outcome.
+-- 
+2.32.0.874.ge7a9d58bfcf
+

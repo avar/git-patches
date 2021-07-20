@@ -1,0 +1,55 @@
+From 0b83acfdfab235c956ec15ae8d450bb31ae74239 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-04.11-0b83acfdfab-20210720T102615Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20210720T102615Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20210716T142032Z-avarab@gmail.com>
+	<cover-00.11-00000000000-20210720T102615Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 19 Jul 2021 10:15:46 +0200
+Subject: [PATCH v9 04/11] refs/files: remove unused "errno != ENOTDIR"
+ condition
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As a follow-up to the preceding commit where we removed the adjacent
+"errno == EISDIR" condition in the same function, remove the
+"last_errno != ENOTDIR" condition here.
+
+It's not possible for us to hit this condition added in
+5b2d8d6f218 (lock_ref_sha1_basic(): improve diagnostics for ref D/F
+conflicts, 2015-05-11). Since a1c1d8170db (refs_resolve_ref_unsafe:
+handle d/f conflicts for writes, 2017-10-06) we've explicitly caught
+these in refs_resolve_ref_unsafe() before returning NULL:
+
+	if (errno != ENOENT &&
+	    errno != EISDIR &&
+	    errno != ENOTDIR)
+		return NULL;
+
+We'd then always return the refname from refs_resolve_ref_unsafe()
+even if we were in a broken state as explained in the preceding
+commit. The elided context here is a call to refs_resolve_ref_unsafe().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index f83aa1063f4..443182da102 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -894,8 +894,7 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 				     RESOLVE_REF_NO_RECURSE,
+ 				     &lock->old_oid, type)) {
+ 		last_errno = errno;
+-		if (last_errno != ENOTDIR ||
+-		    !refs_verify_refname_available(&refs->base, refname,
++		if (!refs_verify_refname_available(&refs->base, refname,
+ 						   NULL, NULL, err))
+ 			strbuf_addf(err, "unable to resolve reference '%s': %s",
+ 				    refname, strerror(last_errno));
+-- 
+2.32.0.874.ge7a9d58bfcf
+
