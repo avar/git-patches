@@ -1,0 +1,231 @@
+From 5c1694e071ed5733c3ace6e2ae9ab488f1ee30d7 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.6-00000000000-20210720T113532Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210718T074936Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210718T074936Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 20 Jul 2021 13:35:32 +0200
+Subject: [PATCH v3 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  commit-graph: define common usage with a macro
+  commit-graph: remove redundant handling of -h
+  commit-graph: use parse_options_concat()
+  multi-pack-index: refactor "goto usage" pattern
+  commit-graph: early exit to "usage" on !argc
+  commit-graph: show usage on "commit-graph [write|verify] garbage"
+
+ builtin/commit-graph.c     | 95 +++++++++++++++++++++-----------------
+ builtin/multi-pack-index.c | 11 ++---
+ t/t5318-commit-graph.sh    |  5 ++
+ 3 files changed, 63 insertions(+), 48 deletions(-)
+
+Range-diff against v2:
+1:  ee6630b7c0d ! 1:  1b9b4703ce2 commit-graph: define common usage with a macro
+    @@ builtin/commit-graph.c
+     -	   "[--split[=<strategy>]] [--reachable|--stdin-packs|--stdin-commits] "
+     -	   "[--changed-paths] [--[no-]max-new-filters <n>] [--[no-]progress] "
+     -	   "<split options>"),
+    -+static const char * builtin_commit_graph_verify_usage[] = {
+     +#define BUILTIN_COMMIT_GRAPH_VERIFY_USAGE \
+     +	N_("git commit-graph verify [--object-dir <objdir>] [--shallow] [--[no-]progress]")
+    ++
+    ++#define BUILTIN_COMMIT_GRAPH_WRITE_USAGE \
+    ++	N_("git commit-graph write [--object-dir <objdir>] [--append] " \
+    ++	   "[--split[=<strategy>]] [--reachable|--stdin-packs|--stdin-commits] " \
+    ++	   "[--changed-paths] [--[no-]max-new-filters <n>] [--[no-]progress] " \
+    ++	   "<split options>")
+    ++
+    ++static const char * builtin_commit_graph_verify_usage[] = {
+     +	BUILTIN_COMMIT_GRAPH_VERIFY_USAGE,
+      	NULL
+      };
+    @@ builtin/commit-graph.c
+     -static const char * const builtin_commit_graph_verify_usage[] = {
+     -	N_("git commit-graph verify [--object-dir <objdir>] [--shallow] [--[no-]progress]"),
+     +static const char * builtin_commit_graph_write_usage[] = {
+    -+#define BUILTIN_COMMIT_GRAPH_WRITE_USAGE \
+    -+	N_("git commit-graph write [--object-dir <objdir>] [--append] " \
+    -+	   "[--split[=<strategy>]] [--reachable|--stdin-packs|--stdin-commits] " \
+    -+	   "[--changed-paths] [--[no-]max-new-filters <n>] [--[no-]progress] " \
+    -+	   "<split options>")
+     +	BUILTIN_COMMIT_GRAPH_WRITE_USAGE,
+      	NULL
+      };
+2:  03581d85781 ! 2:  8f50750ae5e commit-graph: remove redundant handling of -h
+    @@ Commit message
+         parse_options() did this at the time, and the commit-graph code never
+         used PARSE_OPT_NO_INTERNAL_HELP.
+     
+    +    We don't need a test for this, it's tested by the t0012-help.sh test
+    +    added in d691551192a (t0012: test "-h" with builtins, 2017-05-30).
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/commit-graph.c ##
+    @@ builtin/commit-graph.c: int cmd_commit_graph(int argc, const char **argv, const
+      	git_config(git_default_config, NULL);
+      	argc = parse_options(argc, argv, prefix,
+      			     builtin_commit_graph_options,
+    -
+    - ## t/t5318-commit-graph.sh ##
+    -@@ t/t5318-commit-graph.sh: test_description='commit graph'
+    - 
+    - GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS=0
+    - 
+    -+test_expect_success 'usage' '
+    -+	test_expect_code 129 git commit-graph -h 2>err &&
+    -+	! grep error: err
+    -+'
+    -+
+    - test_expect_success 'setup full repo' '
+    - 	mkdir full &&
+    - 	cd "$TRASH_DIRECTORY/full" &&
+3:  8e909cd9c23 ! 3:  f02da994363 commit-graph: use parse_options_concat()
+    @@ Commit message
+         commit-graph: use parse_options_concat()
+     
+         Make use of the parse_options_concat() so we don't need to copy/paste
+    -    common options like --object-dir. This is inspired by a similar change
+    -    to "checkout" in 2087182272
+    -    (checkout: split options[] array in three pieces, 2019-03-29).
+    +    common options like --object-dir.
+    +
+    +    This is inspired by a similar change to "checkout" in 2087182272
+    +    (checkout: split options[] array in three pieces, 2019-03-29), and the
+    +    same pattern in the multi-pack-index command, see
+    +    60ca94769ce (builtin/multi-pack-index.c: split sub-commands,
+    +    2021-03-30).
+     
+         A minor behavior change here is that now we're going to list both
+         --object-dir and --progress first, before we'd list --progress along
+         with other options.
+     
+    +    Co-authored-by: Taylor Blau <me@ttaylorr.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/commit-graph.c ##
+    @@ builtin/commit-graph.c: static struct opts_commit_graph {
+      	int enable_changed_paths;
+      } opts;
+      
+    -+static struct option *add_common_options(struct option *prevopts)
+    ++static struct option common_opts[] = {
+    ++	OPT_STRING(0, "object-dir", &opts.obj_dir,
+    ++		   N_("dir"),
+    ++		   N_("the object directory to store the graph")),
+    ++	OPT_BOOL(0, "progress", &opts.progress,
+    ++		 N_("force progress reporting")),
+    ++	OPT_END()
+    ++};
+    ++
+    ++static struct option *add_common_options(struct option *to)
+     +{
+    -+	struct option options[] = {
+    -+		OPT_STRING(0, "object-dir", &opts.obj_dir,
+    -+			   N_("dir"),
+    -+			   N_("the object directory to store the graph")),
+    -+		OPT_BOOL(0, "progress", &opts.progress,
+    -+			 N_("force progress reporting")),
+    -+		OPT_END()
+    -+	};
+    -+	struct option *newopts = parse_options_concat(options, prevopts);
+    -+	free(prevopts);
+    -+	return newopts;
+    ++	return parse_options_concat(common_opts, to);
+     +}
+     +
+      static struct object_directory *find_odb(struct repository *r,
+    @@ builtin/commit-graph.c: static int graph_verify(int argc, const char **argv)
+     -		OPT_BOOL(0, "progress", &opts.progress, N_("force progress reporting")),
+      		OPT_END(),
+      	};
+    -+	struct option *options = parse_options_dup(builtin_commit_graph_verify_options);
+    -+	options = add_common_options(options);
+    ++	struct option *options = add_common_options(builtin_commit_graph_verify_options);
+      
+      	trace2_cmd_mode("verify");
+      
+    @@ builtin/commit-graph.c: static int graph_verify(int argc, const char **argv)
+      			     builtin_commit_graph_verify_usage, 0);
+      
+      	if (!opts.obj_dir)
+    +@@ builtin/commit-graph.c: static int graph_verify(int argc, const char **argv)
+    + 		die_errno(_("Could not open commit-graph '%s'"), graph_name);
+    + 
+    + 	FREE_AND_NULL(graph_name);
+    ++	FREE_AND_NULL(options);
+    + 
+    + 	if (open_ok)
+    + 		graph = load_commit_graph_one_fd_st(the_repository, fd, &st, odb);
+     @@ builtin/commit-graph.c: static int graph_write(int argc, const char **argv)
+      	struct progress *progress = NULL;
+      
+    @@ builtin/commit-graph.c: static int graph_write(int argc, const char **argv)
+      			0, write_option_max_new_filters),
+      		OPT_END(),
+      	};
+    -+	struct option *options = parse_options_dup(builtin_commit_graph_write_options);
+    -+	options = add_common_options(options);
+    ++	struct option *options = add_common_options(builtin_commit_graph_write_options);
+      
+      	opts.progress = isatty(2);
+      	opts.enable_changed_paths = -1;
+    @@ builtin/commit-graph.c: static int graph_write(int argc, const char **argv)
+      
+      	if (opts.reachable + opts.stdin_packs + opts.stdin_commits > 1)
+     @@ builtin/commit-graph.c: static int graph_write(int argc, const char **argv)
+    + 		result = 1;
+    + 
+    + cleanup:
+    ++	FREE_AND_NULL(options);
+    + 	string_list_clear(&pack_indexes, 0);
+    + 	strbuf_release(&buf);
+    + 	return result;
+    +@@ builtin/commit-graph.c: static int graph_write(int argc, const char **argv)
+      
+      int cmd_commit_graph(int argc, const char **argv, const char *prefix)
+      {
+    @@ builtin/commit-graph.c: static int graph_write(int argc, const char **argv)
+     -			N_("the object directory to store the graph")),
+     -		OPT_END(),
+     -	};
+    -+	struct option *no_options = parse_options_dup(NULL);
+    -+	struct option *builtin_commit_graph_options = add_common_options(no_options);
+    ++	struct option *builtin_commit_graph_options = common_opts;
+      
+      	git_config(git_default_config, NULL);
+      	argc = parse_options(argc, argv, prefix,
+-:  ----------- > 4:  6e9bd877866 multi-pack-index: refactor "goto usage" pattern
+4:  6801fb18faa = 5:  7acb4bd75ce commit-graph: early exit to "usage" on !argc
+5:  5c96699496b ! 6:  5c1694e071e commit-graph: show usage on "commit-graph [write|verify] garbage"
+    @@ builtin/commit-graph.c: static int graph_write(int argc, const char **argv)
+      		die(_("use at most one of --reachable, --stdin-commits, or --stdin-packs"));
+     
+      ## t/t5318-commit-graph.sh ##
+    -@@ t/t5318-commit-graph.sh: GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS=0
+    +@@ t/t5318-commit-graph.sh: test_description='commit graph'
+      
+    - test_expect_success 'usage' '
+    - 	test_expect_code 129 git commit-graph -h 2>err &&
+    --	! grep error: err
+    -+	! grep error: err &&
+    + GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS=0
+    + 
+    ++test_expect_success 'usage' '
+     +	test_expect_code 129 git commit-graph write blah &&
+     +	test_expect_code 129 git commit-graph write verify
+    - '
+    - 
+    ++'
+    ++
+      test_expect_success 'setup full repo' '
+    + 	mkdir full &&
+    + 	cd "$TRASH_DIRECTORY/full" &&
+-- 
+2.32.0.874.ge7a9d58bfcf
+
