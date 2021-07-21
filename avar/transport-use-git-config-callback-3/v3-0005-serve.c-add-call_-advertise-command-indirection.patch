@@ -1,0 +1,124 @@
+From 99eeff6f89084755ca2860df77ff2fa31d74637b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-05.12-99eeff6f890-20210721T233307Z-avarab@gmail.com>
+In-Reply-To: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20210628T191634Z-avarab@gmail.com>
+	<cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Jun 2021 16:12:26 +0200
+Subject: [PATCH v3 05/12] serve.c: add call_{advertise,command}() indirection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Instead of directly calling the callbacks defined in the "struct
+protocol_capability", let's call them via new
+"call_{advertise,command}()" functions. There's no use in this
+indirection now, but it'll be used in a subsequent commit to ensure
+that config is read before they're called.
+
+See ed10cb952d3 (serve: introduce git-serve, 2018-03-15) for the
+introduction of the code being changed here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ serve.c | 33 ++++++++++++++++++++++++---------
+ 1 file changed, 24 insertions(+), 9 deletions(-)
+
+diff --git a/serve.c b/serve.c
+index 49ea9fc8fd5..85cd3eab26e 100644
+--- a/serve.c
++++ b/serve.c
+@@ -42,6 +42,10 @@ static int session_id_advertise(struct repository *r, struct strbuf *value)
+ 	return 1;
+ }
+ 
++typedef int (*advertise_fn_t)(struct repository *r, struct strbuf *value);
++typedef int (*command_fn_t)(struct repository *r, struct strvec *keys,
++			    struct packet_reader *request);
++
+ struct protocol_capability {
+ 	/*
+ 	 * The name of the capability.  The server uses this name when
+@@ -56,7 +60,7 @@ struct protocol_capability {
+ 	 * If a value is added to 'value', the server will advertise this
+ 	 * capability as "<name>=<value>" instead of "<name>".
+ 	 */
+-	int (*advertise)(struct repository *r, struct strbuf *value);
++	advertise_fn_t advertise;
+ 
+ 	/*
+ 	 * Function called when a client requests the capability as a command.
+@@ -67,9 +71,7 @@ struct protocol_capability {
+ 	 *
+ 	 * This field should be NULL for capabilities which are not commands.
+ 	 */
+-	int (*command)(struct repository *r,
+-		       struct strvec *keys,
+-		       struct packet_reader *request);
++	command_fn_t command;
+ };
+ 
+ static struct protocol_capability capabilities[] = {
+@@ -106,6 +108,19 @@ static struct protocol_capability capabilities[] = {
+ 	},
+ };
+ 
++static int call_advertise(struct protocol_capability *command,
++			  struct repository *r, struct strbuf *value)
++{
++	return command->advertise(r, value);
++}
++
++static int call_command(struct protocol_capability *command,
++			struct repository *r, struct strvec *keys,
++			struct packet_reader *request)
++{
++	return command->command(r, keys, request);
++}
++
+ static void advertise_capabilities(void)
+ {
+ 	struct strbuf capability = STRBUF_INIT;
+@@ -115,7 +130,7 @@ static void advertise_capabilities(void)
+ 	for (i = 0; i < ARRAY_SIZE(capabilities); i++) {
+ 		struct protocol_capability *c = &capabilities[i];
+ 
+-		if (c->advertise(the_repository, &value)) {
++		if (call_advertise(c, the_repository, &value)) {
+ 			strbuf_addstr(&capability, c->name);
+ 
+ 			if (value.len) {
+@@ -155,9 +170,9 @@ static struct protocol_capability *get_capability(const char *key)
+ 
+ static int is_valid_capability(const char *key)
+ {
+-	const struct protocol_capability *c = get_capability(key);
++	struct protocol_capability *c = get_capability(key);
+ 
+-	return c && c->advertise(the_repository, NULL);
++	return c && call_advertise(c, the_repository, NULL);
+ }
+ 
+ static int is_command(const char *key, struct protocol_capability **command)
+@@ -170,7 +185,7 @@ static int is_command(const char *key, struct protocol_capability **command)
+ 		if (*command)
+ 			die("command '%s' requested after already requesting command '%s'",
+ 			    out, (*command)->name);
+-		if (!cmd || !cmd->advertise(the_repository, NULL) || !cmd->command)
++		if (!cmd || !call_advertise(cmd, the_repository, NULL) || !cmd->command)
+ 			die("invalid command '%s'", out);
+ 
+ 		*command = cmd;
+@@ -294,7 +309,7 @@ static int process_request(void)
+ 	if (has_capability(&keys, "session-id", &client_sid))
+ 		trace2_data_string("transfer", NULL, "client-sid", client_sid);
+ 
+-	command->command(the_repository, &keys, &reader);
++	call_command(command, the_repository, &keys, &reader);
+ 
+ 	strvec_clear(&keys);
+ 	return 0;
+-- 
+2.32.0.955.ge7c5360f7e7
+
