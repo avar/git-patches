@@ -1,0 +1,141 @@
+From 88e4f710c8168cad100e2d960c771e4c6c86f5fb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-88e4f710c8-20210722T140501Z-avarab@gmail.com>
+In-Reply-To: <CAFSh4Uyr5v9Ao-j0j7yO_HkUZSovBmSg7ADia7XCNZfsspFUYg@mail.gmail.com>
+References: <CAFSh4Uyr5v9Ao-j0j7yO_HkUZSovBmSg7ADia7XCNZfsspFUYg@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Jul 2021 15:51:56 +0200
+Subject: [PATCH] setup: only die on invalid .git under RUN_SETUP
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change RUN_SETUP_GENTLY to stop dying if e.g. the .git is "not a
+repo". This means that we now recover in cases like:
+
+    $ echo "gitdir: /foo/bar" > .git
+    $ git ls-remote https://github.com/torvalds/linux
+    [... ls-remote output ...]
+
+But not (as intended):
+
+    $ git rev-parse HEAD
+    fatal: not a git repository: /foo/bar
+
+The relevant setup_git_directory_gently_1() invocation was added in
+01017dce546 (setup_git_directory_gently_1(): avoid die()ing,
+2017-03-13), but I could reproduce this as far back as Git v1.8.0. I
+don't know if this ever worked, but it should.
+
+Let's also use the compiler to check enum arms for us, instead of
+having a "default" fall-though case, this changes code added in
+ce9b8aab5d9 (setup_git_directory_1(): avoid changing global state,
+2017-03-13).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ setup.c            | 27 ++++++++++++++++++++++-----
+ t/t0002-gitfile.sh |  8 ++++++--
+ 2 files changed, 28 insertions(+), 7 deletions(-)
+
+diff --git a/setup.c b/setup.c
+index eb9367ca5c..6ff145d58b 100644
+--- a/setup.c
++++ b/setup.c
+@@ -1033,7 +1033,8 @@ enum discovery_result {
+ 	/* these are errors */
+ 	GIT_DIR_HIT_CEILING = -1,
+ 	GIT_DIR_HIT_MOUNT_POINT = -2,
+-	GIT_DIR_INVALID_GITFILE = -3
++	GIT_DIR_INVALID_GITFILE = -3,
++	GIT_DIR_GITFILE_NOT_A_REPO = -4,
+ };
+ 
+ /*
+@@ -1118,8 +1119,11 @@ static enum discovery_result setup_git_directory_gently_1(struct strbuf *dir,
+ 				/* NEEDSWORK: fail if .git is not file nor dir */
+ 				if (is_git_directory(dir->buf))
+ 					gitdirenv = DEFAULT_GIT_DIR_ENVIRONMENT;
+-			} else if (error_code != READ_GITFILE_ERR_STAT_FAILED)
++			} else if (error_code == READ_GITFILE_ERR_NOT_A_REPO) {
++				return GIT_DIR_GITFILE_NOT_A_REPO;
++			} else if (error_code != READ_GITFILE_ERR_STAT_FAILED) {
+ 				return GIT_DIR_INVALID_GITFILE;
++			}
+ 		}
+ 		strbuf_setlen(dir, offset);
+ 		if (gitdirenv) {
+@@ -1209,6 +1213,8 @@ const char *setup_git_directory_gently(int *nongit_ok)
+ 	struct strbuf dir = STRBUF_INIT, gitdir = STRBUF_INIT;
+ 	const char *prefix = NULL;
+ 	struct repository_format repo_fmt = REPOSITORY_FORMAT_INIT;
++	int die_on_error = !nongit_ok;
++	enum discovery_result discovery;
+ 
+ 	/*
+ 	 * We may have read an incomplete configuration before
+@@ -1231,7 +1237,9 @@ const char *setup_git_directory_gently(int *nongit_ok)
+ 		die_errno(_("Unable to read current working directory"));
+ 	strbuf_addbuf(&dir, &cwd);
+ 
+-	switch (setup_git_directory_gently_1(&dir, &gitdir, 1)) {
++	discovery = setup_git_directory_gently_1(&dir, &gitdir, die_on_error);
++
++	switch (discovery) {
+ 	case GIT_DIR_EXPLICIT:
+ 		prefix = setup_explicit_git_dir(gitdir.buf, &cwd, &repo_fmt, nongit_ok);
+ 		break;
+@@ -1259,6 +1267,16 @@ const char *setup_git_directory_gently(int *nongit_ok)
+ 			    dir.buf);
+ 		*nongit_ok = 1;
+ 		break;
++	case GIT_DIR_GITFILE_NOT_A_REPO:
++		if (!nongit_ok)
++			die(_("not a git repository: %s"), dir.buf);
++		*nongit_ok = 1;
++		break;
++	case GIT_DIR_INVALID_GITFILE:
++		if (!nongit_ok)
++			die(_("invalid .git file: %s"), dir.buf);
++		*nongit_ok = 1;
++		break;
+ 	case GIT_DIR_NONE:
+ 		/*
+ 		 * As a safeguard against setup_git_directory_gently_1 returning
+@@ -1266,8 +1284,7 @@ const char *setup_git_directory_gently(int *nongit_ok)
+ 		 * set startup_info->have_repository to 1 when we did nothing to
+ 		 * find a repository.
+ 		 */
+-	default:
+-		BUG("unhandled setup_git_directory_1() result");
++		BUG("setup_git_directory_1() should not return GIT_DIR_NONE");
+ 	}
+ 
+ 	/*
+diff --git a/t/t0002-gitfile.sh b/t/t0002-gitfile.sh
+index 8440e6add1..176dc8c9dc 100755
+--- a/t/t0002-gitfile.sh
++++ b/t/t0002-gitfile.sh
+@@ -21,13 +21,17 @@ test_expect_success 'initial setup' '
+ test_expect_success 'bad setup: invalid .git file format' '
+ 	echo "gitdir $REAL" >.git &&
+ 	test_must_fail git rev-parse 2>.err &&
+-	test_i18ngrep "invalid gitfile format" .err
++	test_i18ngrep "invalid gitfile format" .err &&
++
++	git ls-remote "file://$REAL"
+ '
+ 
+ test_expect_success 'bad setup: invalid .git file path' '
+ 	echo "gitdir: $REAL.not" >.git &&
+ 	test_must_fail git rev-parse 2>.err &&
+-	test_i18ngrep "not a git repository" .err
++	test_i18ngrep "not a git repository" .err &&
++
++	git ls-remote "file://$REAL"
+ '
+ 
+ test_expect_success 'final setup + check rev-parse --git-dir' '
+-- 
+2.32.0.954.g5a3a1483ade
+
