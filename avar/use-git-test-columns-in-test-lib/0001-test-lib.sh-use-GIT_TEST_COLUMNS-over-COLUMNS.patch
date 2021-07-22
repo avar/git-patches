@@ -1,0 +1,447 @@
+From 44895f8e3b4691d2d0626755037f48a0ba28d0e4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-44895f8e3b-20210722T085820Z-avarab@gmail.com>
+In-Reply-To: <CAMMLpeT3bJcr7mRDpxmk32VqpAbNpN=fgPjmkcY+0zOBYruybQ@mail.gmail.com>
+References: <CAMMLpeT3bJcr7mRDpxmk32VqpAbNpN=fgPjmkcY+0zOBYruybQ@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Jul 2021 10:45:12 +0200
+Subject: [PATCH] test-lib.sh: use GIT_TEST_COLUMNS over COLUMNS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In my c49a177beca (test-lib.sh: set COLUMNS=80 for --verbose
+repeatability, 2021-06-29) the test suite started breaking on recent
+versions of bash.
+
+This is because it sets "shopt -s checkwinsize" by default in version
+>= 5.0, and furthermore started setting COLUMNS for non-interactive
+use around version 4.3.
+
+As noted in the comment added in test-lib.sh here we could just add
+this to the test-lib.sh to squash this particular bug:
+
+	shopt -u checkwinsize >/dev/null 2>&1
+
+But we'd then be at the mercy of the next shell or terminal that wants
+to be clever about COLUMNS.
+
+Let's instead solve this more thoroughly. We'll now take
+GIT_TEST_COLUMNS over COLUMNS, and furthermore intentionally spoil the
+COLUMNS variable to break any tests that rely on it being set to a
+sane value.
+
+If something breaks because we have a codepath that's not
+term_columns() checking COLUMNS we'd like to know about it, the narrow
+"shopt -u checkwinsize" fix won't give us that, or future-poof us
+against other 3rd party software changes. If that third-party software
+e.g. takes TIOCGWINSZ over columns on some platforms our tests would
+be flaky and break there even without this change.
+
+This approach does mean that any tests of ours that expected to test
+term_columns() behavior by setting COLUMNS will need to explicitly
+unset GIT_TEST_COLUMNS, or set it to the empty string. I'm doing the
+latter in all the tests changed here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ pager.c                       |  7 +++++++
+ t/t3200-branch.sh             |  8 ++++----
+ t/t4052-stat-output.sh        | 22 +++++++++++-----------
+ t/t4205-log-pretty-formats.sh |  6 +++---
+ t/t7004-tag.sh                |  6 +++---
+ t/t7006-pager.sh              |  2 +-
+ t/t7508-status.sh             |  4 ++--
+ t/t9002-column.sh             | 23 ++++++++++-------------
+ t/test-lib.sh                 | 13 +++++++++++--
+ 9 files changed, 52 insertions(+), 39 deletions(-)
+
+diff --git a/pager.c b/pager.c
+index 52f27a6765..cfcc6dc04b 100644
+--- a/pager.c
++++ b/pager.c
+@@ -165,6 +165,13 @@ int term_columns(void)
+ 	term_columns_at_startup = 80;
+ 	term_columns_guessed = 1;
+ 
++	col_string = getenv("GIT_TEST_COLUMNS");
++	if (col_string && (n_cols = atoi(col_string)) > 0) {
++		term_columns_at_startup = n_cols;
++		term_columns_guessed = 0;
++		return term_columns_at_startup;
++	}
++
+ 	col_string = getenv("COLUMNS");
+ 	if (col_string && (n_cols = atoi(col_string)) > 0) {
+ 		term_columns_at_startup = n_cols;
+diff --git a/t/t3200-branch.sh b/t/t3200-branch.sh
+index cc4b10236e..3e0b71a908 100755
+--- a/t/t3200-branch.sh
++++ b/t/t3200-branch.sh
+@@ -328,7 +328,7 @@ test_expect_success 'git branch --list -v with --abbrev' '
+ '
+ 
+ test_expect_success 'git branch --column' '
+-	COLUMNS=81 git branch --column=column >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=81 git branch --column=column >actual &&
+ 	cat >expect <<\EOF &&
+   a/b/c   bam     foo     l     * main    n       o/p     r
+   abc     bar     j/k     m/m     mb      o/o     q       topic
+@@ -341,7 +341,7 @@ test_expect_success 'git branch --column with an extremely long branch name' '
+ 	long=z$long/$long/$long/$long &&
+ 	test_when_finished "git branch -d $long" &&
+ 	git branch $long &&
+-	COLUMNS=80 git branch --column=column >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=80 git branch --column=column >actual &&
+ 	cat >expect <<EOF &&
+   a/b/c
+   abc
+@@ -367,7 +367,7 @@ EOF
+ test_expect_success 'git branch with column.*' '
+ 	git config column.ui column &&
+ 	git config column.branch "dense" &&
+-	COLUMNS=80 git branch >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=80 git branch >actual &&
+ 	git config --unset column.branch &&
+ 	git config --unset column.ui &&
+ 	cat >expect <<\EOF &&
+@@ -383,7 +383,7 @@ test_expect_success 'git branch --column -v should fail' '
+ 
+ test_expect_success 'git branch -v with column.ui ignored' '
+ 	git config column.ui column &&
+-	COLUMNS=80 git branch -v | cut -c -8 | sed "s/ *$//" >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=80 git branch -v | cut -c -8 | sed "s/ *$//" >actual &&
+ 	git config --unset column.ui &&
+ 	cat >expect <<\EOF &&
+   a/b/c
+diff --git a/t/t4052-stat-output.sh b/t/t4052-stat-output.sh
+index 9eba436211..08f8615809 100755
+--- a/t/t4052-stat-output.sh
++++ b/t/t4052-stat-output.sh
+@@ -111,7 +111,7 @@ cat >expect72 <<'EOF'
+  abcd | 1000 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ EOF
+ test_expect_success "format-patch --cover-letter ignores COLUMNS (big change)" '
+-	COLUMNS=200 git format-patch -1 --stdout --cover-letter >output &&
++	GIT_TEST_COLUMNS= COLUMNS=200 git format-patch -1 --stdout --cover-letter >output &&
+ 	grep " | " output >actual &&
+ 	test_cmp expect72 actual
+ '
+@@ -131,7 +131,7 @@ EOF
+ while read verb expect cmd args
+ do
+ 	test_expect_success "$cmd $verb COLUMNS (big change)" '
+-		COLUMNS=200 git $cmd $args >output &&
++		GIT_TEST_COLUMNS= COLUMNS=200 git $cmd $args >output &&
+ 		grep " | " output >actual &&
+ 		test_cmp "$expect" actual
+ 	'
+@@ -139,7 +139,7 @@ do
+ 	case "$cmd" in diff|show) continue;; esac
+ 
+ 	test_expect_success "$cmd --graph $verb COLUMNS (big change)" '
+-		COLUMNS=200 git $cmd $args --graph >output &&
++		GIT_TEST_COLUMNS= COLUMNS=200 git $cmd $args --graph >output &&
+ 		grep " | " output >actual &&
+ 		test_cmp "$expect-graph" actual
+ 	'
+@@ -159,7 +159,7 @@ EOF
+ while read verb expect cmd args
+ do
+ 	test_expect_success "$cmd $verb not enough COLUMNS (big change)" '
+-		COLUMNS=40 git $cmd $args >output &&
++		GIT_TEST_COLUMNS= COLUMNS=40 git $cmd $args >output &&
+ 		grep " | " output >actual &&
+ 		test_cmp "$expect" actual
+ 	'
+@@ -167,7 +167,7 @@ do
+ 	case "$cmd" in diff|show) continue;; esac
+ 
+ 	test_expect_success "$cmd --graph $verb not enough COLUMNS (big change)" '
+-		COLUMNS=40 git $cmd $args --graph >output &&
++		GIT_TEST_COLUMNS= COLUMNS=40 git $cmd $args --graph >output &&
+ 		grep " | " output >actual &&
+ 		test_cmp "$expect-graph" actual
+ 	'
+@@ -302,7 +302,7 @@ EOF
+ while read verb expect cmd args
+ do
+ 	test_expect_success "$cmd $verb COLUMNS (long filename)" '
+-		COLUMNS=200 git $cmd $args >output &&
++		GIT_TEST_COLUMNS= COLUMNS=200 git $cmd $args >output &&
+ 		grep " | " output >actual &&
+ 		test_cmp "$expect" actual
+ 	'
+@@ -310,7 +310,7 @@ do
+ 	case "$cmd" in diff|show) continue;; esac
+ 
+ 	test_expect_success "$cmd --graph $verb COLUMNS (long filename)" '
+-		COLUMNS=200 git $cmd $args --graph >output &&
++		GIT_TEST_COLUMNS= COLUMNS=200 git $cmd $args --graph >output &&
+ 		grep " | " output >actual &&
+ 		test_cmp "$expect-graph" actual
+ 	'
+@@ -331,7 +331,7 @@ while read verb expect cmd args
+ do
+ 	test_expect_success COLUMNS_CAN_BE_1 \
+ 		"$cmd $verb prefix greater than COLUMNS (big change)" '
+-		COLUMNS=1 git $cmd $args >output &&
++		GIT_TEST_COLUMNS= COLUMNS=1 git $cmd $args >output &&
+ 		grep " | " output >actual &&
+ 		test_cmp "$expect" actual
+ 	'
+@@ -340,7 +340,7 @@ do
+ 
+ 	test_expect_success COLUMNS_CAN_BE_1 \
+ 		"$cmd --graph $verb prefix greater than COLUMNS (big change)" '
+-		COLUMNS=1 git $cmd $args --graph >output &&
++		GIT_TEST_COLUMNS= COLUMNS=1 git $cmd $args --graph >output &&
+ 		grep " | " output >actual &&
+ 		test_cmp "$expect-graph" actual
+ 	'
+@@ -356,7 +356,7 @@ cat >expect <<'EOF'
+ EOF
+ test_expect_success 'merge --stat respects COLUMNS (big change)' '
+ 	git checkout -b branch HEAD^^ &&
+-	COLUMNS=100 git merge --stat --no-ff main^ >output &&
++	GIT_TEST_COLUMNS= COLUMNS=100 git merge --stat --no-ff main^ >output &&
+ 	grep " | " output >actual &&
+ 	test_cmp expect actual
+ '
+@@ -365,7 +365,7 @@ cat >expect <<'EOF'
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | 1000 +++++++++++++++++++++++++++++++++++++++
+ EOF
+ test_expect_success 'merge --stat respects COLUMNS (long filename)' '
+-	COLUMNS=100 git merge --stat --no-ff main >output &&
++	GIT_TEST_COLUMNS= COLUMNS=100 git merge --stat --no-ff main >output &&
+ 	grep " | " output >actual &&
+ 	test_cmp expect actual
+ '
+diff --git a/t/t4205-log-pretty-formats.sh b/t/t4205-log-pretty-formats.sh
+index 5865daa8f8..6c8e1b3f1a 100755
+--- a/t/t4205-log-pretty-formats.sh
++++ b/t/t4205-log-pretty-formats.sh
+@@ -207,7 +207,7 @@ test_expect_success 'left alignment formatting at the nth column' '
+ '
+ 
+ test_expect_success 'left alignment formatting at the nth column' '
+-	COLUMNS=50 git log --pretty="tformat:%h %<|(-10)%s" >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=50 git log --pretty="tformat:%h %<|(-10)%s" >actual &&
+ 	qz_to_tab_space <<-EOF >expected &&
+ 	$head1 message two                    Z
+ 	$head2 message one                    Z
+@@ -350,7 +350,7 @@ test_expect_success 'right alignment formatting at the nth column' '
+ '
+ 
+ test_expect_success 'right alignment formatting at the nth column' '
+-	COLUMNS=50 git log --pretty="tformat:%h %>|(-10)%s" >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=50 git log --pretty="tformat:%h %>|(-10)%s" >actual &&
+ 	qz_to_tab_space <<-EOF >expected &&
+ 	$head1                      message two
+ 	$head2                      message one
+@@ -450,7 +450,7 @@ test_expect_success 'center alignment formatting at the nth column' '
+ '
+ 
+ test_expect_success 'center alignment formatting at the nth column' '
+-	COLUMNS=70 git log --pretty="tformat:%h %><|(-30)%s" >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=70 git log --pretty="tformat:%h %><|(-30)%s" >actual &&
+ 	qz_to_tab_space <<-EOF >expected &&
+ 	$head1           message two          Z
+ 	$head2           message one          Z
+diff --git a/t/t7004-tag.sh b/t/t7004-tag.sh
+index 2f72c5c688..1c3d8cfd16 100755
+--- a/t/t7004-tag.sh
++++ b/t/t7004-tag.sh
+@@ -372,7 +372,7 @@ test_expect_success 'tag -l <pattern> -l <pattern> works, as our buggy documenta
+ '
+ 
+ test_expect_success 'listing tags in column' '
+-	COLUMNS=41 git tag -l --column=row >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=41 git tag -l --column=row >actual &&
+ 	cat >expected <<\EOF &&
+ a1      aa1     cba     t210    t211
+ v0.2.1  v1.0    v1.0.1  v1.1.3
+@@ -383,7 +383,7 @@ EOF
+ test_expect_success 'listing tags in column with column.*' '
+ 	test_config column.tag row &&
+ 	test_config column.ui dense &&
+-	COLUMNS=40 git tag -l >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=40 git tag -l >actual &&
+ 	cat >expected <<\EOF &&
+ a1      aa1   cba     t210    t211
+ v0.2.1  v1.0  v1.0.1  v1.1.3
+@@ -397,7 +397,7 @@ test_expect_success 'listing tag with -n --column should fail' '
+ 
+ test_expect_success 'listing tags -n in column with column.ui ignored' '
+ 	test_config column.ui "row dense" &&
+-	COLUMNS=40 git tag -l -n >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=40 git tag -l -n >actual &&
+ 	cat >expected <<\EOF &&
+ a1              Foo
+ aa1             Foo
+diff --git a/t/t7006-pager.sh b/t/t7006-pager.sh
+index 0e7cf75435..1b116366a3 100755
+--- a/t/t7006-pager.sh
++++ b/t/t7006-pager.sh
+@@ -651,7 +651,7 @@ test_expect_success TTY 'git tag with auto-columns ' '
+ 	cat >expect <<-\EOF &&
+ 	initial  one      two      three    four     five
+ 	EOF
+-	test_terminal env PAGER="cat >actual" COLUMNS=80 \
++	test_terminal env PAGER="cat >actual" GIT_TEST_COLUMNS= COLUMNS=80 \
+ 		git -c column.ui=auto tag --sort=authordate &&
+ 	test_cmp expect actual
+ '
+diff --git a/t/t7508-status.sh b/t/t7508-status.sh
+index 2b72451ba3..669a3c7150 100755
+--- a/t/t7508-status.sh
++++ b/t/t7508-status.sh
+@@ -108,13 +108,13 @@ test_expect_success 'status --column' '
+ #	dir2/modified  untracked
+ #
+ EOF
+-	COLUMNS=50 git -c status.displayCommentPrefix=true status --column="column dense" >output &&
++	GIT_TEST_COLUMNS= COLUMNS=50 git -c status.displayCommentPrefix=true status --column="column dense" >output &&
+ 	test_cmp expect output
+ '
+ 
+ test_expect_success 'status --column status.displayCommentPrefix=false' '
+ 	strip_comments expect &&
+-	COLUMNS=49 git -c status.displayCommentPrefix=false status --column="column dense" >output &&
++	GIT_TEST_COLUMNS= COLUMNS=49 git -c status.displayCommentPrefix=false status --column="column dense" >output &&
+ 	test_cmp expect output
+ '
+ 
+diff --git a/t/t9002-column.sh b/t/t9002-column.sh
+index 89983527b6..50cf3e7b42 100755
+--- a/t/t9002-column.sh
++++ b/t/t9002-column.sh
+@@ -46,7 +46,7 @@ test_expect_success '80 columns' '
+ 	cat >expected <<\EOF &&
+ one    two    three  four   five   six    seven  eight  nine   ten    eleven
+ EOF
+-	COLUMNS=80 git column --mode=column <lista >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=80 git column --mode=column <lista >actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -65,7 +65,7 @@ eleven
+ EOF
+ 
+ test_expect_success COLUMNS_CAN_BE_1 'COLUMNS = 1' '
+-	COLUMNS=1 git column --mode=column <lista >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=1 git column --mode=column <lista >actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -74,9 +74,6 @@ test_expect_success 'width = 1' '
+ 	test_cmp expected actual
+ '
+ 
+-COLUMNS=20
+-export COLUMNS
+-
+ test_expect_success '20 columns' '
+ 	cat >expected <<\EOF &&
+ one    seven
+@@ -86,7 +83,7 @@ four   ten
+ five   eleven
+ six
+ EOF
+-	git column --mode=column <lista >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=20 git column --mode=column <lista >actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -99,7 +96,7 @@ four   ten
+ five   eleven
+ six
+ EOF
+-	git column --mode=column,nodense < lista > actual &&
++	GIT_TEST_COLUMNS= COLUMNS=20 git column --mode=column,nodense < lista > actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -110,7 +107,7 @@ two   six   ten
+ three seven eleven
+ four  eight
+ EOF
+-	git column --mode=column,dense < lista > actual &&
++	GIT_TEST_COLUMNS= COLUMNS=20 git column --mode=column,dense < lista > actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -123,7 +120,7 @@ four    ten
+ five    eleven
+ six
+ EOF
+-	git column --mode=column --padding 2 <lista >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=20 git column --mode=column --padding 2 <lista >actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -136,7 +133,7 @@ test_expect_success '20 columns, indented' '
+   five   eleven
+   six
+ EOF
+-	git column --mode=column --indent="  " <lista >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=20 git column --mode=column --indent="  " <lista >actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -149,7 +146,7 @@ seven  eight
+ nine   ten
+ eleven
+ EOF
+-	git column --mode=row <lista >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=20 git column --mode=row <lista >actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -162,7 +159,7 @@ seven  eight
+ nine   ten
+ eleven
+ EOF
+-	git column --mode=row,nodense <lista >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=20 git column --mode=row,nodense <lista >actual &&
+ 	test_cmp expected actual
+ '
+ 
+@@ -173,7 +170,7 @@ four  five   six
+ seven eight  nine
+ ten   eleven
+ EOF
+-	git column --mode=row,dense <lista >actual &&
++	GIT_TEST_COLUMNS= COLUMNS=20 git column --mode=row,dense <lista >actual &&
+ 	test_cmp expected actual
+ '
+ 
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 9e26860544..82771643ba 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -406,10 +406,19 @@ LANG=C
+ LC_ALL=C
+ PAGER=cat
+ TZ=UTC
+-COLUMNS=80
+-export LANG LC_ALL PAGER TZ COLUMNS
++export LANG LC_ALL PAGER TZ
+ EDITOR=:
+ 
++# For repeatability we need to set term_columns()'s idea of
++# columns. We do this via GIT_TEST_COLUMNS and not COLUMNS because
++# e.g. versions of bash >= 5.0 have "shopt -s checkwinsize" on by
++# default. We could do "shopt -u checkwinsize >/dev/null 2>&1" here to
++# fix that particular issue, but this is not shell specific, and
++# future-proof the tests.
++GIT_TEST_COLUMNS=80
++COLUMNS=10
++export GIT_TEST_COLUMNS COLUMNS
++
+ # A call to "unset" with no arguments causes at least Solaris 10
+ # /usr/xpg4/bin/sh and /bin/ksh to bail out.  So keep the unsets
+ # deriving from the command substitution clustered with the other
+-- 
+2.32.0.955.ge7c5360f7e7
+
