@@ -1,0 +1,119 @@
+From acb131cc1c51f2f44d3e8c6be93132bbb1c3252c Mon Sep 17 00:00:00 2001
+Message-Id: <cover-00.11-0000000000-20210726T234237Z-avarab@gmail.com>
+In-Reply-To: <cover-00.12-00000000000-20210720T102051Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210720T102051Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 27 Jul 2021 01:42:37 +0200
+Subject: [PATCH v4 00/11] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (11):
+  refs/packet: add missing BUG() invocations to reflog callbacks
+  refs/files: remove unused REF_DELETING in lock_ref_oid_basic()
+  refs/files: remove unused "extras/skip" in lock_ref_oid_basic()
+  refs/files: remove unused "skip" in lock_raw_ref() too
+  refs/debug: re-indent argument list for "prepare"
+  refs: make repo_dwim_log() accept a NULL oid
+  refs/files: add a comment about refs_reflog_exists() call
+  reflog expire: don't lock reflogs using previously seen OID
+  refs/files: remove unused "oid" in lock_ref_oid_basic()
+  refs/files: remove unused "errno == EISDIR" code
+  refs/files: remove unused "errno != ENOTDIR" condition
+
+ builtin/reflog.c      |  13 ++---
+ reflog-walk.c         |   3 +-
+ refs.c                |   5 +-
+ refs.h                |   2 +-
+ refs/debug.c          |   4 +-
+ refs/files-backend.c  | 130 ++++++++++++------------------------------
+ refs/packed-backend.c |   5 ++
+ 7 files changed, 53 insertions(+), 109 deletions(-)
+
+Range-diff against v3:
+ 1:  737d2d8c3d =  1:  92fc3af072 refs/packet: add missing BUG() invocations to reflog callbacks
+ 2:  dfb9e34076 =  2:  67cd2331fb refs/files: remove unused REF_DELETING in lock_ref_oid_basic()
+ 3:  0f2262fec6 =  3:  7d76514b55 refs/files: remove unused "extras/skip" in lock_ref_oid_basic()
+ 4:  7fb7ff9749 =  4:  852f86e666 refs/files: remove unused "skip" in lock_raw_ref() too
+ 5:  4e526c34aa =  5:  685b48328a refs/debug: re-indent argument list for "prepare"
+ 6:  295594fe8a <  -:  ---------- refs API: pass the "lock OID" to reflog "prepare"
+ 7:  e45ec439db =  6:  b75e7673d7 refs: make repo_dwim_log() accept a NULL oid
+ 8:  8ae8e5ac02 =  7:  7fe6c9bd92 refs/files: add a comment about refs_reflog_exists() call
+ 9:  1050743e27 !  8:  c9c2da3599 reflog expire: don't lock reflogs using previously seen OID
+    @@ Commit message
+         [3].
+     
+         I'm leaving behind now-unused code the refs API etc. that takes the
+    -    now-NULL "oid" argument, and other code that can be simplified now
+    +    now-NULL "unused_oid" argument, and other code that can be simplified now
+         that we never have on OID in that context, that'll be cleaned up in
+         subsequent commits, but for now let's narrowly focus on fixing the
+         "git gc" issue. As the modified assert() shows we always pass a NULL
+    @@ builtin/reflog.c: static int cmd_reflog_delete(int argc, const char **argv, cons
+      					should_expire_reflog_ent,
+      					reflog_expiry_cleanup,
+     
+    + ## refs.h ##
+    +@@ refs.h: enum expire_reflog_flags {
+    +  * expiration policy that is desired.
+    +  *
+    +  * reflog_expiry_prepare_fn -- Called once after the reference is
+    +- *     locked.
+    ++ *     locked. Called with the OID of the locked reference.
+    +  *
+    +  * reflog_expiry_should_prune_fn -- Called once for each entry in the
+    +  *     existing reflog. It should return true iff that entry should be
+    +
+      ## refs/files-backend.c ##
+    +@@ refs/files-backend.c: static int expire_reflog_ent(struct object_id *ooid, struct object_id *noid,
+    + }
+    + 
+    + static int files_reflog_expire(struct ref_store *ref_store,
+    +-			       const char *refname, const struct object_id *oid,
+    ++			       const char *refname, const struct object_id *unused_oid,
+    + 			       unsigned int flags,
+    + 			       reflog_expiry_prepare_fn prepare_fn,
+    + 			       reflog_expiry_should_prune_fn should_prune_fn,
+    +@@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+    + 	int status = 0;
+    + 	int type;
+    + 	struct strbuf err = STRBUF_INIT;
+    ++	const struct object_id *oid;
+    + 
+    + 	memset(&cb, 0, sizeof(cb));
+    + 	cb.flags = flags;
+     @@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+      	 * reference itself, plus we might need to update the
+      	 * reference if --updateref was specified:
+    @@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store
+      				  REF_NO_DEREF,
+      				  &type, &err);
+      	if (!lock) {
+    +@@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+    + 		strbuf_release(&err);
+    + 		return -1;
+    + 	}
+    ++	oid = &lock->old_oid;
+    + 
+    + 	/*
+    + 	 * When refs are deleted, their reflog is deleted before the
+     @@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+      		}
+      	}
+      
+    --	assert(oideq(&lock->old_oid, oid));
+    -+	assert(!oid);
+    - 	(*prepare_fn)(refname, &lock->old_oid, cb.policy_cb);
+    ++	assert(!unused_oid);
+    + 	(*prepare_fn)(refname, oid, cb.policy_cb);
+      	refs_for_each_reflog_ent(ref_store, refname, expire_reflog_ent, &cb);
+      	(*cleanup_fn)(cb.policy_cb);
+10:  753c20f89b =  9:  b61c734cf5 refs/files: remove unused "oid" in lock_ref_oid_basic()
+11:  8a71bbef97 = 10:  009abc9968 refs/files: remove unused "errno == EISDIR" code
+12:  452253d597 = 11:  acb131cc1c refs/files: remove unused "errno != ENOTDIR" condition
+-- 
+2.32.0.956.g6b0c84ceda8
+
