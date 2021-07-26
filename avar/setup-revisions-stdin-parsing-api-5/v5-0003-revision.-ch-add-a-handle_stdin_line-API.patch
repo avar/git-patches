@@ -1,0 +1,162 @@
+From e3d24bd6e8ad5dcf68f1a37dbad41cf3b18bbd71 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.5-e3d24bd6e8a-20210726T124425Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20210726T124425Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210709T105850Z-avarab@gmail.com>
+	<cover-0.5-00000000000-20210726T124425Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 3 Jun 2021 16:05:58 +0200
+Subject: [PATCH v5 3/5] revision.[ch]: add a "handle_stdin_line" API
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the rev_info stdin parsing API to support hooking into its
+read_revisions_from_stdin() function, in the next commit we'll change
+the the custom stdin parsing in pack-objects.c to use it..
+
+For that use-case adding API is barely justified. We'll be able to
+make the handle_revision_arg() static in exchange for it, and we'll
+avoid the duplicate dance around setting "save_warning" and
+"warn_on_object_refname_ambiguity", but we could just continue to do
+that ourselves in builtin/pack-objects.c
+
+The real reason to add this is for a change not part of this
+series. We'll soon teach "git bundle create" to accept
+revision/refname pairs on stdin, and thus do away with the limitation
+of it being impossible to create bundles with ref tips that don't
+correspond to the state of the current repository. I.e. this will
+work:
+
+    $ printf "e83c5163316f89bfbde7\trefs/heads/first-git-dot-git-commit\n" |
+    git bundle create initial.bundle --stdin
+
+As well as things like:
+
+    $ git for-each-ref 'refs/remotes/origin' |
+    sed 's!\trefs/remotes/origin/!\trefs/heads/!' |
+    git bundle create origin.bundle --stdin
+
+In order to do that we'll need to modify the lines we consume on stdin
+revision.c (which bundle.c uses already), and be assured that that
+stripping extra bundle-specific data from them is the only change in
+behavior.
+
+That change will be much more complex if bundle.c needs to start doing
+its own stdin parsing again outside of revision.c, it was recently
+converted to use revision.c's parsing in 5bb0fd2cab5 (bundle:
+arguments can be read from stdin, 2021-01-11)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ revision.c | 22 ++++++++++++++++++++++
+ revision.h | 30 ++++++++++++++++++++++++++++++
+ 2 files changed, 52 insertions(+)
+
+diff --git a/revision.c b/revision.c
+index 50909339a59..3f6ab834aff 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2119,6 +2119,19 @@ static void read_revisions_from_stdin(struct rev_info *revs,
+ 		int len = sb.len;
+ 		if (!len)
+ 			break;
++
++		if (revs->handle_stdin_line) {
++			enum rev_info_stdin_line ret = revs->handle_stdin_line(
++				revs, &sb, revs->stdin_line_priv);
++
++			switch (ret) {
++			case REV_INFO_STDIN_LINE_PROCESS:
++				break;
++			case REV_INFO_STDIN_LINE_CONTINUE:
++				continue;
++			}
++		}
++
+ 		if (sb.buf[0] == '-') {
+ 			if (len == 2 && sb.buf[1] == '-') {
+ 				seen_dashdash = 1;
+@@ -2742,6 +2755,7 @@ int setup_revisions(int argc, const char **argv, struct rev_info *revs, struct s
+ 
+ 			if (!strcmp(arg, "--stdin")) {
+ 				switch (revs->stdin_handling) {
++				case REV_INFO_STDIN_ALWAYS_READ:
+ 				case REV_INFO_STDIN_IGNORE:
+ 					argv[left++] = arg;
+ 					continue;
+@@ -2790,6 +2804,14 @@ int setup_revisions(int argc, const char **argv, struct rev_info *revs, struct s
+ 		}
+ 	}
+ 
++	/*
++	 * We're asked to ALWAYS_READ from stdin, but no --stdin
++	 * option (or "consumed_stdin" would be set).
++	 */
++	if (!revs->consumed_stdin &&
++	    revs->stdin_handling == REV_INFO_STDIN_ALWAYS_READ)
++		read_revisions_from_stdin(revs, &prune_data);
++
+ 	if (prune_data.nr) {
+ 		/*
+ 		 * If we need to introduce the magic "a lone ':' means no
+diff --git a/revision.h b/revision.h
+index 99458cc0647..644b7c8a217 100644
+--- a/revision.h
++++ b/revision.h
+@@ -89,8 +89,17 @@ struct topo_walk_info;
+ enum rev_info_stdin {
+ 	REV_INFO_STDIN_CONSUME_ON_OPTION,
+ 	REV_INFO_STDIN_IGNORE,
++	REV_INFO_STDIN_ALWAYS_READ,
+ };
+ 
++enum rev_info_stdin_line {
++	REV_INFO_STDIN_LINE_PROCESS,
++	REV_INFO_STDIN_LINE_CONTINUE,
++};
++
++typedef enum rev_info_stdin_line (*rev_info_stdin_line_func)(
++	struct rev_info *revs, struct strbuf *line, void *stdin_line_priv);
++
+ struct rev_info {
+ 	/* Starting list */
+ 	struct commit_list *commits;
+@@ -126,6 +135,9 @@ struct rev_info {
+ 	 *
+ 	 * Can be set to REV_INFO_STDIN_IGNORE to ignore the --stdin
+ 	 * option.
++	 *
++	 * Set it to REV_INFO_STDIN_ALWAYS_READ if there's always data
++	 * on stdin to be read, even if no --stdin option is provided.
+ 	 */
+ 	enum rev_info_stdin stdin_handling;
+ 
+@@ -136,6 +148,24 @@ struct rev_info {
+ 	 */
+ 	unsigned int consumed_stdin:1;
+ 
++	/*
++	 * When reading from stdin (see "stdin_handling" above) define
++	 * a handle_stdin_line function to consume the lines.
++	 *
++	 * - Return REV_INFO_STDIN_LINE_PROCESS to continue
++	 *   revision.c's normal processing of the line (after
++	 *   possibly munging the provided strbuf).
++	 *
++	 * - Return REV_INFO_STDIN_LINE_CONTINUE to indicate that the
++	 *   line is fully processed, moving onto the next line (if
++	 *   any)
++	 *
++	 * Use the "stdin_line_priv" to optionally pass your own data
++	 * around.
++	 */
++	rev_info_stdin_line_func handle_stdin_line;
++	void *stdin_line_priv;
++
+ 	/* topo-sort */
+ 	enum rev_sort_order sort_order;
+ 
+-- 
+2.32.0.956.g6b0c84ceda8
+
