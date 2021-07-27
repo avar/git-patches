@@ -1,0 +1,147 @@
+From f1da49de630a5f7ce8315cf4eeace35dcf5a1c37 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-f1da49de63-20210727T000203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 25 Jul 2021 21:12:08 +0200
+Subject: [PATCH] fetch-negotiator: call BUG() on API misuse, don't segfault
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in ec06283844a (fetch-pack: introduce negotiator API,
+2018-06-14) it's important that the fetch negotiator's callbacks be
+called in the documented order, and that some of them never be called
+again after other "later" callbacks are called.
+
+But let's assert that with a BUG(), instead of setting the relevant
+callbacks to NULL. We'll now give a meaningful error on API misuse,
+instead of segfaulting.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fetch-negotiator.c    | 11 +++++++++++
+ fetch-negotiator.h    | 10 ++++++++++
+ negotiator/default.c  |  6 +++---
+ negotiator/noop.c     |  3 +++
+ negotiator/skipping.c |  6 +++---
+ 5 files changed, 30 insertions(+), 6 deletions(-)
+
+diff --git a/fetch-negotiator.c b/fetch-negotiator.c
+index 57ed5784e1..b0888e2656 100644
+--- a/fetch-negotiator.c
++++ b/fetch-negotiator.c
+@@ -24,3 +24,14 @@ void fetch_negotiator_init(struct repository *r,
+ 		return;
+ 	}
+ }
++
++void known_common_BUG(struct fetch_negotiator *negotiator,
++		      struct commit *commit)
++{
++	BUG("known_common() called after add_tip() and/or next() was called");
++}
++
++void add_tip_BUG(struct fetch_negotiator *negotiator, struct commit *commit)
++{
++	BUG("add_tip() called after next() called");
++}
+diff --git a/fetch-negotiator.h b/fetch-negotiator.h
+index ea78868504..b6461260f5 100644
+--- a/fetch-negotiator.h
++++ b/fetch-negotiator.h
+@@ -28,6 +28,9 @@ struct fetch_negotiator {
+ 	 * Once this function is invoked, known_common() cannot be invoked any
+ 	 * more.
+ 	 *
++	 * Set "known_common" to "known_common_BUG" in this callback
++	 * to assert the invocation flow.
++	 *
+ 	 * Indicate that this commit and all its ancestors are to be checked
+ 	 * for commonality with the server.
+ 	 */
+@@ -37,6 +40,10 @@ struct fetch_negotiator {
+ 	 * Once this function is invoked, known_common() and add_tip() cannot
+ 	 * be invoked any more.
+ 	 *
++	 * Set "add_tip" to "add_tip_BUG" in this callback to assert
++	 * the invocation flow, and "known_common" to
++	 * "known_common_BUG" as noted for in add_tip() above.
++	 *
+ 	 * Return the next commit that the client should send as a "have" line.
+ 	 */
+ 	const struct object_id *(*next)(struct fetch_negotiator *);
+@@ -56,4 +63,7 @@ struct fetch_negotiator {
+ void fetch_negotiator_init(struct repository *r,
+ 			   struct fetch_negotiator *negotiator);
+ 
++void known_common_BUG(struct fetch_negotiator *, struct commit *);
++void add_tip_BUG(struct fetch_negotiator *, struct commit *);
++
+ #endif
+diff --git a/negotiator/default.c b/negotiator/default.c
+index 434189ae5d..d6ad595ba4 100644
+--- a/negotiator/default.c
++++ b/negotiator/default.c
+@@ -135,14 +135,14 @@ static void known_common(struct fetch_negotiator *n, struct commit *c)
+ 
+ static void add_tip(struct fetch_negotiator *n, struct commit *c)
+ {
+-	n->known_common = NULL;
++	n->known_common = known_common_BUG;
+ 	rev_list_push(n->data, c, SEEN);
+ }
+ 
+ static const struct object_id *next(struct fetch_negotiator *n)
+ {
+-	n->known_common = NULL;
+-	n->add_tip = NULL;
++	n->known_common = known_common_BUG;
++	n->add_tip = add_tip_BUG;
+ 	return get_rev(n->data);
+ }
+ 
+diff --git a/negotiator/noop.c b/negotiator/noop.c
+index 60569b8350..3271048b27 100644
+--- a/negotiator/noop.c
++++ b/negotiator/noop.c
+@@ -11,10 +11,13 @@ static void known_common(struct fetch_negotiator *n, struct commit *c)
+ static void add_tip(struct fetch_negotiator *n, struct commit *c)
+ {
+ 	/* do nothing */
++	n->known_common = known_common_BUG;
+ }
+ 
+ static const struct object_id *next(struct fetch_negotiator *n)
+ {
++	n->known_common = known_common_BUG;
++	n->add_tip = add_tip_BUG;
+ 	return NULL;
+ }
+ 
+diff --git a/negotiator/skipping.c b/negotiator/skipping.c
+index 1236e79224..18448aeb80 100644
+--- a/negotiator/skipping.c
++++ b/negotiator/skipping.c
+@@ -204,7 +204,7 @@ static void known_common(struct fetch_negotiator *n, struct commit *c)
+ 
+ static void add_tip(struct fetch_negotiator *n, struct commit *c)
+ {
+-	n->known_common = NULL;
++	n->known_common = known_common_BUG;
+ 	if (c->object.flags & SEEN)
+ 		return;
+ 	rev_list_push(n->data, c, 0);
+@@ -212,8 +212,8 @@ static void add_tip(struct fetch_negotiator *n, struct commit *c)
+ 
+ static const struct object_id *next(struct fetch_negotiator *n)
+ {
+-	n->known_common = NULL;
+-	n->add_tip = NULL;
++	n->known_common = known_common_BUG;
++	n->add_tip = add_tip_BUG;
+ 	return get_rev(n->data);
+ }
+ 
+-- 
+2.32.0.988.g1a6a4b2c5f
+
