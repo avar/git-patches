@@ -1,0 +1,141 @@
+From 088e4306d8109a8b254aff341b583b656eb1e64b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.4-088e4306d8-20210727T004015Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-0000000000-20210727T004015Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210727T004015Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 24 Jul 2021 19:15:15 +0200
+Subject: [PATCH 2/4] bundle API: change "flags" to be "extra_index_pack_args"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since the "flags" parameter was added in be042aff24c (Teach progress
+eye-candy to fetch_refs_from_bundle(), 2011-09-18) there's never been
+more than the one flag: BUNDLE_VERBOSE.
+
+Let's have the only caller who cares about that pass "-v" itself
+instead through new "extra_index_pack_args" parameter. The flexibility
+of being able to pass arbitrary arguments to "unbundle" will be used
+in a subsequent commit.
+
+We could pass NULL explicitly in cmd_bundle_unbundle(), but let's
+instead initialize an empty strvec and pass it, in anticipation of a
+subsequent commit wanting to add arguments to it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bundle.c |  5 +++--
+ bundle.c         | 17 +++++++++++------
+ bundle.h         |  8 ++++++--
+ transport.c      |  5 ++++-
+ 4 files changed, 24 insertions(+), 11 deletions(-)
+
+diff --git a/builtin/bundle.c b/builtin/bundle.c
+index 053a51bea1..10f6f45770 100644
+--- a/builtin/bundle.c
++++ b/builtin/bundle.c
+@@ -165,7 +165,8 @@ static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+ 	struct option options[] = {
+ 		OPT_END()
+ 	};
+-	char *bundle_file;
++	char* bundle_file;
++	struct strvec extra_args = STRVEC_INIT;
+ 
+ 	argc = parse_options_cmd_bundle(argc, argv, prefix,
+ 			builtin_bundle_unbundle_usage, options, &bundle_file);
+@@ -177,7 +178,7 @@ static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+ 	}
+ 	if (!startup_info->have_repository)
+ 		die(_("Need a repository to unbundle."));
+-	ret = !!unbundle(the_repository, &header, bundle_fd, 0) ||
++	ret = !!unbundle(the_repository, &header, bundle_fd, &extra_args) ||
+ 		list_bundle_refs(&header, argc, argv);
+ 	bundle_header_release(&header);
+ cleanup:
+diff --git a/bundle.c b/bundle.c
+index 15ce62285c..f2b28a2092 100644
+--- a/bundle.c
++++ b/bundle.c
+@@ -733,18 +733,23 @@ int create_bundle(struct repository *r, const char *path,
+ }
+ 
+ int unbundle(struct repository *r, struct bundle_header *header,
+-	     int bundle_fd, int flags)
++	     int bundle_fd, struct strvec *extra_index_pack_args)
+ {
+-	const char *argv_index_pack[] = {"index-pack",
+-					 "--fix-thin", "--stdin", NULL, NULL};
+ 	struct child_process ip = CHILD_PROCESS_INIT;
++	int i;
+ 
+-	if (flags & BUNDLE_VERBOSE)
+-		argv_index_pack[3] = "-v";
++	strvec_push(&ip.args, "index-pack");
++	strvec_push(&ip.args, "--fix-thin");
++	strvec_push(&ip.args, "--stdin");
++	if (extra_index_pack_args) {
++		struct strvec *extra = extra_index_pack_args;
++		for (i = 0; i < extra->nr; i++)
++			strvec_push(&ip.args, extra->v[i]);
++		strvec_clear(extra_index_pack_args);
++	}
+ 
+ 	if (verify_bundle(r, header, 0))
+ 		return -1;
+-	ip.argv = argv_index_pack;
+ 	ip.in = bundle_fd;
+ 	ip.no_stdout = 1;
+ 	ip.git_cmd = 1;
+diff --git a/bundle.h b/bundle.h
+index 84a6df1b65..d47a7a3c69 100644
+--- a/bundle.h
++++ b/bundle.h
+@@ -26,16 +26,20 @@ int create_bundle(struct repository *r, const char *path,
+ 		  int argc, const char **argv, struct strvec *pack_options,
+ 		  int version);
+ int verify_bundle(struct repository *r, struct bundle_header *header, int verbose);
+-#define BUNDLE_VERBOSE 1
+ 
+ /**
+  * Unbundle after reading the header with read_bundle_header().
+  *
+  * We'll invoke "git index-pack --stdin --fix-thin" for you on the
+  * provided `bundle_fd` from read_bundle_header().
++ *
++ * Provide extra_index_pack_args to pass any extra arguments
++ * (e.g. "-v" for verbose/progress), NULL otherwise. The provided
++ * extra_index_pack_args (if any) will be strvec_clear()'d for you
++ * (like the run-command.h API itself does).
+  */
+ int unbundle(struct repository *r, struct bundle_header *header,
+-	     int bundle_fd, int flags);
++	     int bundle_fd, struct strvec *extra_index_pack_args);
+ int list_bundle_refs(struct bundle_header *header,
+ 		int argc, const char **argv);
+ 
+diff --git a/transport.c b/transport.c
+index 7f3d0d46b3..8781186cf1 100644
+--- a/transport.c
++++ b/transport.c
+@@ -163,12 +163,15 @@ static int fetch_refs_from_bundle(struct transport *transport,
+ 			       int nr_heads, struct ref **to_fetch)
+ {
+ 	struct bundle_transport_data *data = transport->data;
++	struct strvec extra_index_pack_args = STRVEC_INIT;
+ 	int ret;
+ 
++	strvec_push(&extra_index_pack_args, "-v");
++
+ 	if (!data->get_refs_from_bundle_called)
+ 		get_refs_from_bundle(transport, 0, NULL);
+ 	ret = unbundle(the_repository, &data->header, data->fd,
+-			   transport->progress ? BUNDLE_VERBOSE : 0);
++		       &extra_index_pack_args);
+ 	transport->hash_algo = data->header.hash_algo;
+ 	return ret;
+ }
+-- 
+2.32.0.988.g189fd9ae38
+
