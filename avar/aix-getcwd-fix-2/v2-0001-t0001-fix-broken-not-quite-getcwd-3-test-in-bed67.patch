@@ -1,0 +1,139 @@
+From d7d071441b05a45bebb6d367e03b1f0b19f16f11 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-d7d071441b0-20210730T161517Z-avarab@gmail.com>
+In-Reply-To: <patch-1.1-c70791bbd3-20210601T003743Z-avarab@gmail.com>
+References: <patch-1.1-c70791bbd3-20210601T003743Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 31 May 2021 12:25:25 +0200
+Subject: [PATCH v2] t0001: fix broken not-quite getcwd(3) test in bed67874e2
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+With a54e938e5b (strbuf: support long paths w/o read rights in
+strbuf_getcwd() on FreeBSD, 2017-03-26) we had t0001 break on systems
+like OpenBSD and AIX whose getcwd(3) has standard (but not like glibc
+et al) behavior.
+
+This was partially fixed in bed67874e2 (t0001: skip test with
+restrictive permissions if getpwd(3) respects them, 2017-08-07).
+
+The problem with that fix is that while its analysis of the problem is
+correct, it doesn't actually call getcwd(3), instead it invokes "pwd
+-P". There is no guarantee that "pwd -P" is going to call getcwd(3),
+as opposed to e.g. being a shell built-in.
+
+On AIX under both bash and ksh this test breaks because "pwd -P" will
+happily display the current working directory, but getcwd(3) called by
+the "git init" we're testing here will fail to get it.
+
+I checked whether clobbering the $PWD environment variable would
+affect it, and it didn't. Presumably these shells keep track of their
+working directory internally.
+
+There's possible follow-up work here in teaching strbuf_getcwd() to
+get the working directory with whatever method "pwd" uses on these
+platforms. See [1] for a discussion of that, but let's take the easy
+way out here and just skip these tests by fixing the
+GETCWD_IGNORES_PERMS prerequisite to match the limitations of
+strbuf_getcwd().
+
+1. https://lore.kernel.org/git/b650bef5-d739-d98d-e9f1-fa292b6ce982@web.de/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile               |  1 +
+ t/helper/test-getcwd.c | 26 ++++++++++++++++++++++++++
+ t/helper/test-tool.c   |  1 +
+ t/helper/test-tool.h   |  1 +
+ t/t0001-init.sh        |  5 ++++-
+ 5 files changed, 33 insertions(+), 1 deletion(-)
+ create mode 100644 t/helper/test-getcwd.c
+
+diff --git a/Makefile b/Makefile
+index c6f6246bf63..9573190f1d7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -715,6 +715,7 @@ TEST_BUILTINS_OBJS += test-example-decorate.o
+ TEST_BUILTINS_OBJS += test-fast-rebase.o
+ TEST_BUILTINS_OBJS += test-genrandom.o
+ TEST_BUILTINS_OBJS += test-genzeros.o
++TEST_BUILTINS_OBJS += test-getcwd.o
+ TEST_BUILTINS_OBJS += test-hash-speed.o
+ TEST_BUILTINS_OBJS += test-hash.o
+ TEST_BUILTINS_OBJS += test-hashmap.o
+diff --git a/t/helper/test-getcwd.c b/t/helper/test-getcwd.c
+new file mode 100644
+index 00000000000..d680038a780
+--- /dev/null
++++ b/t/helper/test-getcwd.c
+@@ -0,0 +1,26 @@
++#include "test-tool.h"
++#include "git-compat-util.h"
++#include "parse-options.h"
++
++static const char *getcwd_usage[] = {
++	"test-tool getcwd",
++	NULL
++};
++
++int cmd__getcwd(int argc, const char **argv)
++{
++	struct option options[] = {
++		OPT_END()
++	};
++	char *cwd;
++
++	argc = parse_options(argc, argv, "test-tools", options, getcwd_usage, 0);
++	if (argc > 0)
++		usage_with_options(getcwd_usage, options);
++
++	cwd = xgetcwd();
++	puts(cwd);
++	free(cwd);
++
++	return 0;
++}
+diff --git a/t/helper/test-tool.c b/t/helper/test-tool.c
+index 490ac026c51..3ce5585e53a 100644
+--- a/t/helper/test-tool.c
++++ b/t/helper/test-tool.c
+@@ -33,6 +33,7 @@ static struct test_cmd cmds[] = {
+ 	{ "fast-rebase", cmd__fast_rebase },
+ 	{ "genrandom", cmd__genrandom },
+ 	{ "genzeros", cmd__genzeros },
++	{ "getcwd", cmd__getcwd },
+ 	{ "hashmap", cmd__hashmap },
+ 	{ "hash-speed", cmd__hash_speed },
+ 	{ "index-version", cmd__index_version },
+diff --git a/t/helper/test-tool.h b/t/helper/test-tool.h
+index f8dc266721f..9f0f5228508 100644
+--- a/t/helper/test-tool.h
++++ b/t/helper/test-tool.h
+@@ -23,6 +23,7 @@ int cmd__example_decorate(int argc, const char **argv);
+ int cmd__fast_rebase(int argc, const char **argv);
+ int cmd__genrandom(int argc, const char **argv);
+ int cmd__genzeros(int argc, const char **argv);
++int cmd__getcwd(int argc, const char **argv);
+ int cmd__hashmap(int argc, const char **argv);
+ int cmd__hash_speed(int argc, const char **argv);
+ int cmd__index_version(int argc, const char **argv);
+diff --git a/t/t0001-init.sh b/t/t0001-init.sh
+index acd662e403b..df544bb321f 100755
+--- a/t/t0001-init.sh
++++ b/t/t0001-init.sh
+@@ -356,7 +356,10 @@ test_lazy_prereq GETCWD_IGNORES_PERMS '
+ 	chmod 100 $base ||
+ 	BUG "cannot prepare $base"
+ 
+-	(cd $base/dir && /bin/pwd -P)
++	(
++		cd $base/dir &&
++		test-tool getcwd
++	)
+ 	status=$?
+ 
+ 	chmod 700 $base &&
+-- 
+2.32.0.1071.g36f34456314
+
