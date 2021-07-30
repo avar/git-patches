@@ -1,0 +1,66 @@
+From c49d029f408123772147fc9a0cb188351f0b0d64 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-4.7-c49d029f408-20210730T174308Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.7-00000000000-20210730T174308Z-avarab@gmail.com>
+References: <cover-v3-0.7-00000000000-20210730T092843Z-avarab@gmail.com>
+	<cover-v4-0.7-00000000000-20210730T174308Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 30 Jul 2021 10:55:00 +0200
+Subject: [PATCH v4 4/7] http: drop support for curl < 7.18.0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In a preceding commit we dropped support for curl < 7.17.0, let's
+continue that and drop support for versions older than 7.18.0. This
+allows us to get rid of some now-obsolete #ifdefs around
+"CURLPROXY_SOCKS".
+
+This change looks incorrect at first sight, because in curl's hex
+version notation 0x071800 is version 7.24.0, *not* 7.18.0.
+
+But it's correct, because the existing version check being removed
+here is wrong. The check guards use of the following curl options,
+introduced at these respective versions[1]:
+
+    CURLPROXY_SOCKS4                7.10
+    CURLPROXY_SOCKS4A               7.18.0
+    CURLPROXY_SOCKS5                7.10
+    CURLPROXY_SOCKS5_HOSTNAME       7.18.0
+
+I.e. the oldest version that has these is in fact 7.18.0, not
+7.24.0. That we were checking 7.24.0 is just an mistake in
+6d7afe07f29 (remote-http(s): support SOCKS proxies, 2015-10-26) that
+slipped past review. I.e. the version check confusing base 10 and with
+base 16.
+
+1. https://github.com/curl/curl/blob/master/docs/libcurl/symbols-in-versions
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ http.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/http.c b/http.c
+index c20f9b80303..15b43483e5f 100644
+--- a/http.c
++++ b/http.c
+@@ -969,7 +969,6 @@ static CURL *get_curl_handle(void)
+ 		 */
+ 		curl_easy_setopt(result, CURLOPT_PROXY, "");
+ 	} else if (curl_http_proxy) {
+-#if LIBCURL_VERSION_NUM >= 0x071800
+ 		if (starts_with(curl_http_proxy, "socks5h"))
+ 			curl_easy_setopt(result,
+ 				CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5_HOSTNAME);
+@@ -982,7 +981,6 @@ static CURL *get_curl_handle(void)
+ 		else if (starts_with(curl_http_proxy, "socks"))
+ 			curl_easy_setopt(result,
+ 				CURLOPT_PROXYTYPE, CURLPROXY_SOCKS4);
+-#endif
+ #if LIBCURL_VERSION_NUM >= 0x073400
+ 		else if (starts_with(curl_http_proxy, "https")) {
+ 			curl_easy_setopt(result, CURLOPT_PROXYTYPE, CURLPROXY_HTTPS);
+-- 
+2.32.0.1071.g36f34456314
+
