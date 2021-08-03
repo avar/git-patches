@@ -1,0 +1,137 @@
+From ab1969276b91d9fe0af5027739f3ecc1734113c8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-19.27-ab1969276b9-20210803T113535Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.27-00000000000-20210803T113535Z-avarab@gmail.com>
+References: <cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
+	<cover-v4-00.27-00000000000-20210803T113535Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:45 -0700
+Subject: [PATCH v4 19/27] hook: convert 'post-rewrite' hook in sequencer.c to
+ hook.h
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+By using 'hook.h' for 'post-rewrite', we simplify hook invocations by
+not needing to put together our own 'struct child_process'.
+
+The signal handling that's being removed by this commit now takes
+place in run-command.h:run_processes_parallel(), so it is OK to remove
+them here.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 79 ++++++++++++++++++++++-------------------------------
+ 1 file changed, 32 insertions(+), 47 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index 9aac08c1545..77f809c00e4 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -35,6 +35,7 @@
+ #include "commit-reach.h"
+ #include "rebase-interactive.h"
+ #include "reset.h"
++#include "string-list.h"
+ 
+ #define GIT_REFLOG_ACTION "GIT_REFLOG_ACTION"
+ 
+@@ -1147,33 +1148,27 @@ int update_head_with_reflog(const struct commit *old_head,
+ static int run_rewrite_hook(const struct object_id *oldoid,
+ 			    const struct object_id *newoid)
+ {
+-	struct child_process proc = CHILD_PROCESS_INIT;
+-	const char *argv[3];
++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
++	struct strbuf tmp = STRBUF_INIT;
++	struct string_list to_stdin = STRING_LIST_INIT_DUP;
+ 	int code;
+-	struct strbuf sb = STRBUF_INIT;
+ 
+-	argv[0] = find_hook("post-rewrite");
+-	if (!argv[0])
+-		return 0;
++	strvec_push(&opt.args, "amend");
+ 
+-	argv[1] = "amend";
+-	argv[2] = NULL;
+-
+-	proc.argv = argv;
+-	proc.in = -1;
+-	proc.stdout_to_stderr = 1;
+-	proc.trace2_hook_name = "post-rewrite";
+-
+-	code = start_command(&proc);
+-	if (code)
+-		return code;
+-	strbuf_addf(&sb, "%s %s\n", oid_to_hex(oldoid), oid_to_hex(newoid));
+-	sigchain_push(SIGPIPE, SIG_IGN);
+-	write_in_full(proc.in, sb.buf, sb.len);
+-	close(proc.in);
+-	strbuf_release(&sb);
+-	sigchain_pop(SIGPIPE);
+-	return finish_command(&proc);
++	strbuf_addf(&tmp,
++		    "%s %s",
++		    oid_to_hex(oldoid),
++		    oid_to_hex(newoid));
++	string_list_append(&to_stdin, tmp.buf);
++
++	opt.feed_pipe = pipe_from_string_list;
++	opt.feed_pipe_ctx = &to_stdin;
++
++	code = run_hooks_oneshot("post-rewrite", &opt);
++
++	strbuf_release(&tmp);
++	string_list_clear(&to_stdin, 0);
++	return code;
+ }
+ 
+ void commit_post_rewrite(struct repository *r,
+@@ -4526,30 +4521,20 @@ static int pick_commits(struct repository *r,
+ 		flush_rewritten_pending();
+ 		if (!stat(rebase_path_rewritten_list(), &st) &&
+ 				st.st_size > 0) {
+-			struct child_process child = CHILD_PROCESS_INIT;
+-			const char *post_rewrite_hook =
+-				find_hook("post-rewrite");
+-
+-			child.in = open(rebase_path_rewritten_list(), O_RDONLY);
+-			child.git_cmd = 1;
+-			strvec_push(&child.args, "notes");
+-			strvec_push(&child.args, "copy");
+-			strvec_push(&child.args, "--for-rewrite=rebase");
++			struct child_process notes_cp = CHILD_PROCESS_INIT;
++			struct run_hooks_opt hook_opt = RUN_HOOKS_OPT_INIT;
++
++			notes_cp.in = open(rebase_path_rewritten_list(), O_RDONLY);
++			notes_cp.git_cmd = 1;
++			strvec_push(&notes_cp.args, "notes");
++			strvec_push(&notes_cp.args, "copy");
++			strvec_push(&notes_cp.args, "--for-rewrite=rebase");
+ 			/* we don't care if this copying failed */
+-			run_command(&child);
+-
+-			if (post_rewrite_hook) {
+-				struct child_process hook = CHILD_PROCESS_INIT;
+-
+-				hook.in = open(rebase_path_rewritten_list(),
+-					O_RDONLY);
+-				hook.stdout_to_stderr = 1;
+-				hook.trace2_hook_name = "post-rewrite";
+-				strvec_push(&hook.args, post_rewrite_hook);
+-				strvec_push(&hook.args, "rebase");
+-				/* we don't care if this hook failed */
+-				run_command(&hook);
+-			}
++			run_command(&notes_cp);
++
++			hook_opt.path_to_stdin = rebase_path_rewritten_list();
++			strvec_push(&hook_opt.args, "rebase");
++			run_hooks_oneshot("post-rewrite", &hook_opt);
+ 		}
+ 		apply_autostash(rebase_path_autostash());
+ 
+-- 
+2.32.0.1070.gec115ccd780
+

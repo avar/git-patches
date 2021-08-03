@@ -1,0 +1,109 @@
+From b3b8c7c9e20a7f7e578c6e31875506e0ce05c035 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-08.27-b3b8c7c9e20-20210803T113535Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.27-00000000000-20210803T113535Z-avarab@gmail.com>
+References: <cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
+	<cover-v4-00.27-00000000000-20210803T113535Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:53 -0700
+Subject: [PATCH v4 08/27] send-email: use 'git hook run' for
+ 'sendemail-validate'
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "sendmail-validate" hook to be run via the "git hook run"
+wrapper instead of via a direct invocation.
+
+This is the smallest possibly change to get "send-email" using "git
+hook run". We still check the hook itself with "-x", and set a
+"GIT_DIR" variable, both of which are asserted by our tests. We'll
+need to get rid of this special behavior if we start running N hooks,
+but for now let's be as close to bug-for-bug compatible as possible.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-send-email.perl   | 20 ++++++++++++--------
+ t/t9001-send-email.sh |  4 ++--
+ 2 files changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/git-send-email.perl b/git-send-email.perl
+index e65d969d0bb..126850d974b 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -195,13 +195,13 @@ sub format_2822_time {
+ my $editor;
+ 
+ sub system_or_msg {
+-	my ($args, $msg) = @_;
++	my ($args, $msg, $cmd_name) = @_;
+ 	system(@$args);
+ 	my $signalled = $? & 127;
+ 	my $exit_code = $? >> 8;
+ 	return unless $signalled or $exit_code;
+ 
+-	my @sprintf_args = ($args->[0], $exit_code);
++	my @sprintf_args = ($cmd_name ? $cmd_name : $args->[0], $exit_code);
+ 	if (defined $msg) {
+ 		# Quiet the 'redundant' warning category, except we
+ 		# need to support down to Perl 5.8, so we can't do a
+@@ -2031,10 +2031,10 @@ sub validate_patch {
+ 	my ($fn, $xfer_encoding) = @_;
+ 
+ 	if ($repo) {
++		my $hook_name = 'sendemail-validate';
+ 		my $hooks_path = $repo->command_oneline('rev-parse', '--git-path', 'hooks');
+ 		require File::Spec;
+-		my $validate_hook = File::Spec->catfile($hooks_path,
+-					    'sendemail-validate');
++		my $validate_hook = File::Spec->catfile($hooks_path, $hook_name);
+ 		my $hook_error;
+ 		if (-x $validate_hook) {
+ 			require Cwd;
+@@ -2044,13 +2044,17 @@ sub validate_patch {
+ 			chdir($repo->wc_path() or $repo->repo_path())
+ 				or die("chdir: $!");
+ 			local $ENV{"GIT_DIR"} = $repo->repo_path();
+-			$hook_error = system_or_msg([$validate_hook, $target]);
++			my @validate_hook = ("git", "hook", "run", "--ignore-missing", $hook_name, "--", $target);
++			$hook_error = system_or_msg(\@validate_hook, undef,
++						       "git hook run $hook_name -- <patch>");
+ 			chdir($cwd_save) or die("chdir: $!");
+ 		}
+ 		if ($hook_error) {
+-			die sprintf(__("fatal: %s: rejected by sendemail-validate hook\n" .
+-				       "%s\n" .
+-				       "warning: no patches were sent\n"), $fn, $hook_error);
++			$hook_error = sprintf(__("fatal: %s: rejected by %s hook\n" .
++						 $hook_error . "\n" .
++						 "warning: no patches were sent\n"),
++					      $fn, $hook_name);
++			die $hook_error;
+ 		}
+ 	}
+ 
+diff --git a/t/t9001-send-email.sh b/t/t9001-send-email.sh
+index 57fc10e7f82..9ec7d75f0ff 100755
+--- a/t/t9001-send-email.sh
++++ b/t/t9001-send-email.sh
+@@ -539,7 +539,7 @@ test_expect_success $PREREQ "--validate respects relative core.hooksPath path" '
+ 	test_path_is_file my-hooks.ran &&
+ 	cat >expect <<-EOF &&
+ 	fatal: longline.patch: rejected by sendemail-validate hook
+-	fatal: command '"'"'my-hooks/sendemail-validate'"'"' died with exit code 1
++	fatal: command '"'"'git hook run sendemail-validate -- <patch>'"'"' died with exit code 1
+ 	warning: no patches were sent
+ 	EOF
+ 	test_cmp expect actual
+@@ -558,7 +558,7 @@ test_expect_success $PREREQ "--validate respects absolute core.hooksPath path" '
+ 	test_path_is_file my-hooks.ran &&
+ 	cat >expect <<-EOF &&
+ 	fatal: longline.patch: rejected by sendemail-validate hook
+-	fatal: command '"'"'$hooks_path/sendemail-validate'"'"' died with exit code 1
++	fatal: command '"'"'git hook run sendemail-validate -- <patch>'"'"' died with exit code 1
+ 	warning: no patches were sent
+ 	EOF
+ 	test_cmp expect actual
+-- 
+2.32.0.1070.gec115ccd780
+
