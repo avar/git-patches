@@ -1,11 +1,11 @@
-From 7cd7a54802739a33fb4ed4ee08dfae9ad44a1484 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v4-21.27-7cd7a548027-20210803T113632Z-avarab@gmail.com>
-In-Reply-To: <cover-v4-00.27-00000000000-20210803T113632Z-avarab@gmail.com>
+From 3f2488fea6ba01618abbd5b280844ad89bfff274 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-30.36-3f2488fea6b-20210803T185547Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.36-00000000000-20210803T185546Z-avarab@gmail.com>
 References: <cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
-	<cover-v4-00.27-00000000000-20210803T113632Z-avarab@gmail.com>
+	<cover-v4-00.36-00000000000-20210803T185546Z-avarab@gmail.com>
 From: Emily Shaffer <emilyshaffer@google.com>
 Date: Wed, 26 May 2021 17:08:47 -0700
-Subject: [PATCH v4 21/27] reference-transaction: use hook.h to run hooks
+Subject: [PATCH v4 30/36] reference-transaction: use hook.h to run hooks
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -13,30 +13,28 @@ Content-Transfer-Encoding: 8bit
 Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- refs.c | 41 ++++++++++++++---------------------------
- 1 file changed, 14 insertions(+), 27 deletions(-)
+ refs.c | 40 +++++++++++++---------------------------
+ 1 file changed, 13 insertions(+), 27 deletions(-)
 
 diff --git a/refs.c b/refs.c
-index 6211692eaae..1d96a033ad8 100644
+index 6211692eaae..73d4a939267 100644
 --- a/refs.c
 +++ b/refs.c
-@@ -2062,47 +2062,34 @@ int ref_update_reject_duplicates(struct string_list *refnames,
+@@ -2062,47 +2062,33 @@ int ref_update_reject_duplicates(struct string_list *refnames,
  static int run_transaction_hook(struct ref_transaction *transaction,
  				const char *state)
  {
 -	struct child_process proc = CHILD_PROCESS_INIT;
- 	struct strbuf buf = STRBUF_INIT;
+-	struct strbuf buf = STRBUF_INIT;
 -	const char *hook;
 +	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
-+	struct string_list to_stdin = STRING_LIST_INIT_DUP;
++	struct string_list to_stdin = STRING_LIST_INIT_NODUP;
  	int ret = 0, i;
-+	char o[GIT_MAX_HEXSZ + 1], n[GIT_MAX_HEXSZ + 1];
  
 -	hook = find_hook("reference-transaction");
 -	if (!hook)
-+	if (!hook_exists("reference-transaction"))
- 		return ret;
- 
+-		return ret;
+-
 -	strvec_pushl(&proc.args, hook, state, NULL);
 -	proc.in = -1;
 -	proc.stdout_to_stderr = 1;
@@ -44,38 +42,39 @@ index 6211692eaae..1d96a033ad8 100644
 -
 -	ret = start_command(&proc);
 -	if (ret)
--		return ret;
--
++	if (!hook_exists("reference-transaction"))
+ 		return ret;
+ 
 -	sigchain_push(SIGPIPE, SIG_IGN);
 +	strvec_push(&opt.args, state);
  
  	for (i = 0; i < transaction->nr; i++) {
  		struct ref_update *update = transaction->updates[i];
-+		oid_to_hex_r(o, &update->old_oid);
-+		oid_to_hex_r(n, &update->new_oid);
++		struct strbuf buf = STRBUF_INIT;
  
- 		strbuf_reset(&buf);
+-		strbuf_reset(&buf);
 -		strbuf_addf(&buf, "%s %s %s\n",
--			    oid_to_hex(&update->old_oid),
--			    oid_to_hex(&update->new_oid),
--			    update->refname);
++		strbuf_addf(&buf, "%s %s %s",
+ 			    oid_to_hex(&update->old_oid),
+ 			    oid_to_hex(&update->new_oid),
+ 			    update->refname);
 -
 -		if (write_in_full(proc.in, buf.buf, buf.len) < 0) {
 -			if (errno != EPIPE)
 -				ret = -1;
 -			break;
 -		}
-+		strbuf_addf(&buf, "%s %s %s", o, n, update->refname);
-+		string_list_append(&to_stdin, buf.buf);
++		string_list_append(&to_stdin, strbuf_detach(&buf, NULL));
  	}
  
 -	close(proc.in);
 -	sigchain_pop(SIGPIPE);
+-	strbuf_release(&buf);
 +	opt.feed_pipe = pipe_from_string_list;
 +	opt.feed_pipe_ctx = &to_stdin;
 +
 +	ret = run_hooks_oneshot("reference-transaction", &opt);
- 	strbuf_release(&buf);
++	to_stdin.strdup_strings = 1;
 +	string_list_clear(&to_stdin, 0);
  
 -	ret |= finish_command(&proc);
@@ -83,5 +82,5 @@ index 6211692eaae..1d96a033ad8 100644
  }
  
 -- 
-2.32.0.1070.gec115ccd780
+2.33.0.rc0.595.ge31e012651d
 

@@ -1,0 +1,80 @@
+From c74720029a780cc985a167cc323d6a6df2b891ff Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-28.36-c74720029a7-20210803T185547Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.36-00000000000-20210803T185546Z-avarab@gmail.com>
+References: <cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
+	<cover-v4-00.36-00000000000-20210803T185546Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 3 Aug 2021 16:29:33 +0200
+Subject: [PATCH v4 28/36] hook tests: test for exact "pre-push" hook input
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the tests added in ec55559f937 (push: Add support for pre-push
+hooks, 2013-01-13) to exhaustively test for the exact input we're
+expecting. This helps a parallel series that's refactoring how the
+hook is called, to e.g. make sure that we don't miss a trailing
+newline.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5571-pre-push-hook.sh | 23 ++++++++++++++++++-----
+ 1 file changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/t/t5571-pre-push-hook.sh b/t/t5571-pre-push-hook.sh
+index ad8d5804f7b..d2857a6fbc0 100755
+--- a/t/t5571-pre-push-hook.sh
++++ b/t/t5571-pre-push-hook.sh
+@@ -11,7 +11,7 @@ HOOKDIR="$(git rev-parse --git-dir)/hooks"
+ HOOK="$HOOKDIR/pre-push"
+ mkdir -p "$HOOKDIR"
+ write_script "$HOOK" <<EOF
+-cat >/dev/null
++cat >actual
+ exit 0
+ EOF
+ 
+@@ -20,10 +20,16 @@ test_expect_success 'setup' '
+ 	git init --bare repo1 &&
+ 	git remote add parent1 repo1 &&
+ 	test_commit one &&
+-	git push parent1 HEAD:foreign
++	cat >expect <<-EOF &&
++	HEAD $(git rev-parse HEAD) refs/heads/foreign $(test_oid zero)
++	EOF
++
++	test_when_finished "rm actual" &&
++	git push parent1 HEAD:foreign &&
++	test_cmp expect actual
+ '
+ write_script "$HOOK" <<EOF
+-cat >/dev/null
++cat >actual
+ exit 1
+ EOF
+ 
+@@ -32,11 +38,18 @@ export COMMIT1
+ 
+ test_expect_success 'push with failing hook' '
+ 	test_commit two &&
+-	test_must_fail git push parent1 HEAD
++	cat >expect <<-EOF &&
++	HEAD $(git rev-parse HEAD) refs/heads/main $(test_oid zero)
++	EOF
++
++	test_when_finished "rm actual" &&
++	test_must_fail git push parent1 HEAD &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success '--no-verify bypasses hook' '
+-	git push --no-verify parent1 HEAD
++	git push --no-verify parent1 HEAD &&
++	test_path_is_missing actual
+ '
+ 
+ COMMIT2="$(git rev-parse HEAD)"
+-- 
+2.33.0.rc0.595.ge31e012651d
+
