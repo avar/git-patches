@@ -4,12 +4,64 @@ In-Reply-To: <cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
 References: <cover-00.27-0000000000-20210617T101216Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Tue, 3 Aug 2021 20:57:50 +0200
-Subject: [PATCH v4 00/36] *** SUBJECT HERE ***
+Subject: [PATCH v4 00/36] Run hooks via "git run hook" & hook library
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This is a v4 re-roll of the "Base for "config-based-hooks" topic.
+
+It's grown from 27 to 36 patches mainly because I re-folded the two
+topics it depended on into it, i.e.:
+
+    https://lore.kernel.org/git/cover-0.3-0000000000-20210629T190137Z-avarab@gmail.com/
+    https://lore.kernel.org/git/cover-0.3-0000000000-20210629T183325Z-avarab@gmail.com/
+
+I think those have long since reached a level of stability suitable
+for being merged down, but since Junio didn't pick them up
+separately[1][2] there wasn't much point in keeping them split-up.
+
+This re-roll mostly addresses Emily's comments on the v3:
+https://lore.kernel.org/git/YQHAasrmcbdiCDQF@google.com/
+
+I.e.:
+
+ * I did not change the part where I die on hooks that aren't known to
+   git itself. I think it makes sense to keep this topic purely for
+   bug-for-bug compatibility with existing behavior, and to flip the
+   RUN_SETUP_GENTLY flag in her follow-up feature topic.
+
+ * The (ab)use of the run_processes_parallel() API should be gone. I
+   just misunderstood how it worked.
+
+ * The v3 would segfault on a plain "git hook run". I've changed
+   builtin/hook.c to use the same pattern for subcommands as
+   builtin/commit-graph.c et al. This also makes the usage output more
+   consistent.
+
+ * The stub "jobs" member of the struct is now gone, and it's
+   hardcoded to 1. Emily's feature topic can add it back (per her
+   suggestion).
+
+Other updates:
+
+ * In the base topic the s/Signed-off-by/Reviewed-by/g from René
+   change that Junio applied locally has been folded in.
+
+ * Almost all the callers were just "one-shot" callers, I introduced a
+   new run_hooks_oneshot() function for those, which gets rid of the
+   verbosity around memory management, see e.g. the "builtin/gc.c" in
+   the range-diff below.
+
+ * We'd leak memory from "my_hook.feed_pipe_cb_data" in hook.c, we now
+   free() it.
+
+ * Some s/STRING_LIST_INIT_DUP/STRING_LIST_INIT_NODUP &
+   strbuf_detach()/ changes in transport.c and reference-transaction
+   to avoid needless verbosity around memory management.
+
+1. https://lore.kernel.org/git/87sg00qfbp.fsf@evledraar.gmail.com/
+2. https://lore.kernel.org/git/87a6mevkrx.fsf@evledraar.gmail.com/
 
 Emily Shaffer (26):
   hook.c: add a hook_exists() wrapper and use it in bugreport.c
