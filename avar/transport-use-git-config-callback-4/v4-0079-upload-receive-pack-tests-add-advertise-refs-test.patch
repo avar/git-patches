@@ -1,0 +1,180 @@
+From f519b2b5b23d6189405995aed0950ed4716580a3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-79.80-f519b2b5b23-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 9 Jul 2021 11:11:15 +0200
+Subject: [PATCH v4 79/80] {upload,receive}-pack tests: add --advertise-refs
+ tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The --advertise-refs option had no explicit tests of its own, only
+other http tests that would fail at a distance if it it was
+broken. Let's test its behavior explicitly.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5555-http-smart-common.sh | 147 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 147 insertions(+)
+ create mode 100755 t/t5555-http-smart-common.sh
+
+diff --git a/t/t5555-http-smart-common.sh b/t/t5555-http-smart-common.sh
+new file mode 100755
+index 00000000000..b813099ed2c
+--- /dev/null
++++ b/t/t5555-http-smart-common.sh
+@@ -0,0 +1,147 @@
++#!/bin/sh
++
++test_description='test functionality common to smart fetch & push'
++
++. ./test-lib.sh
++
++test_expect_success 'setup' '
++	test_commit --no-tag initial
++'
++
++test_expect_success 'git upload-pack --advertise-refs' '
++	cat >expect <<-EOF &&
++	$(git rev-parse HEAD) HEAD
++	$(git rev-parse HEAD) $(git symbolic-ref HEAD)
++	0000
++	EOF
++
++	# We only care about GIT_PROTOCOL, not GIT_TEST_PROTOCOL_VERSION
++	sane_unset GIT_PROTOCOL &&
++	GIT_TEST_PROTOCOL_VERSION=2 \
++	git upload-pack --advertise-refs . >out 2>err &&
++
++	test-tool pkt-line unpack <out >actual &&
++	test_must_be_empty err &&
++	test_cmp actual expect &&
++
++	# The --advertise-refs alias works
++	git upload-pack --advertise-refs . >out 2>err &&
++
++	test-tool pkt-line unpack <out >actual &&
++	test_must_be_empty err &&
++	test_cmp actual expect
++'
++
++test_expect_success 'git upload-pack --advertise-refs: v0' '
++	# With no specified protocol
++	cat >expect <<-EOF &&
++	$(git rev-parse HEAD) HEAD
++	$(git rev-parse HEAD) $(git symbolic-ref HEAD)
++	0000
++	EOF
++
++	git upload-pack --advertise-refs . >out 2>err &&
++	test-tool pkt-line unpack <out >actual &&
++	test_must_be_empty err &&
++	test_cmp actual expect &&
++
++	# With explicit v0
++	GIT_PROTOCOL=version=0 \
++	git upload-pack --advertise-refs . >out 2>err &&
++	test-tool pkt-line unpack <out >actual 2>err &&
++	test_must_be_empty err &&
++	test_cmp actual expect
++
++'
++
++test_expect_success 'git receive-pack --advertise-refs: v0' '
++	# With no specified protocol
++	cat >expect <<-EOF &&
++	$(git rev-parse HEAD) $(git symbolic-ref HEAD)
++	0000
++	EOF
++
++	git receive-pack --advertise-refs . >out 2>err &&
++	test-tool pkt-line unpack <out >actual &&
++	test_must_be_empty err &&
++	test_cmp actual expect &&
++
++	# With explicit v0
++	GIT_PROTOCOL=version=0 \
++	git receive-pack --advertise-refs . >out 2>err &&
++	test-tool pkt-line unpack <out >actual 2>err &&
++	test_must_be_empty err &&
++	test_cmp actual expect
++
++'
++
++test_expect_success 'git upload-pack --advertise-refs: v1' '
++	# With no specified protocol
++	cat >expect <<-EOF &&
++	version 1
++	$(git rev-parse HEAD) HEAD
++	$(git rev-parse HEAD) $(git symbolic-ref HEAD)
++	0000
++	EOF
++
++	GIT_PROTOCOL=version=1 \
++	git upload-pack --advertise-refs . >out &&
++
++	test-tool pkt-line unpack <out >actual 2>err &&
++	test_must_be_empty err &&
++	test_cmp actual expect
++'
++
++test_expect_success 'git receive-pack --advertise-refs: v1' '
++	# With no specified protocol
++	cat >expect <<-EOF &&
++	version 1
++	$(git rev-parse HEAD) $(git symbolic-ref HEAD)
++	0000
++	EOF
++
++	GIT_PROTOCOL=version=1 \
++	git receive-pack --advertise-refs . >out &&
++
++	test-tool pkt-line unpack <out >actual 2>err &&
++	test_must_be_empty err &&
++	test_cmp actual expect
++'
++
++test_expect_success 'git upload-pack --advertise-refs: v2' '
++	cat >expect <<-EOF &&
++	version 2
++	agent=FAKE
++	ls-refs=unborn
++	fetch=shallow wait-for-done
++	server-option
++	object-format=$(test_oid algo)
++	object-info
++	0000
++	EOF
++
++	GIT_PROTOCOL=version=2 \
++	GIT_USER_AGENT=FAKE \
++	git upload-pack --advertise-refs . >out 2>err &&
++
++	test-tool pkt-line unpack <out >actual &&
++	test_must_be_empty err &&
++	test_cmp actual expect
++'
++
++test_expect_success 'git receive-pack --advertise-refs: v2' '
++	# There is no v2 yet for receive-pack, implicit v0
++	cat >expect <<-EOF &&
++	$(git rev-parse HEAD) $(git symbolic-ref HEAD)
++	0000
++	EOF
++
++	GIT_PROTOCOL=version=2 \
++	git receive-pack --advertise-refs . >out 2>err &&
++
++	test-tool pkt-line unpack <out >actual &&
++	test_must_be_empty err &&
++	test_cmp actual expect
++'
++
++test_done
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

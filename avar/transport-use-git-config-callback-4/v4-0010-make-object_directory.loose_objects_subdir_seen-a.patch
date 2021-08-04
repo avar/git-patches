@@ -1,0 +1,70 @@
+From 33f379eee63a0529f85079857598ac6325d3aec5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-10.80-33f379eee63-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: Eric Wong <e@80x24.org>
+Date: Wed, 7 Jul 2021 23:10:17 +0000
+Subject: [PATCH v4 10/80] make object_directory.loose_objects_subdir_seen a
+ bitmap
+
+There's no point in using 8 bits per-directory when 1 bit
+will do.  This saves us 224 bytes per object directory, which
+ends up being 22MB when dealing with 100K alternates.
+
+Signed-off-by: Eric Wong <e@80x24.org>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ object-file.c  | 11 ++++++++---
+ object-store.h |  2 +-
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index 2dd70ddf3a4..91ded8c22ae 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -2461,12 +2461,17 @@ struct oid_array *odb_loose_cache(struct object_directory *odb,
+ {
+ 	int subdir_nr = oid->hash[0];
+ 	struct strbuf buf = STRBUF_INIT;
++	size_t word_bits = bitsizeof(odb->loose_objects_subdir_seen[0]);
++	size_t word_index = subdir_nr / word_bits;
++	size_t mask = 1 << (subdir_nr % word_bits);
++	uint32_t *bitmap;
+ 
+ 	if (subdir_nr < 0 ||
+-	    subdir_nr >= ARRAY_SIZE(odb->loose_objects_subdir_seen))
++	    subdir_nr >= bitsizeof(odb->loose_objects_subdir_seen))
+ 		BUG("subdir_nr out of range");
+ 
+-	if (odb->loose_objects_subdir_seen[subdir_nr])
++	bitmap = &odb->loose_objects_subdir_seen[word_index];
++	if (*bitmap & mask)
+ 		return &odb->loose_objects_cache[subdir_nr];
+ 
+ 	strbuf_addstr(&buf, odb->path);
+@@ -2474,7 +2479,7 @@ struct oid_array *odb_loose_cache(struct object_directory *odb,
+ 				    append_loose_object,
+ 				    NULL, NULL,
+ 				    &odb->loose_objects_cache[subdir_nr]);
+-	odb->loose_objects_subdir_seen[subdir_nr] = 1;
++	*bitmap |= mask;
+ 	strbuf_release(&buf);
+ 	return &odb->loose_objects_cache[subdir_nr];
+ }
+diff --git a/object-store.h b/object-store.h
+index 6077065d906..ab6d469970e 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -22,7 +22,7 @@ struct object_directory {
+ 	 *
+ 	 * Be sure to call odb_load_loose_cache() before using.
+ 	 */
+-	char loose_objects_subdir_seen[256];
++	uint32_t loose_objects_subdir_seen[8]; /* 256 bits */
+ 	struct oid_array loose_objects_cache[256];
+ 
+ 	/*
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

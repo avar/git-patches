@@ -1,0 +1,159 @@
+From 578eb3f9c3dc5db63a09f6b0b7f86546351ebbf8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-77.80-578eb3f9c3d-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 9 Jul 2021 11:21:30 +0200
+Subject: [PATCH v4 77/80] serve.[ch]: don't pass "struct strvec *keys" to
+ commands
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The serve.c API added in ed10cb952d3 (serve: introduce git-serve,
+2018-03-15) was passing in the raw capabilities "keys", but nothing
+downstream of it ever used them.
+
+Let's remove that code because it's not needed. If we do end up
+needing to pass information about the advertisement in the future
+it'll make more sense to have serve.c parse the capabilities keys and
+pass the result of its parsing, rather than expecting expecting its
+API users to parse the same keys again.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ls-refs.c       | 3 +--
+ ls-refs.h       | 4 +---
+ protocol-caps.c | 3 +--
+ protocol-caps.h | 4 +---
+ serve.c         | 9 +++------
+ upload-pack.c   | 3 +--
+ upload-pack.h   | 4 +---
+ 7 files changed, 9 insertions(+), 21 deletions(-)
+
+diff --git a/ls-refs.c b/ls-refs.c
+index 88f6c3f60d8..a1a0250607f 100644
+--- a/ls-refs.c
++++ b/ls-refs.c
+@@ -138,8 +138,7 @@ static int ls_refs_config(const char *var, const char *value, void *data)
+ 	return parse_hide_refs_config(var, value, "uploadpack");
+ }
+ 
+-int ls_refs(struct repository *r, struct strvec *keys,
+-	    struct packet_reader *request)
++int ls_refs(struct repository *r, struct packet_reader *request)
+ {
+ 	struct ls_refs_data data;
+ 
+diff --git a/ls-refs.h b/ls-refs.h
+index a99e4be0bdd..e2243a547bb 100644
+--- a/ls-refs.h
++++ b/ls-refs.h
+@@ -2,10 +2,8 @@
+ #define LS_REFS_H
+ 
+ struct repository;
+-struct strvec;
+ struct packet_reader;
+-int ls_refs(struct repository *r, struct strvec *keys,
+-	    struct packet_reader *request);
++int ls_refs(struct repository *r, struct packet_reader *request);
+ int ls_refs_advertise(struct repository *r, struct strbuf *value);
+ 
+ #endif /* LS_REFS_H */
+diff --git a/protocol-caps.c b/protocol-caps.c
+index 13a9e63a04a..4b345c55046 100644
+--- a/protocol-caps.c
++++ b/protocol-caps.c
+@@ -74,8 +74,7 @@ static void send_info(struct repository *r, struct packet_writer *writer,
+ 	}
+ }
+ 
+-int cap_object_info(struct repository *r, struct strvec *keys,
+-		    struct packet_reader *request)
++int cap_object_info(struct repository *r, struct packet_reader *request)
+ {
+ 	struct requested_info info;
+ 	struct packet_writer writer;
+diff --git a/protocol-caps.h b/protocol-caps.h
+index 0a9f49df115..15c4550360c 100644
+--- a/protocol-caps.h
++++ b/protocol-caps.h
+@@ -2,9 +2,7 @@
+ #define PROTOCOL_CAPS_H
+ 
+ struct repository;
+-struct strvec;
+ struct packet_reader;
+-int cap_object_info(struct repository *r, struct strvec *keys,
+-		    struct packet_reader *request);
++int cap_object_info(struct repository *r, struct packet_reader *request);
+ 
+ #endif /* PROTOCOL_CAPS_H */
+diff --git a/serve.c b/serve.c
+index c9d933dd337..8f9dc3d9bb9 100644
+--- a/serve.c
++++ b/serve.c
+@@ -62,16 +62,13 @@ struct protocol_capability {
+ 
+ 	/*
+ 	 * Function called when a client requests the capability as a command.
+-	 * The function will be provided the capabilities requested via 'keys'
+-	 * as well as a struct packet_reader 'request' which the command should
++	 * Will be provided a struct packet_reader 'request' which it should
+ 	 * use to read the command specific part of the request.  Every command
+ 	 * MUST read until a flush packet is seen before sending a response.
+ 	 *
+ 	 * This field should be NULL for capabilities which are not commands.
+ 	 */
+-	int (*command)(struct repository *r,
+-		       struct strvec *keys,
+-		       struct packet_reader *request);
++	int (*command)(struct repository *r, struct packet_reader *request);
+ };
+ 
+ static struct protocol_capability capabilities[] = {
+@@ -299,7 +296,7 @@ static int process_request(void)
+ 	if (has_capability(&keys, "session-id", &client_sid))
+ 		trace2_data_string("transfer", NULL, "client-sid", client_sid);
+ 
+-	command->command(the_repository, &keys, &reader);
++	command->command(the_repository, &reader);
+ 
+ 	strvec_clear(&keys);
+ 	return 0;
+diff --git a/upload-pack.c b/upload-pack.c
+index 297b76fcb43..ed60a9abd60 100644
+--- a/upload-pack.c
++++ b/upload-pack.c
+@@ -1655,8 +1655,7 @@ enum fetch_state {
+ 	FETCH_DONE,
+ };
+ 
+-int upload_pack_v2(struct repository *r, struct strvec *keys,
+-		   struct packet_reader *request)
++int upload_pack_v2(struct repository *r, struct packet_reader *request)
+ {
+ 	enum fetch_state state = FETCH_PROCESS_ARGS;
+ 	struct upload_pack_data data;
+diff --git a/upload-pack.h b/upload-pack.h
+index 27ddcdc6cb0..63e3252c98d 100644
+--- a/upload-pack.h
++++ b/upload-pack.h
+@@ -11,10 +11,8 @@ struct upload_pack_options {
+ void upload_pack(struct upload_pack_options *options);
+ 
+ struct repository;
+-struct strvec;
+ struct packet_reader;
+-int upload_pack_v2(struct repository *r, struct strvec *keys,
+-		   struct packet_reader *request);
++int upload_pack_v2(struct repository *r, struct packet_reader *request);
+ 
+ struct strbuf;
+ int upload_pack_advertise(struct repository *r,
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

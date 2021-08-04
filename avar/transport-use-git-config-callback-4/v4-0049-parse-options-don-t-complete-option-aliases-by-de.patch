@@ -1,0 +1,95 @@
+From ca2d62b7879f4e1a28fcef349a82f56ce8a986b6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-49.80-ca2d62b7879-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: Philippe Blain <levraiphilippeblain@gmail.com>
+Date: Fri, 16 Jul 2021 01:55:43 +0000
+Subject: [PATCH v4 49/80] parse-options: don't complete option aliases by
+ default
+
+Since 'OPT_ALIAS' was created in 5c387428f1 (parse-options: don't emit
+"ambiguous option" for aliases, 2019-04-29), 'git clone
+--git-completion-helper', which is used by the Bash completion script to
+list options accepted by clone (via '__gitcomp_builtin'), lists both
+'--recurse-submodules' and its alias '--recursive', which was not the
+case before since '--recursive' had the PARSE_OPT_HIDDEN flag set, and
+options with this flag are skipped by 'parse-options.c::show_gitcomp',
+which implements 'git <cmd> --git-completion-helper'.
+
+This means that typing 'git clone --recurs<TAB>' will yield both
+'--recurse-submodules' and '--recursive', which is not ideal since both
+do the same thing, and so the completion should directly complete the
+canonical option.
+
+At the point where 'show_gitcomp' is called in 'parse_options_step',
+'preprocess_options' was already called in 'parse_options', so any
+aliases are now copies of the original options with a modified help text
+indicating they are aliases.
+
+Helpfully, since 64cc539fd2 (parse-options: don't leak alias help
+messages, 2021-03-21) these copies have the PARSE_OPT_FROM_ALIAS flag
+set, so check that flag early in 'show_gitcomp' and do not print them,
+unless the user explicitely requested that *all* completion be shown (by
+setting 'GIT_COMPLETION_SHOW_ALL'). After all, if we want to encourage
+the use of '--recurse-submodules' over '--recursive', we'd better just
+suggest the former.
+
+The only other options alias is 'log' and friends' '--mailmap', which is
+an alias for '--use-mailmap', but the Bash completion helpers for these
+commands do not use '__gitcomp_builtin', and thus are unnaffected by
+this change.
+
+Test the new behaviour in t9902-completion.sh. As a side effect, this
+also tests the correct behaviour of GIT_COMPLETION_SHOW_ALL, which was
+not tested before. Note that since '__gitcomp_builtin' caches the
+options it shows, we need to re-source the completion script to clear
+that cache for the second test.
+
+Signed-off-by: Philippe Blain <levraiphilippeblain@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ parse-options.c       |  2 +-
+ t/t9902-completion.sh | 13 +++++++++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/parse-options.c b/parse-options.c
+index e6f56768ca5..2abff136a17 100644
+--- a/parse-options.c
++++ b/parse-options.c
+@@ -585,7 +585,7 @@ static int show_gitcomp(const struct option *opts, int show_all)
+ 		if (!opts->long_name)
+ 			continue;
+ 		if (!show_all &&
+-			(opts->flags & (PARSE_OPT_HIDDEN | PARSE_OPT_NOCOMPLETE)))
++			(opts->flags & (PARSE_OPT_HIDDEN | PARSE_OPT_NOCOMPLETE | PARSE_OPT_FROM_ALIAS)))
+ 			continue;
+ 
+ 		switch (opts->type) {
+diff --git a/t/t9902-completion.sh b/t/t9902-completion.sh
+index cb057ef1613..11573936d58 100755
+--- a/t/t9902-completion.sh
++++ b/t/t9902-completion.sh
+@@ -2404,6 +2404,19 @@ test_expect_success 'sourcing the completion script clears cached --options' '
+ 	verbose test -z "$__gitcomp_builtin_notes_edit"
+ '
+ 
++test_expect_success 'option aliases are not shown by default' '
++	test_completion "git clone --recurs" "--recurse-submodules "
++'
++
++test_expect_success 'option aliases are shown with GIT_COMPLETION_SHOW_ALL' '
++	. "$GIT_BUILD_DIR/contrib/completion/git-completion.bash" &&
++	GIT_COMPLETION_SHOW_ALL=1 && export GIT_COMPLETION_SHOW_ALL &&
++	test_completion "git clone --recurs" <<-\EOF
++	--recurse-submodules Z
++	--recursive Z
++	EOF
++'
++
+ test_expect_success '__git_complete' '
+ 	unset -f __git_wrap__git_main &&
+ 
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

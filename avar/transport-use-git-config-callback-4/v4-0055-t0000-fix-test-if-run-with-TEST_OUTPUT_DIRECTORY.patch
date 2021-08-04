@@ -1,0 +1,87 @@
+From ade15525987a2e108fe6b6dd1a2ba4d963d64f13 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-55.80-ade15525987-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: Patrick Steinhardt <ps@pks.im>
+Date: Tue, 20 Jul 2021 08:32:26 +0200
+Subject: [PATCH v4 55/80] t0000: fix test if run with TEST_OUTPUT_DIRECTORY
+
+Testcases in t0000 are quite special given that they many of them run
+nested testcases to verify that testing functionality itself works as
+expected. These nested testcases are realized by writing a new ad-hoc
+test script which again sources test-lib.sh, where the new script is
+created in a nested subdirectory located beneath the current trash
+directory. We then execute the new test script with the nested
+subdirectory as current working directory and explicitly re-export
+TEST_OUTPUT_DIRECTORY to point to that directory.
+
+While this works as expected in the general case, it falls apart when
+the developer has TEST_OUTPUT_DIRECTORY explicitly defined either via
+the environment or via config.mak and runs "make test". In that case,
+test-lib.sh will clobber the value that we've just carefully set up to
+instead contain what the developer has defined. As a result, the
+TEST_OUTPUT_DIRECTORY continues to point at the root output directory,
+not at the nested one.
+
+This issue causes breakage in the 'test_atexit is run' test case: the
+nested test case writes files into "../../", which is assumed to be the
+parent's trash directory. But because TEST_OUTPUT_DIRECTORY already
+points to to the root output directory, we instead end up writing those
+files outside of the output directory. The parent test case will then
+try to check whether those files still exist in its own trash directory,
+which thus must fail now.
+
+Fix the issue by adding a new TEST_OUTPUT_DIRECTORY_OVERRIDE variable.
+If set, then we'll always override the TEST_OUTPUT_DIRECTORY with its
+value after sourcing GIT-BUILD-OPTIONS.
+
+Signed-off-by: Patrick Steinhardt <ps@pks.im>
+Acked-by: Jeff King <peff@peff.net>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ t/t0000-basic.sh | 7 +++++--
+ t/test-lib.sh    | 9 +++++++++
+ 2 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/t/t0000-basic.sh b/t/t0000-basic.sh
+index f68c27d864d..cb87768513c 100755
+--- a/t/t0000-basic.sh
++++ b/t/t0000-basic.sh
+@@ -106,8 +106,11 @@ _run_sub_test_lib_test_common () {
+ 		EOF
+ 		cat >>"$name.sh" &&
+ 		export TEST_DIRECTORY &&
+-		TEST_OUTPUT_DIRECTORY=$(pwd) &&
+-		export TEST_OUTPUT_DIRECTORY &&
++		# The child test re-sources GIT-BUILD-OPTIONS and may thus
++		# override the test output directory. We thus pass it as an
++		# explicit override to the child.
++		TEST_OUTPUT_DIRECTORY_OVERRIDE=$(pwd) &&
++		export TEST_OUTPUT_DIRECTORY_OVERRIDE &&
+ 		GIT_SKIP_TESTS=$skip &&
+ 		export GIT_SKIP_TESTS &&
+ 		sane_unset GIT_TEST_FAIL_PREREQS &&
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 9e268605449..da13190970f 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -57,6 +57,15 @@ fi
+ . "$GIT_BUILD_DIR"/GIT-BUILD-OPTIONS
+ export PERL_PATH SHELL_PATH
+ 
++# In t0000, we need to override test directories of nested testcases. In case
++# the developer has TEST_OUTPUT_DIRECTORY part of his build options, then we'd
++# reset this value to instead contain what the developer has specified. We thus
++# have this knob to allow overriding the directory.
++if test -n "${TEST_OUTPUT_DIRECTORY_OVERRIDE}"
++then
++	TEST_OUTPUT_DIRECTORY="${TEST_OUTPUT_DIRECTORY_OVERRIDE}"
++fi
++
+ # Disallow the use of abbreviated options in the test suite by default
+ if test -z "${GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS}"
+ then
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

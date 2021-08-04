@@ -1,0 +1,85 @@
+From 69bdbdb0ee25bd64bd3ad2fe241d434442e96f75 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-35.80-69bdbdb0ee2-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: Derrick Stolee <dstolee@microsoft.com>
+Date: Wed, 14 Jul 2021 13:12:34 +0000
+Subject: [PATCH v4 35/80] dir.c: accept a directory as part of cone-mode
+ patterns
+
+When we have sparse directory entries in the index, we want to compare
+that directory against sparse-checkout patterns. Those pattern matching
+algorithms are built expecting a file path, not a directory path. This
+is especially important in the "cone mode" patterns which will match
+files that exist within the "parent directories" as well as the
+recursive directory matches.
+
+If path_matches_pattern_list() is given a directory, we can add a fake
+filename ("-") to the directory and get the same results as before,
+assuming we are in cone mode. Since sparse index requires cone mode
+patterns, this is an acceptable assumption.
+
+Reviewed-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Derrick Stolee <dstolee@microsoft.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ dir.c | 24 +++++++++++++++++++-----
+ 1 file changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/dir.c b/dir.c
+index ebe5ec046e0..0c5264b3b20 100644
+--- a/dir.c
++++ b/dir.c
+@@ -1376,7 +1376,7 @@ enum pattern_match_result path_matches_pattern_list(
+ 	struct path_pattern *pattern;
+ 	struct strbuf parent_pathname = STRBUF_INIT;
+ 	int result = NOT_MATCHED;
+-	const char *slash_pos;
++	size_t slash_pos;
+ 
+ 	if (!pl->use_cone_patterns) {
+ 		pattern = last_matching_pattern_from_list(pathname, pathlen, basename,
+@@ -1397,21 +1397,35 @@ enum pattern_match_result path_matches_pattern_list(
+ 	strbuf_addch(&parent_pathname, '/');
+ 	strbuf_add(&parent_pathname, pathname, pathlen);
+ 
++	/*
++	 * Directory entries are matched if and only if a file
++	 * contained immediately within them is matched. For the
++	 * case of a directory entry, modify the path to create
++	 * a fake filename within this directory, allowing us to
++	 * use the file-base matching logic in an equivalent way.
++	 */
++	if (parent_pathname.len > 0 &&
++	    parent_pathname.buf[parent_pathname.len - 1] == '/') {
++		slash_pos = parent_pathname.len - 1;
++		strbuf_add(&parent_pathname, "-", 1);
++	} else {
++		const char *slash_ptr = strrchr(parent_pathname.buf, '/');
++		slash_pos = slash_ptr ? slash_ptr - parent_pathname.buf : 0;
++	}
++
+ 	if (hashmap_contains_path(&pl->recursive_hashmap,
+ 				  &parent_pathname)) {
+ 		result = MATCHED_RECURSIVE;
+ 		goto done;
+ 	}
+ 
+-	slash_pos = strrchr(parent_pathname.buf, '/');
+-
+-	if (slash_pos == parent_pathname.buf) {
++	if (!slash_pos) {
+ 		/* include every file in root */
+ 		result = MATCHED;
+ 		goto done;
+ 	}
+ 
+-	strbuf_setlen(&parent_pathname, slash_pos - parent_pathname.buf);
++	strbuf_setlen(&parent_pathname, slash_pos);
+ 
+ 	if (hashmap_contains_path(&pl->parent_hashmap, &parent_pathname)) {
+ 		result = MATCHED;
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

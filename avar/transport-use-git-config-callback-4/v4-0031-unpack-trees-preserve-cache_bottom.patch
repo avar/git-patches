@@ -1,0 +1,50 @@
+From 17a1bb570bcd165a3dc1c28c441bee45a941bb12 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-31.80-17a1bb570bc-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: Derrick Stolee <dstolee@microsoft.com>
+Date: Wed, 14 Jul 2021 13:12:30 +0000
+Subject: [PATCH v4 31/80] unpack-trees: preserve cache_bottom
+
+The cache_bottom member of 'struct unpack_trees_options' is used to
+track the range of index entries corresponding to a node of the cache
+tree. While recursing with traverse_by_cache_tree(), this value is
+preserved on the call stack using a local and then restored as that
+method returns.
+
+The mark_ce_used() method normally modifies the cache_bottom member when
+it refers to the marked cache entry. However, sparse directory entries
+are stored as nodes in the cache-tree data structure as of 2de37c53
+(cache-tree: integrate with sparse directory entries, 2021-03-30). Thus,
+the cache_bottom will be modified as the cache-tree walk advances. Do
+not update it as well within mark_ce_used().
+
+Reviewed-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Derrick Stolee <dstolee@microsoft.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ unpack-trees.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/unpack-trees.c b/unpack-trees.c
+index f88a69f8e71..87c1ed204c8 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -600,6 +600,13 @@ static void mark_ce_used(struct cache_entry *ce, struct unpack_trees_options *o)
+ {
+ 	ce->ce_flags |= CE_UNPACKED;
+ 
++	/*
++	 * If this is a sparse directory, don't advance cache_bottom.
++	 * That will be advanced later using the cache-tree data.
++	 */
++	if (S_ISSPARSEDIR(ce->ce_mode))
++		return;
++
+ 	if (o->cache_bottom < o->src_index->cache_nr &&
+ 	    o->src_index->cache[o->cache_bottom] == ce) {
+ 		int bottom = o->cache_bottom;
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

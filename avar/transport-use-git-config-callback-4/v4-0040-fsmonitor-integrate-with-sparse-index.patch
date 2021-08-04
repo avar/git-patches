@@ -1,0 +1,124 @@
+From f8fe49e53958f19b0e62e9549a80fcaa56d2f3cf Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-40.80-f8fe49e5395-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: Derrick Stolee <dstolee@microsoft.com>
+Date: Wed, 14 Jul 2021 13:12:39 +0000
+Subject: [PATCH v4 40/80] fsmonitor: integrate with sparse index
+
+If we need to expand a sparse-index into a full one, then the FS Monitor
+bitmap is going to be incorrect. Ensure that we start fresh at such an
+event.
+
+While this is currently a performance drawback, the eventual hope of the
+sparse-index feature is that these expansions will be rare and hence we
+will be able to keep the FS Monitor data accurate across multiple Git
+commands.
+
+These tests are added to demonstrate that the behavior is the same
+across a full index and a sparse index, but also that file modifications
+to a tracked directory outside of the sparse cone will trigger
+ensure_full_index().
+
+Reviewed-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Derrick Stolee <dstolee@microsoft.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ sparse-index.c              |  7 ++++++
+ t/t7519-status-fsmonitor.sh | 49 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 56 insertions(+)
+
+diff --git a/sparse-index.c b/sparse-index.c
+index ef53bd2198b..53c8f711ccc 100644
+--- a/sparse-index.c
++++ b/sparse-index.c
+@@ -186,6 +186,10 @@ int convert_to_sparse(struct index_state *istate)
+ 	cache_tree_free(&istate->cache_tree);
+ 	cache_tree_update(istate, 0);
+ 
++	istate->fsmonitor_has_run_once = 0;
++	FREE_AND_NULL(istate->fsmonitor_dirty);
++	FREE_AND_NULL(istate->fsmonitor_last_update);
++
+ 	istate->sparse_index = 1;
+ 	trace2_region_leave("index", "convert_to_sparse", istate->repo);
+ 	return 0;
+@@ -282,6 +286,9 @@ void ensure_full_index(struct index_state *istate)
+ 	istate->cache = full->cache;
+ 	istate->cache_nr = full->cache_nr;
+ 	istate->cache_alloc = full->cache_alloc;
++	istate->fsmonitor_has_run_once = 0;
++	FREE_AND_NULL(istate->fsmonitor_dirty);
++	FREE_AND_NULL(istate->fsmonitor_last_update);
+ 
+ 	strbuf_release(&base);
+ 	free(full);
+diff --git a/t/t7519-status-fsmonitor.sh b/t/t7519-status-fsmonitor.sh
+index 637391c6ce4..deea88d4431 100755
+--- a/t/t7519-status-fsmonitor.sh
++++ b/t/t7519-status-fsmonitor.sh
+@@ -73,6 +73,7 @@ test_expect_success 'setup' '
+ 	expect*
+ 	actual*
+ 	marker*
++	trace2*
+ 	EOF
+ '
+ 
+@@ -383,4 +384,52 @@ test_expect_success 'status succeeds after staging/unstaging' '
+ 	)
+ '
+ 
++# Usage:
++# check_sparse_index_behavior [!]
++# If "!" is supplied, then we verify that we do not call ensure_full_index
++# during a call to 'git status'. Otherwise, we verify that we _do_ call it.
++check_sparse_index_behavior () {
++	git status --porcelain=v2 >expect &&
++	git sparse-checkout init --cone --sparse-index &&
++	git sparse-checkout set dir1 dir2 &&
++	GIT_TRACE2_EVENT="$(pwd)/trace2.txt" GIT_TRACE2_EVENT_NESTING=10 \
++		git status --porcelain=v2 >actual &&
++	test_region $1 index ensure_full_index trace2.txt &&
++	test_region fsm_hook query trace2.txt &&
++	test_cmp expect actual &&
++	rm trace2.txt &&
++	git sparse-checkout disable
++}
++
++test_expect_success 'status succeeds with sparse index' '
++	git reset --hard &&
++
++	test_config core.fsmonitor "$TEST_DIRECTORY/t7519/fsmonitor-all" &&
++	check_sparse_index_behavior ! &&
++
++	write_script .git/hooks/fsmonitor-test<<-\EOF &&
++		printf "last_update_token\0"
++	EOF
++	git config core.fsmonitor .git/hooks/fsmonitor-test &&
++	check_sparse_index_behavior ! &&
++
++	write_script .git/hooks/fsmonitor-test<<-\EOF &&
++		printf "last_update_token\0"
++		printf "dir1/modified\0"
++	EOF
++	check_sparse_index_behavior ! &&
++
++	cp -r dir1 dir1a &&
++	git add dir1a &&
++	git commit -m "add dir1a" &&
++
++	# This one modifies outside the sparse-checkout definition
++	# and hence we expect to expand the sparse-index.
++	write_script .git/hooks/fsmonitor-test<<-\EOF &&
++		printf "last_update_token\0"
++		printf "dir1a/modified\0"
++	EOF
++	check_sparse_index_behavior
++'
++
+ test_done
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

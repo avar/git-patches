@@ -1,0 +1,153 @@
+From 63766510a15f67cdd067ae0c0dcecb06fc6bfbf1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-63.80-63766510a15-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 22 Jul 2021 01:53:29 +0200
+Subject: [PATCH v4 63/80] bundle tests: use test_cmp instead of grep
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the bundle tests to fully compare the expected "git ls-remote"
+or "git bundle list-heads" output, instead of merely grepping it.
+
+This avoids subtle regressions in the tests. In
+f62e0a39b6 (t5704 (bundle): add tests for bundle --stdin, 2010-04-19)
+the "bundle --stdin <rev-list options>" test was added to make sure we
+didn't include the tag.
+
+But since the --stdin mode didn't work until 5bb0fd2cab (bundle:
+arguments can be read from stdin, 2021-01-11) our grepping of
+"master" (later "main") missed the important part of the test.
+
+Namely that we should not include the "refs/tags/tag" tag in that
+case. Since the test only grepped for "main" in the output we'd miss a
+regression in that code.
+
+So let's use test_cmp instead, and also in the other nearby tests
+where it's easy.
+
+This does make things a bit more verbose in the case of the test
+that's checking the bundle header, since it's different under SHA1 and
+SHA256. I think this makes test easier to follow.
+
+I've got some WIP changes to extend the "git bundle" command to dump
+parts of the header out, which are easier to understand if we test the
+output explicitly like this.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ t/t5607-clone-bundle.sh | 66 +++++++++++++++++++++++++++++++++--------
+ 1 file changed, 53 insertions(+), 13 deletions(-)
+
+diff --git a/t/t5607-clone-bundle.sh b/t/t5607-clone-bundle.sh
+index c9323a08fe8..ed0d911e953 100755
+--- a/t/t5607-clone-bundle.sh
++++ b/t/t5607-clone-bundle.sh
+@@ -29,11 +29,21 @@ test_expect_success '"verify" needs a worktree' '
+ 
+ test_expect_success 'annotated tags can be excluded by rev-list options' '
+ 	git bundle create bundle --all --since=7.Apr.2005.15:14:00.-0700 &&
+-	git ls-remote bundle > output &&
+-	grep tag output &&
++	cat >expect <<-EOF &&
++	$(git rev-parse HEAD)	HEAD
++	$(git rev-parse tag)	refs/tags/tag
++	$(git rev-parse main)	refs/heads/main
++	EOF
++	git ls-remote bundle >actual &&
++	test_cmp expect actual &&
++
+ 	git bundle create bundle --all --since=7.Apr.2005.15:16:00.-0700 &&
+-	git ls-remote bundle > output &&
+-	! grep tag output
++	cat >expect <<-EOF &&
++	$(git rev-parse HEAD)	HEAD
++	$(git rev-parse main)	refs/heads/main
++	EOF
++	git ls-remote bundle >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'die if bundle file cannot be created' '
+@@ -43,14 +53,20 @@ test_expect_success 'die if bundle file cannot be created' '
+ 
+ test_expect_success 'bundle --stdin' '
+ 	echo main | git bundle create stdin-bundle.bdl --stdin &&
+-	git ls-remote stdin-bundle.bdl >output &&
+-	grep main output
++	cat >expect <<-EOF &&
++	$(git rev-parse main)	refs/heads/main
++	EOF
++	git ls-remote stdin-bundle.bdl >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'bundle --stdin <rev-list options>' '
+ 	echo main | git bundle create hybrid-bundle.bdl --stdin tag &&
+-	git ls-remote hybrid-bundle.bdl >output &&
+-	grep main output
++	cat >expect <<-EOF &&
++	$(git rev-parse main)	refs/heads/main
++	EOF
++	git ls-remote stdin-bundle.bdl >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'empty bundle file is rejected' '
+@@ -67,11 +83,31 @@ test_expect_success 'ridiculously long subject in boundary' '
+ 	printf "%01200d\n" 0 | git commit -F - &&
+ 	test_commit fifth &&
+ 	git bundle create long-subject-bundle.bdl HEAD^..HEAD &&
+-	git bundle list-heads long-subject-bundle.bdl >heads &&
+-	test -s heads &&
++	cat >expect <<-EOF &&
++	$(git rev-parse main) HEAD
++	EOF
++	git bundle list-heads long-subject-bundle.bdl >actual &&
++	test_cmp expect actual &&
++
+ 	git fetch long-subject-bundle.bdl &&
+-	sed -n "/^-/{p;q;}" long-subject-bundle.bdl >boundary &&
+-	grep "^-$OID_REGEX " boundary
++
++	if ! test_have_prereq SHA1
++	then
++		echo "@object-format=sha256"
++	fi >expect &&
++	cat >>expect <<-EOF &&
++	-$(git log --pretty=format:"%H %s" -1 HEAD^)
++	$(git rev-parse HEAD) HEAD
++	EOF
++
++	if test_have_prereq SHA1
++	then
++		head -n 3 long-subject-bundle.bdl
++	else
++		head -n 4 long-subject-bundle.bdl
++	fi | grep -v "^#" >actual &&
++
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'prerequisites with an empty commit message' '
+@@ -103,7 +139,11 @@ test_expect_success 'fetch SHA-1 from bundle' '
+ 
+ test_expect_success 'git bundle uses expected default format' '
+ 	git bundle create bundle HEAD^.. &&
+-	head -n1 bundle | grep "^# v$(test_oid version) git bundle$"
++	cat >expect <<-EOF &&
++	# v$(test_oid version) git bundle
++	EOF
++	head -n1 bundle >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'git bundle v3 has expected contents' '
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

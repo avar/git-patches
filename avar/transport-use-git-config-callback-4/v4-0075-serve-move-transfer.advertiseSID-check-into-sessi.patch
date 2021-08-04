@@ -1,0 +1,67 @@
+From f1c267a406dfd5de7b6095863a3abd00ff70e69c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-75.80-f1c267a406d-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 3 Aug 2021 16:55:27 +0200
+Subject: [PATCH v4 75/80] serve: move transfer.advertiseSID check into
+ session_id_advertise()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In 6b5b6e422ee (serve: advertise session ID in v2 capabilities,
+2020-11-11) the check for transfer.advertiseSID was added to the
+beginning of the main serve() loop. Thus on startup of the server we'd
+populate it.
+
+Let's instead use an explicit lazy initialization pattern in
+session_id_advertise() itself, we'll still look the config up only
+once per-process, but by moving it out of serve() itself the further
+changing of that routine becomes easier.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ serve.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/serve.c b/serve.c
+index 33d00c8c634..7b3725ec8bc 100644
+--- a/serve.c
++++ b/serve.c
+@@ -9,8 +9,6 @@
+ #include "serve.h"
+ #include "upload-pack.h"
+ 
+-static int advertise_sid;
+-
+ static int always_advertise(struct repository *r,
+ 			    struct strbuf *value)
+ {
+@@ -33,8 +31,12 @@ static int object_format_advertise(struct repository *r,
+ 	return 1;
+ }
+ 
++static int advertise_sid = -1;
+ static int session_id_advertise(struct repository *r, struct strbuf *value)
+ {
++	if (advertise_sid == -1 &&
++	    git_config_get_bool("transfer.advertisesid", &advertise_sid))
++		advertise_sid = 0;
+ 	if (!advertise_sid)
+ 		return 0;
+ 	if (value)
+@@ -303,8 +305,6 @@ static int process_request(void)
+ /* Main serve loop for protocol version 2 */
+ void serve(struct serve_options *options)
+ {
+-	git_config_get_bool("transfer.advertisesid", &advertise_sid);
+-
+ 	if (options->advertise_capabilities || !options->stateless_rpc) {
+ 		/* serve by default supports v2 */
+ 		packet_write_fmt(1, "version 2\n");
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+

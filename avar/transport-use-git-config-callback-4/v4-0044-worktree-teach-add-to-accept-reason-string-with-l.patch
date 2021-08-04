@@ -1,0 +1,136 @@
+From 0db4961c49bb70cef89ed3d7c90f8f5d9dfc822d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-44.80-0db4961c49b-20210804T164957Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20210721T233307Z-avarab@gmail.com>
+	<cover-v4-00.80-00000000000-20210804T164956Z-avarab@gmail.com>
+From: Stephen Manz <smanz@alum.mit.edu>
+Date: Thu, 15 Jul 2021 02:32:30 +0000
+Subject: [PATCH v4 44/80] worktree: teach `add` to accept --reason <string>
+ with --lock
+
+The default reason stored in the lock file, "added with --lock",
+is unlikely to be what the user would have given in a separate
+`git worktree lock` command. Allowing `--reason` to be specified
+along with `--lock` when adding a working tree gives the user control
+over the reason for locking without needing a second command.
+
+Signed-off-by: Stephen Manz <smanz@alum.mit.edu>
+Reviewed-by: Eric Sunshine <sunshine@sunshineco.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ Documentation/git-worktree.txt |  4 ++--
+ builtin/worktree.c             | 21 ++++++++++++++++-----
+ t/t2400-worktree-add.sh        | 14 ++++++++++++++
+ 3 files changed, 32 insertions(+), 7 deletions(-)
+
+diff --git a/Documentation/git-worktree.txt b/Documentation/git-worktree.txt
+index f1bb1fa5f5a..720663746ba 100644
+--- a/Documentation/git-worktree.txt
++++ b/Documentation/git-worktree.txt
+@@ -9,7 +9,7 @@ git-worktree - Manage multiple working trees
+ SYNOPSIS
+ --------
+ [verse]
+-'git worktree add' [-f] [--detach] [--checkout] [--lock] [-b <new-branch>] <path> [<commit-ish>]
++'git worktree add' [-f] [--detach] [--checkout] [--lock [--reason <string>]] [-b <new-branch>] <path> [<commit-ish>]
+ 'git worktree list' [--porcelain]
+ 'git worktree lock' [--reason <string>] <worktree>
+ 'git worktree move' <worktree> <new-path>
+@@ -242,7 +242,7 @@ With `list`, annotate missing working trees as prunable if they are
+ older than `<time>`.
+ 
+ --reason <string>::
+-	With `lock`, an explanation why the working tree is locked.
++	With `lock` or with `add --lock`, an explanation why the working tree is locked.
+ 
+ <worktree>::
+ 	Working trees can be identified by path, either relative or
+diff --git a/builtin/worktree.c b/builtin/worktree.c
+index 4829b9507ff..0d0a80da61f 100644
+--- a/builtin/worktree.c
++++ b/builtin/worktree.c
+@@ -30,7 +30,7 @@ struct add_opts {
+ 	int detach;
+ 	int quiet;
+ 	int checkout;
+-	int keep_locked;
++	const char *keep_locked;
+ };
+ 
+ static int show_only;
+@@ -302,10 +302,10 @@ static int add_worktree(const char *path, const char *refname,
+ 	 * after the preparation is over.
+ 	 */
+ 	strbuf_addf(&sb, "%s/locked", sb_repo.buf);
+-	if (!opts->keep_locked)
+-		write_file(sb.buf, _("initializing"));
++	if (opts->keep_locked)
++		write_file(sb.buf, "%s", opts->keep_locked);
+ 	else
+-		write_file(sb.buf, _("added with --lock"));
++		write_file(sb.buf, _("initializing"));
+ 
+ 	strbuf_addf(&sb_git, "%s/.git", path);
+ 	if (safe_create_leading_directories_const(sb_git.buf))
+@@ -475,6 +475,8 @@ static int add(int ac, const char **av, const char *prefix)
+ 	const char *branch;
+ 	const char *new_branch = NULL;
+ 	const char *opt_track = NULL;
++	const char *lock_reason = NULL;
++	int keep_locked = 0;
+ 	struct option options[] = {
+ 		OPT__FORCE(&opts.force,
+ 			   N_("checkout <branch> even if already checked out in other worktree"),
+@@ -485,7 +487,9 @@ static int add(int ac, const char **av, const char *prefix)
+ 			   N_("create or reset a branch")),
+ 		OPT_BOOL('d', "detach", &opts.detach, N_("detach HEAD at named commit")),
+ 		OPT_BOOL(0, "checkout", &opts.checkout, N_("populate the new working tree")),
+-		OPT_BOOL(0, "lock", &opts.keep_locked, N_("keep the new working tree locked")),
++		OPT_BOOL(0, "lock", &keep_locked, N_("keep the new working tree locked")),
++		OPT_STRING(0, "reason", &lock_reason, N_("string"),
++			   N_("reason for locking")),
+ 		OPT__QUIET(&opts.quiet, N_("suppress progress reporting")),
+ 		OPT_PASSTHRU(0, "track", &opt_track, NULL,
+ 			     N_("set up tracking mode (see git-branch(1))"),
+@@ -500,6 +504,13 @@ static int add(int ac, const char **av, const char *prefix)
+ 	ac = parse_options(ac, av, prefix, options, worktree_usage, 0);
+ 	if (!!opts.detach + !!new_branch + !!new_branch_force > 1)
+ 		die(_("-b, -B, and --detach are mutually exclusive"));
++	if (lock_reason && !keep_locked)
++		die(_("--reason requires --lock"));
++	if (lock_reason)
++		opts.keep_locked = lock_reason;
++	else if (keep_locked)
++		opts.keep_locked = _("added with --lock");
++
+ 	if (ac < 1 || ac > 2)
+ 		usage_with_options(worktree_usage, options);
+ 
+diff --git a/t/t2400-worktree-add.sh b/t/t2400-worktree-add.sh
+index 93d3795cab9..37ad79470fb 100755
+--- a/t/t2400-worktree-add.sh
++++ b/t/t2400-worktree-add.sh
+@@ -72,6 +72,20 @@ test_expect_success '"add" worktree with lock' '
+ 	test -f .git/worktrees/here-with-lock/locked
+ '
+ 
++test_expect_success '"add" worktree with lock and reason' '
++	lock_reason="why not" &&
++	git worktree add --detach --lock --reason "$lock_reason" here-with-lock-reason main &&
++	test_when_finished "git worktree unlock here-with-lock-reason || :" &&
++	test -f .git/worktrees/here-with-lock-reason/locked &&
++	echo "$lock_reason" >expect &&
++	test_cmp expect .git/worktrees/here-with-lock-reason/locked
++'
++
++test_expect_success '"add" worktree with reason but no lock' '
++	test_must_fail git worktree add --detach --reason "why not" here-with-reason-only main &&
++	test_path_is_missing .git/worktrees/here-with-reason-only/locked
++'
++
+ test_expect_success '"add" worktree from a subdir' '
+ 	(
+ 		mkdir sub &&
+-- 
+2.33.0.rc0.587.gbfc8ffe61b6
+
