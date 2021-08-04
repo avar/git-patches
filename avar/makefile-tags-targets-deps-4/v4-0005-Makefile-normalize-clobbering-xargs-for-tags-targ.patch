@@ -1,0 +1,84 @@
+From 1eaf341632951a6256158ebf59bbd5cae370f793 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-5.5-1eaf3416329-20210804T225203Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.5-00000000000-20210804T225203Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210721T231900Z-avarab@gmail.com>
+	<cover-v4-0.5-00000000000-20210804T225203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Jun 2021 14:24:52 +0200
+Subject: [PATCH v4 5/5] Makefile: normalize clobbering & xargs for tags
+ targets
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since the "tags", "TAGS" and "cscope.out" targets rely on piping into
+xargs with an "echo <list> | xargs" pattern, we need to make sure
+we're in an append mode.
+
+Unlike my recent change to make use of ".DELETE_ON_ERROR" in
+7b76d6bf221 (Makefile: add and use the ".DELETE_ON_ERROR" flag,
+2021-06-29), we really do need the "rm $@+" at the beginning (note,
+not "rm $@").
+
+This is because the xargs command may decide to invoke the program
+multiple times. We need to make sure we've got a union of its results
+at the end.
+
+For "ctags" and "etags" we used the "-a" flag for this, for cscope
+that behavior is the default. Its "-u" flag disables its equivalent of
+an implicit "-a" flag.
+
+Let's also consistently use the $@ and $@+ names instead of needlessly
+hardcoding or referring to more verbose names in the "tags" and "TAGS"
+rules.
+
+These targets could perhaps be improved in the future by factoring
+this "echo <list> | xargs" pattern so that we make intermediate tags
+files for each source file, and then assemble them into one "tags"
+file at the end.
+
+The etags manual page suggests that doing that (or perhaps just
+--update) might be counter-productive, in any case, the tag building
+is fast enough for me, so I'm leaving that for now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 2a176ba5742..1ad7a685d10 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2749,18 +2749,19 @@ FIND_SOURCE_FILES = ( \
+ FOUND_SOURCE_FILES = $(shell $(FIND_SOURCE_FILES))
+ 
+ $(ETAGS_TARGET): $(FOUND_SOURCE_FILES)
+-	$(QUIET_GEN)$(RM) "$(ETAGS_TARGET)+" && \
+-	echo $(FOUND_SOURCE_FILES) | xargs etags -a -o "$(ETAGS_TARGET)+" && \
+-	mv "$(ETAGS_TARGET)+" "$(ETAGS_TARGET)"
++	$(QUIET_GEN)$(RM) $@+ && \
++	echo $(FOUND_SOURCE_FILES) | xargs etags -a -o $@+ && \
++	mv $@+ $@
+ 
+ tags: $(FOUND_SOURCE_FILES)
+-	$(QUIET_GEN)$(RM) tags+ && \
+-	echo $(FOUND_SOURCE_FILES) | xargs ctags -a -o tags+ && \
+-	mv tags+ tags
++	$(QUIET_GEN)$(RM) $@+ && \
++	echo $(FOUND_SOURCE_FILES) | xargs ctags -a -o $@+ && \
++	mv $@+ $@
+ 
+ cscope.out: $(FOUND_SOURCE_FILES)
+-	$(QUIET_GEN)$(RM) $@ && \
+-	echo $(FOUND_SOURCE_FILES) | xargs cscope -f$@ -b
++	$(QUIET_GEN)$(RM) $@+ && \
++	echo $(FOUND_SOURCE_FILES) | xargs cscope -f$@+ -b && \
++	mv $@+ $@
+ 
+ .PHONY: cscope
+ cscope: cscope.out
+-- 
+2.33.0.rc0.597.gc569a812f0a
+

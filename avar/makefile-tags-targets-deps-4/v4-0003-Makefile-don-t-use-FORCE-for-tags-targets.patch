@@ -1,0 +1,74 @@
+From 8649716772bb0dfc404ff018de407040047e7d3b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-3.5-8649716772b-20210804T225203Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.5-00000000000-20210804T225203Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210721T231900Z-avarab@gmail.com>
+	<cover-v4-0.5-00000000000-20210804T225203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 22 Jun 2021 14:24:52 +0200
+Subject: [PATCH v4 3/5] Makefile: don't use "FORCE" for tags targets
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the "FORCE" dependency from the "tags", "TAGS" and "cscope"
+targets, instead make them depend on whether or not the relevant
+source files have changed.
+
+For the cscope target we need to change it to depend on the actual
+generated file while we generate while we're at it, as the next commit
+will discuss we always generate a cscope.out file.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 20 ++++++++++++--------
+ 1 file changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 59c2e98795b..d1012cf71d2 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2746,20 +2746,24 @@ FIND_SOURCE_FILES = ( \
+ 		| sed -e 's|^\./||' \
+ 	)
+ 
+-$(ETAGS_TARGET): FORCE
++FOUND_SOURCE_FILES = $(shell $(FIND_SOURCE_FILES))
++
++$(ETAGS_TARGET): $(FOUND_SOURCE_FILES)
+ 	$(QUIET_GEN)$(RM) "$(ETAGS_TARGET)+" && \
+-	$(FIND_SOURCE_FILES) | xargs etags -a -o "$(ETAGS_TARGET)+" && \
++	echo $(FOUND_SOURCE_FILES) | xargs etags -a -o "$(ETAGS_TARGET)+" && \
+ 	mv "$(ETAGS_TARGET)+" "$(ETAGS_TARGET)"
+ 
+-tags: FORCE
++tags: $(FOUND_SOURCE_FILES)
+ 	$(QUIET_GEN)$(RM) tags+ && \
+-	$(FIND_SOURCE_FILES) | xargs ctags -a -o tags+ && \
++	echo $(FOUND_SOURCE_FILES) | xargs ctags -a -o tags+ && \
+ 	mv tags+ tags
+ 
+-.PHONY: cscope
+-cscope:
++cscope.out: $(FOUND_SOURCE_FILES)
+ 	$(QUIET_GEN)$(RM) cscope* && \
+-	$(FIND_SOURCE_FILES) | xargs cscope -b
++	echo $(FOUND_SOURCE_FILES) | xargs cscope -b
++
++.PHONY: cscope
++cscope: cscope.out
+ 
+ ### Detect prefix changes
+ TRACK_PREFIX = $(bindir_SQ):$(gitexecdir_SQ):$(template_dir_SQ):$(prefix_SQ):\
+@@ -2943,7 +2947,7 @@ check: config-list.h command-list.h
+ 		exit 1; \
+ 	fi
+ 
+-FOUND_C_SOURCES = $(filter %.c,$(shell $(FIND_SOURCE_FILES)))
++FOUND_C_SOURCES = $(filter %.c,$(FOUND_SOURCE_FILES))
+ COCCI_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES),$(FOUND_C_SOURCES))
+ 
+ %.cocci.patch: %.cocci $(COCCI_SOURCES)
+-- 
+2.33.0.rc0.597.gc569a812f0a
+
