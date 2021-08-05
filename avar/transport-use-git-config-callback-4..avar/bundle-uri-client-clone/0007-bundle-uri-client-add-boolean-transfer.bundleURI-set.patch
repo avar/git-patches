@@ -1,0 +1,91 @@
+From f0e4052de453f9197407cc323e47a6f9b6e419f9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.13-f0e4052de4-20210805T142827Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-0000000000-20210805T142827Z-avarab@gmail.com>
+References: <20111110074330.GA27925@sigill.intra.peff.net>
+	<cover-00.13-0000000000-20210805T142827Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 24 Jul 2021 18:52:15 +0200
+Subject: [PATCH 07/13] bundle-uri client: add boolean transfer.bundleURI
+ setting
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The yet-to-be introduced client support for bundle-uri will always
+fall back on a full clone, but we'd still like to be able to ignore a
+server's bundle-uri advertisement entirely.
+
+This is useful for testing, and if a server is pointing to bad
+bundles, they take a while to time out etc.
+
+Since we might see the config in any order we need to clear out any
+accumulated bundle_uri list when we see transfer.bundleURI=false
+setting, and not add any more things to the list.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/transfer.txt |  6 ++++++
+ transport.c                       | 15 ++++++++++++++-
+ 2 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/config/transfer.txt b/Documentation/config/transfer.txt
+index a9aff7f982..1ed026421c 100644
+--- a/Documentation/config/transfer.txt
++++ b/Documentation/config/transfer.txt
+@@ -74,6 +74,12 @@ transfer.advertiseSID::
+ 	Boolean. When true, client and server processes will advertise their
+ 	unique session IDs to their remote counterpart. Defaults to false.
+ 
++transfer.bundleURI::
++	When set to `false` ignores any server advertisement of
++	`bundle-uri` and proceed with a "normal" clone/fetch even if
++	using bundles to bootstap is possible. Defaults to `true`,
++	i.e. bundle-uri is tried whenever a server offers it.
++
+ transfer.injectBundleURI::
+ 	Allows for the injection of `bundle-uri` lines into the
+ 	protocol v2 transport dialog (see `protocol.version` in
+diff --git a/transport.c b/transport.c
+index bd8a914652..80d1857374 100644
+--- a/transport.c
++++ b/transport.c
+@@ -1503,6 +1503,7 @@ int transport_fetch_refs(struct transport *transport, struct ref *refs)
+ 
+ struct config_cb {
+ 	struct transport *transport;
++	int disabled;
+ 	int configured;
+ 	int ret;
+ };
+@@ -1513,7 +1514,15 @@ static int bundle_uri_config(const char *var, const char *value, void *data)
+ 	struct transport *transport = cb->transport;
+ 	struct string_list *uri = &transport->bundle_uri;
+ 
+-	if (!strcmp(var, "transfer.injectbundleuri")) {
++	if (!strcmp(var, "transfer.bundleuri")) {
++		cb->disabled = !git_config_bool(var, value);
++		if (cb->disabled)
++			bundle_uri_string_list_clear(uri);
++		return 0;
++	}
++
++	if (!cb->disabled &&
++	    !strcmp(var, "transfer.injectbundleuri")) {
+ 		cb->configured = 1;
+ 		if (!value)
+ 			cb->ret = error(_("bad (empty) transfer.injectBundleURI"));
+@@ -1538,6 +1547,10 @@ int transport_get_remote_bundle_uri(struct transport *transport, int quiet)
+ 
+ 	git_config(bundle_uri_config, &cb);
+ 
++	/* Don't use bundle-uri at all */
++	if (cb.disabled)
++		return 0;
++
+ 	/* Our own config can fake it up with transport.injectBundleURI */
+ 	if (cb.configured)
+ 		return cb.ret;
+-- 
+2.33.0.rc0.646.g585563e77f
+

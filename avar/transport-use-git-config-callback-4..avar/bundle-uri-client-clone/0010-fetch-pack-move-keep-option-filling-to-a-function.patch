@@ -1,0 +1,63 @@
+From f04cf22da46d6ac3538b25a641f17eaeeeebfb33 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.13-f04cf22da4-20210805T142827Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-0000000000-20210805T142827Z-avarab@gmail.com>
+References: <20111110074330.GA27925@sigill.intra.peff.net>
+	<cover-00.13-0000000000-20210805T142827Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 26 Jul 2021 12:33:47 +0200
+Subject: [PATCH 10/13] fetch-pack: move --keep=* option filling to a function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the populating of the --keep=* option argument to "index-pack" to
+a static function, a subsequent commit will make use of it in another
+function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fetch-pack.c | 20 ++++++++++++--------
+ 1 file changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/fetch-pack.c b/fetch-pack.c
+index b0b21cc969..ef07b45072 100644
+--- a/fetch-pack.c
++++ b/fetch-pack.c
+@@ -826,6 +826,16 @@ static void parse_gitmodules_oids(int fd, struct oidset *gitmodules_oids)
+ 	} while (1);
+ }
+ 
++static void add_index_pack_keep_option(struct strvec *args)
++{
++	char hostname[HOST_NAME_MAX + 1];
++
++	if (xgethostname(hostname, sizeof(hostname)))
++		xsnprintf(hostname, sizeof(hostname), "localhost");
++	strvec_pushf(args, "--keep=fetch-pack %"PRIuMAX " on %s",
++		     (uintmax_t)getpid(), hostname);
++}
++
+ /*
+  * If packfile URIs were provided, pass a non-NULL pointer to index_pack_args.
+  * The strings to pass as the --index-pack-arg arguments to http-fetch will be
+@@ -895,14 +905,8 @@ static int get_pack(struct fetch_pack_args *args,
+ 			strvec_push(&cmd.args, "-v");
+ 		if (args->use_thin_pack)
+ 			strvec_push(&cmd.args, "--fix-thin");
+-		if ((do_keep || index_pack_args) && (args->lock_pack || unpack_limit)) {
+-			char hostname[HOST_NAME_MAX + 1];
+-			if (xgethostname(hostname, sizeof(hostname)))
+-				xsnprintf(hostname, sizeof(hostname), "localhost");
+-			strvec_pushf(&cmd.args,
+-				     "--keep=fetch-pack %"PRIuMAX " on %s",
+-				     (uintmax_t)getpid(), hostname);
+-		}
++		if ((do_keep || index_pack_args) && (args->lock_pack || unpack_limit))
++			add_index_pack_keep_option(&cmd.args);
+ 		if (!index_pack_args && args->check_self_contained_and_connected)
+ 			strvec_push(&cmd.args, "--check-self-contained-and-connected");
+ 		else
+-- 
+2.33.0.rc0.646.g585563e77f
+
