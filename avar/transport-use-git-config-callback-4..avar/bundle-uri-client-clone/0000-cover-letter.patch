@@ -2,12 +2,88 @@ From 1e657ed27aeea601a97eb136d5879ab7359f2961 Mon Sep 17 00:00:00 2001
 Message-Id: <RFC-cover-00.13-0000000000-20210805T150534Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Thu, 5 Aug 2021 17:05:34 +0200
-Subject: [RFC PATCH 00/13] *** SUBJECT HERE ***
+Subject: [RFC PATCH 00/13] Add bundle-uri: resumably clones, static "dumb" CDN etc.
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+We're in the 2.33.0 rc cycle, and I'd hoped to have some more prep
+work for this integrated already, but for now here's something
+interesting I've been working on for early commentary/feedback.
+
+This adds the the ability to protocol v2 for servers to optimistically
+pre-seed supporting clients with one or more bundles via a new
+"bundle-uri" protocol extension.
+
+Right now only "clone" supports this, but it's a rather easy change on
+top to add incremental "fetch" support as well.
+
+The elevator pitch for this feature is (I guess it's a long elevator
+ride..);
+
+ * Allows for offloading most/all of a PACK "fetch" to "dumb" CDN's
+   that *don't* have very close coordination with the server running
+   "git-upload-pack" (unlike packfile-uri, more on that below).
+
+   I.e. distributing an up-to-date-enough bundle via something like
+   Debian's FTP mirror system, or a best-effort occasionally updated
+   CDN.
+
+   Should the bundle(s) be outdated, corrupt or whatever the client
+   gracefully recovers by either ignoring the bad data, or catching up
+   via negotiation with whatever data it did get.
+
+   Server operators should be confident in using bundle URIs, even if
+   the CDN they're pointing to is flaky, out of date, or even
+   sometimes outright broken or unreachable. The client will recover
+   in all those cases.
+
+ * Makes performant git infrastructure more accessible, i.e. this
+   feature helps the last with an up-to-date repack with up-to-date
+   bitmaps when talking to a network-local git server, but a lot of
+   users have more option for scaling or distributing things via dumb
+   CDNs than a server that can run "git-upload-pack".
+
+ * You can even bootstrap a clone of a remote server that doesn't
+   support bundle-uri with a local or remote bundle with the
+   "transfer.injectBundleURI" config.
+
+ * Trivial path to resumable clones. Note that that's "resumable" in
+   the sense that curl(1) will resume a partially downloaded bundle,
+   we don't resume whatever state index-pack was in when the
+   connection was broken.
+
+   I have a POC of this working locally, it's just a matter of
+   invoking curl(1) with "--continue-at -".
+
+   The hindrance for resumably clones is now just the UI for git-clone
+   (i.e. stashing the partial data somewhere), not protocol
+   limitations.
+
+This goes on top of the outstanding series I have for serve.c API
+cleanup & fixes at
+https://lore.kernel.org/git/cover-v4-00.10-00000000000-20210805T011823Z-avarab@gmail.com
+
+I also needed to grab one patch from my "bundle unbundle progress"
+series:
+https://lore.kernel.org/git/cover-0.4-0000000000-20210727T004015Z-avarab@gmail.com/
+
+Something like this approach had been suggested before in late 2011 by
+Jeff King, see:
+https://lore.kernel.org/git/20111110074330.GA27925@sigill.intra.peff.net/;
+There's significant differences in the approach, mainly due to
+protocol v2 not existing at the time. I wrote most of this before
+finding/seeing Jeff's earlier patches.
+
+For a demo of how this works head over to 12/13:
+https://lore.kernel.org/git/RFC-patch-12.13-8dc5613e87-20210805T142839Z-avarab@gmail.com
+
+In 13/13 there's a design doc discussing the approach, and major
+differences with the existing packfile-uri mechanism:
+https://lore.kernel.org/git/RFC-patch-13.13-1e657ed27a-20210805T142839Z-avarab@gmail.com
+
+This can also be grabbed from the "avar/bundle-uri-client-clone"
+branch of https://github.com/avar/git/
 
 Ævar Arnfjörð Bjarmason (13):
   serve: add command to advertise bundle URIs
