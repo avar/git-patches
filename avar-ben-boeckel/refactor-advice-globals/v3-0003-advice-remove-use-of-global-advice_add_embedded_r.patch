@@ -1,0 +1,87 @@
+From 5625c3fe257be13c88e7376738aaeb69b5187460 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v3-3.4-5625c3fe257-20210806T174039Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v3-0.4-00000000000-20210806T174039Z-avarab@gmail.com>
+References: <20210805230321.532218-1-mathstuf@gmail.com>
+	<RFC-cover-v3-0.4-00000000000-20210806T174039Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 6 Aug 2021 11:46:03 +0200
+Subject: [RFCPATCH v3 3/4] advice: remove use of global
+ advice_add_embedded_repo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The external use of this variable was added in 532139940c9 (add: warn
+when adding an embedded repository, 2017-06-14), for the use-case it's
+more straightforward to track whether we've adviced in
+check_embedded_repo() than setting the global variable.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ advice.c      | 2 --
+ advice.h      | 1 -
+ builtin/add.c | 7 ++++---
+ 3 files changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/advice.c b/advice.c
+index b18833bc807..41cfea82d06 100644
+--- a/advice.c
++++ b/advice.c
+@@ -4,7 +4,6 @@
+ #include "help.h"
+ #include "string-list.h"
+ 
+-int advice_add_embedded_repo = 1;
+ int advice_graft_file_deprecated = 1;
+ 
+ static int advice_use_color = -1;
+@@ -38,7 +37,6 @@ static struct {
+ 	const char *name;
+ 	int *preference;
+ } advice_config[] = {
+-	{ "addEmbeddedRepo", &advice_add_embedded_repo },
+ 	{ "graftFileDeprecated", &advice_graft_file_deprecated },
+ };
+ 
+diff --git a/advice.h b/advice.h
+index ed51db0f057..4b754f4c626 100644
+--- a/advice.h
++++ b/advice.h
+@@ -5,7 +5,6 @@
+ 
+ struct string_list;
+ 
+-extern int advice_add_embedded_repo;
+ extern int advice_graft_file_deprecated;
+ 
+ /*
+diff --git a/builtin/add.c b/builtin/add.c
+index cf29b302d44..8a5dd29f3f1 100644
+--- a/builtin/add.c
++++ b/builtin/add.c
+@@ -419,6 +419,7 @@ static const char embedded_advice[] = N_(
+ static void check_embedded_repo(const char *path)
+ {
+ 	struct strbuf name = STRBUF_INIT;
++	static int adviced_on_embedded_repo = 0;
+ 
+ 	if (!warn_on_embedded_repo)
+ 		return;
+@@ -430,10 +431,10 @@ static void check_embedded_repo(const char *path)
+ 	strbuf_strip_suffix(&name, "/");
+ 
+ 	warning(_("adding embedded git repository: %s"), name.buf);
+-	if (advice_add_embedded_repo) {
++	if (!adviced_on_embedded_repo &&
++	    advice_enabled(ADVICE_ADD_EMBEDDED_REPO)) {
+ 		advise(embedded_advice, name.buf, name.buf);
+-		/* there may be multiple entries; advise only once */
+-		advice_add_embedded_repo = 0;
++		adviced_on_embedded_repo = 1;
+ 	}
+ 
+ 	strbuf_release(&name);
+-- 
+2.33.0.rc0.646.g806d90da684
+
