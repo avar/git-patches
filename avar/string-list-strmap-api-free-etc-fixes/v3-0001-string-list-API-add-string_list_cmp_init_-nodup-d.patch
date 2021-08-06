@@ -1,0 +1,225 @@
+From 34c9993205f8448dd9ca7a1e6cb9c46e8f9ef46f Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v3-1.9-34c9993205f-20210806T173953Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v3-0.9-00000000000-20210806T173953Z-avarab@gmail.com>
+References: <20210805230321.532218-1-mathstuf@gmail.com>
+	<RFC-cover-v3-0.9-00000000000-20210806T173953Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 5 Aug 2021 15:24:59 +0200
+Subject: [RFCPATCH v3 1/9] string-list API: add
+ string_list_cmp_init_{nodup,dup}() functions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add init functions for "struct string_list" for the case of
+initializing with a "cmp" function, see 770fedaf9f (string-list.[ch]:
+add a string_list_init_{nodup,dup}(), 2021-07-01) for the recent
+addition of initializers for the non-cmp cases.
+
+This converts all users of the "cmp" member outside of read_mailmap()
+and string-list.[ch] itself to use this API.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/mailsplit.c |  5 ++---
+ builtin/shortlog.c  |  3 +--
+ mailmap.c           |  3 +--
+ merge-ort.c         |  4 ++--
+ merge-recursive.c   |  5 +++--
+ string-list.c       | 14 ++++++++++++++
+ string-list.h       | 12 ++++++++++++
+ tmp-objdir.c        |  4 ++--
+ unpack-trees.c      |  4 ++--
+ 9 files changed, 39 insertions(+), 15 deletions(-)
+
+diff --git a/builtin/mailsplit.c b/builtin/mailsplit.c
+index 664400b8169..5a7455f0f59 100644
+--- a/builtin/mailsplit.c
++++ b/builtin/mailsplit.c
+@@ -175,9 +175,8 @@ static int split_maildir(const char *maildir, const char *dir,
+ 	FILE *f = NULL;
+ 	int ret = -1;
+ 	int i;
+-	struct string_list list = STRING_LIST_INIT_DUP;
+-
+-	list.cmp = maildir_filename_cmp;
++	struct string_list list;
++	string_list_cmp_init_dup(&list, maildir_filename_cmp);
+ 
+ 	if (populate_maildir_list(&list, maildir) < 0)
+ 		goto out;
+diff --git a/builtin/shortlog.c b/builtin/shortlog.c
+index fa1f76cc51e..0e6a2ed2b28 100644
+--- a/builtin/shortlog.c
++++ b/builtin/shortlog.c
+@@ -336,8 +336,7 @@ void shortlog_init(struct shortlog *log)
+ 	log->wrap = DEFAULT_WRAPLEN;
+ 	log->in1 = DEFAULT_INDENT1;
+ 	log->in2 = DEFAULT_INDENT2;
+-	log->trailers.strdup_strings = 1;
+-	log->trailers.cmp = strcasecmp;
++	string_list_cmp_init_dup(&log->trailers, strcasecmp);
+ }
+ 
+ int cmd_shortlog(int argc, const char **argv, const char *prefix)
+diff --git a/mailmap.c b/mailmap.c
+index 462b3956340..a6bbaac86dc 100644
+--- a/mailmap.c
++++ b/mailmap.c
+@@ -85,8 +85,7 @@ static void add_mapping(struct string_list *map,
+ 		me = (struct mailmap_entry *)item->util;
+ 	} else {
+ 		CALLOC_ARRAY(me, 1);
+-		me->namemap.strdup_strings = 1;
+-		me->namemap.cmp = namemap_cmp;
++		string_list_cmp_init_dup(&me->namemap, namemap_cmp);
+ 		item->util = me;
+ 	}
+ 
+diff --git a/merge-ort.c b/merge-ort.c
+index 6eb910d6f0c..0eb9e45d81e 100644
+--- a/merge-ort.c
++++ b/merge-ort.c
+@@ -3916,11 +3916,12 @@ static void process_entries(struct merge_options *opt,
+ {
+ 	struct hashmap_iter iter;
+ 	struct strmap_entry *e;
+-	struct string_list plist = STRING_LIST_INIT_NODUP;
+ 	struct string_list_item *entry;
+ 	struct directory_versions dir_metadata = { STRING_LIST_INIT_NODUP,
+ 						   STRING_LIST_INIT_NODUP,
+ 						   NULL, 0 };
++	struct string_list plist;
++	string_list_cmp_init_nodup(&plist, sort_dirs_next_to_their_children);
+ 
+ 	trace2_region_enter("merge", "process_entries setup", opt->repo);
+ 	if (strmap_empty(&opt->priv->paths)) {
+@@ -3941,7 +3942,6 @@ static void process_entries(struct merge_options *opt,
+ 	trace2_region_leave("merge", "plist copy", opt->repo);
+ 
+ 	trace2_region_enter("merge", "plist special sort", opt->repo);
+-	plist.cmp = sort_dirs_next_to_their_children;
+ 	string_list_sort(&plist);
+ 	trace2_region_leave("merge", "plist special sort", opt->repo);
+ 
+diff --git a/merge-recursive.c b/merge-recursive.c
+index 3355d50e8ad..8d343bb53bc 100644
+--- a/merge-recursive.c
++++ b/merge-recursive.c
+@@ -583,10 +583,12 @@ static void record_df_conflict_files(struct merge_options *opt,
+ 	 * and the file need to be present, then the D/F file will be
+ 	 * reinstated with a new unique name at the time it is processed.
+ 	 */
+-	struct string_list df_sorted_entries = STRING_LIST_INIT_NODUP;
+ 	const char *last_file = NULL;
+ 	int last_len = 0;
+ 	int i;
++	struct string_list df_sorted_entries;
++	string_list_cmp_init_nodup(&df_sorted_entries,
++				   string_list_df_name_compare);
+ 
+ 	/*
+ 	 * If we're merging merge-bases, we don't want to bother with
+@@ -601,7 +603,6 @@ static void record_df_conflict_files(struct merge_options *opt,
+ 		string_list_append(&df_sorted_entries, next->string)->util =
+ 				   next->util;
+ 	}
+-	df_sorted_entries.cmp = string_list_df_name_compare;
+ 	string_list_sort(&df_sorted_entries);
+ 
+ 	string_list_clear(&opt->priv->df_conflict_file_set, 1);
+diff --git a/string-list.c b/string-list.c
+index 43576ad1265..d870dcd51fe 100644
+--- a/string-list.c
++++ b/string-list.c
+@@ -21,6 +21,20 @@ void string_list_init(struct string_list *list, int strdup_strings)
+ 		string_list_init_nodup(list);
+ }
+ 
++void string_list_cmp_init_nodup(struct string_list *list,
++				compare_strings_fn cmp)
++{
++	string_list_init_nodup(list);
++	list->cmp = cmp;
++}
++
++void string_list_cmp_init_dup(struct string_list *list,
++			      compare_strings_fn cmp)
++{
++	string_list_init_dup(list);
++	list->cmp = cmp;
++}
++
+ /* if there is no exact match, point to the index where the entry could be
+  * inserted */
+ static int get_entry_index(const struct string_list *list, const char *string,
+diff --git a/string-list.h b/string-list.h
+index 0d6b4692396..39b35cce91c 100644
+--- a/string-list.h
++++ b/string-list.h
+@@ -104,6 +104,18 @@ struct string_list {
+ void string_list_init_nodup(struct string_list *list);
+ void string_list_init_dup(struct string_list *list);
+ 
++/**
++ * string_list_cmp_init_nodup() and string_list_cmp_init_dup() are
++ * like string_list_init_nodup() and string_list_init_dup(), except a
++ * `compare_string_fn` can be passed (e.g. strcasecmp(), instead of
++ * the default strcmp()).
++ */
++
++void string_list_cmp_init_nodup(struct string_list *list,
++				compare_strings_fn cmp);
++void string_list_cmp_init_dup(struct string_list *list,
++			      compare_strings_fn cmp);
++
+ /**
+  * TODO remove: For compatibility with any in-flight older API users
+  */
+diff --git a/tmp-objdir.c b/tmp-objdir.c
+index b8d880e3626..1c87731e135 100644
+--- a/tmp-objdir.c
++++ b/tmp-objdir.c
+@@ -236,13 +236,13 @@ static int migrate_one(struct strbuf *src, struct strbuf *dst)
+ static int migrate_paths(struct strbuf *src, struct strbuf *dst)
+ {
+ 	size_t src_len = src->len, dst_len = dst->len;
+-	struct string_list paths = STRING_LIST_INIT_DUP;
+ 	int i;
+ 	int ret = 0;
++	struct string_list paths;
++	string_list_cmp_init_dup(&paths, pack_copy_cmp);
+ 
+ 	if (read_dir_paths(&paths, src->buf) < 0)
+ 		return -1;
+-	paths.cmp = pack_copy_cmp;
+ 	string_list_sort(&paths);
+ 
+ 	for (i = 0; i < paths.nr; i++) {
+diff --git a/unpack-trees.c b/unpack-trees.c
+index 5786645f315..546aa42ffcf 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -364,8 +364,9 @@ static void setup_collided_checkout_detection(struct checkout *state,
+ 
+ static void report_collided_checkout(struct index_state *index)
+ {
+-	struct string_list list = STRING_LIST_INIT_NODUP;
+ 	int i;
++	struct string_list list;
++	string_list_cmp_init_nodup(&list, fspathcmp);
+ 
+ 	for (i = 0; i < index->cache_nr; i++) {
+ 		struct cache_entry *ce = index->cache[i];
+@@ -377,7 +378,6 @@ static void report_collided_checkout(struct index_state *index)
+ 		ce->ce_flags &= ~CE_MATCHED;
+ 	}
+ 
+-	list.cmp = fspathcmp;
+ 	string_list_sort(&list);
+ 
+ 	if (list.nr) {
+-- 
+2.33.0.rc0.646.g806d90da684
+

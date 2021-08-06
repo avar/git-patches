@@ -1,0 +1,163 @@
+From a07b87461e2b59b630a852f140b05ce1960dbaa5 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v3-9.9-a07b87461e2-20210806T173953Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v3-0.9-00000000000-20210806T173953Z-avarab@gmail.com>
+References: <20210805230321.532218-1-mathstuf@gmail.com>
+	<RFC-cover-v3-0.9-00000000000-20210806T173953Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 5 Aug 2021 15:43:05 +0200
+Subject: [RFCPATCH v3 9/9] Revert "to revert strmap?"
+
+This reverts commit 85efaec0d0b3671a532e5cfe39be19863959e7d2.
+---
+ merge-ort.c | 21 +++++++++++++++++----
+ strmap.c    | 35 +++++------------------------------
+ strmap.h    | 13 -------------
+ 3 files changed, 22 insertions(+), 47 deletions(-)
+
+diff --git a/merge-ort.c b/merge-ort.c
+index 31ad5c05085..f97452aa345 100644
+--- a/merge-ort.c
++++ b/merge-ort.c
+@@ -504,6 +504,16 @@ struct conflict_info {
+ 	assert((ci) && !(mi)->clean);        \
+ } while (0)
+ 
++static void free_strmap_strings(struct strmap *map)
++{
++	struct hashmap_iter iter;
++	struct strmap_entry *entry;
++
++	strmap_for_each_entry(map, &iter, entry) {
++		free((char*)entry->key);
++	}
++}
++
+ static void clear_or_reinit_internal_opts(struct merge_options_internal *opti,
+ 					  int reinitialize)
+ {
+@@ -517,11 +527,13 @@ static void clear_or_reinit_internal_opts(struct merge_options_internal *opti,
+ 		reinitialize ? strset_partial_clear : strset_clear;
+ 
+ 	/*
+-	 * We used the the pattern of re-using already allocated
+-	 * strings strmap_clear_strings() in make_traverse_path from
+-	 * setup_path_info(). Deallocate them.
++	 * We marked opti->paths with strdup_strings = 0, so that we
++	 * wouldn't have to make another copy of the fullpath created by
++	 * make_traverse_path from setup_path_info().  But, now that we've
++	 * used it and have no other references to these strings, it is time
++	 * to deallocate them.
+ 	 */
+-	strmap_clear_strings(&opti->paths, 0);
++	free_strmap_strings(&opti->paths);
+ 	strmap_func(&opti->paths, 1);
+ 
+ 	/*
+@@ -2992,6 +3004,7 @@ static int collect_renames(struct merge_options *opt,
+ 	 * and have no other references to these strings, it is time to
+ 	 * deallocate them.
+ 	 */
++	free_strmap_strings(&collisions);
+ 	strmap_clear(&collisions, 1);
+ 	return clean;
+ }
+diff --git a/strmap.c b/strmap.c
+index d1e67b7d5ed..ee486357082 100644
+--- a/strmap.c
++++ b/strmap.c
+@@ -38,8 +38,7 @@ void strmap_init_with_options(struct strmap *map,
+ 	map->strdup_strings = strdup_strings;
+ }
+ 
+-static void strmap_free_entries_(struct strmap *map, int free_keys,
+-				 int free_values)
++static void strmap_free_entries_(struct strmap *map, int free_values)
+ {
+ 	struct hashmap_iter iter;
+ 	struct strmap_entry *e;
+@@ -59,8 +58,6 @@ static void strmap_free_entries_(struct strmap *map, int free_keys,
+ 	 * to make some call into the hashmap API to do that.
+ 	 */
+ 	hashmap_for_each_entry(&map->map, &iter, e, ent) {
+-		if (free_keys)
+-			free((void *)e->key);
+ 		if (free_values)
+ 			free(e->value);
+ 		if (!map->pool)
+@@ -68,38 +65,16 @@ static void strmap_free_entries_(struct strmap *map, int free_keys,
+ 	}
+ }
+ 
+-static void strmap_clear_1(struct strmap *map, int free_keys, int free_values,
+-			   int partial)
+-{
+-	if (free_keys >= 0)
+-		assert(map->strdup_strings ^ free_keys);
+-	else
+-		free_keys = map->strdup_strings;
+-	strmap_free_entries_(map, free_keys, free_values);
+-	if (partial)
+-		hashmap_partial_clear(&map->map);
+-	else
+-		hashmap_clear(&map->map);
+-}
+-
+ void strmap_clear(struct strmap *map, int free_values)
+ {
+-	strmap_clear_1(map, -1, free_values, 0);
+-}
+-
+-void strmap_clear_strings(struct strmap *map, int free_values)
+-{
+-	strmap_clear_1(map, 1, free_values, 0);
++	strmap_free_entries_(map, free_values);
++	hashmap_clear(&map->map);
+ }
+ 
+ void strmap_partial_clear(struct strmap *map, int free_values)
+ {
+-	strmap_clear_1(map, -1, free_values, 1);
+-}
+-
+-void strmap_partial_clear_strings(struct strmap *map, int free_values)
+-{
+-	strmap_clear_1(map, 1, free_values, 1);
++	strmap_free_entries_(map, free_values);
++	hashmap_partial_clear(&map->map);
+ }
+ 
+ static struct strmap_entry *create_entry(struct strmap *map,
+diff --git a/strmap.h b/strmap.h
+index 337f6278e86..1e152d832d6 100644
+--- a/strmap.h
++++ b/strmap.h
+@@ -51,25 +51,12 @@ void strmap_init_with_options(struct strmap *map,
+  */
+ void strmap_clear(struct strmap *map, int free_values);
+ 
+-/**
+- * To strmap_clear() what string_list_clear_strings() is to
+- * string_list_clear(). I.e. free your keys too, which we used as-is
+- * without `strdup_strings = 1`.
+- */
+-void strmap_clear_strings(struct strmap *map, int free_values);
+-
+ /*
+  * Similar to strmap_clear() but leaves map->map->table allocated and
+  * pre-sized so that subsequent uses won't need as many rehashings.
+  */
+ void strmap_partial_clear(struct strmap *map, int free_values);
+ 
+-/**
+- * To strmap_partial_clear() what string_list_clear_strings() is to
+- * string_list_clear(). See strmap_clear_strings() above.
+- */
+-void strmap_partial_clear_strings(struct strmap *map, int free_values);
+-
+ /*
+  * Insert "str" into the map, pointing to "data".
+  *
+-- 
+2.33.0.rc0.646.g806d90da684
+
