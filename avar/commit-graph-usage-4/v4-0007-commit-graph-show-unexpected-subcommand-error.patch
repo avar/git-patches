@@ -1,0 +1,72 @@
+From 962521cfa173f820343dbbaec44575fe0a93213a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-7.7-962521cfa17-20210823T122652Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.7-00000000000-20210823T122652Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210720T113707Z-avarab@gmail.com>
+	<cover-v4-0.7-00000000000-20210823T122652Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 29 Jul 2021 15:25:28 +0200
+Subject: [PATCH v4 7/7] commit-graph: show "unexpected subcommand" error
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bring the "commit-graph" command in line with the error output and
+general pattern in cmd_multi_pack_index().
+
+Let's test for that output, and also cover the same potential bug as
+was fixed in the multi-pack-index command in
+88617d11f9d (multi-pack-index: fix potential segfault without
+sub-command, 2021-07-19).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/commit-graph.c  |  1 +
+ t/t5318-commit-graph.sh | 16 +++++++++++++++-
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/commit-graph.c b/builtin/commit-graph.c
+index 0457903f18f..21fc6e934b0 100644
+--- a/builtin/commit-graph.c
++++ b/builtin/commit-graph.c
+@@ -345,6 +345,7 @@ int cmd_commit_graph(int argc, const char **argv, const char *prefix)
+ 	else if (argc && !strcmp(argv[0], "write"))
+ 		return graph_write(argc, argv);
+ 
++	error(_("unrecognized subcommand: %s"), argv[0]);
+ usage:
+ 	usage_with_options(builtin_commit_graph_usage,
+ 			   builtin_commit_graph_options);
+diff --git a/t/t5318-commit-graph.sh b/t/t5318-commit-graph.sh
+index 09a2ccd2920..295c5bd94d2 100755
+--- a/t/t5318-commit-graph.sh
++++ b/t/t5318-commit-graph.sh
+@@ -6,10 +6,24 @@ test_description='commit graph'
+ GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS=0
+ 
+ test_expect_success 'usage' '
+-	test_expect_code 129 git commit-graph write blah &&
++	test_expect_code 129 git commit-graph write blah 2>err &&
+ 	test_expect_code 129 git commit-graph write verify
+ '
+ 
++test_expect_success 'usage shown without sub-command' '
++	test_expect_code 129 git commit-graph 2>err &&
++	! grep error: err
++'
++
++test_expect_success 'usage shown with an error on unknown sub-command' '
++	cat >expect <<-\EOF &&
++	error: unrecognized subcommand: unknown
++	EOF
++	test_expect_code 129 git commit-graph unknown 2>stderr &&
++	grep error stderr >actual &&
++	test_cmp expect actual
++'
++
+ test_expect_success 'setup full repo' '
+ 	mkdir full &&
+ 	cd "$TRASH_DIRECTORY/full" &&
+-- 
+2.33.0.662.gbc81f8cbdca
+

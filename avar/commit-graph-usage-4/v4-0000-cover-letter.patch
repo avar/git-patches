@@ -1,0 +1,118 @@
+From 962521cfa173f820343dbbaec44575fe0a93213a Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-0.7-00000000000-20210823T122652Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210720T113707Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210720T113707Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 23 Aug 2021 14:26:52 +0200
+Subject: [PATCH v4 0/7] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (7):
+  commit-graph: define common usage with a macro
+  commit-graph: remove redundant handling of -h
+  commit-graph: use parse_options_concat()
+  multi-pack-index: refactor "goto usage" pattern
+  commit-graph: early exit to "usage" on !argc
+  commit-graph: show usage on "commit-graph [write|verify] garbage"
+  commit-graph: show "unexpected subcommand" error
+
+ builtin/commit-graph.c     | 90 +++++++++++++++++++++-----------------
+ builtin/multi-pack-index.c | 11 +++--
+ t/t5318-commit-graph.sh    | 19 ++++++++
+ 3 files changed, 74 insertions(+), 46 deletions(-)
+
+Range-diff against v3:
+1:  1b9b4703ce2 = 1:  ef37a8243c8 commit-graph: define common usage with a macro
+2:  8f50750ae5e = 2:  bbed18ff193 commit-graph: remove redundant handling of -h
+3:  f02da994363 = 3:  32cc0d1c7bc commit-graph: use parse_options_concat()
+4:  6e9bd877866 ! 4:  087f98bbec6 multi-pack-index: refactor "goto usage" pattern
+    @@ Commit message
+     
+         Refactor the "goto usage" pattern added in
+         cd57bc41bbc (builtin/multi-pack-index.c: display usage on unrecognized
+    -    command, 2021-03-30) to maintain the same brevity, but doesn't run
+    -    afoul of the recommendation in CodingGuidelines about braces:
+    +    command, 2021-03-30) and 88617d11f9d (multi-pack-index: fix potential
+    +    segfault without sub-command, 2021-07-19) to maintain the same
+    +    brevity, but in a form that doesn't run afoul of the recommendation in
+    +    CodingGuidelines about braces:
+     
+             When there are multiple arms to a conditional and some of them
+             require braces, enclose even a single line block in braces for
+    @@ builtin/multi-pack-index.c: int cmd_multi_pack_index(int argc, const char **argv
+      	else if (!strcmp(argv[0], "expire"))
+      		return cmd_multi_pack_index_expire(argc, argv);
+     -	else {
+    +-		error(_("unrecognized subcommand: %s"), argv[0]);
+     +
+    ++	error(_("unrecognized subcommand: %s"), argv[0]);
+      usage:
+    --		error(_("unrecognized subcommand: %s"), argv[0]);
+     -		usage_with_options(builtin_multi_pack_index_usage,
+     -				   builtin_multi_pack_index_options);
+     -	}
+    -+	error(_("unrecognized subcommand: %s"), argv[0]);
+     +	usage_with_options(builtin_multi_pack_index_usage,
+     +			   builtin_multi_pack_index_options);
+      }
+5:  7acb4bd75ce = 5:  2983e16ba69 commit-graph: early exit to "usage" on !argc
+6:  5c1694e071e ! 6:  85552a6f88c commit-graph: show usage on "commit-graph [write|verify] garbage"
+    @@ Metadata
+      ## Commit message ##
+         commit-graph: show usage on "commit-graph [write|verify] garbage"
+     
+    -    Change the parse_options() invocation in the commit-graph code to make
+    -    sense. We're calling it twice, once for common options parsing, and
+    -    then for the sub-commands.
+    +    Change the parse_options() invocation in the commit-graph code to
+    +    error on unknown leftover argv elements, in addition to the existing
+    +    and implicit erroring via parse_options() on unknown options.
+     
+    -    But we never checked if we had something leftover in argc in "write"
+    -    or "verify", as a result we'd silently accept garbage in these
+    -    subcommands. Let's not do that.
+    +    We'd already error in cmd_commit_graph() on e.g.:
+    +
+    +        git commit-graph unknown verify
+    +        git commit-graph --unknown verify
+    +
+    +    But here we're calling parse_options() twice more for the "write" and
+    +    "verify" subcommands. We did not do the same checking for leftover
+    +    argv elements there. As a result we'd silently accept garbage in these
+    +    subcommands, let's not do that.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/commit-graph.c ##
+     @@ builtin/commit-graph.c: static int graph_verify(int argc, const char **argv)
+    - 	opts.progress = isatty(2);
+      	argc = parse_options(argc, argv, NULL,
+      			     options,
+    --			     builtin_commit_graph_verify_usage, 0);
+    -+			     builtin_commit_graph_verify_usage,
+    -+			     PARSE_OPT_KEEP_UNKNOWN);
+    + 			     builtin_commit_graph_verify_usage, 0);
+     +	if (argc)
+     +		usage_with_options(builtin_commit_graph_verify_usage, options);
+      
+      	if (!opts.obj_dir)
+      		opts.obj_dir = get_object_directory();
+     @@ builtin/commit-graph.c: static int graph_write(int argc, const char **argv)
+    - 
+      	argc = parse_options(argc, argv, NULL,
+      			     options,
+    --			     builtin_commit_graph_write_usage, 0);
+    -+			     builtin_commit_graph_write_usage,
+    -+			     PARSE_OPT_KEEP_UNKNOWN);
+    + 			     builtin_commit_graph_write_usage, 0);
+     +	if (argc)
+     +		usage_with_options(builtin_commit_graph_write_usage, options);
+      
+-:  ----------- > 7:  962521cfa17 commit-graph: show "unexpected subcommand" error
+-- 
+2.33.0.662.gbc81f8cbdca
+
