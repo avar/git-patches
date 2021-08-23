@@ -1,0 +1,222 @@
+From 2e30ee04edb00704f2f796d8005f7acf7de21d10 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v5-00.13-00000000000-20210823T112903Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-0000000000-20210726T234237Z-avarab@gmail.com>
+References: <cover-00.11-0000000000-20210726T234237Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 23 Aug 2021 13:29:03 +0200
+Subject: [PATCH v5 00/13] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Jeff King (1):
+  refs: drop unused "flags" parameter to lock_ref_oid_basic()
+
+Ævar Arnfjörð Bjarmason (12):
+  refs/packet: add missing BUG() invocations to reflog callbacks
+  refs/files: remove unused REF_DELETING in lock_ref_oid_basic()
+  refs/files: remove unused "extras/skip" in lock_ref_oid_basic()
+  refs/files: remove unused "skip" in lock_raw_ref() too
+  refs/debug: re-indent argument list for "prepare"
+  refs: make repo_dwim_log() accept a NULL oid
+  refs/files: add a comment about refs_reflog_exists() call
+  reflog expire: don't lock reflogs using previously seen OID
+  refs API: remove OID argument to reflog_expire()
+  refs/files: remove unused "oid" in lock_ref_oid_basic()
+  refs/files: remove unused "errno == EISDIR" code
+  refs/files: remove unused "errno != ENOTDIR" condition
+
+ builtin/reflog.c      |  13 ++---
+ reflog-walk.c         |   3 +-
+ refs.c                |  13 +++--
+ refs.h                |   9 ++-
+ refs/debug.c          |   8 +--
+ refs/files-backend.c  | 132 +++++++++++-------------------------------
+ refs/packed-backend.c |   7 ++-
+ refs/refs-internal.h  |   2 +-
+ 8 files changed, 64 insertions(+), 123 deletions(-)
+
+Range-diff against v4:
+ 1:  92fc3af0727 =  1:  61cf49b9582 refs/packet: add missing BUG() invocations to reflog callbacks
+ 2:  67cd2331fb4 !  2:  a20548c1a4d refs/files: remove unused REF_DELETING in lock_ref_oid_basic()
+    @@ Metadata
+      ## Commit message ##
+         refs/files: remove unused REF_DELETING in lock_ref_oid_basic()
+     
+    -    The lock_ref_oid_basic() function has gradually been by most callers
+    -    no longer performing a low-level "acquire lock, update and release",
+    -    and instead using the ref transaction API. So there are only 4
+    -    remaining callers of lock_ref_oid_basic().
+    +    The lock_ref_oid_basic() function has gradually been replaced by
+    +    most callers no longer performing a low-level "acquire lock,
+    +    update and release", and instead using the ref transaction API.
+    +    So there are only 4 remaining callers of lock_ref_oid_basic().
+     
+         None of those callers pass REF_DELETING anymore, the last caller went
+         away in 92b1551b1d (refs: resolve symbolic refs first,
+ -:  ----------- >  3:  d3216a6b1d8 refs: drop unused "flags" parameter to lock_ref_oid_basic()
+ 3:  7d76514b559 !  4:  3e538eb3008 refs/files: remove unused "extras/skip" in lock_ref_oid_basic()
+    @@ refs/files-backend.c: static int create_reflock(const char *path, void *cb)
+      					   const struct object_id *old_oid,
+     -					   const struct string_list *extras,
+     -					   const struct string_list *skip,
+    - 					   unsigned int flags, int *type,
+    - 					   struct strbuf *err)
+    + 					   int *type, struct strbuf *err)
+      {
+    + 	struct strbuf ref_file = STRBUF_INIT;
+     @@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+      			last_errno = errno;
+      			if (!refs_verify_refname_available(
+    @@ refs/files-backend.c: static int files_copy_or_rename_ref(struct ref_store *ref_
+      
+      	logmoved = log;
+      
+    +-
+     -	lock = lock_ref_oid_basic(refs, newrefname, NULL, NULL, NULL,
+    --				  REF_NO_DEREF, NULL, &err);
+    -+	lock = lock_ref_oid_basic(refs, newrefname, NULL, REF_NO_DEREF, NULL,
+    -+				  &err);
+    +-				  NULL, &err);
+    ++	lock = lock_ref_oid_basic(refs, newrefname, NULL, NULL, &err);
+      	if (!lock) {
+      		if (copy)
+      			error("unable to copy '%s' to '%s': %s", oldrefname, newrefname, err.buf);
+    @@ refs/files-backend.c: static int files_copy_or_rename_ref(struct ref_store *ref_
+      
+       rollback:
+     -	lock = lock_ref_oid_basic(refs, oldrefname, NULL, NULL, NULL,
+    -+	lock = lock_ref_oid_basic(refs, oldrefname, NULL,
+    - 				  REF_NO_DEREF, NULL, &err);
+    +-				  NULL, &err);
+    ++	lock = lock_ref_oid_basic(refs, oldrefname, NULL, NULL, &err);
+      	if (!lock) {
+      		error("unable to lock %s for rollback: %s", oldrefname, err.buf);
+    + 		strbuf_release(&err);
+     @@ refs/files-backend.c: static int files_create_symref(struct ref_store *ref_store,
+    + 	struct ref_lock *lock;
+      	int ret;
+      
+    - 	lock = lock_ref_oid_basic(refs, refname, NULL,
+    --				  NULL, NULL, REF_NO_DEREF, NULL,
+    -+				  REF_NO_DEREF, NULL,
+    - 				  &err);
+    +-	lock = lock_ref_oid_basic(refs, refname, NULL,
+    +-				  NULL, NULL, NULL,
+    +-				  &err);
+    ++	lock = lock_ref_oid_basic(refs, refname, NULL, NULL, &err);
+      	if (!lock) {
+      		error("%s", err.buf);
+    + 		strbuf_release(&err);
+     @@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+    + 	 * reference itself, plus we might need to update the
+      	 * reference if --updateref was specified:
+      	 */
+    - 	lock = lock_ref_oid_basic(refs, refname, oid,
+    --				  NULL, NULL, REF_NO_DEREF,
+    -+				  REF_NO_DEREF,
+    - 				  &type, &err);
+    +-	lock = lock_ref_oid_basic(refs, refname, oid,
+    +-				  NULL, NULL, &type, &err);
+    ++	lock = lock_ref_oid_basic(refs, refname, oid, &type, &err);
+      	if (!lock) {
+      		error("cannot lock ref '%s': %s", refname, err.buf);
+    + 		strbuf_release(&err);
+ 4:  852f86e666f =  5:  b7335e79f8b refs/files: remove unused "skip" in lock_raw_ref() too
+ 5:  685b48328af =  6:  24449766060 refs/debug: re-indent argument list for "prepare"
+ 6:  b75e7673d70 =  7:  3b7daf03e5a refs: make repo_dwim_log() accept a NULL oid
+ 7:  7fe6c9bd921 =  8:  51abe459e70 refs/files: add a comment about refs_reflog_exists() call
+ 8:  c9c2da35997 !  9:  aba12606cea reflog expire: don't lock reflogs using previously seen OID
+    @@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store
+      	 * reference itself, plus we might need to update the
+      	 * reference if --updateref was specified:
+      	 */
+    --	lock = lock_ref_oid_basic(refs, refname, oid,
+    -+	lock = lock_ref_oid_basic(refs, refname, NULL,
+    - 				  REF_NO_DEREF,
+    - 				  &type, &err);
+    +-	lock = lock_ref_oid_basic(refs, refname, oid, &type, &err);
+    ++	lock = lock_ref_oid_basic(refs, refname, NULL, &type, &err);
+      	if (!lock) {
+    -@@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+    + 		error("cannot lock ref '%s': %s", refname, err.buf);
+      		strbuf_release(&err);
+      		return -1;
+      	}
+ -:  ----------- > 10:  5afa8f1be29 refs API: remove OID argument to reflog_expire()
+ 9:  b61c734cf5c ! 11:  7712e29abe6 refs/files: remove unused "oid" in lock_ref_oid_basic()
+    @@ refs/files-backend.c: static struct ref_iterator *files_ref_iterator_begin(
+      {
+      	/*
+     @@ refs/files-backend.c: static int create_reflock(const char *path, void *cb)
+    +  * On failure errno is set to something meaningful.
+       */
+      static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+    - 					   const char *refname,
+    +-					   const char *refname,
+     -					   const struct object_id *old_oid,
+    - 					   unsigned int flags, int *type,
+    - 					   struct strbuf *err)
+    +-					   int *type, struct strbuf *err)
+    ++					   const char *refname, int *type,
+    ++					   struct strbuf *err)
+      {
+      	struct strbuf ref_file = STRBUF_INIT;
+      	struct ref_lock *lock;
+    @@ refs/files-backend.c: static int files_copy_or_rename_ref(struct ref_store *ref_
+      
+      	logmoved = log;
+      
+    --	lock = lock_ref_oid_basic(refs, newrefname, NULL, REF_NO_DEREF, NULL,
+    --				  &err);
+    -+	lock = lock_ref_oid_basic(refs, newrefname, REF_NO_DEREF, NULL, &err);
+    +-	lock = lock_ref_oid_basic(refs, newrefname, NULL, NULL, &err);
+    ++	lock = lock_ref_oid_basic(refs, newrefname, NULL, &err);
+      	if (!lock) {
+      		if (copy)
+      			error("unable to copy '%s' to '%s': %s", oldrefname, newrefname, err.buf);
+    @@ refs/files-backend.c: static int files_copy_or_rename_ref(struct ref_store *ref_
+      	goto out;
+      
+       rollback:
+    --	lock = lock_ref_oid_basic(refs, oldrefname, NULL,
+    --				  REF_NO_DEREF, NULL, &err);
+    -+	lock = lock_ref_oid_basic(refs, oldrefname, REF_NO_DEREF, NULL, &err);
+    +-	lock = lock_ref_oid_basic(refs, oldrefname, NULL, NULL, &err);
+    ++	lock = lock_ref_oid_basic(refs, oldrefname, NULL, &err);
+      	if (!lock) {
+      		error("unable to lock %s for rollback: %s", oldrefname, err.buf);
+      		strbuf_release(&err);
+    @@ refs/files-backend.c: static int files_create_symref(struct ref_store *ref_store
+      	struct ref_lock *lock;
+      	int ret;
+      
+    --	lock = lock_ref_oid_basic(refs, refname, NULL,
+    --				  REF_NO_DEREF, NULL,
+    --				  &err);
+    -+	lock = lock_ref_oid_basic(refs, refname, REF_NO_DEREF, NULL, &err);
+    +-	lock = lock_ref_oid_basic(refs, refname, NULL, NULL, &err);
+    ++	lock = lock_ref_oid_basic(refs, refname, NULL, &err);
+      	if (!lock) {
+      		error("%s", err.buf);
+      		strbuf_release(&err);
+    @@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store
+      	 * reference itself, plus we might need to update the
+      	 * reference if --updateref was specified:
+      	 */
+    --	lock = lock_ref_oid_basic(refs, refname, NULL,
+    --				  REF_NO_DEREF,
+    --				  &type, &err);
+    -+	lock = lock_ref_oid_basic(refs, refname, REF_NO_DEREF, &type, &err);
+    +-	lock = lock_ref_oid_basic(refs, refname, NULL, &type, &err);
+    ++	lock = lock_ref_oid_basic(refs, refname, &type, &err);
+      	if (!lock) {
+      		error("cannot lock ref '%s': %s", refname, err.buf);
+      		strbuf_release(&err);
+10:  009abc99688 = 12:  f746939a27a refs/files: remove unused "errno == EISDIR" code
+11:  acb131cc1c5 = 13:  2e30ee04edb refs/files: remove unused "errno != ENOTDIR" condition
+-- 
+2.33.0.662.g438caf9576d
+

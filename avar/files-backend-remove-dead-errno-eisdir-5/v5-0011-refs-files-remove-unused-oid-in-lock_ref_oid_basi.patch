@@ -1,0 +1,180 @@
+From 7712e29abe602b467d10ac0660742d74758561d2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-11.13-7712e29abe6-20210823T112903Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.13-00000000000-20210823T112903Z-avarab@gmail.com>
+References: <cover-00.11-0000000000-20210726T234237Z-avarab@gmail.com>
+	<cover-v5-00.13-00000000000-20210823T112903Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 15 Jul 2021 08:30:35 +0200
+Subject: [PATCH v5 11/13] refs/files: remove unused "oid" in
+ lock_ref_oid_basic()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the preceding commit the last caller that passed a non-NULL OID was
+changed to pass NULL to lock_ref_oid_basic(). As noted in preceding
+commits use of this API has been going away (we should use ref
+transactions, or lock_raw_ref()), so we're unlikely to gain new
+callers that want to pass the "oid".
+
+So let's remove it, doing so means we can remove the "mustexist"
+condition, and therefore anything except the "flags =
+RESOLVE_REF_NO_RECURSE" case.
+
+Furthermore, since the verify_lock() function we called did most of
+its work when the "oid" was passed (as "old_oid") we can inline the
+trivial part of it that remains in its only remaining caller. Without
+a NULL "oid" passed it was equivalent to calling refs_read_ref_full()
+followed by oidclr().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 70 +++++++++-----------------------------------
+ 1 file changed, 14 insertions(+), 56 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index a4adac46443..4f2d907597a 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -852,42 +852,6 @@ static struct ref_iterator *files_ref_iterator_begin(
+ 	return ref_iterator;
+ }
+ 
+-/*
+- * Verify that the reference locked by lock has the value old_oid
+- * (unless it is NULL).  Fail if the reference doesn't exist and
+- * mustexist is set. Return 0 on success. On error, write an error
+- * message to err, set errno, and return a negative value.
+- */
+-static int verify_lock(struct ref_store *ref_store, struct ref_lock *lock,
+-		       const struct object_id *old_oid, int mustexist,
+-		       struct strbuf *err)
+-{
+-	assert(err);
+-
+-	if (refs_read_ref_full(ref_store, lock->ref_name,
+-			       mustexist ? RESOLVE_REF_READING : 0,
+-			       &lock->old_oid, NULL)) {
+-		if (old_oid) {
+-			int save_errno = errno;
+-			strbuf_addf(err, "can't verify ref '%s'", lock->ref_name);
+-			errno = save_errno;
+-			return -1;
+-		} else {
+-			oidclr(&lock->old_oid);
+-			return 0;
+-		}
+-	}
+-	if (old_oid && !oideq(&lock->old_oid, old_oid)) {
+-		strbuf_addf(err, "ref '%s' is at %s but expected %s",
+-			    lock->ref_name,
+-			    oid_to_hex(&lock->old_oid),
+-			    oid_to_hex(old_oid));
+-		errno = EBUSY;
+-		return -1;
+-	}
+-	return 0;
+-}
+-
+ static int remove_empty_directories(struct strbuf *path)
+ {
+ 	/*
+@@ -912,15 +876,12 @@ static int create_reflock(const char *path, void *cb)
+  * On failure errno is set to something meaningful.
+  */
+ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+-					   const char *refname,
+-					   const struct object_id *old_oid,
+-					   int *type, struct strbuf *err)
++					   const char *refname, int *type,
++					   struct strbuf *err)
+ {
+ 	struct strbuf ref_file = STRBUF_INIT;
+ 	struct ref_lock *lock;
+ 	int last_errno = 0;
+-	int mustexist = (old_oid && !is_null_oid(old_oid));
+-	int resolve_flags = RESOLVE_REF_NO_RECURSE;
+ 	int resolved;
+ 
+ 	files_assert_main_repository(refs, "lock_ref_oid_basic");
+@@ -928,12 +889,9 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 
+ 	CALLOC_ARRAY(lock, 1);
+ 
+-	if (mustexist)
+-		resolve_flags |= RESOLVE_REF_READING;
+-
+ 	files_ref_path(refs, &ref_file, refname);
+-	resolved = !!refs_resolve_ref_unsafe(&refs->base,
+-					     refname, resolve_flags,
++	resolved = !!refs_resolve_ref_unsafe(&refs->base, refname,
++					     RESOLVE_REF_NO_RECURSE,
+ 					     &lock->old_oid, type);
+ 	if (!resolved && errno == EISDIR) {
+ 		/*
+@@ -951,8 +909,8 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 					    refname);
+ 			goto error_return;
+ 		}
+-		resolved = !!refs_resolve_ref_unsafe(&refs->base,
+-						     refname, resolve_flags,
++		resolved = !!refs_resolve_ref_unsafe(&refs->base, refname,
++						     RESOLVE_REF_NO_RECURSE,
+ 						     &lock->old_oid, type);
+ 	}
+ 	if (!resolved) {
+@@ -987,10 +945,10 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 		goto error_return;
+ 	}
+ 
+-	if (verify_lock(&refs->base, lock, old_oid, mustexist, err)) {
+-		last_errno = errno;
+-		goto error_return;
+-	}
++	if (refs_read_ref_full(&refs->base, lock->ref_name,
++			       0,
++			       &lock->old_oid, NULL))
++		oidclr(&lock->old_oid);
+ 	goto out;
+ 
+  error_return:
+@@ -1409,7 +1367,7 @@ static int files_copy_or_rename_ref(struct ref_store *ref_store,
+ 
+ 	logmoved = log;
+ 
+-	lock = lock_ref_oid_basic(refs, newrefname, NULL, NULL, &err);
++	lock = lock_ref_oid_basic(refs, newrefname, NULL, &err);
+ 	if (!lock) {
+ 		if (copy)
+ 			error("unable to copy '%s' to '%s': %s", oldrefname, newrefname, err.buf);
+@@ -1431,7 +1389,7 @@ static int files_copy_or_rename_ref(struct ref_store *ref_store,
+ 	goto out;
+ 
+  rollback:
+-	lock = lock_ref_oid_basic(refs, oldrefname, NULL, NULL, &err);
++	lock = lock_ref_oid_basic(refs, oldrefname, NULL, &err);
+ 	if (!lock) {
+ 		error("unable to lock %s for rollback: %s", oldrefname, err.buf);
+ 		strbuf_release(&err);
+@@ -1838,7 +1796,7 @@ static int files_create_symref(struct ref_store *ref_store,
+ 	struct ref_lock *lock;
+ 	int ret;
+ 
+-	lock = lock_ref_oid_basic(refs, refname, NULL, NULL, &err);
++	lock = lock_ref_oid_basic(refs, refname, NULL, &err);
+ 	if (!lock) {
+ 		error("%s", err.buf);
+ 		strbuf_release(&err);
+@@ -3056,7 +3014,7 @@ static int files_reflog_expire(struct ref_store *ref_store,
+ 	 * reference itself, plus we might need to update the
+ 	 * reference if --updateref was specified:
+ 	 */
+-	lock = lock_ref_oid_basic(refs, refname, NULL, &type, &err);
++	lock = lock_ref_oid_basic(refs, refname, &type, &err);
+ 	if (!lock) {
+ 		error("cannot lock ref '%s': %s", refname, err.buf);
+ 		strbuf_release(&err);
+-- 
+2.33.0.662.g438caf9576d
+

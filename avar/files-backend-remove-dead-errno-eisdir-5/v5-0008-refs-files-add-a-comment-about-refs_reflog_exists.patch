@@ -1,0 +1,56 @@
+From 51abe459e707445608bfe1d897964d6ef5834423 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-08.13-51abe459e70-20210823T112903Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.13-00000000000-20210823T112903Z-avarab@gmail.com>
+References: <cover-00.11-0000000000-20210726T234237Z-avarab@gmail.com>
+	<cover-v5-00.13-00000000000-20210823T112903Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 15 Jul 2021 11:49:30 +0200
+Subject: [PATCH v5 08/13] refs/files: add a comment about refs_reflog_exists()
+ call
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a comment about why it is that we need to check for the the
+existence of a reflog we're deleting after we've successfully acquired
+the lock in files_reflog_expire(). As noted in [1] the lock protocol
+for reflogs is somewhat intuitive.
+
+This early exit code the comment applies to dates all the way back to
+4264dc15e19 (git reflog expire, 2006-12-19).
+
+1. https://lore.kernel.org/git/54DCDA42.2060800@alum.mit.edu/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 997e021c1c4..fbcd0c790bc 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -3061,6 +3061,19 @@ static int files_reflog_expire(struct ref_store *ref_store,
+ 		strbuf_release(&err);
+ 		return -1;
+ 	}
++
++	/*
++	 * When refs are deleted, their reflog is deleted before the
++	 * ref itself is deleted. This is because there is no separate
++	 * lock for reflog; instead we take a lock on the ref with
++	 * lock_ref_oid_basic().
++	 *
++	 * If a race happens and the reflog doesn't exist after we've
++	 * acquired the lock that's OK. We've got nothing more to do;
++	 * We were asked to delete the reflog, but someone else
++	 * deleted it! The caller doesn't care that we deleted it,
++	 * just that it is deleted. So we can return successfully.
++	 */
+ 	if (!refs_reflog_exists(ref_store, refname)) {
+ 		unlock_ref(lock);
+ 		return 0;
+-- 
+2.33.0.662.g438caf9576d
+
