@@ -1,0 +1,61 @@
+From 2fb0fb202829cf7f2884e91e4606f3356ab1dcd8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-02.28-2fb0fb20282-20210823T120208Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+References: <pull.1054.v3.git.git.1629207607.gitgitgadget@gmail.com>
+	<cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+From: Han-Wen Nienhuys <hanwen@google.com>
+Date: Thu, 26 Nov 2020 19:35:04 +0100
+Subject: [PATCH v4 02/28] init-db: set the_repository->hash_algo early on
+
+The reftable backend needs to know the hash algorithm for writing the
+initialization hash table.
+
+The initial reftable contains a symref HEAD => "main" (or "master"), which is
+agnostic to the size of hash value, but this is an exceptional circumstance, and
+the reftable library does not cater to this exception. It insists that all
+tables in the stack have a consistent format ID for the hash algorithm.
+
+Call set_repo_hash_algo directly after calling validate_hash_algorithm() (which
+reads $GIT_DEFAULT_HASH).
+
+Helped-by: Junio C Hamano <gitster@pobox.com>
+Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
+---
+ builtin/init-db.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/builtin/init-db.c b/builtin/init-db.c
+index 2167796ff2a..c2f03f6018e 100644
+--- a/builtin/init-db.c
++++ b/builtin/init-db.c
+@@ -425,6 +425,27 @@ int init_db(const char *git_dir, const char *real_git_dir,
+ 
+ 	validate_hash_algorithm(&repo_fmt, hash);
+ 
++	/*
++	 * At this point, the_repository we have in-core does not look
++	 * anything like one that we would see initialized in an already
++	 * working repository after calling setup_git_directory().
++	 *
++	 * Calling repository.c::initialize_the_repository() may have
++	 * prepared the .index .objects and .parsed_objects members, but
++	 * other members like .gitdir, .commondir, etc. have not been
++	 * initialized.
++	 *
++	 * Many API functions assume they are working with the_repository
++	 * that has sensibly been initialized, but because we haven't
++	 * really read from an existing repository, we need to hand-craft
++	 * the necessary members of the structure to get out of this
++	 * chicken-and-egg situation.
++	 *
++	 * For now, we update the hash algorithm member to what the
++	 * validate_hash_algorithm() call decided for us.
++	 */
++	repo_set_hash_algo(the_repository, repo_fmt.hash_algo);
++
+ 	reinit = create_default_files(template_dir, original_git_dir,
+ 				      initial_branch, &repo_fmt,
+ 				      flags & INIT_DB_QUIET);
+-- 
+2.33.0.662.gbaddc25a55e
+

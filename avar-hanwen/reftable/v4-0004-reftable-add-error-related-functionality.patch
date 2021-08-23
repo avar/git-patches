@@ -1,0 +1,143 @@
+From a0686356c11ec185fc01f467f1cf84876486aec7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-04.28-a0686356c11-20210823T120208Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+References: <pull.1054.v3.git.git.1629207607.gitgitgadget@gmail.com>
+	<cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+From: Han-Wen Nienhuys <hanwen@google.com>
+Date: Tue, 24 Nov 2020 17:05:33 +0100
+Subject: [PATCH v4 04/28] reftable: add error related functionality
+
+The reftable/ directory is structured as a library, so it cannot
+crash on misuse. Instead, it returns an error codes.
+
+In addition, the error code can be used to signal conditions from lower levels
+of the library to be handled by higher levels of the library. For example, a
+transaction might legitimately write an empty reftable file, but in that case,
+we'd want to shortcut the transaction overhead.
+
+Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
+---
+ reftable/error.c          | 41 ++++++++++++++++++++++++++
+ reftable/reftable-error.h | 62 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 103 insertions(+)
+ create mode 100644 reftable/error.c
+ create mode 100644 reftable/reftable-error.h
+
+diff --git a/reftable/error.c b/reftable/error.c
+new file mode 100644
+index 00000000000..f6f16def921
+--- /dev/null
++++ b/reftable/error.c
+@@ -0,0 +1,41 @@
++/*
++Copyright 2020 Google LLC
++
++Use of this source code is governed by a BSD-style
++license that can be found in the LICENSE file or at
++https://developers.google.com/open-source/licenses/bsd
++*/
++
++#include "reftable-error.h"
++
++#include <stdio.h>
++
++const char *reftable_error_str(int err)
++{
++	static char buf[250];
++	switch (err) {
++	case REFTABLE_IO_ERROR:
++		return "I/O error";
++	case REFTABLE_FORMAT_ERROR:
++		return "corrupt reftable file";
++	case REFTABLE_NOT_EXIST_ERROR:
++		return "file does not exist";
++	case REFTABLE_LOCK_ERROR:
++		return "data is outdated";
++	case REFTABLE_API_ERROR:
++		return "misuse of the reftable API";
++	case REFTABLE_ZLIB_ERROR:
++		return "zlib failure";
++	case REFTABLE_NAME_CONFLICT:
++		return "file/directory conflict";
++	case REFTABLE_EMPTY_TABLE_ERROR:
++		return "wrote empty table";
++	case REFTABLE_REFNAME_ERROR:
++		return "invalid refname";
++	case -1:
++		return "general error";
++	default:
++		snprintf(buf, sizeof(buf), "unknown error code %d", err);
++		return buf;
++	}
++}
+diff --git a/reftable/reftable-error.h b/reftable/reftable-error.h
+new file mode 100644
+index 00000000000..6f89bedf1a5
+--- /dev/null
++++ b/reftable/reftable-error.h
+@@ -0,0 +1,62 @@
++/*
++Copyright 2020 Google LLC
++
++Use of this source code is governed by a BSD-style
++license that can be found in the LICENSE file or at
++https://developers.google.com/open-source/licenses/bsd
++*/
++
++#ifndef REFTABLE_ERROR_H
++#define REFTABLE_ERROR_H
++
++/*
++ * Errors in reftable calls are signaled with negative integer return values. 0
++ * means success.
++ */
++enum reftable_error {
++	/* Unexpected file system behavior */
++	REFTABLE_IO_ERROR = -2,
++
++	/* Format inconsistency on reading data */
++	REFTABLE_FORMAT_ERROR = -3,
++
++	/* File does not exist. Returned from block_source_from_file(), because
++	 * it needs special handling in stack.
++	 */
++	REFTABLE_NOT_EXIST_ERROR = -4,
++
++	/* Trying to write out-of-date data. */
++	REFTABLE_LOCK_ERROR = -5,
++
++	/* Misuse of the API:
++	 *  - on writing a record with NULL refname.
++	 *  - on writing a reftable_ref_record outside the table limits
++	 *  - on writing a ref or log record before the stack's
++	 * next_update_inde*x
++	 *  - on writing a log record with multiline message with
++	 *  exact_log_message unset
++	 *  - on reading a reftable_ref_record from log iterator, or vice versa.
++	 *
++	 * When a call misuses the API, the internal state of the library is
++	 * kept unchanged.
++	 */
++	REFTABLE_API_ERROR = -6,
++
++	/* Decompression error */
++	REFTABLE_ZLIB_ERROR = -7,
++
++	/* Wrote a table without blocks. */
++	REFTABLE_EMPTY_TABLE_ERROR = -8,
++
++	/* Dir/file conflict. */
++	REFTABLE_NAME_CONFLICT = -9,
++
++	/* Invalid ref name. */
++	REFTABLE_REFNAME_ERROR = -10,
++};
++
++/* convert the numeric error code to a string. The string should not be
++ * deallocated. */
++const char *reftable_error_str(int err);
++
++#endif
+-- 
+2.33.0.662.gbaddc25a55e
+

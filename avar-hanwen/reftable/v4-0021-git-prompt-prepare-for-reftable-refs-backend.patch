@@ -1,0 +1,58 @@
+From 443bdebfb5de2b47a9a4eef24227745960fe0380 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-21.28-443bdebfb5d-20210823T120208Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+References: <pull.1054.v3.git.git.1629207607.gitgitgadget@gmail.com>
+	<cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+From: =?UTF-8?q?SZEDER=20G=C3=A1bor?= <szeder.dev@gmail.com>
+Date: Fri, 19 Jun 2020 18:03:12 +0200
+Subject: [PATCH v4 21/28] git-prompt: prepare for reftable refs backend
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In our git-prompt script we strive to use Bash builtins wherever
+possible, because fork()-ing subshells for command substitutions and
+fork()+exec()-ing Git commands are expensive on some platforms.  We
+even read and parse '.git/HEAD' using Bash builtins to get the name of
+the current branch [1].  However, the upcoming reftable refs backend
+won't use '.git/HEAD' at all, but will write an invalid refname as
+placeholder for backwards compatibility instead, which will break our
+git-prompt script.
+
+Update the git-prompt script to recognize the placeholder '.git/HEAD'
+written by the reftable backend (its content is specified in the
+reftable specs), and then fall back to use 'git symbolic-ref' to get
+the name of the current branch.
+
+[1] 3a43c4b5bd (bash prompt: use bash builtins to find out current
+    branch, 2011-03-31)
+
+Signed-off-by: SZEDER Gábor <szeder.dev@gmail.com>
+---
+ contrib/completion/git-prompt.sh | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/contrib/completion/git-prompt.sh b/contrib/completion/git-prompt.sh
+index db7c0068fb5..4177274bea4 100644
+--- a/contrib/completion/git-prompt.sh
++++ b/contrib/completion/git-prompt.sh
+@@ -478,10 +478,15 @@ __git_ps1 ()
+ 			if ! __git_eread "$g/HEAD" head; then
+ 				return $exit
+ 			fi
+-			# is it a symbolic ref?
+ 			b="${head#ref: }"
+ 			if [ "$head" = "$b" ]; then
+ 				detached=yes
++			elif [ "$b" = "refs/heads/.invalid" ]; then
++				# Reftable
++				b="$(git symbolic-ref HEAD 2>/dev/null)" ||
++				detached=yes
++			fi
++			if [ "$detached" = yes ]; then
+ 				b="$(
+ 				case "${GIT_PS1_DESCRIBE_STYLE-}" in
+ 				(contains)
+-- 
+2.33.0.662.gbaddc25a55e
+

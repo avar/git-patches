@@ -1,0 +1,72 @@
+From c4f9fb42d9e48bce28aa9de94b7340809eadf055 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-27.28-c4f9fb42d9e-20210823T120208Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+References: <pull.1054.v3.git.git.1629207607.gitgitgadget@gmail.com>
+	<cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 23 Aug 2021 10:08:08 +0200
+Subject: [PATCH v4 27/28] reftable: fixup for new base topic 2/3
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since my "refs API: remove OID argument to reflog_expire()" we don't
+have the "oid" as part of the reflog_expire() signature. Instead the
+reflog_expire() should pass the OID of the tip of the "locked" ref to
+the prepare_fn().
+
+In files_reflog_expire() we do that by getting the OID from
+lock_ref_oid_basic(). I'm assuming (but am not familiar enough with
+reftable...) that by the time we get here we've got a locked ref
+already in some way, so let's just use
+refs_resolve_ref_unsafe_with_errno() to lookup the current OID of that
+presumably-locked ref.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/reftable-backend.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/refs/reftable-backend.c b/refs/reftable-backend.c
+index dcc792e5e87..94917c85cf7 100644
+--- a/refs/reftable-backend.c
++++ b/refs/reftable-backend.c
+@@ -1463,7 +1463,7 @@ static int write_reflog_expiry_table(struct reftable_writer *writer, void *argv)
+ 
+ static int
+ git_reftable_reflog_expire(struct ref_store *ref_store, const char *refname,
+-			   const struct object_id *oid, unsigned int flags,
++			   unsigned int flags,
+ 			   reflog_expiry_prepare_fn prepare_fn,
+ 			   reflog_expiry_should_prune_fn should_prune_fn,
+ 			   reflog_expiry_cleanup_fn cleanup_fn,
+@@ -1497,6 +1497,9 @@ git_reftable_reflog_expire(struct ref_store *ref_store, const char *refname,
+ 	struct reftable_iterator it = { NULL };
+ 	struct reftable_addition *add = NULL;
+ 	int err = 0;
++	int ignore_errno;
++	struct object_id oid;
++
+ 	if (refs->err < 0) {
+ 		return refs->err;
+ 	}
+@@ -1515,7 +1518,14 @@ git_reftable_reflog_expire(struct ref_store *ref_store, const char *refname,
+ 	if (err) {
+ 		goto done;
+ 	}
+-	prepare_fn(refname, oid, policy_cb_data);
++	if (!refs_resolve_ref_unsafe_with_errno(ref_store, refname,
++					       RESOLVE_REF_READING, &oid,
++					       NULL, &ignore_errno)) {
++		err = -1;
++		goto done;
++	}
++	prepare_fn(refname, &oid, policy_cb_data);
++
+ 	while (1) {
+ 		struct reftable_log_record log = { NULL };
+ 		int err = reftable_iterator_next_log(&it, &log);
+-- 
+2.33.0.662.gbaddc25a55e
+

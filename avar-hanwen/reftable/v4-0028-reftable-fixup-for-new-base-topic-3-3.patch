@@ -1,0 +1,92 @@
+From c863b03201c9f229ec474276a3e80d36339fe5f8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-28.28-c863b03201c-20210823T120208Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+References: <pull.1054.v3.git.git.1629207607.gitgitgadget@gmail.com>
+	<cover-v4-00.28-00000000000-20210823T120208Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 23 Aug 2021 12:17:19 +0200
+Subject: [PATCH v4 28/28] reftable: fixup for new base topic 3/3
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since the "refs: add failure_errno to refs_read_raw_ref() signature"
+in the base topic we've preferred to use
+refs_resolve_ref_unsafe_with_errno() over the
+refs_resolve_ref_unsafe().
+
+Let's make it explicitly clear that we're ignoring "errno" in these
+cases, and while we're at it change "if (x != NULL)" to just "if (x)"
+as refs_resolve_ref_unsafe*() returns a const char *, and explicitly
+checking 0 or NULL in if's is not in line with our coding guidelines.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/reftable-backend.c | 26 +++++++++++++++++---------
+ 1 file changed, 17 insertions(+), 9 deletions(-)
+
+diff --git a/refs/reftable-backend.c b/refs/reftable-backend.c
+index 94917c85cf7..61ee144e19e 100644
+--- a/refs/reftable-backend.c
++++ b/refs/reftable-backend.c
+@@ -315,9 +315,11 @@ static int reftable_ref_iterator_advance(struct ref_iterator *ref_iterator)
+ 			break;
+ 		case REFTABLE_REF_SYMREF: {
+ 			int out_flags = 0;
+-			const char *resolved = refs_resolve_ref_unsafe(
++			int ignore_errno;
++			const char *resolved = refs_resolve_ref_unsafe_with_errno(
+ 				ri->ref_store, ri->ref.refname,
+-				RESOLVE_REF_READING, &ri->oid, &out_flags);
++				RESOLVE_REF_READING, &ri->oid, &out_flags,
++				&ignore_errno);
+ 			ri->base.flags = out_flags;
+ 			if (resolved == NULL &&
+ 			    !(ri->flags & DO_FOR_EACH_INCLUDE_BROKEN) &&
+@@ -543,8 +545,10 @@ static int reftable_check_old_oid(struct ref_store *refs, const char *refname,
+ {
+ 	struct object_id out_oid;
+ 	int out_flags = 0;
+-	const char *resolved = refs_resolve_ref_unsafe(
+-		refs, refname, RESOLVE_REF_READING, &out_oid, &out_flags);
++	int ignore_errno;
++	const char *resolved = refs_resolve_ref_unsafe_with_errno(
++		refs, refname, RESOLVE_REF_READING, &out_oid, &out_flags,
++		&ignore_errno);
+ 	if (is_null_oid(want_oid) != (resolved == NULL)) {
+ 		return REFTABLE_LOCK_ERROR;
+ 	}
+@@ -845,20 +849,24 @@ static int write_create_symref_table(struct reftable_writer *writer, void *arg)
+ 		struct reftable_log_record log = { NULL };
+ 		struct object_id new_oid;
+ 		struct object_id old_oid;
++		int ignore_errno;
+ 
+ 		fill_reftable_log_record(&log);
+ 		log.refname = (char *)create->refname;
+ 		log.update_index = ts;
+ 		log.value.update.message = (char *)create->logmsg;
+-		if (refs_resolve_ref_unsafe(
++		if (refs_resolve_ref_unsafe_with_errno(
+ 			    (struct ref_store *)create->refs, create->refname,
+-			    RESOLVE_REF_READING, &old_oid, NULL) != NULL) {
++			    RESOLVE_REF_READING, &old_oid, NULL,
++			    &ignore_errno)) {
+ 			log.value.update.old_hash = old_oid.hash;
+ 		}
+ 
+-		if (refs_resolve_ref_unsafe((struct ref_store *)create->refs,
+-					    create->target, RESOLVE_REF_READING,
+-					    &new_oid, NULL) != NULL) {
++		if (refs_resolve_ref_unsafe_with_errno((struct ref_store *)create->refs,
++						       create->target,
++						       RESOLVE_REF_READING,
++						       &new_oid, NULL,
++						       &ignore_errno)) {
+ 			log.value.update.new_hash = new_oid.hash;
+ 		}
+ 
+-- 
+2.33.0.662.gbaddc25a55e
+
