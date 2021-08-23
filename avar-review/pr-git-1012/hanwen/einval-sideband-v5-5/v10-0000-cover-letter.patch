@@ -1,0 +1,106 @@
+From 72ef17fa96ec84e1882144f35ef77fc4f13e21bd Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v10-0.8-00000000000-20210823T114257Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20210720T102644Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20210720T102644Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 23 Aug 2021 13:42:57 +0200
+Subject: [PATCH v10 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Han-Wen Nienhuys (7):
+  refs: remove EINVAL errno output from specification of read_raw_ref_fn
+  refs/files-backend: stop setting errno from lock_ref_oid_basic
+  refs: make errno output explicit for read_raw_ref_fn
+  refs: add failure_errno to refs_read_raw_ref() signature
+  branch tests: test for errno propagating on failing read
+  refs: explicitly return failure_errno from parse_loose_ref_contents
+  refs: make errno output explicit for refs_resolve_ref_unsafe
+
+Ævar Arnfjörð Bjarmason (1):
+  refs file backend: move raceproof_create_file() here
+
+ cache.h               |  43 ---------
+ object-file.c         |  68 ---------------
+ refs.c                |  69 ++++++++++-----
+ refs.h                |  11 +++
+ refs/debug.c          |   7 +-
+ refs/files-backend.c  | 196 +++++++++++++++++++++++++++++++++---------
+ refs/packed-backend.c |  15 ++--
+ refs/refs-internal.h  |  32 ++++---
+ t/t3200-branch.sh     |  35 ++++++++
+ 9 files changed, 280 insertions(+), 196 deletions(-)
+
+Range-diff against v9:
+1:  b7063c5af89 = 1:  f06b054e861 refs file backend: move raceproof_create_file() here
+2:  5a63b64f53f = 2:  ba0f5f5fb0a refs: remove EINVAL errno output from specification of read_raw_ref_fn
+3:  0dd8a4c1209 ! 3:  2c4c30e8e06 refs/files-backend: stop setting errno from lock_ref_oid_basic
+    @@ refs/files-backend.c: static int create_reflock(const char *path, void *cb)
+     - * On failure errno is set to something meaningful.
+       */
+      static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+    - 					   const char *refname,
+    + 					   const char *refname, int *type,
+     @@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+      {
+      	struct strbuf ref_file = STRBUF_INIT;
+4:  c54fb99714a ! 4:  05f3a346e3b refs: make errno output explicit for read_raw_ref_fn
+    @@ refs/debug.c: debug_ref_iterator_begin(struct ref_store *ref_store, const char *
+      {
+      	struct debug_ref_store *drefs = (struct debug_ref_store *)ref_store;
+      	int res = 0;
+    -@@ refs/debug.c: static int debug_read_raw_ref(struct ref_store *ref_store, const char *refname,
+    + 
+      	oidcpy(oid, null_oid());
+    - 	errno = 0;
+    +-	errno = 0;
+      	res = drefs->refs->be->read_raw_ref(drefs->refs, refname, oid, referent,
+     -					    type);
+     +					    type, failure_errno);
+      
+      	if (res == 0) {
+      		trace_printf_key(&trace_refs, "read_raw_ref: %s: %s (=> %s) type %x: %d\n",
+    +@@ refs/debug.c: static int debug_read_raw_ref(struct ref_store *ref_store, const char *refname,
+    + 	} else {
+    + 		trace_printf_key(&trace_refs,
+    + 				 "read_raw_ref: %s: %d (errno %d)\n", refname,
+    +-				 res, errno);
+    ++				 res, *failure_errno);
+    + 	}
+    + 	return res;
+    + }
+     
+      ## refs/files-backend.c ##
+     @@ refs/files-backend.c: static struct ref_cache *get_loose_ref_cache(struct files_ref_store *refs)
+5:  18825efce7d = 5:  fa9260f25fa refs: add failure_errno to refs_read_raw_ref() signature
+-:  ----------- > 6:  00b9a0215b0 branch tests: test for errno propagating on failing read
+6:  57e3f246f4f ! 7:  bead035aa40 refs: explicitly return failure_errno from parse_loose_ref_contents
+    @@ refs/files-backend.c: static int files_read_raw_ref(struct ref_store *ref_store,
+      	strbuf_reset(&sb_contents);
+      	if (strbuf_read(&sb_contents, fd, 256) < 0) {
+     -		int save_errno = errno;
+    ++		myerr = errno;
+      		close(fd);
+     -		errno = save_errno;
+      		goto out;
+    @@ refs/refs-internal.h: struct ref_store {
+      
+      /*
+       * Fill in the generic part of refs and add it to our collection of
+    +
+    + ## t/t3200-branch.sh ##
+    +@@ t/t3200-branch.sh: test_expect_success SYMLINKS 'git branch -m with symlinked .git/refs' '
+    + 	) &&
+    + 	git --git-dir subdir/.git/ branch rename-src &&
+    + 	git rev-parse rename-src >expect &&
+    ++	# Tests a BUG() assertion in files_read_raw_ref()
+    + 	git --git-dir subdir/.git/ branch -m rename-src rename-dest &&
+    + 	git rev-parse rename-dest >actual &&
+    + 	test_cmp expect actual &&
+7:  4b5e168b978 = 8:  72ef17fa96e refs: make errno output explicit for refs_resolve_ref_unsafe
+-- 
+2.33.0.662.g438caf9576d
+
