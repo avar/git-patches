@@ -1,0 +1,140 @@
+From 7f79fb282e5bcd5359b0b996fc9b98e54d340fe5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-4.4-7f79fb282e5-20210823T103719Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.4-00000000000-20210823T103719Z-avarab@gmail.com>
+References: <RFC-cover-v3-0.4-0000000000-20210806T191231Z-avarab@gmail.com>
+	<cover-v4-0.4-00000000000-20210823T103719Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 6 Aug 2021 11:59:34 +0200
+Subject: [PATCH v4 4/4] advice: move advice.graftFileDeprecated squashing to
+ commit.[ch]
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the squashing of the advice.graftFileDeprecated advice over to an
+external variable in commit.[ch], allowing advice() to purely use the
+new-style API of invoking advice() with an enum.
+
+See 8821e90a09a (advice: don't pointlessly suggest
+--convert-graft-file, 2018-11-27) for why quieting this advice was
+needed. It's more straightforward to move this code to commit.[ch] and
+use it builtin/replace.c, than to go through the indirection of
+advice.[ch].
+
+Because this was the last advice_config variable we can remove that
+old facility from advice.c.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ advice.c          | 16 ----------------
+ advice.h          |  2 --
+ builtin/replace.c |  2 +-
+ commit.c          |  4 +++-
+ commit.h          |  1 +
+ 5 files changed, 5 insertions(+), 20 deletions(-)
+
+diff --git a/advice.c b/advice.c
+index 41cfea82d06..e716ddebffe 100644
+--- a/advice.c
++++ b/advice.c
+@@ -4,8 +4,6 @@
+ #include "help.h"
+ #include "string-list.h"
+ 
+-int advice_graft_file_deprecated = 1;
+-
+ static int advice_use_color = -1;
+ static char advice_colors[][COLOR_MAXLEN] = {
+ 	GIT_COLOR_RESET,
+@@ -33,13 +31,6 @@ static const char *advise_get_color(enum color_advice ix)
+ 	return "";
+ }
+ 
+-static struct {
+-	const char *name;
+-	int *preference;
+-} advice_config[] = {
+-	{ "graftFileDeprecated", &advice_graft_file_deprecated },
+-};
+-
+ static struct {
+ 	const char *key;
+ 	int enabled;
+@@ -162,13 +153,6 @@ int git_default_advice_config(const char *var, const char *value)
+ 	if (!skip_prefix(var, "advice.", &k))
+ 		return 0;
+ 
+-	for (i = 0; i < ARRAY_SIZE(advice_config); i++) {
+-		if (strcasecmp(k, advice_config[i].name))
+-			continue;
+-		*advice_config[i].preference = git_config_bool(var, value);
+-		break;
+-	}
+-
+ 	for (i = 0; i < ARRAY_SIZE(advice_setting); i++) {
+ 		if (strcasecmp(k, advice_setting[i].key))
+ 			continue;
+diff --git a/advice.h b/advice.h
+index 4b754f4c626..e380a0562e3 100644
+--- a/advice.h
++++ b/advice.h
+@@ -5,8 +5,6 @@
+ 
+ struct string_list;
+ 
+-extern int advice_graft_file_deprecated;
+-
+ /*
+  * To add a new advice, you need to:
+  * Define a new advice_type.
+diff --git a/builtin/replace.c b/builtin/replace.c
+index cd487659117..946938d011e 100644
+--- a/builtin/replace.c
++++ b/builtin/replace.c
+@@ -507,7 +507,7 @@ static int convert_graft_file(int force)
+ 	if (!fp)
+ 		return -1;
+ 
+-	advice_graft_file_deprecated = 0;
++	no_graft_file_deprecated_advice = 1;
+ 	while (strbuf_getline(&buf, fp) != EOF) {
+ 		if (*buf.buf == '#')
+ 			continue;
+diff --git a/commit.c b/commit.c
+index 143f472c0f2..551de4903c1 100644
+--- a/commit.c
++++ b/commit.c
+@@ -25,6 +25,7 @@
+ static struct commit_extra_header *read_commit_extra_header_lines(const char *buf, size_t len, const char **);
+ 
+ int save_commit_buffer = 1;
++int no_graft_file_deprecated_advice;
+ 
+ const char *commit_type = "commit";
+ 
+@@ -190,7 +191,8 @@ static int read_graft_file(struct repository *r, const char *graft_file)
+ 	struct strbuf buf = STRBUF_INIT;
+ 	if (!fp)
+ 		return -1;
+-	if (advice_graft_file_deprecated)
++	if (!no_graft_file_deprecated_advice &&
++	    advice_enabled(ADVICE_GRAFT_FILE_DEPRECATED))
+ 		advise(_("Support for <GIT_DIR>/info/grafts is deprecated\n"
+ 			 "and will be removed in a future Git version.\n"
+ 			 "\n"
+diff --git a/commit.h b/commit.h
+index df42eb434f3..3ea32766bcb 100644
+--- a/commit.h
++++ b/commit.h
+@@ -41,6 +41,7 @@ struct commit {
+ };
+ 
+ extern int save_commit_buffer;
++extern int no_graft_file_deprecated_advice;
+ extern const char *commit_type;
+ 
+ /* While we can decorate any object with a name, it's only used for commits.. */
+-- 
+2.33.0.663.gfcc3c7013a8
+
