@@ -1,0 +1,124 @@
+From e3648bf78c7a98bebe9f0988b634539d296ced43 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.4-00000000000-20210824T091204Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-0000000000-20210607T115454Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210607T115454Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 24 Aug 2021 11:12:04 +0200
+Subject: [PATCH v2 0/4] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (4):
+  test-tool: split up test-tool read-cache
+  test-tool: migrate read-cache-perf to parse_options()
+  test-tool: migrate read-cache-again to parse_options()
+  read-cache perf: add a perf test for refresh_index()
+
+ Makefile                         |  2 ++
+ t/helper/test-read-cache-again.c | 45 +++++++++++++++++++++++++
+ t/helper/test-read-cache-perf.c  | 47 +++++++++++++++++++++++++++
+ t/helper/test-read-cache.c       | 56 +++++++++++++-------------------
+ t/helper/test-tool.c             |  2 ++
+ t/helper/test-tool.h             |  2 ++
+ t/perf/p0002-read-cache.sh       |  7 +++-
+ t/t7519-status-fsmonitor.sh      |  2 +-
+ 8 files changed, 128 insertions(+), 35 deletions(-)
+ create mode 100644 t/helper/test-read-cache-again.c
+ create mode 100644 t/helper/test-read-cache-perf.c
+
+Range-diff against v1:
+1:  6e7fcd46934 ! 1:  adb3f989a29 test-tool: split up test-tool read-cache
+    @@ Commit message
+         test-tool: split up test-tool read-cache
+     
+         Since the "test-tool read-cache" was originally added back in
+    -    1ecb5ff141 (read-cache: add simple performance test, 2013-06-09) it's
+    -    been growing all sorts of bells and whistles that aren't very
+    -    conducive to performance testing the index, e.g. it learned how to
+    -    read config.
+    +    1ecb5ff141 (read-cache: add simple performance test, 2013-06-09) the
+    +    test-read-cache.c tool has been growing various features that make the
+    +    code harder to read. I.e. sometimes running as a one-off, sometimes looping.
+    +
+    +    It's also been unconditionally reading config since
+    +    dc76852df2f (fsmonitor: demonstrate that it is not refreshed after
+    +    discard_index(), 2019-05-07), which introduces unnecessary noise into
+    +    the performance test.
+     
+         Then in recent changes in e2df6c3972 (test-read-cache: print cache
+         entries with --table, 2021-03-30) and 2782db3eed (test-tool: don't
+    @@ Commit message
+     
+         I think that having one test tool do so many different things makes it
+         harder to read its code. Let's instead split up the "again" and "perf"
+    -    uses for it into their own tools.
+    +    uses for it into their own small tools, this makes the main
+    +    "test-read-cache.c" a simpler.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ t/helper/test-read-cache.c: static void print_cache(struct index_state *istate)
+     +	};
+     +
+     +	argc = parse_options(argc, argv, "test-tools", options, read_cache_usage, 0);
+    -+	if (argc > 0)
+    ++	if (argc)
+     +		usage_msg_opt("Too many arguments.", read_cache_usage, options);
+      
+      	initialize_the_repository();
+2:  07f392e0878 ! 2:  a68fa4a6355 test-tools: migrate read-cache-perf to parse_options()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-tools: migrate read-cache-perf to parse_options()
+    +    test-tool: migrate read-cache-perf to parse_options()
+     
+         Change the newly added (but then mostly copy/pasted) read-cache-perf
+         to use the parse_options() API. This will make things easier as we add
+    @@ t/helper/test-read-cache-perf.c
+     -		die("usage: test-tool read-cache-perf [<count>]");
+     +	argc = parse_options(argc, argv, "test-tools", options,
+     +			     read_cache_perf_usage, 0);
+    -+	if (argc > 0)
+    ++	if (argc)
+     +		usage_msg_opt("Too many arguments.", read_cache_perf_usage,
+     +			      options);
+     +	if (cnt < 1)
+3:  36f4072b131 ! 3:  a34e69eaa48 test-tools: migrate read-cache-again to parse_options()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-tools: migrate read-cache-again to parse_options()
+    +    test-tool: migrate read-cache-again to parse_options()
+     
+         Change the newly added (but then mostly copy/pasted) read-cache-perf
+         to use the parse_options() API. I have no plans to further modify
+    @@ t/helper/test-read-cache-again.c
+      {
+      	struct repository *r = the_repository;
+     -	int i, cnt;
+    -+	int cnt = -1;
+    ++	int cnt = 2;
+      	const char *name;
+     +	struct option options[] = {
+     +		OPT_INTEGER(0, "count", &cnt, "number of passes"),
+    @@ t/helper/test-read-cache-again.c
+     +	if (argc != 1)
+     +		usage_msg_opt("Too many arguments.", read_cache_again_usage,
+     +			      options);
+    -+	if (cnt == -1)
+    -+		cnt = 2;
+    -+	else if (cnt < 1)
+    ++	if (cnt < 1)
+     +		usage_msg_opt("Need at least one pass.", read_cache_again_usage,
+     +			      options);
+      	name = argv[2];
+4:  120a37acaef = 4:  e3648bf78c7 read-cache perf: add a perf test for refresh_index()
+-- 
+2.33.0.663.gbaff4edb973
+

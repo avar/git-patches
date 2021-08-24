@@ -1,0 +1,89 @@
+From a34e69eaa484a84244ddb06c67f2431a15fd72de Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.4-a34e69eaa48-20210824T091204Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-00000000000-20210824T091204Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210607T115454Z-avarab@gmail.com>
+	<cover-v2-0.4-00000000000-20210824T091204Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 May 2021 12:28:08 +0200
+Subject: [PATCH v2 3/4] test-tool: migrate read-cache-again to parse_options()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the newly added (but then mostly copy/pasted) read-cache-perf
+to use the parse_options() API. I have no plans to further modify
+read-cache-again, but making these commands consistent has a value in
+and of itself.
+
+Since we check the "cnt = < 1" case now via more idiomatic
+post-parse_options() assertions we can move from the for-loop to a
+while-loop and ditch the "i" variable.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-read-cache-again.c | 26 ++++++++++++++++++++------
+ t/t7519-status-fsmonitor.sh      |  2 +-
+ 2 files changed, 21 insertions(+), 7 deletions(-)
+
+diff --git a/t/helper/test-read-cache-again.c b/t/helper/test-read-cache-again.c
+index 707db036cb1..fa456ca229e 100644
+--- a/t/helper/test-read-cache-again.c
++++ b/t/helper/test-read-cache-again.c
+@@ -1,20 +1,34 @@
+ #include "test-tool.h"
+ #include "cache.h"
++#include "parse-options.h"
++
++static const char *read_cache_again_usage[] = {
++	"test-tool read-cache-again [<options>...] <file>",
++	NULL
++};
+ 
+ int cmd__read_cache_again(int argc, const char **argv)
+ {
+ 	struct repository *r = the_repository;
+-	int i, cnt;
++	int cnt = 2;
+ 	const char *name;
++	struct option options[] = {
++		OPT_INTEGER(0, "count", &cnt, "number of passes"),
++		OPT_END()
++	};
+ 
+-	if (argc != 2)
+-		die("usage: test-tool read-cache-again <count> <file>");
+-
+-	cnt = strtol(argv[0], NULL, 0);
++	argc = parse_options(argc, argv, "test-tools", options,
++			     read_cache_again_usage, 0);
++	if (argc != 1)
++		usage_msg_opt("Too many arguments.", read_cache_again_usage,
++			      options);
++	if (cnt < 1)
++		usage_msg_opt("Need at least one pass.", read_cache_again_usage,
++			      options);
+ 	name = argv[2];
+ 
+ 	setup_git_directory();
+-	for (i = 0; i < cnt; i++) {
++	while (cnt--) {
+ 		int pos;
+ 		repo_read_index(r);
+ 		refresh_index(r->index, REFRESH_QUIET,
+diff --git a/t/t7519-status-fsmonitor.sh b/t/t7519-status-fsmonitor.sh
+index 7de5fcb1bd7..817e642f58e 100755
+--- a/t/t7519-status-fsmonitor.sh
++++ b/t/t7519-status-fsmonitor.sh
+@@ -360,7 +360,7 @@ test_expect_success UNTRACKED_CACHE 'ignore .git changes when invalidating UNTR'
+ test_expect_success 'discard_index() also discards fsmonitor info' '
+ 	test_config core.fsmonitor "$TEST_DIRECTORY/t7519/fsmonitor-all" &&
+ 	test_might_fail git update-index --refresh &&
+-	test-tool read-cache-again 2 tracked >actual &&
++	test-tool read-cache-again --count=2 tracked >actual &&
+ 	printf "tracked is%s up to date\n" "" " not" >expect &&
+ 	test_cmp expect actual
+ '
+-- 
+2.33.0.663.gbaff4edb973
+

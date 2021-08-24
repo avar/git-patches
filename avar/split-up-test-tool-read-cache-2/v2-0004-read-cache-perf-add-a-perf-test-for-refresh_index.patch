@@ -1,0 +1,80 @@
+From e3648bf78c7a98bebe9f0988b634539d296ced43 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.4-e3648bf78c7-20210824T091204Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-00000000000-20210824T091204Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210607T115454Z-avarab@gmail.com>
+	<cover-v2-0.4-00000000000-20210824T091204Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 May 2021 12:18:36 +0200
+Subject: [PATCH v2 4/4] read-cache perf: add a perf test for refresh_index()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a perf test for the refresh_index() function to compliment the
+existing read()/discard() in a loop perf test added in
+1ecb5ff141f (read-cache: add simple performance test, 2013-06-09).
+
+Since this test is much slower (around 10x) than the previous
+read()/discard() test let's run it 100 times instead of the 1000 time
+the first one runs.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-read-cache-perf.c | 12 ++++++++++++
+ t/perf/p0002-read-cache.sh      |  5 +++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/t/helper/test-read-cache-perf.c b/t/helper/test-read-cache-perf.c
+index 301e98797b4..630c126fbf3 100644
+--- a/t/helper/test-read-cache-perf.c
++++ b/t/helper/test-read-cache-perf.c
+@@ -11,8 +11,11 @@ int cmd__read_cache_perf(int argc, const char **argv)
+ {
+ 	struct repository *r = the_repository;
+ 	int cnt = -1;
++	int refresh = 0;
+ 	struct option options[] = {
+ 		OPT_INTEGER(0, "count", &cnt, "number of passes"),
++		OPT_BOOL(0, "refresh", &refresh,
++			 "call refresh_index() in a loop, not read()/discard()"),
+ 		OPT_END()
+ 	};
+ 
+@@ -26,10 +29,19 @@ int cmd__read_cache_perf(int argc, const char **argv)
+ 			      options);
+ 
+ 	setup_git_directory();
++	if (refresh)
++		repo_read_index(r);
+ 	while (cnt--) {
++		if (refresh) {
++			unsigned int flags = REFRESH_QUIET|REFRESH_PROGRESS;
++			refresh_index(r->index, flags, NULL, NULL, NULL);
++			continue;
++		}
+ 		repo_read_index(r);
+ 		discard_index(r->index);
+ 	}
++	if (refresh)
++		discard_index(r->index);
+ 
+ 	return 0;
+ }
+diff --git a/t/perf/p0002-read-cache.sh b/t/perf/p0002-read-cache.sh
+index 1762b648654..cbccc5ace95 100755
+--- a/t/perf/p0002-read-cache.sh
++++ b/t/perf/p0002-read-cache.sh
+@@ -11,4 +11,9 @@ test_perf "read_cache/discard_cache $count times" "
+ 	test-tool read-cache-perf --count=$count
+ "
+ 
++count=100
++test_perf "refresh_index() $count times" "
++	test-tool read-cache-perf --count=$count --refresh
++"
++
+ test_done
+-- 
+2.33.0.663.gbaff4edb973
+

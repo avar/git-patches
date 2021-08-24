@@ -1,0 +1,86 @@
+From a68fa4a6355f3f74e2f3b1e525f1f79c739a767d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.4-a68fa4a6355-20210824T091204Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-00000000000-20210824T091204Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210607T115454Z-avarab@gmail.com>
+	<cover-v2-0.4-00000000000-20210824T091204Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 May 2021 12:17:41 +0200
+Subject: [PATCH v2 2/4] test-tool: migrate read-cache-perf to parse_options()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the newly added (but then mostly copy/pasted) read-cache-perf
+to use the parse_options() API. This will make things easier as we add
+new options.
+
+Since we check the "cnt = < 1" case now via more idiomatic
+post-parse_options() assertions we can move from the for-loop to a
+while-loop and ditch the "i" variable.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-read-cache-perf.c | 26 ++++++++++++++++++++------
+ t/perf/p0002-read-cache.sh      |  2 +-
+ 2 files changed, 21 insertions(+), 7 deletions(-)
+
+diff --git a/t/helper/test-read-cache-perf.c b/t/helper/test-read-cache-perf.c
+index 90176c010a1..301e98797b4 100644
+--- a/t/helper/test-read-cache-perf.c
++++ b/t/helper/test-read-cache-perf.c
+@@ -1,18 +1,32 @@
+ #include "test-tool.h"
+ #include "cache.h"
++#include "parse-options.h"
++
++static const char *read_cache_perf_usage[] = {
++	"test-tool read-cache-perf [<options>...]",
++	NULL
++};
+ 
+ int cmd__read_cache_perf(int argc, const char **argv)
+ {
+ 	struct repository *r = the_repository;
+-	int i, cnt = 1;
++	int cnt = -1;
++	struct option options[] = {
++		OPT_INTEGER(0, "count", &cnt, "number of passes"),
++		OPT_END()
++	};
+ 
+-	if (argc == 2)
+-		cnt = strtol(argv[1], NULL, 0);
+-	else
+-		die("usage: test-tool read-cache-perf [<count>]");
++	argc = parse_options(argc, argv, "test-tools", options,
++			     read_cache_perf_usage, 0);
++	if (argc)
++		usage_msg_opt("Too many arguments.", read_cache_perf_usage,
++			      options);
++	if (cnt < 1)
++		usage_msg_opt("Need at least one pass.", read_cache_perf_usage,
++			      options);
+ 
+ 	setup_git_directory();
+-	for (i = 0; i < cnt; i++) {
++	while (cnt--) {
+ 		repo_read_index(r);
+ 		discard_index(r->index);
+ 	}
+diff --git a/t/perf/p0002-read-cache.sh b/t/perf/p0002-read-cache.sh
+index d0ba5173fb1..1762b648654 100755
+--- a/t/perf/p0002-read-cache.sh
++++ b/t/perf/p0002-read-cache.sh
+@@ -8,7 +8,7 @@ test_perf_default_repo
+ 
+ count=1000
+ test_perf "read_cache/discard_cache $count times" "
+-	test-tool read-cache-perf $count
++	test-tool read-cache-perf --count=$count
+ "
+ 
+ test_done
+-- 
+2.33.0.663.gbaff4edb973
+
