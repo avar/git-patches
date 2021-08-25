@@ -1,0 +1,229 @@
+From da003330800f9748a78a12128e975ea2a63d495e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-6.6-da003330800-20210825T231400Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210825T231400Z-avarab@gmail.com>
+References: <87o8agp29o.fsf@evledraar.gmail.com>
+	<cover-0.6-00000000000-20210825T231400Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 2 Aug 2021 12:22:07 +0200
+Subject: [PATCH 6/6] tr2: log N parent process names on Linux
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In 2f732bf15e6 (tr2: log parent process name, 2021-07-21) we started
+logging parent process names, but only logged all parents on Windows.
+on Linux only the name of the immediate parent process was logged.
+
+Extend the functionality added there to also log full parent chain on
+Linux. In 2f732bf15e6 it was claimed that "further ancestry info can
+be gathered with procfs, but it's unwieldy to do so.".
+
+I don't know what the author meant by that, but I think it probably
+referred to needing to slurp this up from the FS, as opposed to having
+an API. The underlying semantics on Linux are easier to deal with than
+on Windows though, at least as far as finding the parent PIDs
+goes. See the get_processes() function used on Windows. As shown in
+353d3d77f4f (trace2: collect Windows-specific process information,
+2019-02-22) it needs to deal with cycles.
+
+What is more complex on Linux is getting at the process name, a
+simpler approach is to use fscanf(), see [1] for an implementation of
+that, but as noted in the comment being added here it would fail in
+the face of some weird process names, so we need our own
+parse_proc_stat() to parse it out.
+
+With this patch the "ancestry" chain for a trace2 event might look
+like this:
+
+    $ GIT_TRACE2_EVENT=/dev/stdout ~/g/git/git version | grep ancestry | jq -r .ancestry
+    [
+      "bash",
+      "screen",
+      "systemd"
+    ]
+
+And in the case of naughty process names. This uses perl's ability to
+use prctl(PR_SET_NAME, ...). See Perl/perl5@7636ea95c5 (Set the legacy
+process name with prctl() on assignment to $0 on Linux, 2010-04-15)[2]:
+
+    $ perl -e '$0 = "(naughty\nname)"; system "GIT_TRACE2_EVENT=/dev/stdout ~/g/git/git version"' | grep ancestry | jq -r .ancestry
+    [
+      "sh",
+      "(naughty\nname)",
+      "bash",
+      "screen",
+      "systemd"
+    ]
+
+1. https://lore.kernel.org/git/87o8agp29o.fsf@evledraar.gmail.com/
+2. https://github.com/Perl/perl5/commit/7636ea95c57762930accf4358f7c0c2dec086b5e
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ compat/linux/procinfo.c | 134 ++++++++++++++++++++++++++++++++++------
+ 1 file changed, 116 insertions(+), 18 deletions(-)
+
+diff --git a/compat/linux/procinfo.c b/compat/linux/procinfo.c
+index 46a751c9a1d..937084126a6 100644
+--- a/compat/linux/procinfo.c
++++ b/compat/linux/procinfo.c
+@@ -4,27 +4,129 @@
+ #include "strvec.h"
+ #include "trace2.h"
+ 
+-static void get_ancestry_names(struct strvec *names)
++/*
++ * We need more complex parsing instat_parent_pid() and
++ * parse_proc_stat() below than a dumb fscanf(). That's because while
++ * the statcomm field is surrounded by parentheses, the process itself
++ * is free to insert any arbitrary byte sequence its its name. That
++ * can include newlines, spaces, closing parentheses etc. See
++ * do_task_stat() in fs/proc/array.c in linux.git, this is in contrast
++ * with the escaped version of the name found in /proc/%d/status.
++ *
++ * So instead of using fscanf() we'll read N bytes from it, look for
++ * the first "(", and then the last ")", anything in-between is our
++ * process name.
++ *
++ * How much N do we need? On Linux /proc/sys/kernel/pid_max is 2^15 by
++ * default, but it can be raised set to values of up to 2^22. So
++ * that's 7 digits for a PID. We have 2 PIDs in the first four fields
++ * we're interested in, so 2 * 7 = 14.
++ *
++ * We then have 4 spaces between those four values, which brings us up
++ * to 18. Add the two parentheses and it's 20. The "state" is then one
++ * character (now at 21).
++ *
++ * Finally the maximum length of the "comm" name itself is 15
++ * characters, e.g. a setting of "123456789abcdefg" will be truncated
++ * to "123456789abcdef". See PR_SET_NAME in prctl(2). So all in all
++ * we'd need to read 21 + 15 = 36 bytes.
++ *
++ * Let's just read 2^6 (64) instead for good measure. If PID_MAX ever
++ * grows past 2^22 we'll be future-proof. We'll then anchor at the
++ * last ")" we find to locate the parent PID.
++ */
++#define STAT_PARENT_PID_READ_N 64
++
++static int parse_proc_stat(struct strbuf *sb, struct strbuf *name,
++			    int *statppid)
+ {
++	const char *lhs = strchr(sb->buf, '(');
++	const char *rhs = strrchr(sb->buf, ')');
++	const char *ppid_lhs, *ppid_rhs;
++	char *p;
++	pid_t ppid;
++
++	if (!lhs || !rhs)
++		goto bad_kernel;
++
+ 	/*
+-	 * NEEDSWORK: We could gather the entire pstree into an array to match
+-	 * functionality with compat/win32/trace2_win32_process_info.c.
+-	 * To do so, we may want to examine /proc/<pid>/stat. For now, just
+-	 * gather the immediate parent name which is readily accessible from
+-	 * /proc/$(getppid())/comm.
++	 * We're at the ")", that's followed by " X ", where X is a
++	 * single "state" character. So advance by 4 bytes.
+ 	 */
++	ppid_lhs = rhs + 4;
++
++	ppid_rhs = strchr(ppid_lhs, ' ');
++	if (!ppid_rhs)
++		goto bad_kernel;
++
++	ppid = strtol(ppid_lhs, &p, 10);
++	if (ppid_rhs == p) {
++		const char *comm = lhs + 1;
++		int commlen = rhs - lhs - 1;
++
++		strbuf_addf(name, "%.*s", commlen, comm);
++		*statppid = ppid;
++
++		return 0;
++	}
++
++bad_kernel:
++	/*
++	 * We were able to read our STAT_PARENT_PID_READ_N bytes from
++	 * /proc/%d/stat, but the content is bad. Broken kernel?
++	 * Should not happen, but handle it gracefully.
++	 */
++	return -1;
++}
++
++static int stat_parent_pid(pid_t pid, struct strbuf *name, int *statppid)
++{
+ 	struct strbuf procfs_path = STRBUF_INIT;
+-	struct strbuf name = STRBUF_INIT;
++	struct strbuf sb = STRBUF_INIT;
++	size_t n;
++	FILE *fp = NULL;
++	int ret = -1;
+ 
+ 	/* try to use procfs if it's present. */
+-	strbuf_addf(&procfs_path, "/proc/%d/comm", getppid());
+-	if (strbuf_read_file(&name, procfs_path.buf, 0) > 0) {
+-		strbuf_trim_trailing_newline(&name);
+-		strvec_push(names, name.buf);
+-		strbuf_release(&name);
+-	}
++	strbuf_addf(&procfs_path, "/proc/%d/stat", pid);
++	fp = fopen(procfs_path.buf, "r");
++	if (!fp)
++		goto cleanup;
++
++	n = strbuf_fread(&sb, STAT_PARENT_PID_READ_N, fp);
++	if (n != STAT_PARENT_PID_READ_N)
++		goto cleanup;
++	if (parse_proc_stat(&sb, name, statppid) < 0)
++		goto cleanup;
+ 
++	ret = 0;
++cleanup:
++	if (fp)
++		fclose(fp);
+ 	strbuf_release(&procfs_path);
++	strbuf_release(&sb);
++
++	return ret;
++}
++
++static void push_ancestry_name(struct strvec *names, pid_t pid)
++{
++	struct strbuf name = STRBUF_INIT;
++	int ppid;
++
++	if (stat_parent_pid(pid, &name, &ppid) < 0)
++		goto cleanup;
++
++	strvec_push(names, name.buf);
++
++	/*
++	 * Both errors and reaching the end of the process chain are
++	 * reported as fields of 0 by proc(5)
++	 */
++	if (ppid)
++		push_ancestry_name(names, ppid);
++cleanup:
++	strbuf_release(&name);
+ 	return;
+ }
+ 
+@@ -44,11 +146,7 @@ void trace2_collect_process_info(enum trace2_process_info_reason reason)
+ 		 */
+ 		break;
+ 	case TRACE2_PROCESS_INFO_STARTUP:
+-		/*
+-		 * NEEDSWORK: we could do the entire ptree in an array instead,
+-		 * see compat/win32/trace2_win32_process_info.c.
+-		 */
+-		get_ancestry_names(&names);
++		push_ancestry_name(&names, getppid());
+ 
+ 		if (names.nr)
+ 			trace2_cmd_ancestry(names.v);
+-- 
+2.33.0.733.ga72a4f1c2e1
+

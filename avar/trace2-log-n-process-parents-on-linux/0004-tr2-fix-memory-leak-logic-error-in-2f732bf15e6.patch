@@ -1,0 +1,64 @@
+From 73e7d4eb6ace74f1d1883a912ee60f933fb50141 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.6-73e7d4eb6ac-20210825T231400Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210825T231400Z-avarab@gmail.com>
+References: <87o8agp29o.fsf@evledraar.gmail.com>
+	<cover-0.6-00000000000-20210825T231400Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 25 Aug 2021 11:32:54 +0200
+Subject: [PATCH 4/6] tr2: fix memory leak & logic error in 2f732bf15e6
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In a subsequent commit I'll be replacing most of this code to log N
+parents, but let's first fix bugs introduced in the recent
+2f732bf15e6 (tr2: log parent process name, 2021-07-21).
+
+It was using the strbuf_read_file() in the wrong way, its return value
+is either a length or a negative value on error. If we didn't have a
+procfs, or otherwise couldn't access it we'd end up pushing an empty
+string to the trace2 ancestry array.
+
+It was also using the strvec_push() API the wrong way. That API always
+does an xstrdup(), so by detaching the strbuf here we'd leak
+memory. Let's instead pass in our pointer for strvec_push() to
+xstrdup(), and then free our own strbuf.
+
+Furthermore we need to free that "procfs_path" strbuf whether or not
+strbuf_read_file() succeeds, which was another source of memory leaks
+in 2f732bf15e6, i.e. we'd leak that memory as well if we weren't on a
+system where we could read the file from procfs.
+
+In combination with the preceding commit this makes all of
+t[0-9]*trace2*.sh pass under SANITIZE=leak on Linux.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ compat/linux/procinfo.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/compat/linux/procinfo.c b/compat/linux/procinfo.c
+index 62f8aaed4cc..c86daff2b26 100644
+--- a/compat/linux/procinfo.c
++++ b/compat/linux/procinfo.c
+@@ -18,12 +18,13 @@ static void get_ancestry_names(struct strvec *names)
+ 
+ 	/* try to use procfs if it's present. */
+ 	strbuf_addf(&procfs_path, "/proc/%d/comm", getppid());
+-	if (strbuf_read_file(&name, procfs_path.buf, 0)) {
+-		strbuf_release(&procfs_path);
++	if (strbuf_read_file(&name, procfs_path.buf, 0) > 0) {
+ 		strbuf_trim_trailing_newline(&name);
+-		strvec_push(names, strbuf_detach(&name, NULL));
++		strvec_push(names, name.buf);
++		strbuf_release(&name);
+ 	}
+ 
++	strbuf_release(&procfs_path);
+ 	return;
+ }
+ 
+-- 
+2.33.0.733.ga72a4f1c2e1
+
