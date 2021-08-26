@@ -1,0 +1,94 @@
+From 321b8ba3f0e0b0df64462df49732e54472b44ff8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.5-321b8ba3f0e-20210826T134913Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20210826T134913Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210727T004015Z-avarab@gmail.com>
+	<cover-v2-0.5-00000000000-20210826T134913Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 26 Aug 2021 15:25:39 +0200
+Subject: [PATCH v2 2/5] strvec: add a strvec_pushvec()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a strvec_pushvec() function to concatenate two "struct strvec *"
+together, and modify code added in 50d89ad6542 (submodule: use
+argv_array instead of hand-building arrays, 2012-09-01) to use it. In
+a subsequent commit we'll gain another API user.
+
+This could also have been named strvec_concat()[1], but I opted to
+make its name consistent with the strbuf_addbuf() function instead. We
+only name these sorts of functions *_concat() in one instance:
+parse_options_concat().
+
+1. http://lore.kernel.org/git/30620e13-4509-1905-7644-9962b6adf9c5@gmail.com
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ strvec.c    | 8 ++++++++
+ strvec.h    | 7 +++++++
+ submodule.c | 4 +---
+ 3 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/strvec.c b/strvec.c
+index 61a76ce6cb9..54ed8427c13 100644
+--- a/strvec.c
++++ b/strvec.c
+@@ -56,6 +56,14 @@ void strvec_pushv(struct strvec *array, const char **items)
+ 		strvec_push(array, *items);
+ }
+ 
++void strvec_pushvec(struct strvec *array, const struct strvec *items)
++{
++	int i;
++
++	for (i = 0; i < items->nr; i++)
++		strvec_push(array, items->v[i]);
++}
++
+ void strvec_pop(struct strvec *array)
+ {
+ 	if (!array->nr)
+diff --git a/strvec.h b/strvec.h
+index fdcad75b45b..9003bde2b7d 100644
+--- a/strvec.h
++++ b/strvec.h
+@@ -62,6 +62,13 @@ void strvec_pushl(struct strvec *, ...);
+ /* Push a null-terminated array of strings onto the end of the array. */
+ void strvec_pushv(struct strvec *, const char **);
+ 
++/**
++ * Push the contents of another "struct strvec *" onto the end of the
++ * array. Like strvec_pushv(), this is a convenience wrapper that
++ * calls strvec_push() in a loop.
++ */
++void strvec_pushvec(struct strvec *, const struct strvec *);
++
+ /**
+  * Remove the final element from the array. If there are no
+  * elements in the array, do nothing.
+diff --git a/submodule.c b/submodule.c
+index 8e611fe1dbf..84b5f5dc0e0 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -1606,7 +1606,6 @@ int fetch_populated_submodules(struct repository *r,
+ 			       int default_option,
+ 			       int quiet, int max_parallel_jobs)
+ {
+-	int i;
+ 	struct submodule_parallel_fetch spf = SPF_INIT;
+ 
+ 	spf.r = r;
+@@ -1622,8 +1621,7 @@ int fetch_populated_submodules(struct repository *r,
+ 		die(_("index file corrupt"));
+ 
+ 	strvec_push(&spf.args, "fetch");
+-	for (i = 0; i < options->nr; i++)
+-		strvec_push(&spf.args, options->v[i]);
++	strvec_pushvec(&spf.args, options);
+ 	strvec_push(&spf.args, "--recurse-submodules-default");
+ 	/* default value, "--submodule-prefix" and its value are added later */
+ 
+-- 
+2.33.0.733.ga72a4f1c2e1
+

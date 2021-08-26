@@ -1,0 +1,69 @@
+From 942c723251001b8fad0292e2711deae1ccbf40b9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.5-942c7232510-20210826T134913Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20210826T134913Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210727T004015Z-avarab@gmail.com>
+	<cover-v2-0.5-00000000000-20210826T134913Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 26 Jul 2021 15:05:34 +0200
+Subject: [PATCH v2 5/5] bundle: show progress on "unbundle"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "unbundle" command added in 2e0afafebd8 (Add git-bundle: move
+objects and references by archive, 2007-02-22) did not show progress
+output, even though the underlying API learned how to show progress in
+be042aff24c (Teach progress eye-candy to fetch_refs_from_bundle(),
+2011-09-18).
+
+Now we'll show "Unbundling objects" using the new --progress-title
+option to "git index-pack", to go with its existing "Receiving
+objects" and "Indexing objects" (which it shows when invoked with
+"--stdin", and with a pack file, respectively).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bundle.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/bundle.c b/builtin/bundle.c
+index f9360c32c6c..1fbfe280c57 100644
+--- a/builtin/bundle.c
++++ b/builtin/bundle.c
+@@ -162,10 +162,15 @@ static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+ 	struct bundle_header header = BUNDLE_HEADER_INIT;
+ 	int bundle_fd = -1;
+ 	int ret;
++	int progress = isatty(2);
++
+ 	struct option options[] = {
++		OPT_BOOL(0, "progress", &progress,
++			 N_("show progress meter")),
+ 		OPT_END()
+ 	};
+ 	char *bundle_file;
++	struct strvec extra_args = STRVEC_INIT;
+ 
+ 	argc = parse_options_cmd_bundle(argc, argv, prefix,
+ 			builtin_bundle_unbundle_usage, options, &bundle_file);
+@@ -177,7 +182,15 @@ static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+ 	}
+ 	if (!startup_info->have_repository)
+ 		die(_("Need a repository to unbundle."));
+-	ret = !!unbundle(the_repository, &header, bundle_fd, NULL) ||
++
++	if (progress) {
++		strvec_push(&extra_args, "-v");
++		strvec_push(&extra_args, "--progress-title");
++		strvec_push(&extra_args, _("Unbundling objects"));
++	}
++
++	ret = !!unbundle(the_repository, &header, bundle_fd, progress ?
++			 &extra_args : NULL) ||
+ 		list_bundle_refs(&header, argc, argv);
+ 	bundle_header_release(&header);
+ cleanup:
+-- 
+2.33.0.733.ga72a4f1c2e1
+
