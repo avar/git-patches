@@ -1,0 +1,186 @@
+From 942c723251001b8fad0292e2711deae1ccbf40b9 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.5-00000000000-20210826T134944Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-0000000000-20210727T004015Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210727T004015Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 26 Aug 2021 15:49:44 +0200
+Subject: [PATCH v3 0/5] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (5):
+  bundle API: start writing API documentation
+  strvec: add a strvec_pushvec()
+  bundle API: change "flags" to be "extra_index_pack_args"
+  index-pack: add --progress-title option
+  bundle: show progress on "unbundle"
+
+ Documentation/git-index-pack.txt |  6 ++++++
+ builtin/bundle.c                 | 15 ++++++++++++++-
+ builtin/index-pack.c             |  6 ++++++
+ bundle.c                         | 14 ++++++++------
+ bundle.h                         | 15 +++++++++++++--
+ strvec.c                         |  8 ++++++++
+ strvec.h                         |  7 +++++++
+ submodule.c                      |  4 +---
+ transport.c                      |  6 +++++-
+ 9 files changed, 68 insertions(+), 13 deletions(-)
+
+Range-diff against v2:
+1:  dc8591f6d0b ! 1:  9fb2f7a3a80 bundle API: start writing API documentation
+    @@ Commit message
+         start. We'll add a parameter to this function in a subsequent commit,
+         but let's start by documenting it.
+     
+    +    The "/**" comment (as opposed to "/*") signifies the start of API
+    +    documentation. See [1] and bdfdaa4978d (strbuf.h: integrate
+    +    api-strbuf.txt documentation, 2015-01-16) and 6afbbdda333 (strbuf.h:
+    +    unify documentation comments beginnings, 2015-01-16) for a discussion
+    +    of that convention.
+    +
+    +    1. https://lore.kernel.org/git/874kbeecfu.fsf@evledraar.gmail.com/
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## bundle.h ##
+-:  ----------- > 2:  321b8ba3f0e strvec: add a strvec_pushvec()
+2:  3d7bd9c33be ! 3:  637039634e7 bundle API: change "flags" to be "extra_index_pack_args"
+    @@ Commit message
+         of being able to pass arbitrary arguments to "unbundle" will be used
+         in a subsequent commit.
+     
+    -    We could pass NULL explicitly in cmd_bundle_unbundle(), but let's
+    -    instead initialize an empty strvec and pass it, in anticipation of a
+    -    subsequent commit wanting to add arguments to it.
+    -
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/bundle.c ##
+    -@@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+    - 	struct option options[] = {
+    - 		OPT_END()
+    - 	};
+    --	char *bundle_file;
+    -+	char* bundle_file;
+    -+	struct strvec extra_args = STRVEC_INIT;
+    - 
+    - 	argc = parse_options_cmd_bundle(argc, argv, prefix,
+    - 			builtin_bundle_unbundle_usage, options, &bundle_file);
+     @@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+      	}
+      	if (!startup_info->have_repository)
+      		die(_("Need a repository to unbundle."));
+     -	ret = !!unbundle(the_repository, &header, bundle_fd, 0) ||
+    -+	ret = !!unbundle(the_repository, &header, bundle_fd, &extra_args) ||
+    ++	ret = !!unbundle(the_repository, &header, bundle_fd, NULL) ||
+      		list_bundle_refs(&header, argc, argv);
+      	bundle_header_release(&header);
+      cleanup:
+    @@ bundle.c: int create_bundle(struct repository *r, const char *path,
+     -	const char *argv_index_pack[] = {"index-pack",
+     -					 "--fix-thin", "--stdin", NULL, NULL};
+      	struct child_process ip = CHILD_PROCESS_INIT;
+    -+	int i;
+      
+     -	if (flags & BUNDLE_VERBOSE)
+     -		argv_index_pack[3] = "-v";
+    @@ bundle.c: int create_bundle(struct repository *r, const char *path,
+     +	strvec_push(&ip.args, "--fix-thin");
+     +	strvec_push(&ip.args, "--stdin");
+     +	if (extra_index_pack_args) {
+    -+		struct strvec *extra = extra_index_pack_args;
+    -+		for (i = 0; i < extra->nr; i++)
+    -+			strvec_push(&ip.args, extra->v[i]);
+    ++		strvec_pushvec(&ip.args, extra_index_pack_args);
+     +		strvec_clear(extra_index_pack_args);
+     +	}
+      
+    @@ transport.c: static int fetch_refs_from_bundle(struct transport *transport,
+     +	struct strvec extra_index_pack_args = STRVEC_INIT;
+      	int ret;
+      
+    -+	strvec_push(&extra_index_pack_args, "-v");
+    ++	if (transport->progress)
+    ++		strvec_push(&extra_index_pack_args, "-v");
+     +
+      	if (!data->get_refs_from_bundle_called)
+      		get_refs_from_bundle(transport, 0, NULL);
+      	ret = unbundle(the_repository, &data->header, data->fd,
+     -			   transport->progress ? BUNDLE_VERBOSE : 0);
+    -+		       &extra_index_pack_args);
+    ++		       transport->progress ? &extra_index_pack_args : NULL);
+      	transport->hash_algo = data->header.hash_algo;
+      	return ret;
+      }
+3:  67197064a8b ! 4:  4136ffe1ba1 index-pack: add --progress-title option
+    @@ Commit message
+         index-pack: add --progress-title option
+     
+         Add a --progress-title option to index-pack, when data is piped into
+    -    index-pack its progress is a proxy for whatever's feeding it
+    -    data.
+    +    index-pack its progress is a proxy for whatever's feeding it data.
+     
+         This option will allow us to set a more relevant progress bar title in
+         "git bundle unbundle", and is also used in my "bundle-uri" RFC
+         patches[1] by a new caller in fetch-pack.c.
+     
+    +    The code change in cmd_index_pack() won't handle
+    +    "--progress-title=xyz", only "--progress-title xyz", and the "(i+1)"
+    +    style (as opposed to "i + 1") is a bit odd.
+    +
+    +    I'm just copying this as-is from the handling of the "-o" option in
+    +    the same function, see 9cf6d3357aa (Add git-index-pack utility,
+    +    2005-10-12) for its addition. Eventually we'd like to migrate this to
+    +    parse_options(), but in the meantime let's handle all of these
+    +    consistently, and not needlessly diverge in style.
+    +
+         1. https://lore.kernel.org/git/RFC-cover-00.13-0000000000-20210805T150534Z-avarab@gmail.com/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    @@ Documentation/git-index-pack.txt: OPTIONS
+     +--progress-title::
+     +	For internal use only.
+     ++
+    -+Set the title of the "Receiving objects" progress bar (it's "Indexing
+    -+objects" under `--stdin`).
+    ++Set the title of the progress bar. The title is "Receiving objects" by
+    ++default and "Indexing objects" when `--stdin` is specified.
+     +
+      --check-self-contained-and-connected::
+      	Die if the pack contains broken links. For internal use only.
+4:  e4ca8b26962 ! 5:  942c7232510 bundle: show progress on "unbundle"
+    @@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, co
+     +			 N_("show progress meter")),
+      		OPT_END()
+      	};
+    - 	char* bundle_file;
+    + 	char *bundle_file;
+    ++	struct strvec extra_args = STRVEC_INIT;
+    + 
+    + 	argc = parse_options_cmd_bundle(argc, argv, prefix,
+    + 			builtin_bundle_unbundle_usage, options, &bundle_file);
+     @@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+      	}
+      	if (!startup_info->have_repository)
+      		die(_("Need a repository to unbundle."));
+    +-	ret = !!unbundle(the_repository, &header, bundle_fd, NULL) ||
+     +
+     +	if (progress) {
+     +		strvec_push(&extra_args, "-v");
+    @@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, co
+     +		strvec_push(&extra_args, _("Unbundling objects"));
+     +	}
+     +
+    - 	ret = !!unbundle(the_repository, &header, bundle_fd, &extra_args) ||
+    ++	ret = !!unbundle(the_repository, &header, bundle_fd, progress ?
+    ++			 &extra_args : NULL) ||
+      		list_bundle_refs(&header, argc, argv);
+      	bundle_header_release(&header);
+    + cleanup:
+-- 
+2.33.0.733.ga72a4f1c2e1
+
