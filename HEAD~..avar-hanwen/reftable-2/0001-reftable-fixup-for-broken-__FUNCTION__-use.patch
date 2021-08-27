@@ -1,0 +1,213 @@
+From f7d9c8af0ca371bcd60b25f0b5a30e769574eb5a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-f7d9c8af0c-20210827T055608Z-avarab@gmail.com>
+In-Reply-To: <xmqqwno7bgeo.fsf@gitster.g>
+References: <xmqqwno7bgeo.fsf@gitster.g>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 27 Aug 2021 07:45:08 +0200
+Subject: [PATCH] reftable: fixup for broken __FUNCTION__ use
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The use of the __FUNCTION__ macro is non-standard, in this case all
+we're doing with it is generating a prettier unique filename based on
+the name of the function that makes it, presumably to make ad-hoc
+debugging easier.
+
+For mkdtemp() and mkstemp() we don't need to pass anything like this
+in, since the "XXXXXX" part of the template will ensure that we get a
+unique filename, but to make finding what function created what
+tempfile easy let's just use __LINE__ here, it's not *as easy*, but at
+least this one uses standard behavior.
+
+This can be tested under DEVOPTS=pedantic, i.e. before this change
+we'd emit errors like:
+
+    reftable/stack_test.c: In function ‘test_read_file’:
+    reftable/stack_test.c:67:30: error: ISO C does not support ‘__FUNCTION__’ predefined identifier [-Werror=pedantic]
+      char *fn = get_tmp_template(__FUNCTION__);
+
+The current tip of "seen" is broken as a result, see
+https://github.com/git/git/runs/3439941236
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ reftable/stack_test.c | 43 ++++++++++++++++++++++---------------------
+ 1 file changed, 22 insertions(+), 21 deletions(-)
+
+diff --git a/reftable/stack_test.c b/reftable/stack_test.c
+index 890a5c0199..f6b542b259 100644
+--- a/reftable/stack_test.c
++++ b/reftable/stack_test.c
+@@ -46,25 +46,26 @@ static int count_dir_entries(const char *dirname)
+ 	return len;
+ }
+ 
+-static char *get_tmp_template(const char *prefix)
++static char *get_tmp_template(const int line)
+ {
+ 	const char *tmp = getenv("TMPDIR");
+ 	static char template[1024];
+-	snprintf(template, sizeof(template) - 1, "%s/%s.XXXXXX",
+-		 tmp ? tmp : "/tmp", prefix);
++	snprintf(template, sizeof(template) - 1, "%s/stack-test.c-%d.XXXXXX",
++		 tmp ? tmp : "/tmp", line);
++	fprintf(stderr, "have template %s\n", template);
+ 	return template;
+ }
+ 
+-static char *get_tmp_dir(const char *prefix)
++static char *get_tmp_dir(const int line)
+ {
+-	char *dir = get_tmp_template(prefix);
++	char *dir = get_tmp_template(line);
+ 	EXPECT(mkdtemp(dir));
+ 	return dir;
+ }
+ 
+ static void test_read_file(void)
+ {
+-	char *fn = get_tmp_template(__FUNCTION__);
++	char *fn = get_tmp_template(__LINE__);
+ 	int fd = mkstemp(fn);
+ 	char out[1024] = "line1\n\nline2\nline3";
+ 	int n, err;
+@@ -133,7 +134,7 @@ static int write_test_log(struct reftable_writer *wr, void *arg)
+ 
+ static void test_reftable_stack_add_one(void)
+ {
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+@@ -174,7 +175,7 @@ static void test_reftable_stack_uptodate(void)
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st1 = NULL;
+ 	struct reftable_stack *st2 = NULL;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	int err;
+ 	struct reftable_ref_record ref1 = {
+@@ -218,7 +219,7 @@ static void test_reftable_stack_uptodate(void)
+ 
+ static void test_reftable_stack_transaction_api(void)
+ {
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+@@ -265,7 +266,7 @@ static void test_reftable_stack_validate_refname(void)
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+ 	int err;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	int i;
+ 	struct reftable_ref_record ref = {
+@@ -305,7 +306,7 @@ static int write_error(struct reftable_writer *wr, void *arg)
+ 
+ static void test_reftable_stack_update_index_check(void)
+ {
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+@@ -337,7 +338,7 @@ static void test_reftable_stack_update_index_check(void)
+ 
+ static void test_reftable_stack_lock_failure(void)
+ {
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+@@ -362,7 +363,7 @@ static void test_reftable_stack_add(void)
+ 		.exact_log_message = 1,
+ 	};
+ 	struct reftable_stack *st = NULL;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_ref_record refs[2] = { { NULL } };
+ 	struct reftable_log_record logs[2] = { { NULL } };
+@@ -443,7 +444,7 @@ static void test_reftable_stack_log_normalize(void)
+ 		0,
+ 	};
+ 	struct reftable_stack *st = NULL;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 
+ 	uint8_t h1[GIT_SHA1_RAWSZ] = { 0x01 }, h2[GIT_SHA1_RAWSZ] = { 0x02 };
+@@ -495,7 +496,7 @@ static void test_reftable_stack_log_normalize(void)
+ static void test_reftable_stack_tombstone(void)
+ {
+ 	int i = 0;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+@@ -577,7 +578,7 @@ static void test_reftable_stack_tombstone(void)
+ 
+ static void test_reftable_stack_hash_id(void)
+ {
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+@@ -685,7 +686,7 @@ static void test_suggest_compaction_segment_nothing(void)
+ 
+ static void test_reflog_expire(void)
+ {
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+@@ -766,7 +767,7 @@ static void test_empty_add(void)
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+ 	int err;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	struct reftable_stack *st2 = NULL;
+ 
+@@ -788,7 +789,7 @@ static void test_reftable_stack_auto_compaction(void)
+ {
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st = NULL;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	int err, i;
+ 	int N = 100;
+@@ -823,7 +824,7 @@ static void test_reftable_stack_compaction_concurrent(void)
+ {
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st1 = NULL, *st2 = NULL;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	int err, i;
+ 	int N = 3;
+@@ -873,7 +874,7 @@ static void test_reftable_stack_compaction_concurrent_clean(void)
+ {
+ 	struct reftable_write_options cfg = { 0 };
+ 	struct reftable_stack *st1 = NULL, *st2 = NULL, *st3 = NULL;
+-	char *dir = get_tmp_dir(__FUNCTION__);
++	char *dir = get_tmp_dir(__LINE__);
+ 
+ 	int err, i;
+ 	int N = 3;
+-- 
+2.33.0.736.g68690aaec9a
+
