@@ -1,0 +1,67 @@
+From 56d05862a67a128a4b6db97af5fe2791f8523575 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-3.3-56d05862a67-20210830T103823Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-0.3-00000000000-20210830T103822Z-avarab@gmail.com>
+References: <20210830072118.91921-1-sunshine@sunshineco.com>
+	<RFC-cover-v2-0.3-00000000000-20210830T103822Z-avarab@gmail.com>
+From: Eric Sunshine <sunshine@sunshineco.com>
+Date: Mon, 30 Aug 2021 03:21:18 -0400
+Subject: [RFC PATCH v2 3/3] notes: don't indent empty lines
+
+Like other Git commands, `git notes` takes care to call `stripspace` on
+the user-supplied note content, thereby ensuring that it has no trailing
+whitespace, among other cleanups. However, when notes are inserted into
+a patch via `git format-patch --notes`, all lines of the note are
+indented unconditionally, including empty lines, which leaves trailing
+whitespace on lines which previously were empty, thus negating the
+normalization done earlier. Fix this shortcoming.
+
+Signed-off-by: Eric Sunshine <sunshine@sunshineco.com>
+---
+ notes.c                 |  2 +-
+ t/t4014-format-patch.sh | 17 +++++++++++++++++
+ 2 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/notes.c b/notes.c
+index f87dac40684..25e0a598996 100644
+--- a/notes.c
++++ b/notes.c
+@@ -1295,7 +1295,7 @@ static void format_note(struct notes_tree *t, const struct object_id *object_oid
+ 	for (msg_p = msg; msg_p < msg + msglen; msg_p += linelen + 1) {
+ 		linelen = strchrnul(msg_p, '\n') - msg_p;
+ 
+-		if (!raw)
++		if (!raw && linelen)
+ 			strbuf_addstr(sb, "    ");
+ 		strbuf_add(sb, msg_p, linelen);
+ 		strbuf_addch(sb, '\n');
+diff --git a/t/t4014-format-patch.sh b/t/t4014-format-patch.sh
+index 712d4b5ddf0..7406e5fe990 100755
+--- a/t/t4014-format-patch.sh
++++ b/t/t4014-format-patch.sh
+@@ -906,6 +906,23 @@ test_expect_success 'format-patch with multiple notes refs in config' '
+ 	grep "this is note 2" out
+ '
+ 
++test_expect_success 'format-patch --notes does not indent empty lines' '
++	git notes add --file=- HEAD <<-\EOF &&
++	paragraph 1
++
++	paragraph 2
++	EOF
++	test_when_finished "git notes remove HEAD" &&
++	git format-patch -1 --stdout --notes >out &&
++	sed -n "/^[ 	]*paragraph 1$/,/^[ 	]*paragraph 2$/{s/^[ 	][ 	]*/[indent]/;p;}" out >actual &&
++	cat >expect <<-\EOF &&
++	[indent]paragraph 1
++
++	[indent]paragraph 2
++	EOF
++	test_cmp expect actual
++'
++
+ echo "fatal: --name-only does not make sense" >expect.name-only
+ echo "fatal: --name-status does not make sense" >expect.name-status
+ echo "fatal: --check does not make sense" >expect.check
+-- 
+2.33.0.737.g0eefde7d76
+
