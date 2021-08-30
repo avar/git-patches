@@ -1,9 +1,9 @@
 From 4b546b83fd7edc58b52b3b99fa8125c72587aa23 Mon Sep 17 00:00:00 2001
-Message-Id: <RFC-cover-v2-0.2-00000000000-20210830T103836Z-avarab@gmail.com>
+Message-Id: <RFC-cover-v2-0.2-00000000000-20210830T103856Z-avarab@gmail.com>
 In-Reply-To: <20210830072118.91921-1-sunshine@sunshineco.com>
 References: <20210830072118.91921-1-sunshine@sunshineco.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Mon, 30 Aug 2021 12:38:36 +0200
+Date: Mon, 30 Aug 2021 12:38:56 +0200
 Subject: [RFC PATCH v2 0/2] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -22,7 +22,6 @@ Eric Sunshine (2):
  4 files changed, 42 insertions(+), 37 deletions(-)
 
 Range-diff against v1:
-1:  d2915b20aee < -:  ----------- t3301: tolerate minor notes-related presentation changes
 2:  478d8b8d104 ! 1:  5a1ddd30859 t3303/t9301: make `notes` tests less brittle
     @@ Commit message
          desired information in a stable machine-consumable format.
@@ -32,8 +31,984 @@ Range-diff against v1:
      
       ## t/t3303-notes-subtrees.sh ##
      @@ t/t3303-notes-subtrees.sh: INPUT_END
+1:  d2915b20aee ! 2:  4b546b83fd7 t3301: tolerate minor notes-related presentation changes
+    @@ Metadata
+     Author: Eric Sunshine <sunshine@sunshineco.com>
+     
+      ## Commit message ##
+    -    t3301: tolerate minor notes-related presentation changes
+    +    notes: don't indent empty lines
+     
+    -    These tests care about whether intended notes-related functionality
+    -    occurred and that `git log` presents the notes in the expected fashion
+    -    (or, in some cases, that `git log` suppresses the notes). However, the
+    -    tests hard-code the precise indentation of notes by the default `git
+    -    log` output, which makes them somewhat brittle since they won't be able
+    -    to tolerate even minor changes to the presentation. Make the tests a bit
+    -    more robust by ignoring indentation.
+    +    Like other Git commands, `git notes` takes care to call `stripspace` on
+    +    the user-supplied note content, thereby ensuring that it has no trailing
+    +    whitespace, among other cleanups. However, when notes are inserted into
+    +    a patch via `git format-patch --notes`, all lines of the note are
+    +    indented unconditionally, including empty lines, which leaves trailing
+    +    whitespace on lines which previously were empty, thus negating the
+    +    normalization done earlier. Fix this shortcoming.
+     
+         Signed-off-by: Eric Sunshine <sunshine@sunshineco.com>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +
+    + ## notes.c ##
+    +@@ notes.c: static void format_note(struct notes_tree *t, const struct object_id *object_oid
+    + 	for (msg_p = msg; msg_p < msg + msglen; msg_p += linelen + 1) {
+    + 		linelen = strchrnul(msg_p, '\n') - msg_p;
+    + 
+    +-		if (!raw)
+    ++		if (!raw && linelen)
+    + 			strbuf_addstr(sb, "    ");
+    + 		strbuf_add(sb, msg_p, linelen);
+    + 		strbuf_addch(sb, '\n');
+     
+      ## t/t3301-notes.sh ##
+    -@@ t/t3301-notes.sh: test_description='Test commit notes'
+    - 
+    - . ./test-lib.sh
+    - 
+    -+lognotes () {
+    -+	git log "$@" >lognotes.out &&
+    -+	sed 's/^[ 	]*//' lognotes.out
+    -+}
+    -+
+    - write_script fake_editor <<\EOF
+    - echo "$MSG" >"$1"
+    - echo "$MSG" >&2
+    -@@ t/t3301-notes.sh: EOF
+    - GIT_EDITOR=./fake_editor
+    - export GIT_EDITOR
+    - 
+    --indent="    "
+    --
+    - test_expect_success 'cannot annotate non-existing HEAD' '
+    - 	test_must_fail env MSG=3 git notes add
+    - '
+    -@@ t/t3301-notes.sh: test_expect_success 'show notes' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:14:13 2005 -0700
+    - 
+    --		${indent}2nd
+    -+		2nd
+    - 
+    - 		Notes:
+    --		${indent}b1
+    -+		b1
+    - 	EOF
+    - 	git cat-file commit HEAD >commits &&
+    - 	! grep b1 commits &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'show multi-line notes' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:15:13 2005 -0700
+    - 
+    --		${indent}3rd
+    -+		3rd
+    - 
+    - 		Notes:
+    --		${indent}b3
+    --		${indent}c3c3c3c3
+    --		${indent}d3d3d3
+    -+		b3
+    -+		c3c3c3c3
+    -+		d3d3d3
+    - 
+    - 	EOF
+    - 	cat expect >>expect-multiline &&
+    --	git log -2 >actual &&
+    -+	lognotes -2 >actual &&
+    - 	test_cmp expect-multiline actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'show -F notes' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:16:13 2005 -0700
+    - 
+    --		${indent}4th
+    -+		4th
+    - 
+    - 		Notes:
+    --		${indent}xyzzy
+    -+		xyzzy
+    - 
+    - 	EOF
+    - 	cat expect-multiline >>expect-F &&
+    --	git log -3 >actual &&
+    -+	lognotes -3 >actual &&
+    - 	test_cmp expect-F actual
+    - '
+    - 
+    - test_expect_success 'Re-adding -F notes without -f fails' '
+    - 	echo "zyxxy" >note5 &&
+    - 	test_must_fail git notes add -F note5 &&
+    --	git log -3 >actual &&
+    -+	lognotes -3 >actual &&
+    - 	test_cmp expect-F actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'git log --pretty=raw does not show notes' '
+    - 		author A U Thor <author@example.com> 1112912173 -0700
+    - 		committer C O Mitter <committer@example.com> 1112912173 -0700
+    - 
+    --		${indent}4th
+    -+		4th
+    - 	EOF
+    --	git log -1 --pretty=raw >actual &&
+    -+	lognotes -1 --pretty=raw >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'git log --show-notes' '
+    - 	cat >>expect <<-EOF &&
+    - 
+    - 	Notes:
+    --	${indent}xyzzy
+    -+	xyzzy
+    - 	EOF
+    --	git log -1 --pretty=raw --show-notes >actual &&
+    -+	lognotes -1 --pretty=raw --show-notes >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    - test_expect_success 'git log --no-notes' '
+    --	git log -1 --no-notes >actual &&
+    -+	lognotes -1 --no-notes >actual &&
+    - 	! grep xyzzy actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'setup alternate notes ref' '
+    - '
+    - 
+    - test_expect_success 'git log --notes shows default notes' '
+    --	git log -1 --notes >actual &&
+    -+	lognotes -1 --notes >actual &&
+    - 	grep xyzzy actual &&
+    - 	! grep alternate actual
+    - '
+    - 
+    - test_expect_success 'git log --notes=X shows only X' '
+    --	git log -1 --notes=alternate >actual &&
+    -+	lognotes -1 --notes=alternate >actual &&
+    - 	! grep xyzzy actual &&
+    - 	grep alternate actual
+    - '
+    - 
+    - test_expect_success 'git log --notes --notes=X shows both' '
+    --	git log -1 --notes --notes=alternate >actual &&
+    -+	lognotes -1 --notes --notes=alternate >actual &&
+    - 	grep xyzzy actual &&
+    - 	grep alternate actual
+    - '
+    - 
+    - test_expect_success 'git log --no-notes resets default state' '
+    --	git log -1 --notes --notes=alternate \
+    -+	lognotes -1 --notes --notes=alternate \
+    - 		--no-notes --notes=alternate \
+    - 		>actual &&
+    - 	! grep xyzzy actual &&
+    -@@ t/t3301-notes.sh: test_expect_success 'git log --no-notes resets default state' '
+    - '
+    - 
+    - test_expect_success 'git log --no-notes resets ref list' '
+    --	git log -1 --notes --notes=alternate \
+    -+	lognotes -1 --notes --notes=alternate \
+    - 		--no-notes --notes \
+    - 		>actual &&
+    - 	grep xyzzy actual &&
+     @@ t/t3301-notes.sh: test_expect_success 'show -m notes' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:17:13 2005 -0700
+    - 
+    --		${indent}5th
+    -+		5th
+      
+      		Notes:
+    --		${indent}spam
+    + 		${indent}spam
+     -		${indent}
+    --		${indent}foo
+    --		${indent}bar
+    --		${indent}baz
+    -+		spam
+     +
+    -+		foo
+    -+		bar
+    -+		baz
+    - 
+    - 	EOF
+    - 	cat expect-F >>expect-m &&
+    --	git log -4 >actual &&
+    -+	lognotes -4 >actual &&
+    - 	test_cmp expect-m actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'remove note with add -f -F /dev/null' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:17:13 2005 -0700
+    - 
+    --		${indent}5th
+    -+		5th
+    - 
+    - 	EOF
+    - 	cat expect-F >>expect-rm-F &&
+    --	git log -4 >actual &&
+    -+	lognotes -4 >actual &&
+    - 	test_cmp expect-rm-F actual &&
+    - 	test_must_fail git notes show
+    - '
+    - 
+    - test_expect_success 'do not create empty note with -m ""' '
+    - 	git notes add -m "" &&
+    --	git log -4 >actual &&
+    -+	lognotes -4 >actual &&
+    - 	test_cmp expect-rm-F actual &&
+    - 	test_must_fail git notes show
+    - '
+    -@@ t/t3301-notes.sh: test_expect_success 'remove note with "git notes remove"' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:17:13 2005 -0700
+    - 
+    --		${indent}5th
+    -+		5th
+    - 
+    - 		commit $parent
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:16:13 2005 -0700
+    - 
+    --		${indent}4th
+    -+		4th
+    - 
+    - 	EOF
+    - 	cat expect-multiline >>expect-rm-remove &&
+    --	git log -4 >actual &&
+    -+	lognotes -4 >actual &&
+    - 	test_cmp expect-rm-remove actual &&
+    - 	test_must_fail git notes show HEAD^
+    - '
+    -@@ t/t3301-notes.sh: test_expect_success 'create other note on a different notes ref (setup)' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:18:13 2005 -0700
+    - 
+    --		${indent}6th
+    -+		6th
+    - 	EOF
+    - 	cp expect-not-other expect-other &&
+    - 	cat >>expect-other <<-EOF
+    - 
+    - 		Notes (other):
+    --		${indent}other note
+    -+		other note
+    - 	EOF
+    - '
+    - 
+    - test_expect_success 'Do not show note on other ref by default' '
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect-not-other actual
+    - '
+    - 
+    - test_expect_success 'Do show note when ref is given in GIT_NOTES_REF' '
+    --	GIT_NOTES_REF="refs/notes/other" git log -1 >actual &&
+    -+	test_env GIT_NOTES_REF="refs/notes/other" lognotes -1 >actual &&
+    - 	test_cmp expect-other actual
+    - '
+    - 
+    - test_expect_success 'Do show note when ref is given in core.notesRef config' '
+    - 	test_config core.notesRef "refs/notes/other" &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect-other actual
+    - '
+    - 
+    - test_expect_success 'Do not show note when core.notesRef is overridden' '
+    - 	test_config core.notesRef "refs/notes/other" &&
+    --	GIT_NOTES_REF="refs/notes/wrong" git log -1 >actual &&
+    -+	test_env GIT_NOTES_REF="refs/notes/wrong" lognotes -1 >actual &&
+    - 	test_cmp expect-not-other actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'Show all notes when notes.displayRef=refs/notes/*' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:18:13 2005 -0700
+    - 
+    --		${indent}6th
+    -+		6th
+    - 
+    - 		Notes:
+    --		${indent}order test
+    -+		order test
+    - 
+    - 		Notes (other):
+    --		${indent}other note
+    -+		other note
+    - 
+    - 		commit $parent
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:17:13 2005 -0700
+    - 
+    --		${indent}5th
+    -+		5th
+    - 
+    - 		Notes:
+    --		${indent}replacement for deleted note
+    -+		replacement for deleted note
+    - 	EOF
+    - 	GIT_NOTES_REF=refs/notes/commits git notes add \
+    - 		-m"replacement for deleted note" HEAD^ &&
+    - 	GIT_NOTES_REF=refs/notes/commits git notes add -m"order test" &&
+    - 	test_unconfig core.notesRef &&
+    - 	test_config notes.displayRef "refs/notes/*" &&
+    --	git log -2 >actual &&
+    -+	lognotes -2 >actual &&
+    - 	test_cmp expect-both actual
+    - '
+    - 
+    - test_expect_success 'core.notesRef is implicitly in notes.displayRef' '
+    - 	test_config core.notesRef refs/notes/commits &&
+    - 	test_config notes.displayRef refs/notes/other &&
+    --	git log -2 >actual &&
+    -+	lognotes -2 >actual &&
+    - 	test_cmp expect-both actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'notes.displayRef can be given more than once' '
+    - 	test_unconfig core.notesRef &&
+    - 	test_config notes.displayRef refs/notes/commits &&
+    - 	git config --add notes.displayRef refs/notes/other &&
+    --	git log -2 >actual &&
+    -+	lognotes -2 >actual &&
+    - 	test_cmp expect-both actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'notes.displayRef respects order' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:18:13 2005 -0700
+    - 
+    --		${indent}6th
+    -+		6th
+    - 
+    - 		Notes (other):
+    --		${indent}other note
+    -+		other note
+    - 
+    - 		Notes:
+    --		${indent}order test
+    -+		order test
+    - 	EOF
+    - 	test_config core.notesRef refs/notes/other &&
+    - 	test_config notes.displayRef refs/notes/commits &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect-both-reversed actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'notes.displayRef with no value handled gracefully' '
+    - '
+    - 
+    - test_expect_success 'GIT_NOTES_DISPLAY_REF works' '
+    --	GIT_NOTES_DISPLAY_REF=refs/notes/commits:refs/notes/other \
+    --		git log -2 >actual &&
+    -+	test_env GIT_NOTES_DISPLAY_REF=refs/notes/commits:refs/notes/other \
+    -+		lognotes -2 >actual &&
+    - 	test_cmp expect-both actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'GIT_NOTES_DISPLAY_REF overrides config' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:18:13 2005 -0700
+    - 
+    --		${indent}6th
+    -+		6th
+    - 
+    - 		commit $parent
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:17:13 2005 -0700
+    - 
+    --		${indent}5th
+    -+		5th
+    - 	EOF
+    - 	test_config notes.displayRef "refs/notes/*" &&
+    --	GIT_NOTES_REF= GIT_NOTES_DISPLAY_REF= git log -2 >actual &&
+    -+	test_env GIT_NOTES_REF= GIT_NOTES_DISPLAY_REF= lognotes -2 >actual &&
+    - 	test_cmp expect-none actual
+    - '
+    - 
+    - test_expect_success '--show-notes=* adds to GIT_NOTES_DISPLAY_REF' '
+    --	GIT_NOTES_REF= GIT_NOTES_DISPLAY_REF= git log --show-notes=* -2 >actual &&
+    -+	test_env GIT_NOTES_REF= GIT_NOTES_DISPLAY_REF= lognotes --show-notes=* -2 >actual &&
+    - 	test_cmp expect-both actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success '--no-standard-notes' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:18:13 2005 -0700
+    - 
+    --		${indent}6th
+    -+		6th
+    - 
+    - 		Notes:
+    --		${indent}order test
+    -+		order test
+    - 	EOF
+    --	git log --no-standard-notes --show-notes=commits -1 >actual &&
+    -+	lognotes --no-standard-notes --show-notes=commits -1 >actual &&
+    - 	test_cmp expect-commits actual
+    - '
+    - 
+    - test_expect_success '--standard-notes' '
+    - 	test_config notes.displayRef "refs/notes/*" &&
+    --	git log --no-standard-notes --show-notes=commits \
+    -+	lognotes --no-standard-notes --show-notes=commits \
+    - 		--standard-notes -2 >actual &&
+    - 	test_cmp expect-both actual
+    - '
+    - 
+    - test_expect_success '--show-notes=ref accumulates' '
+    --	git log --show-notes=other --show-notes=commits \
+    -+	lognotes --show-notes=other --show-notes=commits \
+    - 		 --no-standard-notes -1 >actual &&
+    - 	test_cmp expect-both-reversed actual
+    - '
+    -@@ t/t3301-notes.sh: test_expect_success 'create note from other note with "git notes add -C"' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:19:13 2005 -0700
+    - 
+    --		${indent}7th
+    -+		7th
+    - 
+    - 		Notes:
+    --		${indent}order test
+    -+		order test
+    - 	EOF
+    - 	note=$(git notes list HEAD^) &&
+    - 	git notes add -C $note &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual &&
+    - 	git notes list HEAD^ >expect &&
+    - 	git notes list HEAD >actual &&
+    -@@ t/t3301-notes.sh: test_expect_success 'create note from blob with "git notes add -C" reuses blob i
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:20:13 2005 -0700
+    - 
+    --		${indent}8th
+    -+		8th
+    - 
+    - 		Notes:
+    --		${indent}This is a blob object
+    -+		This is a blob object
+    - 	EOF
+    - 	echo "This is a blob object" | git hash-object -w --stdin >blob &&
+    - 	git notes add -C $(cat blob) &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual &&
+    - 	git notes list HEAD >actual &&
+    - 	test_cmp blob actual
+    -@@ t/t3301-notes.sh: test_expect_success 'create note from other note with "git notes add -c"' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:21:13 2005 -0700
+    - 
+    --		${indent}9th
+    -+		9th
+    - 
+    - 		Notes:
+    --		${indent}yet another note
+    -+		yet another note
+    - 	EOF
+    - 	note=$(git notes list HEAD^^) &&
+    - 	MSG="yet another note" git notes add -c $note &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    + 		${indent}foo
+    + 		${indent}bar
+    + 		${indent}baz
+     @@ t/t3301-notes.sh: test_expect_success 'append to note from other note with "git notes append -C"'
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:21:13 2005 -0700
+    - 
+    --		${indent}9th
+    -+		9th
+      
+      		Notes:
+    --		${indent}yet another note
+    + 		${indent}yet another note
+     -		${indent}
+    --		${indent}yet another note
+    -+		yet another note
+     +
+    -+		yet another note
+    - 	EOF
+    - 	note=$(git notes list HEAD^) &&
+    - 	git notes append -C $note HEAD^ &&
+    --	git log -1 HEAD^ >actual &&
+    -+	lognotes -1 HEAD^ >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'create note from other note with "git notes append -c"' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:22:13 2005 -0700
+    - 
+    --		${indent}10th
+    -+		10th
+    - 
+    - 		Notes:
+    --		${indent}other note
+    -+		other note
+    + 		${indent}yet another note
+      	EOF
+      	note=$(git notes list HEAD^) &&
+    - 	MSG="other note" git notes append -c $note &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+     @@ t/t3301-notes.sh: test_expect_success 'append to note from other note with "git notes append -c"'
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:22:13 2005 -0700
+    - 
+    --		${indent}10th
+    -+		10th
+      
+      		Notes:
+    --		${indent}other note
+    + 		${indent}other note
+     -		${indent}
+    --		${indent}yet another note
+    -+		other note
+     +
+    -+		yet another note
+    + 		${indent}yet another note
+      	EOF
+      	note=$(git notes list HEAD) &&
+    - 	MSG="yet another note" git notes append -c $note &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'copy note with "git notes copy"' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:16:13 2005 -0700
+    - 
+    --		${indent}4th
+    -+		4th
+    - 
+    - 		Notes:
+    --		${indent}This is a blob object
+    -+		This is a blob object
+    - 	EOF
+    - 	git notes copy 8th 4th &&
+    --	git log 3rd..4th >actual &&
+    -+	lognotes 3rd..4th >actual &&
+    - 	test_cmp expect actual &&
+    - 	git notes list 4th >expect &&
+    - 	git notes list 8th >actual &&
+     @@ t/t3301-notes.sh: test_expect_success 'copy note with "git notes copy" with default' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:23:13 2005 -0700
+    - 
+    --		${indent}11th
+    -+		11th
+      
+      		Notes:
+    --		${indent}other note
+    + 		${indent}other note
+     -		${indent}
+    --		${indent}yet another note
+    -+		other note
+     +
+    -+		yet another note
+    + 		${indent}yet another note
+      	EOF
+      	git notes copy HEAD^ &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual &&
+    - 	git notes list HEAD^ >expect &&
+    - 	git notes list HEAD >actual &&
+     @@ t/t3301-notes.sh: test_expect_success 'prevent overwrite with "git notes copy"' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:23:13 2005 -0700
+    - 
+    --		${indent}11th
+    -+		11th
+      
+      		Notes:
+    --		${indent}other note
+    + 		${indent}other note
+     -		${indent}
+    --		${indent}yet another note
+    -+		other note
+     +
+    -+		yet another note
+    - 	EOF
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual &&
+    - 	git notes list HEAD^ >expect &&
+    - 	git notes list HEAD >actual &&
+    -@@ t/t3301-notes.sh: test_expect_success 'allow overwrite with "git notes copy -f"' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:23:13 2005 -0700
+    - 
+    --		${indent}11th
+    -+		11th
+    - 
+    - 		Notes:
+    --		${indent}This is a blob object
+    -+		This is a blob object
+    + 		${indent}yet another note
+      	EOF
+    - 	git notes copy -f HEAD~3 HEAD &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual &&
+    - 	git notes list HEAD~3 >expect &&
+    - 	git notes list HEAD >actual &&
+    + 	git log -1 >actual &&
+     @@ t/t3301-notes.sh: test_expect_success 'allow overwrite with "git notes copy -f" with default' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:23:13 2005 -0700
+    - 
+    --		${indent}11th
+    -+		11th
+      
+      		Notes:
+    --		${indent}yet another note
+    + 		${indent}yet another note
+     -		${indent}
+    --		${indent}yet another note
+    -+		yet another note
+     +
+    -+		yet another note
+    + 		${indent}yet another note
+      	EOF
+      	git notes copy -f HEAD~2 &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual &&
+    - 	git notes list HEAD~2 >expect &&
+    - 	git notes list HEAD >actual &&
+     @@ t/t3301-notes.sh: test_expect_success 'git notes copy --stdin' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:25:13 2005 -0700
+    - 
+    --		${indent}13th
+    -+		13th
+      
+      		Notes:
+    --		${indent}yet another note
+    + 		${indent}yet another note
+     -		${indent}
+    --		${indent}yet another note
+    -+		yet another note
+     +
+    -+		yet another note
+    + 		${indent}yet another note
+      
+      		commit $parent
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:24:13 2005 -0700
+    - 
+    --		${indent}12th
+    -+		12th
+    +@@ t/t3301-notes.sh: test_expect_success 'git notes copy --stdin' '
+      
+      		Notes:
+    --		${indent}other note
+    + 		${indent}other note
+     -		${indent}
+    --		${indent}yet another note
+    -+		other note
+     +
+    -+		yet another note
+    + 		${indent}yet another note
+      	EOF
+      	from=$(git rev-parse HEAD~3) &&
+    - 	to=$(git rev-parse HEAD^) &&
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --stdin' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >>copy &&
+    - 	git notes copy --stdin <copy &&
+    --	git log -2 >actual &&
+    -+	lognotes -2 >actual &&
+    - 	test_cmp expect actual &&
+    - 	git notes list HEAD~2 >expect &&
+    - 	git notes list HEAD >actual &&
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (unconfigured)' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:27:13 2005 -0700
+    - 
+    --		${indent}15th
+    -+		15th
+    - 
+    - 		commit $parent
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:26:13 2005 -0700
+    - 
+    --		${indent}14th
+    -+		14th
+    - 	EOF
+    - 	from=$(git rev-parse HEAD~3) &&
+    - 	to=$(git rev-parse HEAD^) &&
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (unconfigured)' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >>copy &&
+    - 	git notes copy --for-rewrite=foo <copy &&
+    --	git log -2 >actual &&
+    -+	lognotes -2 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+     @@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (enabled)' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:27:13 2005 -0700
+    - 
+    --		${indent}15th
+    -+		15th
+      
+      		Notes:
+    --		${indent}yet another note
+    + 		${indent}yet another note
+     -		${indent}
+    --		${indent}yet another note
+    -+		yet another note
+     +
+    -+		yet another note
+    + 		${indent}yet another note
+      
+      		commit $parent
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:26:13 2005 -0700
+    - 
+    --		${indent}14th
+    -+		14th
+    +@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (enabled)' '
+      
+      		Notes:
+    --		${indent}other note
+    + 		${indent}other note
+     -		${indent}
+    --		${indent}yet another note
+    -+		other note
+     +
+    -+		yet another note
+    - 	EOF
+    - 	test_config notes.rewriteMode overwrite &&
+    - 	test_config notes.rewriteRef "refs/notes/*" &&
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (enabled)' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >>copy &&
+    - 	git notes copy --for-rewrite=foo <copy &&
+    --	git log -2 >actual &&
+    -+	lognotes -2 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (disabled)' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >copy &&
+    - 	git notes copy --for-rewrite=bar <copy &&
+    --	git log -2 >actual &&
+    -+	lognotes -2 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (overwrite)' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:27:13 2005 -0700
+    - 
+    --		${indent}15th
+    -+		15th
+    - 
+    - 		Notes:
+    --		${indent}a fresh note
+    -+		a fresh note
+    + 		${indent}yet another note
+      	EOF
+    - 	git notes add -f -m"a fresh note" HEAD^ &&
+      	test_config notes.rewriteMode overwrite &&
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (overwrite)' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >copy &&
+    - 	git notes copy --for-rewrite=foo <copy &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (ignore)' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >copy &&
+    - 	git notes copy --for-rewrite=foo <copy &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+     @@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (append)' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:27:13 2005 -0700
+    - 
+    --		${indent}15th
+    -+		15th
+      
+      		Notes:
+    --		${indent}a fresh note
+    + 		${indent}a fresh note
+     -		${indent}
+    --		${indent}another fresh note
+    -+		a fresh note
+     +
+    -+		another fresh note
+    + 		${indent}another fresh note
+      	EOF
+      	git notes add -f -m"another fresh note" HEAD^ &&
+    - 	test_config notes.rewriteMode concatenate &&
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (append)' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >copy &&
+    - 	git notes copy --for-rewrite=foo <copy &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+     @@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (append two to one)' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:27:13 2005 -0700
+    - 
+    --		${indent}15th
+    -+		15th
+      
+      		Notes:
+    --		${indent}a fresh note
+    --		${indent}
+    --		${indent}another fresh note
+    --		${indent}
+    --		${indent}append 1
+    + 		${indent}a fresh note
+     -		${indent}
+    --		${indent}append 2
+    -+		a fresh note
+     +
+    -+		another fresh note
+    + 		${indent}another fresh note
+    +-		${indent}
+     +
+    -+		append 1
+    + 		${indent}append 1
+    +-		${indent}
+     +
+    -+		append 2
+    + 		${indent}append 2
+      	EOF
+      	git notes add -f -m"append 1" HEAD^ &&
+    - 	git notes add -f -m"append 2" HEAD^^ &&
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (append two to one)' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >>copy &&
+    - 	git notes copy --for-rewrite=foo <copy &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'git notes copy --for-rewrite (append empty)' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >copy &&
+    - 	git notes copy --for-rewrite=foo <copy &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'GIT_NOTES_REWRITE_MODE works' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:27:13 2005 -0700
+    - 
+    --		${indent}15th
+    -+		15th
+    - 
+    - 		Notes:
+    --		${indent}replacement note 1
+    -+		replacement note 1
+    - 	EOF
+    - 	test_config notes.rewriteMode concatenate &&
+    - 	test_config notes.rewriteRef "refs/notes/*" &&
+    -@@ t/t3301-notes.sh: test_expect_success 'GIT_NOTES_REWRITE_MODE works' '
+    - 	to=$(git rev-parse HEAD) &&
+    - 	echo "$from" "$to" >copy &&
+    - 	GIT_NOTES_REWRITE_MODE=overwrite git notes copy --for-rewrite=foo <copy &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'GIT_NOTES_REWRITE_REF works' '
+    - 		Author: A U Thor <author@example.com>
+    - 		Date:   Thu Apr 7 15:27:13 2005 -0700
+    - 
+    --		${indent}15th
+    -+		15th
+    - 
+    - 		Notes:
+    --		${indent}replacement note 2
+    -+		replacement note 2
+    - 	EOF
+    - 	git notes add -f -m"replacement note 2" HEAD^ &&
+    - 	test_config notes.rewriteMode overwrite &&
+    -@@ t/t3301-notes.sh: test_expect_success 'GIT_NOTES_REWRITE_REF works' '
+    - 	echo "$from" "$to" >copy &&
+    - 	GIT_NOTES_REWRITE_REF=refs/notes/commits:refs/notes/other \
+    - 		git notes copy --for-rewrite=foo <copy &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: test_expect_success 'GIT_NOTES_REWRITE_REF overrides config' '
+    - 	echo "$from" "$to" >copy &&
+    - 	GIT_NOTES_REWRITE_REF=refs/notes/commits \
+    - 		git notes copy --for-rewrite=foo <copy &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	grep "replacement note 3" actual
+    - '
+    - 
+    -@@ t/t3301-notes.sh: EOF
+    - 
+    - test_expect_success 'empty notes are displayed by git log' '
+    - 	test_commit 17th &&
+    --	git log -1 >expect &&
+    -+	lognotes -1 >expect &&
+    - 	cat >>expect <<-EOF &&
+    - 
+    - 		Notes:
+    - 	EOF
+    - 	git notes add -C "$empty_blob" --allow-empty &&
+    --	git log -1 >actual &&
+    -+	lognotes -1 >actual &&
+    - 	test_cmp expect actual
+    - '
+    - 
 3:  56d05862a67 < -:  ----------- notes: don't indent empty lines
--:  ----------- > 2:  4b546b83fd7 notes: don't indent empty lines
 -- 
 2.33.0.737.g0eefde7d76
 
