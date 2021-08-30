@@ -1,0 +1,107 @@
+From 5a1ddd30859070d89e45fcbcf51837d0749a4be1 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-1.2-5a1ddd30859-20210830T103836Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-0.2-00000000000-20210830T103836Z-avarab@gmail.com>
+References: <20210830072118.91921-1-sunshine@sunshineco.com>
+	<RFC-cover-v2-0.2-00000000000-20210830T103836Z-avarab@gmail.com>
+From: Eric Sunshine <sunshine@sunshineco.com>
+Date: Mon, 30 Aug 2021 03:21:17 -0400
+Subject: [RFC PATCH v2 1/2] t3303/t9301: make `notes` tests less brittle
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+These tests care about whether intended notes-related functionality
+occurred, but they check for the expected result in a brittle way by
+consulting the default output of `git log` which is intended for human,
+not machine, consumption. Make the tests more robust by requesting the
+desired information in a stable machine-consumable format.
+
+Signed-off-by: Eric Sunshine <sunshine@sunshineco.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3303-notes-subtrees.sh    | 13 ++++++++-----
+ t/t9301-fast-import-notes.sh | 36 +++++++++++++++++++-----------------
+ 2 files changed, 27 insertions(+), 22 deletions(-)
+
+diff --git a/t/t3303-notes-subtrees.sh b/t/t3303-notes-subtrees.sh
+index d47ce00f694..abffa105645 100755
+--- a/t/t3303-notes-subtrees.sh
++++ b/t/t3303-notes-subtrees.sh
+@@ -171,13 +171,16 @@ INPUT_END
+ }
+ 
+ verify_concatenated_notes () {
+-	git log | grep "^    " > output &&
++	git log --format="tformat:%B%N" >output &&
+ 	i=$number_of_commits &&
+ 	while [ $i -gt 0 ]; do
+-		echo "    commit #$i" &&
+-		echo "    first note for commit #$i" &&
+-		echo "    " &&
+-		echo "    second note for commit #$i" &&
++		cat <<-EOF &&
++		commit #$i
++		first note for commit #$i
++
++		second note for commit #$i
++
++		EOF
+ 		i=$(($i-1));
+ 	done > expect &&
+ 	test_cmp expect output
+diff --git a/t/t9301-fast-import-notes.sh b/t/t9301-fast-import-notes.sh
+index 1ae4d7c0d37..123323b2bbb 100755
+--- a/t/t9301-fast-import-notes.sh
++++ b/t/t9301-fast-import-notes.sh
+@@ -259,29 +259,31 @@ EOF
+ 
+ INPUT_END
+ 
+-whitespace="    "
+-
+ cat >expect <<EXPECT_END
+-    fourth commit
+-    pre-prefix of note for fourth commit
+-$whitespace
+-    prefix of note for fourth commit
+-$whitespace
+-    third note for fourth commit
+-    third commit
+-    prefix of note for third commit
+-$whitespace
+-    third note for third commit
+-    second commit
+-    third note for second commit
+-    first commit
+-    third note for first commit
++fourth commit
++pre-prefix of note for fourth commit
++
++prefix of note for fourth commit
++
++third note for fourth commit
++
++third commit
++prefix of note for third commit
++
++third note for third commit
++
++second commit
++third note for second commit
++
++first commit
++third note for first commit
++
+ EXPECT_END
+ 
+ test_expect_success 'add concatenation notes with M command' '
+ 
+ 	git fast-import <input &&
+-	GIT_NOTES_REF=refs/notes/test git log | grep "^    " > actual &&
++	GIT_NOTES_REF=refs/notes/test git log --format="tformat:%B%N" >actual &&
+ 	test_cmp expect actual
+ 
+ '
+-- 
+2.33.0.737.g0eefde7d76
+
