@@ -1,0 +1,86 @@
+From 85619728d41c53878f6adee2dda50e82a4ab4a35 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.8-85619728d41-20210831T132508Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.8-00000000000-20210831T132508Z-avarab@gmail.com>
+References: <cover-0.4-0000000000-20210714T172251Z-avarab@gmail.com>
+	<cover-v3-0.8-00000000000-20210831T132508Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 30 Aug 2021 18:04:21 +0200
+Subject: [PATCH v3 1/8] Makefile: add SANITIZE=leak flag to GIT-BUILD-OPTIONS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When SANITIZE=leak is specified we'll now add a SANITIZE_LEAK flag to
+GIT-BUILD-OPTIONS, this can then be picked up by the test-lib.sh,
+which sets a SANITIZE_LEAK prerequisite.
+
+We can then skip specific tests that are known to fail under
+SANITIZE=leak, add one such annotation to t0004-unwritable.sh, which
+now passes under SANITIZE=leak.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile              | 5 +++++
+ t/t0004-unwritable.sh | 2 +-
+ t/test-lib.sh         | 1 +
+ 3 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index d1feab008fc..005d647d46e 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1221,6 +1221,9 @@ PTHREAD_CFLAGS =
+ SPARSE_FLAGS ?=
+ SP_EXTRA_FLAGS = -Wno-universal-initializer
+ 
++# For informing GIT-BUILD-OPTIONS of the SANITIZE=leak target
++SANITIZE_LEAK =
++
+ # For the 'coccicheck' target; setting SPATCH_BATCH_SIZE higher will
+ # usually result in less CPU usage at the cost of higher peak memory.
+ # Setting it to 0 will feed all files in a single spatch invocation.
+@@ -1265,6 +1268,7 @@ BASIC_CFLAGS += -DSHA1DC_FORCE_ALIGNED_ACCESS
+ endif
+ ifneq ($(filter leak,$(SANITIZERS)),)
+ BASIC_CFLAGS += -DSUPPRESS_ANNOTATED_LEAKS
++SANITIZE_LEAK = YesCompiledWithIt
+ endif
+ ifneq ($(filter address,$(SANITIZERS)),)
+ NO_REGEX = NeededForASAN
+@@ -2812,6 +2816,7 @@ GIT-BUILD-OPTIONS: FORCE
+ 	@echo NO_UNIX_SOCKETS=\''$(subst ','\'',$(subst ','\'',$(NO_UNIX_SOCKETS)))'\' >>$@+
+ 	@echo PAGER_ENV=\''$(subst ','\'',$(subst ','\'',$(PAGER_ENV)))'\' >>$@+
+ 	@echo DC_SHA1=\''$(subst ','\'',$(subst ','\'',$(DC_SHA1)))'\' >>$@+
++	@echo SANITIZE_LEAK=\''$(subst ','\'',$(subst ','\'',$(SANITIZE_LEAK)))'\' >>$@+
+ 	@echo X=\'$(X)\' >>$@+
+ ifdef TEST_OUTPUT_DIRECTORY
+ 	@echo TEST_OUTPUT_DIRECTORY=\''$(subst ','\'',$(subst ','\'',$(TEST_OUTPUT_DIRECTORY)))'\' >>$@+
+diff --git a/t/t0004-unwritable.sh b/t/t0004-unwritable.sh
+index e3137d638ee..fbdcb926b3a 100755
+--- a/t/t0004-unwritable.sh
++++ b/t/t0004-unwritable.sh
+@@ -21,7 +21,7 @@ test_expect_success POSIXPERM,SANITY 'write-tree should notice unwritable reposi
+ 	test_must_fail git write-tree
+ '
+ 
+-test_expect_success POSIXPERM,SANITY 'commit should notice unwritable repository' '
++test_expect_success POSIXPERM,SANITY,!SANITIZE_LEAK 'commit should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+ 	test_must_fail git commit -m second
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index abcfbed6d61..4ab18914a3d 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1533,6 +1533,7 @@ test -z "$NO_PYTHON" && test_set_prereq PYTHON
+ test -n "$USE_LIBPCRE2" && test_set_prereq PCRE
+ test -n "$USE_LIBPCRE2" && test_set_prereq LIBPCRE2
+ test -z "$NO_GETTEXT" && test_set_prereq GETTEXT
++test -n "$SANITIZE_LEAK" && test_set_prereq SANITIZE_LEAK
+ 
+ if test -z "$GIT_TEST_CHECK_CACHE_TREE"
+ then
+-- 
+2.33.0.805.g739b16c2189
+
