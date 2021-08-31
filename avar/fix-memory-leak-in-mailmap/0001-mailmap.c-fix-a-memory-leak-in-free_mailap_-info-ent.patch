@@ -1,0 +1,99 @@
+From 16628e0116d4561639cc5a672e0cb8b40f558caf Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-16628e0116d-20210831T133949Z-avarab@gmail.com>
+In-Reply-To: <patch-4.4-ad8680f529-20210714T172251Z-avarab@gmail.com>
+References: <patch-4.4-ad8680f529-20210714T172251Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 13 Jul 2021 17:00:23 +0200
+Subject: [PATCH] mailmap.c: fix a memory leak in free_mailap_{info,entry}({
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the free_mailmap_entry() code added in 0925ce4d49 (Add map_user()
+and clear_mailmap() to mailmap, 2009-02-08) the intent was clearly to
+clear the "me" structure, but while we freed parts of the
+mailmap_entry structure, we didn't free the structure itself. The same
+goes for the "mailmap_info" structure.
+
+This brings us from 50 failures when running t4203-mailmap.sh to
+49. Not really progress as far as the number of failures is concerned,
+but as far as I can tell this fixes all leaks in mailmap.c
+itself. There's still users of it such as builtin/log.c that call
+read_mailmap() without a clear_mailmap(), but that's on them.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff:
+1:  80edda308c9 ! 1:  16628e0116d SANITIZE tests: fix leak in mailmap.c
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    SANITIZE tests: fix leak in mailmap.c
+    -
+    -    Get closer to being able to run t4203-mailmap.sh by fixing a couple of
+    -    memory leak in mailmap.c.
+    +    mailmap.c: fix a memory leak in free_mailap_{info,entry}({
+     
+         In the free_mailmap_entry() code added in 0925ce4d49 (Add map_user()
+         and clear_mailmap() to mailmap, 2009-02-08) the intent was clearly to
+    @@ Commit message
+         mailmap_entry structure, we didn't free the structure itself. The same
+         goes for the "mailmap_info" structure.
+     
+    +    This brings us from 50 failures when running t4203-mailmap.sh to
+    +    49. Not really progress as far as the number of failures is concerned,
+    +    but as far as I can tell this fixes all leaks in mailmap.c
+    +    itself. There's still users of it such as builtin/log.c that call
+    +    read_mailmap() without a clear_mailmap(), but that's on them.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## mailmap.c ##
+    @@ mailmap.c: static void free_mailmap_entry(void *p, const char *s)
+      }
+      
+      /*
+    -
+    - ## t/t4203-mailmap.sh ##
+    -@@ t/t4203-mailmap.sh: test_expect_success 'check-mailmap bogus contact --stdin' '
+    - 	test_must_fail git check-mailmap --stdin bogus </dev/null
+    - '
+    - 
+    -+if test_have_prereq SANITIZE_LEAK
+    -+then
+    -+	skip_all='skipping the rest of mailmap tests under SANITIZE_LEAK'
+    -+	test_done
+    -+fi
+    -+
+    - test_expect_success 'No mailmap' '
+    - 	cat >expect <<-EOF &&
+    - 	$GIT_AUTHOR_NAME (1):
+
+ mailmap.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/mailmap.c b/mailmap.c
+index 462b3956340..40ce152024d 100644
+--- a/mailmap.c
++++ b/mailmap.c
+@@ -37,6 +37,7 @@ static void free_mailmap_info(void *p, const char *s)
+ 		 s, debug_str(mi->name), debug_str(mi->email));
+ 	free(mi->name);
+ 	free(mi->email);
++	free(mi);
+ }
+ 
+ static void free_mailmap_entry(void *p, const char *s)
+@@ -52,6 +53,7 @@ static void free_mailmap_entry(void *p, const char *s)
+ 
+ 	me->namemap.strdup_strings = 1;
+ 	string_list_clear_func(&me->namemap, free_mailmap_info);
++	free(me);
+ }
+ 
+ /*
+-- 
+2.33.0.805.g739b16c2189
+
