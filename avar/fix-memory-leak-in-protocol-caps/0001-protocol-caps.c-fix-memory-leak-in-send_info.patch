@@ -1,0 +1,92 @@
+From 9acbc21cdd33dfb87398255ae0c47d3d1fb2e326 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-9acbc21cdd3-20210831T134517Z-avarab@gmail.com>
+In-Reply-To: <patch-3.4-b7fb5d5a56-20210714T172251Z-avarab@gmail.com>
+References: <patch-3.4-b7fb5d5a56-20210714T172251Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 13 Jul 2021 14:11:59 +0200
+Subject: [PATCH] protocol-caps.c: fix memory leak in send_info()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in a2ba162cda (object-info: support for retrieving
+object info, 2021-04-20) which appears to have been based on a
+misunderstanding of how the pkt-line.c API works. There is no need to
+strdup() input to packet_writer_write(), it's just a printf()-like
+format function.
+
+This fixes a potentially large memory leak, since the number of OID
+lines the "object-info" call can be arbitrarily large (or a small one
+if the request is small).
+
+This makes t5701-git-serve.sh pass again under SANITIZE=leak, as it
+did before a2ba162cda2.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff:
+1:  720852eee0b ! 1:  9acbc21cdd3 SANITIZE tests: fix memory leaks in t5701*, add to whitelist
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    SANITIZE tests: fix memory leaks in t5701*, add to whitelist
+    +    protocol-caps.c: fix memory leak in send_info()
+     
+         Fix a memory leak in a2ba162cda (object-info: support for retrieving
+         object info, 2021-04-20) which appears to have been based on a
+    -    misunderstanding of how the pkt-line.c API works, there is no need to
+    -    strdup() input to, it's just a printf()-like format function.
+    +    misunderstanding of how the pkt-line.c API works. There is no need to
+    +    strdup() input to packet_writer_write(), it's just a printf()-like
+    +    format function.
+     
+         This fixes a potentially large memory leak, since the number of OID
+         lines the "object-info" call can be arbitrarily large (or a small one
+         if the request is small).
+     
+    +    This makes t5701-git-serve.sh pass again under SANITIZE=leak, as it
+    +    did before a2ba162cda2.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## protocol-caps.c ##
+    @@ protocol-caps.c: static void send_info(struct repository *r, struct packet_write
+      }
+      
+      int cap_object_info(struct repository *r, struct strvec *keys,
+    -
+    - ## t/t5701-git-serve.sh ##
+    -@@ t/t5701-git-serve.sh: test_description='test protocol v2 server commands'
+    - GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+    - export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+    - 
+    -+GIT_TEST_SANITIZE_LEAK=true
+    - . ./test-lib.sh
+    - 
+    - test_expect_success 'test capability advertisement' '
+
+ protocol-caps.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/protocol-caps.c b/protocol-caps.c
+index 13a9e63a04a..901b6795e42 100644
+--- a/protocol-caps.c
++++ b/protocol-caps.c
+@@ -69,9 +69,10 @@ static void send_info(struct repository *r, struct packet_writer *writer,
+ 			}
+ 		}
+ 
+-		packet_writer_write(writer, "%s",
+-				    strbuf_detach(&send_buffer, NULL));
++		packet_writer_write(writer, "%s", send_buffer.buf);
++		strbuf_reset(&send_buffer);
+ 	}
++	strbuf_release(&send_buffer);
+ }
+ 
+ int cap_object_info(struct repository *r, struct strvec *keys,
+-- 
+2.33.0.805.g739b16c2189
+
