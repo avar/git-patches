@@ -1,9 +1,9 @@
 From e611d2c23d983336d9feaeb6b3d510cb7e50c473 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-0.8-00000000000-20210831T132535Z-avarab@gmail.com>
+Message-Id: <cover-v3-0.8-00000000000-20210831T132546Z-avarab@gmail.com>
 In-Reply-To: <cover-0.4-0000000000-20210714T172251Z-avarab@gmail.com>
 References: <cover-0.4-0000000000-20210714T172251Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 31 Aug 2021 15:25:35 +0200
+Date: Tue, 31 Aug 2021 15:25:46 +0200
 Subject: [PATCH v3 0/8] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -90,13 +90,360 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 t/test-pragma-SANITIZE=leak-ok.sh
 
 Range-diff against v2:
-1:  df5a44e70b5 < -:  ----------- tests: add a test mode for SANITIZE=leak, run it in CI
+-:  ----------- > 1:  85619728d41 Makefile: add SANITIZE=leak flag to GIT-BUILD-OPTIONS
+-:  ----------- > 2:  91c36b94eaa CI: refactor "if" to "case" statement
+1:  df5a44e70b5 ! 3:  7e3577e4e3c tests: add a test mode for SANITIZE=leak, run it in CI
+    @@ Commit message
+         corresponding GIT_TEST_* mode for it, i.e. memory leaks have been
+         fixed as one-offs without structured regression testing.
+     
+    -    This change add such a mode, we now have new
+    -    linux-{clang,gcc}-sanitize-leak CI targets, these targets run the same
+    -    tests as linux-{clang,gcc}, except that almost all of them are
+    -    skipped.
+    +    This change add such a mode, and a new linux-SANITIZE=leak CI
+    +    target. The test mode and CI target only runs a whitelist of
+    +    known-good tests using a mechanism discussed below, to ensure that we
+    +    won't add regressions to code that's had its memory leaks fixed.
+     
+    -    There is a whitelist of some tests that are OK in test-lib.sh, and
+    -    individual tests can be opted-in by setting
+    -    GIT_TEST_SANITIZE_LEAK=true before sourcing test-lib.sh. Within those
+    -    individual test can be skipped with the "!SANITIZE_LEAK"
+    -    prerequisite. See the updated t/README for more details.
+    +    The CI target uses a new GIT_TEST_PASSING_SANITIZE_LEAK=true test
+    +    mode. When running in that mode all tests except those that have opted
+    +    themselves in to running by setting and exporting
+    +    TEST_PASSES_SANITIZE_LEAK=true before sourcing test-lib.sh.
+     
+    -    I'm using the GIT_TEST_SANITIZE_LEAK=true and !SANITIZE_LEAK pattern
+    -    in a couple of tests whose memory leaks I'll fix in subsequent
+    -    commits.
+    +    I'm adding a "test-pragma-SANITIZE=leak-ok.sh" wrapper for setting and
+    +    exporting that variable, as the assignment/export boilerplate would
+    +    otherwise get quite verbose and repetitive in subsequent commits.
+     
+    -    I'm not being aggressive about opting in tests, it's not all tests
+    -    that currently pass under SANITIZE=leak, just a small number of
+    -    known-good tests. We can add more later as we fix leaks and grow more
+    -    confident in this test mode.
+    +    The tests using the "test-pragma-SANITIZE=leak-ok.sh" pragma can in
+    +    turn make use of the "SANITIZE_LEAK" prerequisite added in a preceding
+    +    commit, should they wish to selectively skip tests even under
+    +    "GIT_TEST_PASSING_SANITIZE_LEAK=true".
+     
+    -    See the recent discussion at [1] about the lack of this sort of test
+    -    mode, and 0e5bba53af (add UNLEAK annotation for reducing leak false
+    -    positives, 2017-09-08) for the initial addition of SANITIZE=leak.
+    +    Now tests that don't set the "test-pragma-SANITIZE=leak-ok.sh" pragma
+    +    will be skipped under GIT_TEST_PASSING_SANITIZE_LEAK=true:
+    +
+    +        $ GIT_TEST_PASSING_SANITIZE_LEAK=true ./t0001-init.sh
+    +        1..0 # SKIP skip all tests in t0001 under SANITIZE=leak, TEST_PASSES_SANITIZE_LEAK not set
+    +
+    +    In subsequents commit we'll conservatively add more
+    +    TEST_PASSES_SANITIZE_LEAK=true annotations. The idea is that as memory
+    +    leaks are fixed we can add more known-good tests to this CI target, to
+    +    ensure that we won't have regressions.
+    +
+    +    As of writing this we've got major regressions between master..seen,
+    +    i.e. the t000*.sh tests and more fixed since 31f9acf9ce2 (Merge branch
+    +    'ah/plugleaks', 2021-08-04) have regressed recently.
+    +
+    +    See the discussion at <87czsv2idy.fsf@evledraar.gmail.com> about the
+    +    lack of this sort of test mode, and 0e5bba53af (add UNLEAK annotation
+    +    for reducing leak false positives, 2017-09-08) for the initial
+    +    addition of SANITIZE=leak.
+     
+         See also 09595ab381 (Merge branch 'jk/leak-checkers', 2017-09-19),
+         7782066f67 (Merge branch 'jk/apache-lsan', 2019-05-19) and the recent
+         936e58851a (Merge branch 'ah/plugleaks', 2021-05-07) for some of the
+         past history of "one-off" SANITIZE=leak (and more) fixes.
+     
+    -    When calling maybe_skip_all_sanitize_leak matching against
+    -    "$TEST_NAME" instead of "$this_test" as other "match_pattern_list()"
+    -    users do is intentional. I'd like to match things like "t13*config*"
+    -    in subsequent commits. This part of the API isn't public, so we can
+    -    freely change it in the future.
+    -
+    -    1. https://lore.kernel.org/git/87czsv2idy.fsf@evledraar.gmail.com/
+    -
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## .github/workflows/main.yml ##
+    @@ .github/workflows/main.yml: jobs:
+                - jobname: linux-gcc-default
+                  cc: gcc
+                  pool: ubuntu-latest
+    -+          - jobname: linux-clang-sanitize-leak
+    -+            cc: clang
+    -+            pool: ubuntu-latest
+    -+          - jobname: linux-gcc-sanitize-leak
+    -+            cc: gcc
+    ++          - jobname: linux-SANITIZE=leak
+     +            pool: ubuntu-latest
+          env:
+            CC: ${{matrix.vector.cc}}
+            jobname: ${{matrix.vector.jobname}}
+     
+    - ## Makefile ##
+    -@@ Makefile: PTHREAD_CFLAGS =
+    - SPARSE_FLAGS ?=
+    - SP_EXTRA_FLAGS = -Wno-universal-initializer
+    - 
+    -+# For informing GIT-BUILD-OPTIONS of the SANITIZE=leak target
+    -+SANITIZE_LEAK =
+    -+
+    - # For the 'coccicheck' target; setting SPATCH_BATCH_SIZE higher will
+    - # usually result in less CPU usage at the cost of higher peak memory.
+    - # Setting it to 0 will feed all files in a single spatch invocation.
+    -@@ Makefile: BASIC_CFLAGS += -DSHA1DC_FORCE_ALIGNED_ACCESS
+    - endif
+    - ifneq ($(filter leak,$(SANITIZERS)),)
+    - BASIC_CFLAGS += -DSUPPRESS_ANNOTATED_LEAKS
+    -+SANITIZE_LEAK = YesCompiledWithIt
+    - endif
+    - ifneq ($(filter address,$(SANITIZERS)),)
+    - NO_REGEX = NeededForASAN
+    -@@ Makefile: GIT-BUILD-OPTIONS: FORCE
+    - 	@echo NO_UNIX_SOCKETS=\''$(subst ','\'',$(subst ','\'',$(NO_UNIX_SOCKETS)))'\' >>$@+
+    - 	@echo PAGER_ENV=\''$(subst ','\'',$(subst ','\'',$(PAGER_ENV)))'\' >>$@+
+    - 	@echo DC_SHA1=\''$(subst ','\'',$(subst ','\'',$(DC_SHA1)))'\' >>$@+
+    -+	@echo SANITIZE_LEAK=\''$(subst ','\'',$(subst ','\'',$(SANITIZE_LEAK)))'\' >>$@+
+    - 	@echo X=\'$(X)\' >>$@+
+    - ifdef TEST_OUTPUT_DIRECTORY
+    - 	@echo TEST_OUTPUT_DIRECTORY=\''$(subst ','\'',$(subst ','\'',$(TEST_OUTPUT_DIRECTORY)))'\' >>$@+
+    -
+      ## ci/install-dependencies.sh ##
+     @@ ci/install-dependencies.sh: UBUNTU_COMMON_PKGS="make libssl-dev libcurl4-openssl-dev libexpat-dev
+       libemail-valid-perl libio-socket-ssl-perl libnet-smtp-ssl-perl"
+      
+      case "$jobname" in
+     -linux-clang|linux-gcc)
+    -+linux-clang|linux-gcc|linux-clang-sanitize-leak|linux-gcc-sanitize-leak)
+    ++linux-clang|linux-gcc|linux-SANITIZE=leak)
+      	sudo apt-add-repository -y "ppa:ubuntu-toolchain-r/test"
+      	sudo apt-get -q update
+      	sudo apt-get -q -y install language-pack-is libsvn-perl apache2 \
+      		$UBUNTU_COMMON_PKGS
+      	case "$jobname" in
+     -	linux-gcc)
+    -+	linux-gcc|linux-gcc-sanitize-leak)
+    ++	linux-gcc|linux-SANITIZE=leak)
+      		sudo apt-get -q -y install gcc-8
+      		;;
+      	esac
+    @@ ci/lib.sh: export GIT_TEST_CLONE_2GB=true
+      
+      case "$jobname" in
+     -linux-clang|linux-gcc)
+    --	if [ "$jobname" = linux-gcc ]
+    --	then
+    -+linux-clang|linux-gcc|linux-clang-sanitize-leak|linux-gcc-sanitize-leak)
+    -+	case "$jobname" in
+    -+	linux-gcc|linux-gcc-sanitize-leak)
+    ++linux-clang|linux-gcc|linux-SANITIZE=leak)
+    + 	case "$jobname" in
+    +-	linux-gcc)
+    ++	linux-gcc|linux-SANITIZE=leak)
+      		export CC=gcc-8
+      		MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=/usr/bin/python3"
+    --	else
+    -+		;;
+    -+	*)
+    - 		MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=/usr/bin/python2"
+    --	fi
+    -+		;;
+    -+	esac
+    - 
+    - 	export GIT_TEST_HTTPD=true
+    - 
+    + 		;;
+     @@ ci/lib.sh: linux-musl)
+      	;;
+      esac
+      
+     +case "$jobname" in
+    -+linux-clang-sanitize-leak|linux-gcc-sanitize-leak)
+    ++linux-SANITIZE=leak)
+     +	export SANITIZE=leak
+    ++	export GIT_TEST_PASSING_SANITIZE_LEAK=true
+     +	;;
+     +esac
+     +
+    @@ ci/run-build-and-tests.sh: esac
+      make
+      case "$jobname" in
+     -linux-gcc)
+    -+linux-gcc|linux-gcc-sanitize-leak)
+    ++linux-gcc|linux-SANITIZE=leak)
+      	export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+      	make test
+      	export GIT_TEST_SPLIT_INDEX=yes
+    @@ ci/run-build-and-tests.sh: linux-gcc)
+      	make test
+      	;;
+     -linux-clang)
+    -+linux-clang|linux-clang-sanitize-leak)
+    ++linux-clang|linux-SANITIZE=leak)
+      	export GIT_TEST_DEFAULT_HASH=sha1
+      	make test
+      	export GIT_TEST_DEFAULT_HASH=sha256
+    @@ t/README: GIT_TEST_CHECKOUT_WORKERS=<n> overrides the 'checkout.workers' setting
+      to <n> and 'checkout.thresholdForParallelism' to 0, forcing the
+      execution of the parallel-checkout code.
+      
+    -+GIT_TEST_SANITIZE_LEAK=<boolean> will force the tests to run when git
+    -+is compiled with SANITIZE=leak (we pick it up via
+    -+../GIT-BUILD-OPTIONS).
+    -+
+    -+By default all tests are skipped when compiled with SANITIZE=leak, and
+    -+individual test scripts opt themselves in to leak testing by setting
+    -+GIT_TEST_SANITIZE_LEAK=true before sourcing test-lib.sh. Within those
+    -+tests use the SANITIZE_LEAK prerequisite to skip individiual tests
+    -+(i.e. test_expect_success !SANITIZE_LEAK [...]).
+    -+
+    -+So the GIT_TEST_SANITIZE_LEAK setting is different in behavior from
+    -+both other GIT_TEST_*=[true|false] settings, but more useful given how
+    -+SANITIZE=leak works & the state of the test suite. Manually setting
+    -+GIT_TEST_SANITIZE_LEAK=true is only useful during development when
+    -+finding and fixing memory leaks.
+    ++GIT_TEST_PASSING_SANITIZE_LEAK=<boolean> when compiled with
+    ++SANITIZE=leak will run only those tests that have whitelisted
+    ++themselves as passing with no memory leaks. Do this by sourcing
+    ++"test-pragma-SANITIZE=leak-ok.sh" before sourcing "test-lib.sh" itself
+    ++at the top of the test script. This test mode is used by the
+    ++"linux-SANITIZE=leak" CI target.
+     +
+      Naming Tests
+      ------------
+      
+     
+    - ## t/t5701-git-serve.sh ##
+    -@@ t/t5701-git-serve.sh: test_expect_success 'unexpected lines are not allowed in fetch request' '
+    + ## t/t0000-basic.sh ##
+    +@@ t/t0000-basic.sh: swapping compression and hashing order, the person who is making the
+    + modification *should* take notice and update the test vectors here.
+    + '
+    + 
+    ++. ./test-pragma-SANITIZE=leak-ok.sh
+    + . ./test-lib.sh
+      
+    - # Test the basics of object-info
+    - #
+    --test_expect_success 'basics of object-info' '
+    -+test_expect_success !SANITIZE_LEAK 'basics of object-info' '
+    - 	test-tool pkt-line pack >in <<-EOF &&
+    - 	command=object-info
+    - 	object-format=$(test_oid algo)
+    + try_local_xy () {
+     
+      ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: then
+    - 	exit 1
+    - fi
+    - 
+    -+# SANITIZE=leak test mode
+    -+sanitize_leak_true=
+    -+add_sanitize_leak_true () {
+    -+	sanitize_leak_true="$sanitize_leak_true$1 "
+    -+}
+    -+
+    -+sanitize_leak_false=
+    -+add_sanitize_leak_false () {
+    -+	sanitize_leak_false="$sanitize_leak_false$1 "
+    -+}
+    -+
+    -+sanitize_leak_opt_in_msg="opt-in with GIT_TEST_SANITIZE_LEAK=true"
+    -+maybe_skip_all_sanitize_leak () {
+    -+	# Whitelist patterns
+    -+	add_sanitize_leak_true 't000*'
+    -+	add_sanitize_leak_true 't001*'
+    -+	add_sanitize_leak_true 't006*'
+    -+
+    -+	# Blacklist patterns (overrides whitelist)
+    -+	add_sanitize_leak_false 't000[469]*'
+    -+	add_sanitize_leak_false 't001[2459]*'
+    -+	add_sanitize_leak_false 't006[0248]*'
+    -+
+    -+	if match_pattern_list "$1" "$sanitize_leak_false"
+    -+	then
+    -+		skip_all="test $this_test on SANITIZE=leak blacklist, $sanitize_leak_opt_in_msg"
+    -+		test_done
+    -+	elif match_pattern_list "$1" "$sanitize_leak_true"
+    -+	then
+    -+		return 0
+    -+	fi
+    -+	return 1
+    -+}
+    -+
+    - # Are we running this test at all?
+    - remove_trash=
+    - this_test=${0##*/}
+     @@ t/test-lib.sh: then
+      	test_done
+      fi
+    @@ t/test-lib.sh: then
+     +# SANITIZE=leak
+     +if test -n "$SANITIZE_LEAK"
+     +then
+    -+	if test -z "$GIT_TEST_SANITIZE_LEAK" &&
+    -+		maybe_skip_all_sanitize_leak "$TEST_NAME"
+    ++	if test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
+     +	then
+    -+		say_color info >&3 "test $this_test on SANITIZE=leak whitelist"
+    -+		GIT_TEST_SANITIZE_LEAK=true
+    -+	fi
+    ++		# We need to see it in "git env--helper" (via
+    ++		# test_bool_env)
+    ++		export TEST_PASSES_SANITIZE_LEAK
+     +
+    -+	# We need to see it in "git env--helper" (via
+    -+	# test_bool_env)
+    -+	export GIT_TEST_SANITIZE_LEAK
+    -+
+    -+	if ! test_bool_env GIT_TEST_SANITIZE_LEAK false
+    -+	then
+    -+		skip_all="skip all tests in $this_test under SANITIZE=leak, $sanitize_leak_opt_in_msg"
+    -+		test_done
+    ++		if ! test_bool_env TEST_PASSES_SANITIZE_LEAK false
+    ++		then
+    ++			skip_all="skipping $this_test under GIT_TEST_PASSING_SANITIZE_LEAK=true"
+    ++			test_done
+    ++		fi
+     +	fi
+    -+elif test_bool_env GIT_TEST_SANITIZE_LEAK false
+    ++elif test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
+     +then
+    -+	error "GIT_TEST_SANITIZE_LEAK=true has no effect except when compiled with SANITIZE=leak"
+    ++	error "GIT_TEST_PASSING_SANITIZE_LEAK=true has no effect except when compiled with SANITIZE=leak"
+     +fi
+     +
+      # Last-minute variable setup
+      HOME="$TRASH_DIRECTORY"
+      GNUPGHOME="$HOME/gnupg-home-not-used"
+    -@@ t/test-lib.sh: test -z "$NO_PYTHON" && test_set_prereq PYTHON
+    - test -n "$USE_LIBPCRE2" && test_set_prereq PCRE
+    - test -n "$USE_LIBPCRE2" && test_set_prereq LIBPCRE2
+    - test -z "$NO_GETTEXT" && test_set_prereq GETTEXT
+    -+test -n "$SANITIZE_LEAK" && test_set_prereq SANITIZE_LEAK
+    - 
+    - if test -z "$GIT_TEST_CHECK_CACHE_TREE"
+    - then
+    +
+    + ## t/test-pragma-SANITIZE=leak-ok.sh (new) ##
+    +@@
+    ++#!/bin/sh
+    ++
+    ++## This "pragma" (as in "perldoc perlpragma") declares that the test
+    ++## will pass under GIT_TEST_PASSING_SANITIZE_LEAK=true. Source this
+    ++## before sourcing test-lib.sh
+    ++
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    ++export TEST_PASSES_SANITIZE_LEAK
 2:  51fd1c400da < -:  ----------- SANITIZE tests: fix memory leaks in t13*config*, add to whitelist
 3:  720852eee0b < -:  ----------- SANITIZE tests: fix memory leaks in t5701*, add to whitelist
 4:  80edda308c9 < -:  ----------- SANITIZE tests: fix leak in mailmap.c
--:  ----------- > 1:  85619728d41 Makefile: add SANITIZE=leak flag to GIT-BUILD-OPTIONS
--:  ----------- > 2:  91c36b94eaa CI: refactor "if" to "case" statement
--:  ----------- > 3:  7e3577e4e3c tests: add a test mode for SANITIZE=leak, run it in CI
 -:  ----------- > 4:  0cd14d64165 tests: annotate t000*.sh with TEST_PASSES_SANITIZE_LEAK=true
 -:  ----------- > 5:  ed5f5705755 tests: annotate t001*.sh with TEST_PASSES_SANITIZE_LEAK=true
 -:  ----------- > 6:  2599016c4e7 tests: annotate t002*.sh with TEST_PASSES_SANITIZE_LEAK=true
