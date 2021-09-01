@@ -1,0 +1,179 @@
+From d24f1df5d494061ebc06911e2ecb9ccbb065b2c7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-d24f1df5d49-20210901T112248Z-avarab@gmail.com>
+In-Reply-To: <YS9RieTeJSFmd6M7@coredump.intra.peff.net>
+References: <YS9RieTeJSFmd6M7@coredump.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Sep 2021 12:32:42 +0200
+Subject: [PATCH] gettext: remove optional non-standard parens in N_()
+ definition
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the USE_PARENS_AROUND_GETTEXT_N compile-time option which was
+meant to catch an inadvertent mistakes which is too obscure to
+maintain this facility.
+
+The backstory of how USE_PARENS_AROUND_GETTEXT_N came about is: When I
+added the N_() macro in 65784830366 (i18n: add no-op _() and N_()
+wrappers, 2011-02-22) it was defined as:
+
+    #define N_(msgid) (msgid)
+
+This is non-standard C, as was noticed and fixed in 642f85faab2 (i18n:
+avoid parenthesized string as array initializer,
+2011-04-07). I.e. this needed to be defined as:
+
+    #define N_(msgid) msgid
+
+Then in e62cd35a3e8 (i18n: log: mark parseopt strings for translation,
+2012-08-20) when "builtin_log_usage" was marked for translation the
+string concatenation the string concatenation for passing to usage()
+added in 1c370ea4e51 (Show usage string for 'git log -h', 'git show
+-h' and 'git diff -h', 2009-08-06) was faithfully preserved:
+
+-       "git log [<options>] [<since>..<until>] [[--] <path>...]\n"
+-       "   or: git show [options] <object>...",
++       N_("git log [<options>] [<since>..<until>] [[--] <path>...]\n")
++       N_("   or: git show [options] <object>..."),
+
+This was then fixed to be the expected array of usage strings in
+e66dc0cc4b1 (log.c: fix translation markings, 2015-01-06) rather than
+a string with multiple "\n"-delimited usage strings, and finally in
+290c8e7a3fe (gettext.h: add parentheses around N_ expansion if
+supported, 2015-01-11) USE_PARENS_AROUND_GETTEXT_N was added to ensure
+this mistake didn't happen again.
+
+I think that even if this was a N_()-specific issue this
+USE_PARENS_AROUND_GETTEXT_N facility wouldn't be worth it, the issue
+would be too rare to worry about.
+
+But I also think that 290c8e7a3fe which introduced
+USE_PARENS_AROUND_GETTEXT_N misattributed the problem. The issue
+wasn't with the N_() macro added in e62cd35a3e8, but that before the
+N_() macro existed in the codebase the initial migration to
+parse_options() in 1c370ea4e51 continued passsing in a "\n"-delimited
+string, when the new API it was migrating to supported and expected
+the passing of an array.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile          | 20 +-------------------
+ config.mak.dev    |  2 --
+ gettext.h         | 24 ------------------------
+ git-compat-util.h |  4 ----
+ 4 files changed, 1 insertion(+), 49 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index d1feab008fc..4936e234bc1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -409,15 +409,6 @@ all::
+ # Define NEEDS_LIBRT if your platform requires linking with librt (glibc version
+ # before 2.17) for clock_gettime and CLOCK_MONOTONIC.
+ #
+-# Define USE_PARENS_AROUND_GETTEXT_N to "yes" if your compiler happily
+-# compiles the following initialization:
+-#
+-#   static const char s[] = ("FOO");
+-#
+-# and define it to "no" if you need to remove the parentheses () around the
+-# constant.  The default is "auto", which means to use parentheses if your
+-# compiler is detected to support it.
+-#
+ # Define HAVE_BSD_SYSCTL if your platform has a BSD-compatible sysctl function.
+ #
+ # Define HAVE_GETDELIM if your system has the getdelim() function.
+@@ -497,8 +488,7 @@ all::
+ #
+ #    pedantic:
+ #
+-#        Enable -pedantic compilation. This also disables
+-#        USE_PARENS_AROUND_GETTEXT_N to produce only relevant warnings.
++#        Enable -pedantic compilation.
+ 
+ GIT-VERSION-FILE: FORCE
+ 	@$(SHELL_PATH) ./GIT-VERSION-GEN
+@@ -1347,14 +1337,6 @@ ifneq (,$(SOCKLEN_T))
+ 	BASIC_CFLAGS += -Dsocklen_t=$(SOCKLEN_T)
+ endif
+ 
+-ifeq (yes,$(USE_PARENS_AROUND_GETTEXT_N))
+-	BASIC_CFLAGS += -DUSE_PARENS_AROUND_GETTEXT_N=1
+-else
+-ifeq (no,$(USE_PARENS_AROUND_GETTEXT_N))
+-	BASIC_CFLAGS += -DUSE_PARENS_AROUND_GETTEXT_N=0
+-endif
+-endif
+-
+ ifeq ($(uname_S),Darwin)
+ 	ifndef NO_FINK
+ 		ifeq ($(shell test -d /sw/lib && echo y),y)
+diff --git a/config.mak.dev b/config.mak.dev
+index 022fb582180..41d6345bc0a 100644
+--- a/config.mak.dev
++++ b/config.mak.dev
+@@ -4,8 +4,6 @@ SPARSE_FLAGS += -Wsparse-error
+ endif
+ ifneq ($(filter pedantic,$(DEVOPTS)),)
+ DEVELOPER_CFLAGS += -pedantic
+-# don't warn for each N_ use
+-DEVELOPER_CFLAGS += -DUSE_PARENS_AROUND_GETTEXT_N=0
+ endif
+ DEVELOPER_CFLAGS += -Wall
+ DEVELOPER_CFLAGS += -Wdeclaration-after-statement
+diff --git a/gettext.h b/gettext.h
+index c8b34fd6122..d209911ebb8 100644
+--- a/gettext.h
++++ b/gettext.h
+@@ -55,31 +55,7 @@ const char *Q_(const char *msgid, const char *plu, unsigned long n)
+ }
+ 
+ /* Mark msgid for translation but do not translate it. */
+-#if !USE_PARENS_AROUND_GETTEXT_N
+ #define N_(msgid) msgid
+-#else
+-/*
+- * Strictly speaking, this will lead to invalid C when
+- * used this way:
+- *	static const char s[] = N_("FOO");
+- * which will expand to
+- *	static const char s[] = ("FOO");
+- * and in valid C, the initializer on the right hand side must
+- * be without the parentheses.  But many compilers do accept it
+- * as a language extension and it will allow us to catch mistakes
+- * like:
+- *	static const char *msgs[] = {
+- *		N_("one")
+- *		N_("two"),
+- *		N_("three"),
+- *		NULL
+- *	};
+- * (notice the missing comma on one of the lines) by forcing
+- * a compilation error, because parenthesised ("one") ("two")
+- * will not get silently turned into ("onetwo").
+- */
+-#define N_(msgid) (msgid)
+-#endif
+ 
+ const char *get_preferred_languages(void);
+ int is_utf8_locale(void);
+diff --git a/git-compat-util.h b/git-compat-util.h
+index b46605300ab..ddc65ff61d9 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -1253,10 +1253,6 @@ int warn_on_fopen_errors(const char *path);
+  */
+ int open_nofollow(const char *path, int flags);
+ 
+-#if !defined(USE_PARENS_AROUND_GETTEXT_N) && defined(__GNUC__)
+-#define USE_PARENS_AROUND_GETTEXT_N 1
+-#endif
+-
+ #ifndef SHELL_PATH
+ # define SHELL_PATH "/bin/sh"
+ #endif
+-- 
+2.33.0.807.gf14ecf9c2e9
+
