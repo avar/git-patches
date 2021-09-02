@@ -1,0 +1,149 @@
+From 3ccc654a6641dda1d1e534e8d4ba3369b1d0d1dc Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-22.36-3ccc654a664-20210902T125059Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.36-00000000000-20210902T125059Z-avarab@gmail.com>
+References: <cover-v4-00.36-00000000000-20210803T191505Z-avarab@gmail.com>
+	<cover-v5-00.36-00000000000-20210902T125059Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:28 -0700
+Subject: [PATCH v5 22/36] hook: support passing stdin to hooks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Some hooks (such as post-rewrite) need to take input via stdin.
+Previously, callers provided stdin to hooks by setting
+run-command.h:child_process.in, which takes a FD. Callers would open the
+file in question themselves before calling run-command(). However, since
+we will now need to seek to the front of the file and read it again for
+every hook which runs, hook.h:run_command() takes a path and handles FD
+management itself. Since this file is opened for read only, it should
+not prevent later parallel execution support.
+
+On the frontend, this is supported by asking for a file path, rather
+than by reading stdin. Reading directly from stdin would involve caching
+the entire stdin (to memory or to disk) and reading it back from the
+beginning to each hook. We'd want to support cases like insufficient
+memory or storage for the file. While this may prove useful later, for
+now the path of least resistance is to just ask the user to make this
+interim file themselves.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-hook.txt |  7 ++++++-
+ builtin/hook.c             |  4 +++-
+ hook.c                     |  8 +++++++-
+ hook.h                     |  3 +++
+ t/t1800-hook.sh            | 18 ++++++++++++++++++
+ 5 files changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/git-hook.txt b/Documentation/git-hook.txt
+index 097fb9de63b..fa68c1f3912 100644
+--- a/Documentation/git-hook.txt
++++ b/Documentation/git-hook.txt
+@@ -8,7 +8,7 @@ git-hook - run git hooks
+ SYNOPSIS
+ --------
+ [verse]
+-'git hook' run [--ignore-missing] <hook-name> [-- <hook-args>]
++'git hook' run [--to-stdin=<path>] [--ignore-missing] <hook-name> [-- <hook-args>]
+ 
+ DESCRIPTION
+ -----------
+@@ -32,6 +32,11 @@ what those are.
+ OPTIONS
+ -------
+ 
++--to-stdin::
++	For "run"; Specify a file which will be streamed into the
++	hook's stdin. The hook will receive the entire file from
++	beginning to EOF.
++
+ --ignore-missing::
+ 	Ignore any missing hook by quietly returning zero. Used for
+ 	tools that want to do a blind one-shot run of a hook that may
+diff --git a/builtin/hook.c b/builtin/hook.c
+index 76d49e672f4..fae69068201 100644
+--- a/builtin/hook.c
++++ b/builtin/hook.c
+@@ -7,7 +7,7 @@
+ #include "strvec.h"
+ 
+ #define BUILTIN_HOOK_RUN_USAGE \
+-	N_("git hook run [--ignore-missing] <hook-name> [-- <hook-args>]")
++	N_("git hook run [--ignore-missing] [--to-stdin=<path>] <hook-name> [-- <hook-args>]")
+ 
+ static const char * const builtin_hook_usage[] = {
+ 	BUILTIN_HOOK_RUN_USAGE,
+@@ -29,6 +29,8 @@ static int run(int argc, const char **argv, const char *prefix)
+ 	struct option run_options[] = {
+ 		OPT_BOOL(0, "ignore-missing", &ignore_missing,
+ 			 N_("exit quietly with a zero exit code if the requested hook cannot be found")),
++		OPT_STRING(0, "to-stdin", &opt.path_to_stdin, N_("path"),
++			   N_("file to read into hooks' stdin")),
+ 		OPT_END(),
+ 	};
+ 	int ret;
+diff --git a/hook.c b/hook.c
+index 8a923e52c1b..d156b0dc800 100644
+--- a/hook.c
++++ b/hook.c
+@@ -59,7 +59,13 @@ static int pick_next_hook(struct child_process *cp,
+ 	if (!run_me)
+ 		return 0;
+ 
+-	cp->no_stdin = 1;
++	/* reopen the file for stdin; run_command closes it. */
++	if (hook_cb->options->path_to_stdin) {
++		cp->no_stdin = 0;
++		cp->in = xopen(hook_cb->options->path_to_stdin, O_RDONLY);
++	} else {
++		cp->no_stdin = 1;
++	}
+ 	cp->env = hook_cb->options->env.v;
+ 	cp->stdout_to_stderr = 1;
+ 	cp->trace2_hook_name = hook_cb->hook_name;
+diff --git a/hook.h b/hook.h
+index 3edd937e198..253725e197b 100644
+--- a/hook.h
++++ b/hook.h
+@@ -23,6 +23,9 @@ struct run_hooks_opt
+ 
+ 	/* Path to initial working directory for subprocess */
+ 	const char *dir;
++
++	/* Path to file which should be piped to stdin for each hook */
++	const char *path_to_stdin;
+ };
+ 
+ #define RUN_HOOKS_OPT_INIT { \
+diff --git a/t/t1800-hook.sh b/t/t1800-hook.sh
+index feb95b8fc8d..6431b19e392 100755
+--- a/t/t1800-hook.sh
++++ b/t/t1800-hook.sh
+@@ -130,4 +130,22 @@ test_expect_success 'git -c core.hooksPath=<PATH> hook run' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'stdin to hooks' '
++	write_script .git/hooks/test-hook <<-\EOF &&
++	echo BEGIN stdin
++	cat
++	echo END stdin
++	EOF
++
++	cat >expect <<-EOF &&
++	BEGIN stdin
++	hello
++	END stdin
++	EOF
++
++	echo hello >input &&
++	git hook run --to-stdin=input test-hook 2>actual &&
++	test_cmp expect actual
++'
++
+ test_done
+-- 
+2.33.0.816.g1ba32acadee
+

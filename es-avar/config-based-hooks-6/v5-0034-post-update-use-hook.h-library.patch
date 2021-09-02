@@ -1,0 +1,65 @@
+From a20ad847c145de70951b9ef64e0a276a2b5abe9f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-34.36-a20ad847c14-20210902T125059Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.36-00000000000-20210902T125059Z-avarab@gmail.com>
+References: <cover-v4-00.36-00000000000-20210803T191505Z-avarab@gmail.com>
+	<cover-v5-00.36-00000000000-20210902T125059Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:50 -0700
+Subject: [PATCH v5 34/36] post-update: use hook.h library
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/receive-pack.c | 25 ++++++-------------------
+ 1 file changed, 6 insertions(+), 19 deletions(-)
+
+diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+index 31ce4ece4e7..26e302aab85 100644
+--- a/builtin/receive-pack.c
++++ b/builtin/receive-pack.c
+@@ -1650,33 +1650,20 @@ static const char *update(struct command *cmd, struct shallow_info *si)
+ static void run_update_post_hook(struct command *commands)
+ {
+ 	struct command *cmd;
+-	struct child_process proc = CHILD_PROCESS_INIT;
+-	const char *hook;
+-
+-	hook = find_hook("post-update");
+-	if (!hook)
+-		return;
++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
+ 
+ 	for (cmd = commands; cmd; cmd = cmd->next) {
+ 		if (cmd->error_string || cmd->did_not_exist)
+ 			continue;
+-		if (!proc.args.nr)
+-			strvec_push(&proc.args, hook);
+-		strvec_push(&proc.args, cmd->ref_name);
++		strvec_push(&opt.args, cmd->ref_name);
+ 	}
+-	if (!proc.args.nr)
++	if (!opt.args.nr)
+ 		return;
+ 
+-	proc.no_stdin = 1;
+-	proc.stdout_to_stderr = 1;
+-	proc.err = use_sideband ? -1 : 0;
+-	proc.trace2_hook_name = "post-update";
++	if (use_sideband)
++		opt.consume_sideband = hook_output_to_sideband;
+ 
+-	if (!start_command(&proc)) {
+-		if (use_sideband)
+-			copy_to_sideband(proc.err, -1, NULL);
+-		finish_command(&proc);
+-	}
++	run_hooks_oneshot("post-update", &opt);
+ }
+ 
+ static void check_aliased_update_internal(struct command *cmd,
+-- 
+2.33.0.816.g1ba32acadee
+
