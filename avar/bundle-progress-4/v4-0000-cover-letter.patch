@@ -1,0 +1,154 @@
+From 8f4c7f99799eebe95c1060fd728ee49434033ee4 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-0.4-00000000000-20210905T072750Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.5-00000000000-20210826T140414Z-avarab@gmail.com>
+References: <cover-v3-0.5-00000000000-20210826T140414Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Sun, 5 Sep 2021 09:27:50 +0200
+Subject: [PATCH v4 0/4] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (4):
+  bundle API: start writing API documentation
+  bundle API: change "flags" to be "extra_index_pack_args"
+  index-pack: add --progress-title option
+  bundle: show progress on "unbundle"
+
+ Documentation/git-bundle.txt     |  2 +-
+ Documentation/git-index-pack.txt |  6 ++++++
+ builtin/bundle.c                 | 11 ++++++++++-
+ builtin/index-pack.c             |  6 ++++++
+ bundle.c                         | 12 ++++++------
+ bundle.h                         | 14 ++++++++++++--
+ transport.c                      |  6 +++++-
+ 7 files changed, 46 insertions(+), 11 deletions(-)
+
+Range-diff against v3:
+1:  9fb2f7a3a80 = 1:  05be8cb0fc3 bundle API: start writing API documentation
+2:  321b8ba3f0e < -:  ----------- strvec: add a strvec_pushvec()
+3:  637039634e7 ! 2:  9255c766484 bundle API: change "flags" to be "extra_index_pack_args"
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/bundle.c ##
+    +@@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+    + 		OPT_END()
+    + 	};
+    + 	char *bundle_file;
+    ++	struct strvec extra_index_pack_args = STRVEC_INIT;
+    + 
+    + 	argc = parse_options_cmd_bundle(argc, argv, prefix,
+    + 			builtin_bundle_unbundle_usage, options, &bundle_file);
+     @@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+      	}
+      	if (!startup_info->have_repository)
+      		die(_("Need a repository to unbundle."));
+     -	ret = !!unbundle(the_repository, &header, bundle_fd, 0) ||
+    -+	ret = !!unbundle(the_repository, &header, bundle_fd, NULL) ||
+    ++	ret = !!unbundle(the_repository, &header, bundle_fd,
+    ++			 &extra_index_pack_args) ||
+      		list_bundle_refs(&header, argc, argv);
+      	bundle_header_release(&header);
+      cleanup:
+    @@ bundle.c: int create_bundle(struct repository *r, const char *path,
+     -	const char *argv_index_pack[] = {"index-pack",
+     -					 "--fix-thin", "--stdin", NULL, NULL};
+      	struct child_process ip = CHILD_PROCESS_INIT;
+    ++	strvec_pushl(&ip.args, "index-pack", "--fix-thin", "--stdin", NULL);
+      
+     -	if (flags & BUNDLE_VERBOSE)
+     -		argv_index_pack[3] = "-v";
+    -+	strvec_push(&ip.args, "index-pack");
+    -+	strvec_push(&ip.args, "--fix-thin");
+    -+	strvec_push(&ip.args, "--stdin");
+     +	if (extra_index_pack_args) {
+    -+		strvec_pushvec(&ip.args, extra_index_pack_args);
+    ++		strvec_pushv(&ip.args, extra_index_pack_args->v);
+     +		strvec_clear(extra_index_pack_args);
+     +	}
+      
+    @@ bundle.h: int create_bundle(struct repository *r, const char *path,
+       * We'll invoke "git index-pack --stdin --fix-thin" for you on the
+       * provided `bundle_fd` from read_bundle_header().
+     + *
+    -+ * Provide extra_index_pack_args to pass any extra arguments
+    ++ * Provide "extra_index_pack_args" to pass any extra arguments
+     + * (e.g. "-v" for verbose/progress), NULL otherwise. The provided
+    -+ * extra_index_pack_args (if any) will be strvec_clear()'d for you
+    -+ * (like the run-command.h API itself does).
+    ++ * "extra_index_pack_args" (if any) will be strvec_clear()'d for you.
+       */
+      int unbundle(struct repository *r, struct bundle_header *header,
+     -	     int bundle_fd, int flags);
+    @@ transport.c: static int fetch_refs_from_bundle(struct transport *transport,
+      		get_refs_from_bundle(transport, 0, NULL);
+      	ret = unbundle(the_repository, &data->header, data->fd,
+     -			   transport->progress ? BUNDLE_VERBOSE : 0);
+    -+		       transport->progress ? &extra_index_pack_args : NULL);
+    ++		       &extra_index_pack_args);
+      	transport->hash_algo = data->header.hash_algo;
+      	return ret;
+      }
+4:  e44d825e5df ! 3:  338c0e1e518 index-pack: add --progress-title option
+    @@ Commit message
+         Not using the "--long-option=value" style is inconsistent with
+         existing long options handled by cmd_index_pack(), but makes the code
+         that needs to call it better (two strvec_push(), instead of needing a
+    -    strvec_pushf()).
+    +    strvec_pushf()). Since the option is internal-only the inconsistency
+    +    shouldn't matter.
+     
+    -    Since the option is internal-only the inconsistency shouldn't
+    -    matter. I'm copying the pattern to handle it as-is from the handling
+    -    of the existing "-o" option in the same function, see 9cf6d3357aa (Add
+    -    git-index-pack utility, 2005-10-12) for its addition.
+    -
+    -    Eventually we'd like to migrate all of this this to parse_options(),
+    -    which would make these differences in behavior go away.
+    +    I'm copying the pattern to handle it as-is from the handling of the
+    +    existing "-o" option in the same function, see 9cf6d3357aa (Add
+    +    git-index-pack utility, 2005-10-12) for its addition. That's a short
+    +    option, but the code to implement the two is the same in functionality
+    +    and style. Eventually we'd like to migrate all of this this to
+    +    parse_options(), which would make these differences in behavior go
+    +    away.
+     
+         1. https://lore.kernel.org/git/RFC-cover-00.13-0000000000-20210805T150534Z-avarab@gmail.com/
+     
+5:  cd38b0f0fed ! 4:  8f4c7f99799 bundle: show progress on "unbundle"
+    @@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, co
+      		OPT_END()
+      	};
+      	char *bundle_file;
+    -+	struct strvec extra_args = STRVEC_INIT;
+    - 
+    - 	argc = parse_options_cmd_bundle(argc, argv, prefix,
+    - 			builtin_bundle_unbundle_usage, options, &bundle_file);
+     @@ builtin/bundle.c: static int cmd_bundle_unbundle(int argc, const char **argv, const char *prefix)
+      	}
+      	if (!startup_info->have_repository)
+      		die(_("Need a repository to unbundle."));
+    --	ret = !!unbundle(the_repository, &header, bundle_fd, NULL) ||
+    -+
+    -+	if (progress) {
+    -+		strvec_push(&extra_args, "-v");
+    -+		strvec_push(&extra_args, "--progress-title");
+    -+		strvec_push(&extra_args, _("Unbundling objects"));
+    -+	}
+    -+
+    -+	ret = !!unbundle(the_repository, &header, bundle_fd, progress ?
+    -+			 &extra_args : NULL) ||
+    ++	if (progress)
+    ++		strvec_pushl(&extra_index_pack_args, "-v", "--progress-title",
+    ++			     _("Unbundling objects"), NULL);
+    + 	ret = !!unbundle(the_repository, &header, bundle_fd,
+    + 			 &extra_index_pack_args) ||
+      		list_bundle_refs(&header, argc, argv);
+    - 	bundle_header_release(&header);
+    - cleanup:
+-- 
+2.33.0.813.g41c39388776
+
