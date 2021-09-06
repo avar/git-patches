@@ -1,5 +1,5 @@
-From a3cd81d50133359bf154ab3f2f29e2c95b7ed68a Mon Sep 17 00:00:00 2001
-Message-Id: <patch-1.1-a3cd81d5013-20210906T072949Z-avarab@gmail.com>
+From ae6ff9f77f18fe2fa17b0177a0c78a8a8597f8fe Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-ae6ff9f77f1-20210906T073306Z-avarab@gmail.com>
 In-Reply-To: <96814e5e-54be-1eca-0d75-68be53b1be3d@archlinux.org>
 References: <96814e5e-54be-1eca-0d75-68be53b1be3d@archlinux.org>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -13,16 +13,16 @@ Content-Transfer-Encoding: 8bit
 
 Fix a regression in my c95e3a3f0b8 (send-email: move trivial config
 handling to Perl, 2021-05-28) where we'd pick the first config key out
-of multiple defined ones, instead the normal "last key wins" semantics
-of "git config --get".
+of multiple defined ones, instead of using the normal "last key wins"
+semantics of "git config --get".
 
 This broke e.g. cases where a .git/config would have a different
-sendemail.smtpServer than ~/.gitconfig, we'd pick the ~/.gitconfig
+sendemail.smtpServer than ~/.gitconfig. We'd pick the ~/.gitconfig
 over .git/config, instead of preferring the repository-local
 version. The same would go for /etc/gitconfig etc.
 
 The full list of impacted config keys (the %config_settings values
-which are references to scalars, not arrays) are:
+which are references to scalars, not arrays) is:
 
     sendemail.smtpencryption
     sendemail.smtpserver
@@ -50,10 +50,12 @@ I.e. having any of these set in say ~/.gitconfig and in-repo
 
 To test this add a test of config priority to one of these config
 variables, most don't have tests at all, but there was an existing one
-for sendemail.8bitEncoding. The "git config" (instead of
-"test_config") is somewhat of an anti-pattern, but follows established
-conventions in t9001-send-email.sh, likewise with any other pattern or
-idiom in this test.
+for sendemail.8bitEncoding.
+
+The "git config" (instead of "test_config") is somewhat of an
+anti-pattern, but follows established conventions in
+t9001-send-email.sh, likewise with any other pattern or idiom in this
+test.
 
 The populating of home/.gitconfig and setting of HOME= is copied from
 a test in t0017-env-helper.sh added in 1ff750b128e (tests: make
@@ -64,65 +66,6 @@ Reported-by: Eli Schwartz <eschwartz@archlinux.org>
 Tested-by: Eli Schwartz <eschwartz@archlinux.org>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
-
-On Sun, Sep 05 2021, Eli Schwartz wrote:
-
-> [[PGP Signed Part:Undecided]]
-> On 9/5/21 8:04 PM, Ævar Arnfjörð Bjarmason wrote:
->> 
->> On Sun, Sep 05 2021, Eli Schwartz wrote:
->> 
->>> I recently noticed that git send-email was attempting to send emails
->>> using the wrong email address. I have a global email configuration in
->>> XDG_CONFIG_HOME, and a specific one set in the {repo}/.git/config of
->>> some repos... this was trying to use the global configuration.
->>>
->>> `git config -l | grep ^sendemail.smtpserver=` reports two emails
-
-[...]
-
->>> `git config --get sendemail.smtpserver` reports only the second,
->>> repo-specific one
->>>
->>>
->>> I bisected the issue to commit c95e3a3f0b8107b5dc7eac9dfdb9e5238280c9fb
->>>
->>>     send-email: move trivial config handling to Perl
->>>
->>>
->>> Using this commit, git-send-email disagrees with git config --get on
->>> which email to use.
->>>
->>> Using commit f4dc9432fd287bde9100488943baf3c6a04d90d1 immediately
->>> preceding this commit, git send-email agrees with git config --get.
->> 
->> That's a pretty bad bug, sorry about that. I believe that the following
->> patch should fix it (needs tests obviously). I.e. when we had N config
->> keys we'd previously pick the normal "last key wins", which my
->> c95e3a3f0b8107b5dc7eac9dfdb9e5238280c9fb changed to "first wins":
->> 
->> diff --git a/git-send-email.perl b/git-send-email.perl
->> index e65d969d0bb..6c7ab3d2e91 100755
->> --- a/git-send-email.perl
->> +++ b/git-send-email.perl
->> @@ -376,7 +376,7 @@ sub read_config {
->>  			@$target = @values;
->>  		}
->>  		else {
->> -			my $v = $known_keys->{$key}->[0];
->> +			my $v = $known_keys->{$key}->[-1];
->>  			next unless defined $v;
->>  			next if $configured->{$setting}++;
->>  			$$target = $v;
->> 
->
->
->
-> Thanks, this worked for me and fixed my problem! Feel free to add my
-> tested-by.
-
-Added, and here's a properly formatted patch with a regression test.
-
  git-send-email.perl   |  2 +-
  t/t9001-send-email.sh | 15 +++++++++++++++
  2 files changed, 16 insertions(+), 1 deletion(-)
