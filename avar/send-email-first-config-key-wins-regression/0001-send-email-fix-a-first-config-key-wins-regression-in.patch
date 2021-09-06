@@ -64,6 +64,65 @@ Reported-by: Eli Schwartz <eschwartz@archlinux.org>
 Tested-by: Eli Schwartz <eschwartz@archlinux.org>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+On Sun, Sep 05 2021, Eli Schwartz wrote:
+
+> [[PGP Signed Part:Undecided]]
+> On 9/5/21 8:04 PM, Ævar Arnfjörð Bjarmason wrote:
+>> 
+>> On Sun, Sep 05 2021, Eli Schwartz wrote:
+>> 
+>>> I recently noticed that git send-email was attempting to send emails
+>>> using the wrong email address. I have a global email configuration in
+>>> XDG_CONFIG_HOME, and a specific one set in the {repo}/.git/config of
+>>> some repos... this was trying to use the global configuration.
+>>>
+>>> `git config -l | grep ^sendemail.smtpserver=` reports two emails
+
+[...]
+
+>>> `git config --get sendemail.smtpserver` reports only the second,
+>>> repo-specific one
+>>>
+>>>
+>>> I bisected the issue to commit c95e3a3f0b8107b5dc7eac9dfdb9e5238280c9fb
+>>>
+>>>     send-email: move trivial config handling to Perl
+>>>
+>>>
+>>> Using this commit, git-send-email disagrees with git config --get on
+>>> which email to use.
+>>>
+>>> Using commit f4dc9432fd287bde9100488943baf3c6a04d90d1 immediately
+>>> preceding this commit, git send-email agrees with git config --get.
+>> 
+>> That's a pretty bad bug, sorry about that. I believe that the following
+>> patch should fix it (needs tests obviously). I.e. when we had N config
+>> keys we'd previously pick the normal "last key wins", which my
+>> c95e3a3f0b8107b5dc7eac9dfdb9e5238280c9fb changed to "first wins":
+>> 
+>> diff --git a/git-send-email.perl b/git-send-email.perl
+>> index e65d969d0bb..6c7ab3d2e91 100755
+>> --- a/git-send-email.perl
+>> +++ b/git-send-email.perl
+>> @@ -376,7 +376,7 @@ sub read_config {
+>>  			@$target = @values;
+>>  		}
+>>  		else {
+>> -			my $v = $known_keys->{$key}->[0];
+>> +			my $v = $known_keys->{$key}->[-1];
+>>  			next unless defined $v;
+>>  			next if $configured->{$setting}++;
+>>  			$$target = $v;
+>> 
+>
+>
+>
+> Thanks, this worked for me and fixed my problem! Feel free to add my
+> tested-by.
+
+Added, and here's a properly formatted patch with a regression test.
+
  git-send-email.perl   |  2 +-
  t/t9001-send-email.sh | 15 +++++++++++++++
  2 files changed, 16 insertions(+), 1 deletion(-)
