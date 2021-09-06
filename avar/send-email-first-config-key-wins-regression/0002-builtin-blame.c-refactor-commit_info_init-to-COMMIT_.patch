@@ -1,0 +1,110 @@
+From 8272375cbcbc1ae8bddfb4b2e0e00c3873ea3556 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.6-8272375cbcb-20210906T072851Z-avarab@gmail.com>
+In-Reply-To: <96814e5e-54be-1eca-0d75-68be53b1be3d@archlinux.org>
+References: <96814e5e-54be-1eca-0d75-68be53b1be3d@archlinux.org>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 1 Jul 2021 11:28:29 +0200
+Subject: [PATCH 2/6] builtin/blame.c: refactor commit_info_init() to
+ COMMIT_INFO_INIT macro
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the commit_info_init() function addded in ea02ffa3857 (mailmap:
+simplify map_user() interface, 2013-01-05) and instead initialize the
+"struct commit_info" with a macro.
+
+This is the more idiomatic pattern in the codebase, and doesn't leave
+us wondering when we see the *_init() function if this struct needs
+more complex initialization than a macro can provide.
+
+The get_commit_info() function is only called by the three callers
+being changed here immediately after initializing the struct with the
+macros, so by moving the initialization to the callers we don't need
+to do it in get_commit_info() anymore.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/blame.c | 30 +++++++++++++-----------------
+ 1 file changed, 13 insertions(+), 17 deletions(-)
+
+diff --git a/builtin/blame.c b/builtin/blame.c
+index 641523ff9af..1c31a996403 100644
+--- a/builtin/blame.c
++++ b/builtin/blame.c
+@@ -101,6 +101,16 @@ struct commit_info {
+ 	struct strbuf summary;
+ };
+ 
++#define COMMIT_INFO_INIT { \
++	.author = STRBUF_INIT, \
++	.author_mail = STRBUF_INIT, \
++	.author_tz = STRBUF_INIT, \
++	.committer = STRBUF_INIT, \
++	.committer_mail = STRBUF_INIT, \
++	.committer_tz = STRBUF_INIT, \
++	.summary = STRBUF_INIT, \
++}
++
+ /*
+  * Parse author/committer line in the commit object buffer
+  */
+@@ -160,18 +170,6 @@ static void get_ac_line(const char *inbuf, const char *what,
+ 	strbuf_add(name, namebuf, namelen);
+ }
+ 
+-static void commit_info_init(struct commit_info *ci)
+-{
+-
+-	strbuf_init(&ci->author, 0);
+-	strbuf_init(&ci->author_mail, 0);
+-	strbuf_init(&ci->author_tz, 0);
+-	strbuf_init(&ci->committer, 0);
+-	strbuf_init(&ci->committer_mail, 0);
+-	strbuf_init(&ci->committer_tz, 0);
+-	strbuf_init(&ci->summary, 0);
+-}
+-
+ static void commit_info_destroy(struct commit_info *ci)
+ {
+ 
+@@ -192,8 +190,6 @@ static void get_commit_info(struct commit *commit,
+ 	const char *subject, *encoding;
+ 	const char *message;
+ 
+-	commit_info_init(ret);
+-
+ 	encoding = get_log_output_encoding();
+ 	message = logmsg_reencode(commit, NULL, encoding);
+ 	get_ac_line(message, "\nauthor ",
+@@ -246,7 +242,7 @@ static void write_filename_info(struct blame_origin *suspect)
+  */
+ static int emit_one_suspect_detail(struct blame_origin *suspect, int repeat)
+ {
+-	struct commit_info ci;
++	struct commit_info ci = COMMIT_INFO_INIT;
+ 
+ 	if (!repeat && (suspect->commit->object.flags & METAINFO_SHOWN))
+ 		return 0;
+@@ -440,7 +436,7 @@ static void emit_other(struct blame_scoreboard *sb, struct blame_entry *ent, int
+ 	int cnt;
+ 	const char *cp;
+ 	struct blame_origin *suspect = ent->suspect;
+-	struct commit_info ci;
++	struct commit_info ci = COMMIT_INFO_INIT;
+ 	char hex[GIT_MAX_HEXSZ + 1];
+ 	int show_raw_time = !!(opt & OUTPUT_RAW_TIMESTAMP);
+ 	const char *default_color = NULL, *color = NULL, *reset = NULL;
+@@ -630,7 +626,7 @@ static void find_alignment(struct blame_scoreboard *sb, int *option)
+ 		if (longest_file < num)
+ 			longest_file = num;
+ 		if (!(suspect->commit->object.flags & METAINFO_SHOWN)) {
+-			struct commit_info ci;
++			struct commit_info ci = COMMIT_INFO_INIT;
+ 			suspect->commit->object.flags |= METAINFO_SHOWN;
+ 			get_commit_info(suspect->commit, &ci, 1);
+ 			if (*option & OUTPUT_SHOW_EMAIL)
+-- 
+2.33.0.821.gfd4106eadbd
+
