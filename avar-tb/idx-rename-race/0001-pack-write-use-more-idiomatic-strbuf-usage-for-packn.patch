@@ -1,0 +1,171 @@
+From 0e6ef07ce0063a1a3c5e254368aaea02bd72645a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.3-0e6ef07ce00-20210907T193416Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210907T193416Z-avarab@gmail.com>
+References: <YS8BwgfurPzhT4xh@nand.local>
+	<cover-0.3-00000000000-20210907T193416Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 Sep 2021 20:37:56 +0200
+Subject: [PATCH 1/3] pack-write: use more idiomatic strbuf usage for packname
+ construction
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code added in 5889271114a (finish_tmp_packfile():use strbuf for
+pathname construction, 2014-03-03) to do strbuf_reset() instead of
+noting the length of the base template, and doing a strbuf_setlen() to
+reset it, also change the spacing in the finish_tmp_packfile() so that
+each setup of the template, rename, and strbuf_reset() is grouped
+together.
+
+Since the prototype of the previous "name_buffer" now has a "const"
+use this chance to wrap the overly long definition of the
+finish_tmp_packfile() function.
+
+This doesn't really matter for now, but as we'll see makes the
+subsequent change much easier, as we won't need to juggle the basename
+template v.s. its current contents anymore when writing bitmaps.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/pack-objects.c | 17 +++++++++++------
+ pack-write.c           | 27 ++++++++++++---------------
+ pack.h                 |  7 ++++++-
+ 3 files changed, 29 insertions(+), 22 deletions(-)
+
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index df49f656b96..717003563db 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -1216,7 +1216,7 @@ static void write_pack_file(void)
+ 
+ 		if (!pack_to_stdout) {
+ 			struct stat st;
+-			struct strbuf tmpname = STRBUF_INIT;
++			struct strbuf tmp_basename = STRBUF_INIT;
+ 
+ 			/*
+ 			 * Packs are runtime accessed in their mtime
+@@ -1237,7 +1237,7 @@ static void write_pack_file(void)
+ 					warning_errno(_("failed utime() on %s"), pack_tmp_name);
+ 			}
+ 
+-			strbuf_addf(&tmpname, "%s-", base_name);
++			strbuf_addf(&tmp_basename, "%s-", base_name);
+ 
+ 			if (write_bitmap_index) {
+ 				bitmap_writer_set_checksum(hash);
+@@ -1245,12 +1245,16 @@ static void write_pack_file(void)
+ 					&to_pack, written_list, nr_written);
+ 			}
+ 
+-			finish_tmp_packfile(&tmpname, pack_tmp_name,
++			finish_tmp_packfile(&tmp_basename, pack_tmp_name,
+ 					    written_list, nr_written,
+ 					    &pack_idx_opts, hash);
+ 
+ 			if (write_bitmap_index) {
+-				strbuf_addf(&tmpname, "%s.bitmap", hash_to_hex(hash));
++				struct strbuf sb = STRBUF_INIT;
++
++				strbuf_addf(&sb, "%s%s.bitmap",
++					    tmp_basename.buf,
++					    hash_to_hex(hash));
+ 
+ 				stop_progress(&progress_state);
+ 
+@@ -1258,11 +1262,12 @@ static void write_pack_file(void)
+ 				bitmap_writer_select_commits(indexed_commits, indexed_commits_nr, -1);
+ 				bitmap_writer_build(&to_pack);
+ 				bitmap_writer_finish(written_list, nr_written,
+-						     tmpname.buf, write_bitmap_options);
++						     sb.buf, write_bitmap_options);
+ 				write_bitmap_index = 0;
++				strbuf_release(&sb);
+ 			}
+ 
+-			strbuf_release(&tmpname);
++			strbuf_release(&tmp_basename);
+ 			free(pack_tmp_name);
+ 			puts(hash_to_hex(hash));
+ 		}
+diff --git a/pack-write.c b/pack-write.c
+index 277c60165e8..57b9fc11423 100644
+--- a/pack-write.c
++++ b/pack-write.c
+@@ -462,15 +462,15 @@ struct hashfile *create_tmp_packfile(char **pack_tmp_name)
+ 	return hashfd(fd, *pack_tmp_name);
+ }
+ 
+-void finish_tmp_packfile(struct strbuf *name_buffer,
++void finish_tmp_packfile(const struct strbuf *tmp_basename,
+ 			 const char *pack_tmp_name,
+ 			 struct pack_idx_entry **written_list,
+ 			 uint32_t nr_written,
+ 			 struct pack_idx_option *pack_idx_opts,
+ 			 unsigned char hash[])
+ {
++	struct strbuf sb = STRBUF_INIT;
+ 	const char *idx_tmp_name, *rev_tmp_name = NULL;
+-	int basename_len = name_buffer->len;
+ 
+ 	if (adjust_shared_perm(pack_tmp_name))
+ 		die_errno("unable to make temporary pack file readable");
+@@ -483,26 +483,23 @@ void finish_tmp_packfile(struct strbuf *name_buffer,
+ 	rev_tmp_name = write_rev_file(NULL, written_list, nr_written, hash,
+ 				      pack_idx_opts->flags);
+ 
+-	strbuf_addf(name_buffer, "%s.pack", hash_to_hex(hash));
+-
+-	if (rename(pack_tmp_name, name_buffer->buf))
++	strbuf_addf(&sb, "%s%s.pack", tmp_basename->buf, hash_to_hex(hash));
++	if (rename(pack_tmp_name, sb.buf))
+ 		die_errno("unable to rename temporary pack file");
+-
+-	strbuf_setlen(name_buffer, basename_len);
++	strbuf_reset(&sb);
+ 
+ 	if (rev_tmp_name) {
+-		strbuf_addf(name_buffer, "%s.rev", hash_to_hex(hash));
+-		if (rename(rev_tmp_name, name_buffer->buf))
++		strbuf_addf(&sb, "%s%s.rev", tmp_basename->buf,
++			    hash_to_hex(hash));
++		if (rename(rev_tmp_name, sb.buf))
+ 			die_errno("unable to rename temporary reverse-index file");
+-
+-		strbuf_setlen(name_buffer, basename_len);
++		strbuf_reset(&sb);
+ 	}
+ 
+-	strbuf_addf(name_buffer, "%s.idx", hash_to_hex(hash));
+-	if (rename(idx_tmp_name, name_buffer->buf))
++	strbuf_addf(&sb, "%s%s.idx", tmp_basename->buf, hash_to_hex(hash));
++	if (rename(idx_tmp_name, sb.buf))
+ 		die_errno("unable to rename temporary index file");
+-
+-	strbuf_setlen(name_buffer, basename_len);
++	strbuf_reset(&sb);
+ 
+ 	free((void *)idx_tmp_name);
+ }
+diff --git a/pack.h b/pack.h
+index fa139545262..ae0c9e04cd9 100644
+--- a/pack.h
++++ b/pack.h
+@@ -110,6 +110,11 @@ int encode_in_pack_object_header(unsigned char *hdr, int hdr_len,
+ int read_pack_header(int fd, struct pack_header *);
+ 
+ struct hashfile *create_tmp_packfile(char **pack_tmp_name);
+-void finish_tmp_packfile(struct strbuf *name_buffer, const char *pack_tmp_name, struct pack_idx_entry **written_list, uint32_t nr_written, struct pack_idx_option *pack_idx_opts, unsigned char sha1[]);
++void finish_tmp_packfile(const struct strbuf *name_buffer,
++			 const char *pack_tmp_name,
++			 struct pack_idx_entry **written_list,
++			 uint32_t nr_written,
++			 struct pack_idx_option *pack_idx_opts,
++			 unsigned char sha1[]);
+ 
+ #endif
+-- 
+2.33.0.818.gd2ef2916285
+
