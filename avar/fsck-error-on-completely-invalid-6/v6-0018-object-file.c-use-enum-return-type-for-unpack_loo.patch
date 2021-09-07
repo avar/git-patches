@@ -1,0 +1,188 @@
+From 1b7173a5b5b199065d10bdcfa6b15fa95a3ee61c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-18.22-1b7173a5b5b-20210907T104559Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.22-00000000000-20210907T104558Z-avarab@gmail.com>
+References: <cover-00.21-00000000000-20210710T133203Z-avarab@gmail.com>
+	<cover-v6-00.22-00000000000-20210907T104558Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 Sep 2021 12:01:45 +0200
+Subject: [PATCH v6 18/22] object-file.c: use "enum" return type for
+ unpack_loose_header()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the preceding commits we changed and documented
+unpack_loose_header() from return any negative value or zero, to only
+-2, -1 or 0. Let's instead add an "enum unpack_loose_header_result"
+type and use it, and have the compiler assert that we're exhaustively
+covering all return values. This gets rid of the need for having a
+"default" BUG() case in loose_object_info().
+
+I'm on the fence about whether this is more readable or worth it, but
+since it was suggested in [1] to do this let's go for it.
+
+1. https://lore.kernel.org/git/20210527175433.2673306-1-jonathantanmy@google.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-file.c  | 20 ++++++++++----------
+ object-store.h | 27 ++++++++++++++++++++-------
+ streaming.c    | 27 ++++++++++++++++-----------
+ 3 files changed, 46 insertions(+), 28 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index 0cb5287d3ef..9484c7ce2be 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1233,10 +1233,12 @@ void *map_loose_object(struct repository *r,
+ 	return map_loose_object_1(r, NULL, oid, size);
+ }
+ 
+-int unpack_loose_header(git_zstream *stream,
+-			unsigned char *map, unsigned long mapsize,
+-			void *buffer, unsigned long bufsiz,
+-			struct strbuf *header)
++enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
++						    unsigned char *map,
++						    unsigned long mapsize,
++						    void *buffer,
++						    unsigned long bufsiz,
++						    struct strbuf *header)
+ {
+ 	int status;
+ 
+@@ -1411,7 +1413,7 @@ static int loose_object_info(struct repository *r,
+ 	unsigned long mapsize;
+ 	void *map;
+ 	git_zstream stream;
+-	int hdr_ret;
++	enum unpack_loose_header_result hdr_ret;
+ 	char hdr[MAX_HEADER_LEN];
+ 	struct strbuf hdrbuf = STRBUF_INIT;
+ 	unsigned long size_scratch;
+@@ -1457,18 +1459,16 @@ static int loose_object_info(struct repository *r,
+ 	hdr_ret = unpack_loose_header(&stream, map, mapsize, hdr, sizeof(hdr),
+ 				      allow_unknown ? &hdrbuf : NULL);
+ 	switch (hdr_ret) {
+-	case 0:
++	case UNPACK_LOOSE_HEADER_RESULT_OK:
+ 		break;
+-	case -1:
++	case UNPACK_LOOSE_HEADER_RESULT_BAD:
+ 		status = error(_("unable to unpack %s header"),
+ 			       oid_to_hex(oid));
+ 		break;
+-	case -2:
++	case UNPACK_LOOSE_HEADER_RESULT_BAD_TOO_LONG:
+ 		status = error(_("header for %s too long, exceeds %d bytes"),
+ 			       oid_to_hex(oid), MAX_HEADER_LEN);
+ 		break;
+-	default:
+-		BUG("unknown hdr_ret value %d", hdr_ret);
+ 	}
+ 	if (!status) {
+ 		if (!parse_loose_header(hdrbuf.len ? hdrbuf.buf : hdr, oi))
+diff --git a/object-store.h b/object-store.h
+index e896b813f24..ac55b02f15a 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -485,23 +485,36 @@ int for_each_object_in_pack(struct packed_git *p,
+ int for_each_packed_object(each_packed_object_fn, void *,
+ 			   enum for_each_object_flags flags);
+ 
++enum unpack_loose_header_result {
++	UNPACK_LOOSE_HEADER_RESULT_BAD_TOO_LONG = -2,
++	UNPACK_LOOSE_HEADER_RESULT_BAD = -1,
++	UNPACK_LOOSE_HEADER_RESULT_OK,
++
++};
++
+ /**
+  * unpack_loose_header() initializes the data stream needed to unpack
+  * a loose object header.
+  *
+- * Returns 0 on success. Returns negative values on error. If the
+- * header exceeds MAX_HEADER_LEN -2 will be returned.
++ * Returns UNPACK_LOOSE_HEADER_RESULT_OK on success. Returns
++ * UNPACK_LOOSE_HEADER_RESULT_BAD values on error, or if the header
++ * exceeds MAX_HEADER_LEN UNPACK_LOOSE_HEADER_RESULT_BAD_TOO_LONG will
++ * be returned.
+  *
+  * It will only parse up to MAX_HEADER_LEN bytes unless an optional
+  * "hdrbuf" argument is non-NULL. This is intended for use with
+  * OBJECT_INFO_ALLOW_UNKNOWN_TYPE to extract the bad type for (error)
+  * reporting. The full header will be extracted to "hdrbuf" for use
+- * with parse_loose_header(), -2 will still be returned from this
+- * function to indicate that the header was too long.
++ * with parse_loose_header(), UNPACK_LOOSE_HEADER_RESULT_BAD_TOO_LONG
++ * will still be returned from this function to indicate that the
++ * header was too long.
+  */
+-int unpack_loose_header(git_zstream *stream, unsigned char *map,
+-			unsigned long mapsize, void *buffer,
+-			unsigned long bufsiz, struct strbuf *hdrbuf);
++enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
++						    unsigned char *map,
++						    unsigned long mapsize,
++						    void *buffer,
++						    unsigned long bufsiz,
++						    struct strbuf *hdrbuf);
+ 
+ /**
+  * parse_loose_header() parses the starting "<type> <len>\0" of an
+diff --git a/streaming.c b/streaming.c
+index c3dc241d6a5..3e5045c004d 100644
+--- a/streaming.c
++++ b/streaming.c
+@@ -224,24 +224,25 @@ static int open_istream_loose(struct git_istream *st, struct repository *r,
+ 			      enum object_type *type)
+ {
+ 	struct object_info oi = OBJECT_INFO_INIT;
++	enum unpack_loose_header_result hdr_ret;
+ 	oi.sizep = &st->size;
+ 	oi.typep = type;
+ 
+ 	st->u.loose.mapped = map_loose_object(r, oid, &st->u.loose.mapsize);
+ 	if (!st->u.loose.mapped)
+ 		return -1;
+-	if ((unpack_loose_header(&st->z,
+-				 st->u.loose.mapped,
+-				 st->u.loose.mapsize,
+-				 st->u.loose.hdr,
+-				 sizeof(st->u.loose.hdr),
+-				 NULL) < 0) ||
+-	    (parse_loose_header(st->u.loose.hdr, &oi) < 0) ||
+-	    *type < 0) {
+-		git_inflate_end(&st->z);
+-		munmap(st->u.loose.mapped, st->u.loose.mapsize);
+-		return -1;
++	hdr_ret = unpack_loose_header(&st->z, st->u.loose.mapped,
++				      st->u.loose.mapsize, st->u.loose.hdr,
++				      sizeof(st->u.loose.hdr), NULL);
++	switch (hdr_ret) {
++	case UNPACK_LOOSE_HEADER_RESULT_OK:
++		break;
++	case UNPACK_LOOSE_HEADER_RESULT_BAD:
++	case UNPACK_LOOSE_HEADER_RESULT_BAD_TOO_LONG:
++		goto error;
+ 	}
++	if (parse_loose_header(st->u.loose.hdr, &oi) < 0 || *type < 0)
++		goto error;
+ 
+ 	st->u.loose.hdr_used = strlen(st->u.loose.hdr) + 1;
+ 	st->u.loose.hdr_avail = st->z.total_out;
+@@ -250,6 +251,10 @@ static int open_istream_loose(struct git_istream *st, struct repository *r,
+ 	st->read = read_istream_loose;
+ 
+ 	return 0;
++error:
++	git_inflate_end(&st->z);
++	munmap(st->u.loose.mapped, st->u.loose.mapsize);
++	return -1;
+ }
+ 
+ 
+-- 
+2.33.0.815.g21c7aaf6073
+
