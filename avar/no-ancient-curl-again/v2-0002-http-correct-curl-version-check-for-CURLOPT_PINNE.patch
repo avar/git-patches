@@ -1,0 +1,76 @@
+From 511534ce17a9ad0119eef8c8857dd3be4d37c5d1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.5-511534ce17a-20210908T152636Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20210908T152636Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210825T231400Z-avarab@gmail.com>
+	<cover-v2-0.5-00000000000-20210908T152636Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 25 Aug 2021 10:33:40 +0200
+Subject: [PATCH v2 2/5] http: correct curl version check for
+ CURLOPT_PINNEDPUBLICKEY
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In aeff8a61216 (http: implement public key pinning, 2016-02-15) a
+dependency and warning() was added if curl older than 7.44.0 was used,
+but the relevant code depended on CURLOPT_PINNEDPUBLICKEY, introduced
+in 7.39.0.
+
+Let's also remove the macro check before we declare the ssl_pinnedkey
+variable, the pattern for other such variables is to declare the
+static variable unconditionally, we just may not use it on older
+versions. This reduces macro verbosity.
+
+The reduction in verbosity comes at the small cost of issuing a
+warning about the unused variable if this code is compiled with curl
+versions older than 7.39.0. I think that's an acceptable trade-off,
+anyone compiling a new git with a 2014-era toolchain likely has at
+least other warning that'll have prompted them not to use -Werror, and
+if not maybe this'll prompt them to compile their new git with a more
+modern libcurl.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ http.c | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/http.c b/http.c
+index 56856178bfe..f7d5b6a0776 100644
+--- a/http.c
++++ b/http.c
+@@ -59,9 +59,7 @@ static struct {
+ static const char *ssl_key;
+ static const char *ssl_capath;
+ static const char *curl_no_proxy;
+-#if LIBCURL_VERSION_NUM >= 0x072c00
+ static const char *ssl_pinnedkey;
+-#endif
+ static const char *ssl_cainfo;
+ static long curl_low_speed_limit = -1;
+ static long curl_low_speed_time = -1;
+@@ -373,10 +371,10 @@ static int http_options(const char *var, const char *value, void *cb)
+ 	}
+ 
+ 	if (!strcmp("http.pinnedpubkey", var)) {
+-#if LIBCURL_VERSION_NUM >= 0x072c00
++#if LIBCURL_VERSION_NUM >= 0x072700
+ 		return git_config_pathname(&ssl_pinnedkey, var, value);
+ #else
+-		warning(_("Public key pinning not supported with cURL < 7.44.0"));
++		warning(_("Public key pinning not supported with cURL < 7.39.0"));
+ 		return 0;
+ #endif
+ 	}
+@@ -845,7 +843,7 @@ static CURL *get_curl_handle(void)
+ 		curl_easy_setopt(result, CURLOPT_SSLKEY, ssl_key);
+ 	if (ssl_capath != NULL)
+ 		curl_easy_setopt(result, CURLOPT_CAPATH, ssl_capath);
+-#if LIBCURL_VERSION_NUM >= 0x072c00
++#if LIBCURL_VERSION_NUM >= 0x072700
+ 	if (ssl_pinnedkey != NULL)
+ 		curl_easy_setopt(result, CURLOPT_PINNEDPUBLICKEY, ssl_pinnedkey);
+ #endif
+-- 
+2.33.0.825.g2bf60429931
+
