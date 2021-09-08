@@ -1,0 +1,144 @@
+From 7b39f4599b1c805ce2146f57bea1637b8421e4ca Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.4-7b39f4599b-20210908T003153Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-0000000000-20210908T003153Z-avarab@gmail.com>
+References: <cover.1630461918.git.me@ttaylorr.com>
+	<cover-v2-0.4-0000000000-20210908T003153Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 Sep 2021 20:37:56 +0200
+Subject: [PATCH v2 2/4] pack-write: refactor renaming in finish_tmp_packfile()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the renaming in finish_tmp_packfile() so that it takes a
+"const struct strbuf *" instead of a non-const, and refactor the
+repetitive renaming pattern in finish_tmp_packfile() to use a new
+static rename_tmp_packfile() helper function.
+
+The previous strbuf_reset() idiom originated with
+5889271114a (finish_tmp_packfile():use strbuf for pathname
+construction, 2014-03-03), which in turn was a minimal adjustment of
+pre-strbuf code added in 0e990530ae (finish_tmp_packfile(): a helper
+function, 2011-10-28).
+
+Since the memory allocation is not a bottleneck here we can afford a
+bit more readability at the cost of re-allocating this new "struct
+strbuf sb".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/pack-objects.c |  8 ++++++--
+ pack-write.c           | 41 +++++++++++++++++++----------------------
+ pack.h                 |  2 +-
+ 3 files changed, 26 insertions(+), 25 deletions(-)
+
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index df49f656b9..f2569b5ca2 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -1250,7 +1250,10 @@ static void write_pack_file(void)
+ 					    &pack_idx_opts, hash);
+ 
+ 			if (write_bitmap_index) {
+-				strbuf_addf(&tmpname, "%s.bitmap", hash_to_hex(hash));
++				struct strbuf sb = STRBUF_INIT;
++
++				strbuf_addf(&sb, "%s%s.bitmap", tmpname.buf,
++					    hash_to_hex(hash));
+ 
+ 				stop_progress(&progress_state);
+ 
+@@ -1258,8 +1261,9 @@ static void write_pack_file(void)
+ 				bitmap_writer_select_commits(indexed_commits, indexed_commits_nr, -1);
+ 				bitmap_writer_build(&to_pack);
+ 				bitmap_writer_finish(written_list, nr_written,
+-						     tmpname.buf, write_bitmap_options);
++						     sb.buf, write_bitmap_options);
+ 				write_bitmap_index = 0;
++				strbuf_release(&sb);
+ 			}
+ 
+ 			strbuf_release(&tmpname);
+diff --git a/pack-write.c b/pack-write.c
+index 277c60165e..363b395d67 100644
+--- a/pack-write.c
++++ b/pack-write.c
+@@ -462,7 +462,21 @@ struct hashfile *create_tmp_packfile(char **pack_tmp_name)
+ 	return hashfd(fd, *pack_tmp_name);
+ }
+ 
+-void finish_tmp_packfile(struct strbuf *name_buffer,
++static void rename_tmp_packfile(const char *source,
++				 const struct strbuf *basename,
++				 const unsigned char hash[],
++				 const char *ext)
++{
++	struct strbuf sb = STRBUF_INIT;
++
++	strbuf_addf(&sb, "%s%s.%s", basename->buf, hash_to_hex(hash), ext);
++	if (rename(source, sb.buf))
++		die_errno("unable to rename temporary '*.%s' file to '%s'",
++			  ext, sb.buf);
++	strbuf_release(&sb);
++}
++
++void finish_tmp_packfile(const struct strbuf *basename,
+ 			 const char *pack_tmp_name,
+ 			 struct pack_idx_entry **written_list,
+ 			 uint32_t nr_written,
+@@ -470,7 +484,6 @@ void finish_tmp_packfile(struct strbuf *name_buffer,
+ 			 unsigned char hash[])
+ {
+ 	const char *idx_tmp_name, *rev_tmp_name = NULL;
+-	int basename_len = name_buffer->len;
+ 
+ 	if (adjust_shared_perm(pack_tmp_name))
+ 		die_errno("unable to make temporary pack file readable");
+@@ -483,26 +496,10 @@ void finish_tmp_packfile(struct strbuf *name_buffer,
+ 	rev_tmp_name = write_rev_file(NULL, written_list, nr_written, hash,
+ 				      pack_idx_opts->flags);
+ 
+-	strbuf_addf(name_buffer, "%s.pack", hash_to_hex(hash));
+-
+-	if (rename(pack_tmp_name, name_buffer->buf))
+-		die_errno("unable to rename temporary pack file");
+-
+-	strbuf_setlen(name_buffer, basename_len);
+-
+-	if (rev_tmp_name) {
+-		strbuf_addf(name_buffer, "%s.rev", hash_to_hex(hash));
+-		if (rename(rev_tmp_name, name_buffer->buf))
+-			die_errno("unable to rename temporary reverse-index file");
+-
+-		strbuf_setlen(name_buffer, basename_len);
+-	}
+-
+-	strbuf_addf(name_buffer, "%s.idx", hash_to_hex(hash));
+-	if (rename(idx_tmp_name, name_buffer->buf))
+-		die_errno("unable to rename temporary index file");
+-
+-	strbuf_setlen(name_buffer, basename_len);
++	rename_tmp_packfile(pack_tmp_name, basename, hash, "pack");
++	if (rev_tmp_name)
++		rename_tmp_packfile(rev_tmp_name, basename, hash, "rev");
++	rename_tmp_packfile(idx_tmp_name, basename, hash, "idx");
+ 
+ 	free((void *)idx_tmp_name);
+ }
+diff --git a/pack.h b/pack.h
+index 1c17254c0a..594d5176aa 100644
+--- a/pack.h
++++ b/pack.h
+@@ -110,7 +110,7 @@ int encode_in_pack_object_header(unsigned char *hdr, int hdr_len,
+ int read_pack_header(int fd, struct pack_header *);
+ 
+ struct hashfile *create_tmp_packfile(char **pack_tmp_name);
+-void finish_tmp_packfile(struct strbuf *name_buffer,
++void finish_tmp_packfile(const struct strbuf *basename,
+ 			 const char *pack_tmp_name,
+ 			 struct pack_idx_entry **written_list,
+ 			 uint32_t nr_written,
+-- 
+2.33.0.819.gea1b153a43c
+
