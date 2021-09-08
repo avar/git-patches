@@ -1,0 +1,47 @@
+From 76a04309861b94b2b5721c3b646ca9ce759d95e1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-76a0430986-20210908T010648Z-avarab@gmail.com>
+In-Reply-To: <9f40019eb3d3315cb03440e6237bced4feb6cf67.1617116623.git.me@ttaylorr.com>
+References: <9f40019eb3d3315cb03440e6237bced4feb6cf67.1617116623.git.me@ttaylorr.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 8 Sep 2021 02:48:16 +0200
+Subject: [PATCH] pack-write: don't prepare to write *.rev when not writing
+ *.rev
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a performance regression introduced in a587b5a786 (pack-write.c:
+extract 'write_rev_file_order', 2021-03-30) and stop needlessly
+allocating the "pack_order" array and sorting it with
+"pack_order_cmp()", only to throw that work away when we discover that
+we're not writing *.rev files at all.
+
+This redundant work was not present in the original version of this
+code added in 8ef50d9958 (pack-write.c: prepare to write 'pack-*.rev'
+files, 2021-01-25). There we'd call write_rev_file() from
+e.g. finish_tmp_packfile(), but we'd "return NULL" early in
+write_rev_file() if not doing a "WRITE_REV" or "WRITE_REV_VERIFY".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ pack-write.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/pack-write.c b/pack-write.c
+index f1fc3ecafa..1883848e7c 100644
+--- a/pack-write.c
++++ b/pack-write.c
+@@ -224,6 +224,9 @@ const char *write_rev_file(const char *rev_name,
+ 	uint32_t i;
+ 	const char *ret;
+ 
++	if (!(flags & WRITE_REV) && !(flags & WRITE_REV_VERIFY))
++		return NULL;
++
+ 	ALLOC_ARRAY(pack_order, nr_objects);
+ 	for (i = 0; i < nr_objects; i++)
+ 		pack_order[i] = i;
+-- 
+2.33.0.819.gea1b153a43c
+
