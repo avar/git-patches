@@ -1,0 +1,62 @@
+From 1149a41c67b69bcf0c4aeca12e7ecb9fd7f7ee6d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-1149a41c67b-20210909T130655Z-avarab@gmail.com>
+In-Reply-To: <nycvar.QRO.7.76.6.2109091323150.59@tvgsbejvaqbjf.bet>
+References: <nycvar.QRO.7.76.6.2109091323150.59@tvgsbejvaqbjf.bet>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 15 Jul 2021 18:02:01 +0200
+Subject: [PATCH] test-tool run-command: fix confusing init pattern
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In be5d88e1128 (test-tool run-command: learn to run (parts of) the
+testsuite, 2019-10-04) an init pattern was added that would use
+TESTSUITE_INIT, but then promptly memset() everything back to 0. We'd
+then set the "dup" on the two string lists. Our setting of "next" to
+"-1" thus did nothing, we'd reset it to "0" before using it.
+
+Let's just use the init macro for the STRING_LIST members, we can then
+remove the already redundant memset().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-run-command.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/t/helper/test-run-command.c b/t/helper/test-run-command.c
+index 7ae03dc7123..8e42516bdc1 100644
+--- a/t/helper/test-run-command.c
++++ b/t/helper/test-run-command.c
+@@ -56,12 +56,15 @@ static int task_finished(int result,
+ }
+ 
+ struct testsuite {
+-	struct string_list tests, failed;
++	struct string_list tests;
++	struct string_list failed;
+ 	int next;
+ 	int quiet, immediate, verbose, verbose_log, trace, write_junit_xml;
+ };
+-#define TESTSUITE_INIT \
+-	{ STRING_LIST_INIT_DUP, STRING_LIST_INIT_DUP, -1, 0, 0, 0, 0, 0, 0 }
++#define TESTSUITE_INIT { \
++	.tests = STRING_LIST_INIT_DUP, \
++	.failed = STRING_LIST_INIT_DUP, \
++}
+ 
+ static int next_test(struct child_process *cp, struct strbuf *err, void *cb,
+ 		     void **task_cb)
+@@ -142,9 +145,6 @@ static int testsuite(int argc, const char **argv)
+ 		OPT_END()
+ 	};
+ 
+-	memset(&suite, 0, sizeof(suite));
+-	suite.tests.strdup_strings = suite.failed.strdup_strings = 1;
+-
+ 	argc = parse_options(argc, argv, NULL, options,
+ 			testsuite_usage, PARSE_OPT_STOP_AT_NON_OPTION);
+ 
+-- 
+2.33.0.867.g88ec4638586
+
