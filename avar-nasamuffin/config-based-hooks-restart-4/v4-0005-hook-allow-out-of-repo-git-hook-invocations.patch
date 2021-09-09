@@ -1,0 +1,89 @@
+From 8cadc4770b7c12be71d8035ee73b3fded5ee26dc Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-5.5-8cadc4770b7-20210909T122559Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.5-00000000000-20210909T122559Z-avarab@gmail.com>
+References: <20210819033450.3382652-1-emilyshaffer@google.com>
+	<cover-v4-0.5-00000000000-20210909T122559Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Sun, 11 Jul 2021 17:01:05 -0700
+Subject: [PATCH v4 5/5] hook: allow out-of-repo 'git hook' invocations
+
+Since hooks can now be supplied via the config, and a config can be
+present without a gitdir via the global and system configs, we can start
+to allow 'git hook run' to occur without a gitdir. This enables us to do
+things like run sendemail-validate hooks when running 'git send-email'
+from a nongit directory.
+
+It still doesn't make sense to look for hooks in the hookdir in nongit
+repos, though, as there is no hookdir.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+---
+ git.c           |  2 +-
+ hook.c          |  2 +-
+ t/t1800-hook.sh | 20 +++++++++++++++-----
+ 3 files changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/git.c b/git.c
+index 540909c391f..39988ee3b02 100644
+--- a/git.c
++++ b/git.c
+@@ -538,7 +538,7 @@ static struct cmd_struct commands[] = {
+ 	{ "grep", cmd_grep, RUN_SETUP_GENTLY },
+ 	{ "hash-object", cmd_hash_object },
+ 	{ "help", cmd_help },
+-	{ "hook", cmd_hook, RUN_SETUP },
++	{ "hook", cmd_hook, RUN_SETUP_GENTLY },
+ 	{ "index-pack", cmd_index_pack, RUN_SETUP_GENTLY | NO_PARSEOPT },
+ 	{ "init", cmd_init_db },
+ 	{ "init-db", cmd_init_db },
+diff --git a/hook.c b/hook.c
+index 401840d4683..fe2705c5f38 100644
+--- a/hook.c
++++ b/hook.c
+@@ -182,7 +182,7 @@ struct list_head *list_hooks(const char *hookname)
+ 
+ 	/* Add the hook from the hookdir. The placeholder makes it easier to
+ 	 * allocate work in pick_next_hook. */
+-	if (find_hook(hookname))
++	if (have_git_dir() && find_hook(hookname))
+ 		append_or_move_hook(hook_head, NULL);
+ 
+ 	return hook_head;
+diff --git a/t/t1800-hook.sh b/t/t1800-hook.sh
+index 68e7ff7de7e..6b6ba30e88e 100755
+--- a/t/t1800-hook.sh
++++ b/t/t1800-hook.sh
+@@ -128,15 +128,25 @@ test_expect_success 'git hook list: existing hook' '
+ 	test_cmp expect actual
+ '
+ 
+-test_expect_success 'git hook run -- out-of-repo runs excluded' '
+-	write_script .git/hooks/test-hook <<-EOF &&
+-	echo Test hook
+-	EOF
++test_expect_success 'git hook run: out-of-repo runs execute global hooks' '
++	test_config_global hook.global-hook.event test-hook --add &&
++	test_config_global hook.global-hook.command "echo no repo no problems" --add &&
++
++	echo "global-hook" >expect &&
++	nongit git hook list test-hook >actual &&
++	test_cmp expect actual &&
++
++	echo "no repo no problems" >expect &&
+ 
+-	nongit test_must_fail git hook run test-hook
++	nongit git hook run test-hook 2>actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'git -c core.hooksPath=<PATH> hook run' '
++	write_script .git/hooks/test-hook <<-EOF &&
++	echo Test hook
++	EOF
++
+ 	mkdir my-hooks &&
+ 	write_script my-hooks/test-hook <<-\EOF &&
+ 	echo Hook ran $1 >>actual
+-- 
+2.33.0.867.g88ec4638586
+
