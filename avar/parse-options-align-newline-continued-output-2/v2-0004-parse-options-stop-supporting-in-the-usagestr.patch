@@ -1,0 +1,227 @@
+From 2a1d8346cc58c8828946ff1d22db7bf247f0be41 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.6-2a1d8346cc5-20210910T134917Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20210910T134917Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20210901T110917Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20210910T134917Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Sep 2021 14:30:05 +0200
+Subject: [PATCH v2 4/6] parse-options: stop supporting "" in the usagestr
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The strings in the the "usagestr" array have special handling for the
+empty string dating back to f389c808b67 (Rework make_usage to print
+the usage message immediately, 2007-10-14). We'll prefix all strings
+after the first one with "or: ", unless the previous string ended in a
+"\n". Then once we encountered a "" we'll emit all strings after that
+point verbatim.
+
+This gets rid of that last special case, which was added in
+f389c808b67 (Rework make_usage to print the usage message immediately,
+2007-10-14). It had only one in-tree user (aside from the "git
+credential-cache*" use removed in the preceding commit): "git blame":
+
+    $ git blame -h
+    usage: git blame [<options>] [<rev-opts>] [<rev>] [--] <file>
+
+        <rev-opts> are documented in git-rev-list(1)
+
+Let's change that output to simply use "[<git-rev-list args>]" instead
+of "[<rev-opts>]". This accomplishes the same goal without needing
+this special support.
+
+The use of this in "blame" dates back to 5817da01434 (git-blame:
+migrate to incremental parse-option [1/2], 2008-07-08), we can instead
+just say that we support <git rev-list args> as "bundle" has done
+since 2e0afafebd8 (Add git-bundle: move objects and references by
+archive, 2007-02-22).
+
+Once we get rid of this special case we can also use usage_msg_opt()
+to emit the error message we'd get on an invalid "-L <range>"
+argument, which means we can get rid of the old-style "blame_usage"
+variable.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/blame.c               |  9 +++------
+ builtin/rev-parse.c           |  3 +++
+ parse-options.c               |  8 +-------
+ t/helper/test-parse-options.c |  2 --
+ t/t0040-parse-options.sh      |  2 --
+ t/t1502-rev-parse-parseopt.sh | 16 ----------------
+ 6 files changed, 7 insertions(+), 33 deletions(-)
+
+diff --git a/builtin/blame.c b/builtin/blame.c
+index 641523ff9af..45d9873a999 100644
+--- a/builtin/blame.c
++++ b/builtin/blame.c
+@@ -29,12 +29,8 @@
+ #include "refs.h"
+ #include "tag.h"
+ 
+-static char blame_usage[] = N_("git blame [<options>] [<rev-opts>] [<rev>] [--] <file>");
+-
+ static const char *blame_opt_usage[] = {
+-	blame_usage,
+-	"",
+-	N_("<rev-opts> are documented in git-rev-list(1)"),
++	N_("git blame [<options>] [<git rev-list args>] [<rev>] [--] <file>"),
+ 	NULL
+ };
+ 
+@@ -1107,7 +1103,8 @@ int cmd_blame(int argc, const char **argv, const char *prefix)
+ 				    nth_line_cb, &sb, lno, anchor,
+ 				    &bottom, &top, sb.path,
+ 				    the_repository->index))
+-			usage(blame_usage);
++			usage_msg_opt(_("Invalid -L <range> parameters"),
++				      blame_opt_usage, options);
+ 		if ((!lno && (top || bottom)) || lno < bottom)
+ 			die(Q_("file %s has only %lu line",
+ 			       "file %s has only %lu lines",
+diff --git a/builtin/rev-parse.c b/builtin/rev-parse.c
+index 22c4e1a4ff0..aeebfd52805 100644
+--- a/builtin/rev-parse.c
++++ b/builtin/rev-parse.c
+@@ -436,7 +436,10 @@ static int cmd_parseopt(int argc, const char **argv, const char *prefix)
+ 	for (;;) {
+ 		if (strbuf_getline(&sb, stdin) == EOF)
+ 			die(_("premature end of input"));
++		if (!sb.len)
++			die(_("empty lines are not permitted before the `--' separator"));
+ 		ALLOC_GROW(usage, unb + 1, usz);
++
+ 		if (!strcmp("--", sb.buf)) {
+ 			if (unb < 1)
+ 				die(_("no usage string given before the `--' separator"));
+diff --git a/parse-options.c b/parse-options.c
+index 2abff136a17..950a8279beb 100644
+--- a/parse-options.c
++++ b/parse-options.c
+@@ -924,18 +924,12 @@ static int usage_with_options_internal(struct parse_opt_ctx_t *ctx,
+ 		fprintf(outfile, "cat <<\\EOF\n");
+ 
+ 	fprintf_ln(outfile, _("usage: %s"), _(*usagestr++));
+-	while (*usagestr && **usagestr)
++	while (*usagestr) {
+ 		/*
+ 		 * TRANSLATORS: the colon here should align with the
+ 		 * one in "usage: %s" translation.
+ 		 */
+ 		fprintf_ln(outfile, _("   or: %s"), _(*usagestr++));
+-	while (*usagestr) {
+-		if (**usagestr)
+-			fprintf_ln(outfile, _("    %s"), _(*usagestr));
+-		else
+-			fputc('\n', outfile);
+-		usagestr++;
+ 	}
+ 
+ 	need_newline = 1;
+diff --git a/t/helper/test-parse-options.c b/t/helper/test-parse-options.c
+index 2051ce57db7..e00aef073b0 100644
+--- a/t/helper/test-parse-options.c
++++ b/t/helper/test-parse-options.c
+@@ -102,8 +102,6 @@ int cmd__parse_options(int argc, const char **argv)
+ 	const char *prefix = "prefix/";
+ 	const char *usage[] = {
+ 		"test-tool parse-options <options>",
+-		"",
+-		"A helper function for the parse-options API.",
+ 		NULL
+ 	};
+ 	struct string_list expect = STRING_LIST_INIT_NODUP;
+diff --git a/t/t0040-parse-options.sh b/t/t0040-parse-options.sh
+index ad4746d899a..2910874ece5 100755
+--- a/t/t0040-parse-options.sh
++++ b/t/t0040-parse-options.sh
+@@ -10,8 +10,6 @@ test_description='our own option parser'
+ cat >expect <<\EOF
+ usage: test-tool parse-options <options>
+ 
+-    A helper function for the parse-options API.
+-
+     --yes                 get a boolean
+     -D, --no-doubt        begins with 'no-'
+     -B, --no-fear         be brave
+diff --git a/t/t1502-rev-parse-parseopt.sh b/t/t1502-rev-parse-parseopt.sh
+index b29563fc997..2ac8f68b735 100755
+--- a/t/t1502-rev-parse-parseopt.sh
++++ b/t/t1502-rev-parse-parseopt.sh
+@@ -6,8 +6,6 @@ test_description='test git rev-parse --parseopt'
+ test_expect_success 'setup optionspec' '
+ 	sed -e "s/^|//" >optionspec <<\EOF
+ |some-command [options] <args>...
+-|
+-|some-command does foo and bar!
+ |--
+ |h,help    show the help
+ |
+@@ -41,8 +39,6 @@ EOF
+ test_expect_success 'setup optionspec-no-switches' '
+ 	sed -e "s/^|//" >optionspec_no_switches <<\EOF
+ |some-command [options] <args>...
+-|
+-|some-command does foo and bar!
+ |--
+ EOF
+ '
+@@ -50,8 +46,6 @@ EOF
+ test_expect_success 'setup optionspec-only-hidden-switches' '
+ 	sed -e "s/^|//" >optionspec_only_hidden_switches <<\EOF
+ |some-command [options] <args>...
+-|
+-|some-command does foo and bar!
+ |--
+ |hidden1* A hidden switch
+ EOF
+@@ -62,8 +56,6 @@ test_expect_success 'test --parseopt help output' '
+ |cat <<\EOF
+ |usage: some-command [options] <args>...
+ |
+-|    some-command does foo and bar!
+-|
+ |    -h, --help            show the help
+ |    --foo                 some nifty option --foo
+ |    --bar ...             some cool option --bar with an argument
+@@ -103,8 +95,6 @@ test_expect_success 'test --parseopt help output no switches' '
+ |cat <<\EOF
+ |usage: some-command [options] <args>...
+ |
+-|    some-command does foo and bar!
+-|
+ |EOF
+ END_EXPECT
+ 	test_expect_code 129 git rev-parse --parseopt -- -h > output < optionspec_no_switches &&
+@@ -116,8 +106,6 @@ test_expect_success 'test --parseopt help output hidden switches' '
+ |cat <<\EOF
+ |usage: some-command [options] <args>...
+ |
+-|    some-command does foo and bar!
+-|
+ |EOF
+ END_EXPECT
+ 	test_expect_code 129 git rev-parse --parseopt -- -h > output < optionspec_only_hidden_switches &&
+@@ -129,8 +117,6 @@ test_expect_success 'test --parseopt help-all output hidden switches' '
+ |cat <<\EOF
+ |usage: some-command [options] <args>...
+ |
+-|    some-command does foo and bar!
+-|
+ |    --hidden1             A hidden switch
+ |
+ |EOF
+@@ -144,8 +130,6 @@ test_expect_success 'test --parseopt invalid switch help output' '
+ |error: unknown option `does-not-exist'\''
+ |usage: some-command [options] <args>...
+ |
+-|    some-command does foo and bar!
+-|
+ |    -h, --help            show the help
+ |    --foo                 some nifty option --foo
+ |    --bar ...             some cool option --bar with an argument
+-- 
+2.33.0.873.g125ff7b9940
+

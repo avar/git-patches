@@ -1,0 +1,175 @@
+From 201689882129c1b4172f14480e2b329102611029 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.6-20168988212-20210910T134917Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20210910T134917Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20210901T110917Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20210910T134917Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Sep 2021 14:23:18 +0200
+Subject: [PATCH v2 2/6] git: add a NEED_UNIX_SOCKETS option for built-ins
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the implementation of b5dd96b70ac (make credential helpers
+builtins, 2020-08-13) to declare in the "struct cmd_struct" that
+NO_UNIX_SOCKETS can't be set.
+
+This is one of two in-tree users for the empty lines in
+parse_options() usage, getting rid of that is the main motivation for
+this, but I also think it doesn't make sense to emit these sorts of
+usage messages just to appease t0012-help.sh, which b5dd96b70ac aimed
+to do.
+
+I.e. these commands don't support "[options]", or "<action>", they
+just die, so pretending that they do just so we'll get an expected
+exit code from "-h" doesn't make sense. By moving this up to the
+"struct cmd_struct" we can just skip these in --list-cmds=builtins
+instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin.h                          |  6 ++++++
+ builtin/credential-cache--daemon.c | 11 +----------
+ builtin/credential-cache.c         | 11 +----------
+ git.c                              | 15 ++++++++++++---
+ t/t0012-help.sh                    | 10 ++++++++++
+ 5 files changed, 30 insertions(+), 23 deletions(-)
+
+diff --git a/builtin.h b/builtin.h
+index 16ecd5586f0..66713da6a02 100644
+--- a/builtin.h
++++ b/builtin.h
+@@ -63,6 +63,12 @@
+  *	more informed decision, e.g., by ignoring `pager.<cmd>` for
+  *	certain subcommands.
+  *
++ * `NEED_UNIX_SOCKETS`:
++ *
++ *	This built-in will not work if NO_UNIX_SOCKETS is defined. It
++ *	will be recognized for emitting error messages, but won't be
++ *	listed in --list-cmds=builtins.
++ *
+  * . Add `builtin/foo.o` to `BUILTIN_OBJS` in `Makefile`.
+  *
+  * Additionally, if `foo` is a new command, there are 4 more things to do:
+diff --git a/builtin/credential-cache--daemon.c b/builtin/credential-cache--daemon.c
+index 4c6c89ab0de..d9863287a4d 100644
+--- a/builtin/credential-cache--daemon.c
++++ b/builtin/credential-cache--daemon.c
+@@ -304,16 +304,7 @@ int cmd_credential_cache_daemon(int argc, const char **argv, const char *prefix)
+ 
+ int cmd_credential_cache_daemon(int argc, const char **argv, const char *prefix)
+ {
+-	const char * const usage[] = {
+-		"git credential-cache--daemon [options] <action>",
+-		"",
+-		"credential-cache--daemon is disabled in this build of Git",
+-		NULL
+-	};
+-	struct option options[] = { OPT_END() };
+-
+-	argc = parse_options(argc, argv, prefix, options, usage, 0);
+-	die(_("credential-cache--daemon unavailable; no unix socket support"));
++	BUG("should not be called under NO_UNIX_SOCKETS");
+ }
+ 
+ #endif /* NO_UNIX_SOCKET */
+diff --git a/builtin/credential-cache.c b/builtin/credential-cache.c
+index e8a74157471..22b49b265bf 100644
+--- a/builtin/credential-cache.c
++++ b/builtin/credential-cache.c
+@@ -142,16 +142,7 @@ int cmd_credential_cache(int argc, const char **argv, const char *prefix)
+ 
+ int cmd_credential_cache(int argc, const char **argv, const char *prefix)
+ {
+-	const char * const usage[] = {
+-		"git credential-cache [options] <action>",
+-		"",
+-		"credential-cache is disabled in this build of Git",
+-		NULL
+-	};
+-	struct option options[] = { OPT_END() };
+-
+-	argc = parse_options(argc, argv, prefix, options, usage, 0);
+-	die(_("credential-cache unavailable; no unix socket support"));
++	BUG("should not be called under NO_UNIX_SOCKETS");
+ }
+ 
+ #endif /* NO_UNIX_SOCKETS */
+diff --git a/git.c b/git.c
+index 18bed9a9964..6b0248841db 100644
+--- a/git.c
++++ b/git.c
+@@ -17,6 +17,7 @@
+ #define SUPPORT_SUPER_PREFIX	(1<<4)
+ #define DELAY_PAGER_CONFIG	(1<<5)
+ #define NO_PARSEOPT		(1<<6) /* parse-options is not used */
++#define NEED_UNIX_SOCKETS	(1<<7) /* Works unless -DNO_UNIX_SOCKETS */
+ 
+ struct cmd_struct {
+ 	const char *cmd;
+@@ -66,6 +67,10 @@ static int list_cmds(const char *spec)
+ 	struct string_list list = STRING_LIST_INIT_DUP;
+ 	int i;
+ 	int nongit;
++	unsigned int exclude_option = 0;
++#ifdef NO_UNIX_SOCKETS
++	exclude_option |= NEED_UNIX_SOCKETS;
++#endif
+ 
+ 	/*
+ 	* Set up the repository so we can pick up any repo-level config (like
+@@ -78,7 +83,7 @@ static int list_cmds(const char *spec)
+ 		int len = sep - spec;
+ 
+ 		if (match_token(spec, len, "builtins"))
+-			list_builtins(&list, 0);
++			list_builtins(&list, exclude_option);
+ 		else if (match_token(spec, len, "main"))
+ 			list_all_main_cmds(&list);
+ 		else if (match_token(spec, len, "others"))
+@@ -423,6 +428,10 @@ static int run_builtin(struct cmd_struct *p, int argc, const char **argv)
+ 	const char *prefix;
+ 
+ 	prefix = NULL;
++#ifdef NO_UNIX_SOCKETS
++	if (p->option & NEED_UNIX_SOCKETS)
++		die(_("%s is unavailable; there is no UNIX socket support in this build of Git"), p->cmd);
++#endif
+ 	help = argc == 2 && !strcmp(argv[1], "-h");
+ 	if (!help) {
+ 		if (p->option & RUN_SETUP)
+@@ -513,8 +522,8 @@ static struct cmd_struct commands[] = {
+ 	{ "config", cmd_config, RUN_SETUP_GENTLY | DELAY_PAGER_CONFIG },
+ 	{ "count-objects", cmd_count_objects, RUN_SETUP },
+ 	{ "credential", cmd_credential, RUN_SETUP_GENTLY | NO_PARSEOPT },
+-	{ "credential-cache", cmd_credential_cache },
+-	{ "credential-cache--daemon", cmd_credential_cache_daemon },
++	{ "credential-cache", cmd_credential_cache, NEED_UNIX_SOCKETS },
++	{ "credential-cache--daemon", cmd_credential_cache_daemon, NEED_UNIX_SOCKETS },
+ 	{ "credential-store", cmd_credential_store },
+ 	{ "describe", cmd_describe, RUN_SETUP },
+ 	{ "diff", cmd_diff, NO_PARSEOPT },
+diff --git a/t/t0012-help.sh b/t/t0012-help.sh
+index 5679e29c624..2d05dde4b90 100755
+--- a/t/t0012-help.sh
++++ b/t/t0012-help.sh
+@@ -85,4 +85,14 @@ do
+ 	'
+ done <builtins
+ 
++test_expect_success UNIX_SOCKETS 'builtin list includes NEED_UNIX_SOCKETS under UNIX_SOCKETS' '
++	grep ^credential-cache$ builtins &&
++	grep ^credential-cache--daemon$ builtins
++'
++
++test_expect_success !UNIX_SOCKETS 'builtin list excludes NEED_UNIX_SOCKETS under !UNIX_SOCKETS' '
++	! grep ^credential-cache$ builtins &&
++	! grep ^credential-cache--daemon$ builtins
++'
++
+ test_done
+-- 
+2.33.0.873.g125ff7b9940
+
