@@ -1,0 +1,70 @@
+From 56c59b51219bc846d934ce9e82875362371de165 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-8.8-56c59b51219-20210910T102651Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.8-00000000000-20210910T102651Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210908T152807Z-avarab@gmail.com>
+	<cover-v2-0.8-00000000000-20210910T102651Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 25 Aug 2021 10:55:58 +0200
+Subject: [PATCH v2 8/8] http: don't hardcode the value of CURL_SOCKOPT_OK
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Use the new git-curl-compat.h header to define CURL_SOCKOPT_OK to its
+known value if we're on an older curl version that doesn't have it. It
+was hardcoded in http.c in a15d069a198 (http: enable keepalive on TCP
+sockets, 2013-10-12).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-curl-compat.h | 15 +++++++++++++++
+ http.c            |  2 +-
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/git-curl-compat.h b/git-curl-compat.h
+index 01d6f028be1..cbb0914a320 100644
+--- a/git-curl-compat.h
++++ b/git-curl-compat.h
+@@ -20,10 +20,25 @@
+  * GIT_CURL_HAVE_X. If multiple similar symbols with the same prefix
+  * were defined in the same version we pick one and check for that name.
+  *
++ * We may also define a missing CURL_* symbol to its known value, if
++ * doing so is sufficient to add support for it to older versions that
++ * don't have it.
++ *
+  * Keep any symbols in date order of when their support was
+  * introduced, oldest first, in the official version of cURL library.
+  */
+ 
++/**
++ * CURL_SOCKOPT_OK was added in 7.21.5, released in April 2011.
++ *
++ * This should be safe as CURL_SOCKOPT_OK is known to be defined as a
++ * macro, not an enum field, and even if that were to change the value
++ * "0" for "OK" is unlikely to change.
++ */
++#ifndef CURL_SOCKOPT_OK
++#define CURL_SOCKOPT_OK 0
++#endif
++
+ /**
+  * CURLOPT_TCP_KEEPALIVE was added in 7.25.0, released in March 2012.
+  */
+diff --git a/http.c b/http.c
+index 94eefe97089..d7c20493d7f 100644
+--- a/http.c
++++ b/http.c
+@@ -537,7 +537,7 @@ static int sockopt_callback(void *client, curl_socket_t fd, curlsocktype type)
+ 	if (rc < 0)
+ 		warning_errno("unable to set SO_KEEPALIVE on socket");
+ 
+-	return 0; /* CURL_SOCKOPT_OK only exists since curl 7.21.5 */
++	return CURL_SOCKOPT_OK;
+ }
+ 
+ static void set_curl_keepalive(CURL *c)
+-- 
+2.33.0.867.gd5d659bf226
+
