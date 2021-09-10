@@ -1,0 +1,81 @@
+From 7511af75fbe5c0208ef11ef2cd532f47d95e754b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-7511af75fbe-20210910T103535Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.1-00000000000-20210910T103535Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20210908T152807Z-avarab@gmail.com>
+	<cover-v2-0.1-00000000000-20210910T103535Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Sep 2021 11:35:14 +0200
+Subject: [PATCH v2 1/1] http: check CURLE_SSL_PINNEDPUBKEYNOTMATCH when
+ emitting errors
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the error shown when a http.pinnedPubKey doesn't match to point
+the http.pinnedPubKey variable added in aeff8a61216 (http: implement
+public key pinning, 2016-02-15), e.g.:
+
+    git -c http.pinnedPubKey=sha256/someNonMatchingKey ls-remote https://github.com/git/git.git
+    fatal: unable to access 'https://github.com/git/git.git/' with http.pinnedPubkey configuration: SSL: public key does not match pinned public key!
+
+Before this we'd emit the exact same thing without the " with
+http.pinnedPubkey configuration". Unfortunately we can't test this
+easily, as there are no tests that require https:// in the test suite,
+and t/lib-httpd.sh doesn't know how to set up such tests.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ http.c        | 4 ++++
+ http.h        | 1 +
+ remote-curl.c | 5 ++++-
+ 3 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/http.c b/http.c
+index d7c20493d7f..a10a228c761 100644
+--- a/http.c
++++ b/http.c
+@@ -1489,6 +1489,10 @@ static int handle_curl_result(struct slot_results *results)
+ 		 */
+ 		credential_reject(&cert_auth);
+ 		return HTTP_NOAUTH;
++#if LIBCURL_VERSION_NUM >= 0x072700
++	} else if (results->curl_result == CURLE_SSL_PINNEDPUBKEYNOTMATCH) {
++		return HTTP_NOMATCHPUBLICKEY;
++#endif
+ 	} else if (missing_target(results))
+ 		return HTTP_MISSING_TARGET;
+ 	else if (results->http_code == 401) {
+diff --git a/http.h b/http.h
+index 3db5a0cf320..df1590e53a4 100644
+--- a/http.h
++++ b/http.h
+@@ -154,6 +154,7 @@ struct http_get_options {
+ #define HTTP_START_FAILED	3
+ #define HTTP_REAUTH	4
+ #define HTTP_NOAUTH	5
++#define HTTP_NOMATCHPUBLICKEY	6
+ 
+ /*
+  * Requests a URL and stores the result in a strbuf.
+diff --git a/remote-curl.c b/remote-curl.c
+index 598cff7cde6..fe7de7bf905 100644
+--- a/remote-curl.c
++++ b/remote-curl.c
+@@ -499,9 +499,12 @@ static struct discovery *discover_refs(const char *service, int for_push)
+ 		show_http_message(&type, &charset, &buffer);
+ 		die(_("Authentication failed for '%s'"),
+ 		    transport_anonymize_url(url.buf));
++	case HTTP_NOMATCHPUBLICKEY:
+ 	default:
+ 		show_http_message(&type, &charset, &buffer);
+-		die(_("unable to access '%s': %s"),
++		die(http_ret == HTTP_NOMATCHPUBLICKEY
++		    ? _("unable to access '%s' with http.pinnedPubkey configuration: %s")
++		    : _("unable to access '%s': %s"),
+ 		    transport_anonymize_url(url.buf), curl_errorstr);
+ 	}
+ 
+-- 
+2.33.0.867.gd5d659bf226
+
