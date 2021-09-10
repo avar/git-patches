@@ -1,47 +1,57 @@
-From 9643601c263d666dc0bfb355d887a15e7279271b Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-3.6-9643601c263-20210910T151418Z-avarab@gmail.com>
-In-Reply-To: <cover-v2-0.6-00000000000-20210910T151417Z-avarab@gmail.com>
+From 11f4a1195634574a3e441adc28b9459bb5df1729 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.6-11f4a119563-20210910T153147Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20210910T153146Z-avarab@gmail.com>
 References: <cover-0.2-00000000000-20210901T110917Z-avarab@gmail.com>
-	<cover-v2-0.6-00000000000-20210910T151417Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20210910T153146Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Fri, 10 Sep 2021 14:30:05 +0200
 Subject: [PATCH v2 3/6] parse-options: stop supporting "" in the usagestr
+ array
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 The strings in the the "usagestr" array have special handling for the
 empty string dating back to f389c808b67 (Rework make_usage to print
-the usage message immediately, 2007-10-14). We'll prefix all strings
-after the first one with "or: ", unless the previous string ended in a
-"\n". Then once we encountered a "" we'll emit all strings after that
-point verbatim.
+the usage message immediately, 2007-10-14).
 
-This gets rid of that last special case, which was added in
+We'll prefix all strings after the first one with "or: ". Then if we
+encountered a "" we'll emit all strings after that point verbatim
+without any "or: " prefixing.
+
+This gets rid of that special case, which was added in
 f389c808b67 (Rework make_usage to print the usage message immediately,
-2007-10-14). It had only one in-tree user (aside from the "git
-credential-cache*" use removed in the preceding commit): "git blame":
+2007-10-14). It was only used "blame" (the "credential-cache*" use of
+it was removed in the preceding commit). Before this change we'd emit:
 
     $ git blame -h
     usage: git blame [<options>] [<rev-opts>] [<rev>] [--] <file>
 
         <rev-opts> are documented in git-rev-list(1)
 
-Let's change that output to simply use "[<git-rev-list args>]" instead
-of "[<rev-opts>]". This accomplishes the same goal without needing
-this special support.
+This changes that output to simply use "[<git-rev-list args>]" instead
+of "[<rev-opts>]". This accomplishes the same, is more consistent as
+"git bundle" and "git blame" use the same way of referring to these
+options now.
 
-The use of this in "blame" dates back to 5817da01434 (git-blame:
-migrate to incremental parse-option [1/2], 2008-07-08), we can instead
-just say that we support <git rev-list args> as "bundle" has done
-since 2e0afafebd8 (Add git-bundle: move objects and references by
-archive, 2007-02-22).
+The use of this in "blame" dated back to 5817da01434 (git-blame:
+migrate to incremental parse-option [1/2], 2008-07-08), and the use in
+"bundle" to 2e0afafebd8 (Add git-bundle: move objects and
+references by archive, 2007-02-22).
 
 Once we get rid of this special case we can also use usage_msg_opt()
 to emit the error message we'd get on an invalid "-L <range>"
 argument, which means we can get rid of the old-style "blame_usage"
 variable.
+
+It's possible that this change introduce breakage somewhere. We'd only
+catch these cases at runtime, and the "git rev-parse --parseopt"
+command is used by shellscripts, see bac199b7b17 (Update
+git-sh-setup(1) to allow transparent use of git-rev-parse --parseopt,
+2007-11-04). I've grepped the codebase for "OPTIONS_SPEC",
+"char.*\*.*usage\[\]" etc. I'm fairly sure there no outstanding users
+of this functionality.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
