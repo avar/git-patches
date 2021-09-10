@@ -1,0 +1,163 @@
+From be68e102de2a28f0bd771bae827615fc4da94a1d Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.6-00000000000-20210910T111845Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210908T151949Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210908T151949Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 10 Sep 2021 13:18:45 +0200
+Subject: [PATCH v2 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  help: correct the usage string in -h and documentation
+  help: correct usage string & behavior of "git help --guides"
+  on top
+  help tests: add test for --config output
+  help: correct logic error in combining --all and --config
+  help / completion: make "git help" do the hard work
+
+ Documentation/git-help.txt             |   9 +-
+ builtin/help.c                         | 110 ++++++++++++++++++-------
+ contrib/completion/git-completion.bash |  21 +++--
+ t/t0012-help.sh                        |  46 +++++++++++
+ 4 files changed, 140 insertions(+), 46 deletions(-)
+
+Range-diff against v1:
+1:  b5c79d87847 = 1:  b10bfd21f14 help: correct the usage string in -h and documentation
+2:  1ebd443e43c ! 2:  4a683b6b7e8 help: correct usage string for "git help --guides"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    help: correct usage string for "git help --guides"
+    +    help: correct usage string & behavior of "git help --guides"
+     
+         As noted in 65f98358c0c (builtin/help.c: add --guide option,
+         2013-04-02) and a133737b809 (doc: include --guide option description
+    @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+      
+     +	/* Options that take no further arguments */
+     +	standalone = show_config || show_guides;
+    -+	if (standalone && argc)
+    -+		usage_with_options(builtin_help_usage, builtin_help_options);
+    ++	if (argc && show_config)
+    ++		usage_msg_opt(_("--config cannot be combined with other options"),
+    ++			      builtin_help_usage, builtin_help_options);
+    ++	if (argc && show_guides)
+    ++		usage_msg_opt(_("--guides cannot be combined with other options"),
+    ++			      builtin_help_usage, builtin_help_options);
+     +
+      	if (show_all) {
+      		git_config(git_help_config, NULL);
+-:  ----------- > 3:  7e6298ad481 on top
+3:  d0a8045c9ed = 4:  3c5dcc34251 help tests: add test for --config output
+4:  e4bc7e57a6d < -:  ----------- help: refactor "for_human" control flow in cmd_help()
+5:  bcc640d32a1 ! 5:  dcbd151ce75 help: correct logic error in combining --all and --config
+    @@ builtin/help.c: static const char * const builtin_help_usage[] = {
+      };
+      
+     @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+    + 	int nongit;
+      	enum help_format parsed_help_format;
+      	const char *page;
+    - 	int standalone = 0;
+     +	int need_config = 0;
+      
+      	argc = parse_options(argc, argv, prefix, builtin_help_options,
+    @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+      	parsed_help_format = help_format;
+      
+     +	/* Incompatible options */
+    -+	if (show_all + !!show_config + show_guides > 1)
+    -+		usage_with_options(builtin_help_usage, builtin_help_options);
+    ++	if (show_all && show_config)
+    ++		usage_msg_opt(_("--config and --all cannot be combined"),
+    ++			      builtin_help_usage, builtin_help_options);
+    ++
+    ++	if (show_config && show_guides)
+    ++		usage_msg_opt(_("--config and --guides cannot be combined"),
+    ++			      builtin_help_usage, builtin_help_options);
+     +
+      	/* Options that take no further arguments */
+    - 	standalone = show_config || show_guides;
+    - 	if (standalone && argc)
+    - 		usage_with_options(builtin_help_usage, builtin_help_options);
+    ++	if (argc && show_config)
+    ++		usage_msg_opt(_("--config cannot be combined with command or guide names"),
+    ++			      builtin_help_usage, builtin_help_options);
+    + 	if (argc && show_guides)
+    +-		usage_msg_opt(_("--guides cannot be combined with other options"),
+    ++		usage_msg_opt(_("--guides cannot be combined with command or guide names"),
+    + 			      builtin_help_usage, builtin_help_options);
+      
+     -	if (show_all) {
+     +	need_config = show_all || show_config;
+    @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+     -	if (show_guides)
+     -		list_guides_help();
+     -
+    --	if (show_all || standalone) {
+    +-	if (show_all || show_guides) {
+     -		printf("%s\n", _(git_more_info_string));
+     -		return 0;
+     -	}
+    @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+     
+      ## t/t0012-help.sh ##
+     @@ t/t0012-help.sh: test_expect_success 'basic help commands' '
+    + '
+      
+      test_expect_success 'invalid usage' '
+    - 	test_expect_code 129 git help -c git-add &&
+     -	test_expect_code 129 git help -g git-add
+     +	test_expect_code 129 git help -g git-add &&
+    ++	test_expect_code 129 git help -c git-add &&
+    ++	test_expect_code 129 git help -g git-add &&
+     +
+     +	test_expect_code 129 git help -a -c &&
+     +	test_expect_code 129 git help -g -c
+6:  940061e84d1 ! 6:  be68e102de2 help / completion: make "git help" do the hard work
+    @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+      
+     -	if (show_config) {
+     -		int for_human = show_config == 1;
+    --
+    --		if (for_human)
+    --			setup_pager();
+    --		list_config_help(for_human);
+    --		if (for_human)
+     +	switch (show_config) {
+     +	case SHOW_CONFIG_UNSET:
+     +		break;
+    -+	case SHOW_CONFIG_HUMAN:
+    -+		setup_pager();
+    -+		/* fallthrough */
+     +	case SHOW_CONFIG_VARS:
+     +	case SHOW_CONFIG_SECTIONS:
+     +		list_config_help(show_config);
+    -+		if (show_config == SHOW_CONFIG_HUMAN)
+    - 			printf("\n%s\n", _("'git help config' for more information"));
+      
+    +-		if (!for_human) {
+    +-			list_config_help(for_human);
+    +-			return 0;
+    +-		}
+    ++		return 0;
+    ++	case SHOW_CONFIG_HUMAN:
+    + 		setup_pager();
+    +-		list_config_help(for_human);
+    ++		list_config_help(show_config);
+    + 		printf("\n%s\n", _("'git help config' for more information"));
+    ++
+      		return 0;
+    + 	}
+    + 
+     
+      ## contrib/completion/git-completion.bash ##
+     @@ contrib/completion/git-completion.bash: __git_config_vars=
+-- 
+2.33.0.873.g125ff7b9940
+
