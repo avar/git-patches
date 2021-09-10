@@ -1,9 +1,9 @@
 From 56c59b51219bc846d934ce9e82875362371de165 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-0.8-00000000000-20210910T102651Z-avarab@gmail.com>
+Message-Id: <cover-v2-0.8-00000000000-20210910T102726Z-avarab@gmail.com>
 In-Reply-To: <cover-0.5-00000000000-20210908T152807Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20210908T152807Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 10 Sep 2021 12:26:51 +0200
+Date: Fri, 10 Sep 2021 12:27:26 +0200
 Subject: [PATCH v2 0/8] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -29,6 +29,358 @@ Content-Transfer-Encoding: 8bit
  5 files changed, 158 insertions(+), 33 deletions(-)
  create mode 100644 git-curl-compat.h
 
+Range-diff against v1:
+-:  ----------- > 1:  ac11cf8cfd1 INSTALL: don't mention the "curl" executable at all
+-:  ----------- > 2:  4b653cee2d3 INSTALL: mention that we need libcurl 7.19.4 or newer to build
+-:  ----------- > 3:  76c2aa6e78d Makefile: drop support for curl < 7.9.8 (again)
+1:  3ffa2f491dd = 4:  e73a9ff1780 http: drop support for curl < 7.18.0 (again)
+3:  d8192164937 ! 5:  2567b888c3d http: correct version check for CURL_HTTP_VERSION_2_0
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    http: correct version check for CURL_HTTP_VERSION_2_0
+    +    http: correct version check for CURL_HTTP_VERSION_2
+     
+         In d73019feb44 (http: add support selecting http version, 2018-11-08)
+    -    a dependency was added on CURL_HTTP_VERSION_2_0, but this feature was
+    +    a dependency was added on CURL_HTTP_VERSION_2, but this feature was
+         introduced in curl version 7.43.0, not 7.47.0, as the incorrect
+         version check led us to believe.
+     
+    @@ Commit message
+         dependency on CURL_HTTP_VERSION_2TLS, but the corresponding version
+         check was not corrected.
+     
+    +    The newest symbol we depend on is CURL_HTTP_VERSION_2. It was added in
+    +    7.33.0, but the CURL_HTTP_VERSION_2 alias we used was added in
+    +    7.47.0. So we could support an even older version here, but let's just
+    +    correct the checked version.
+    +
+         1. https://lore.kernel.org/git/pull.69.git.gitgitgadget@gmail.com/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+2:  511534ce17a ! 6:  397d54a1352 http: correct curl version check for CURLOPT_PINNEDPUBLICKEY
+    @@ Commit message
+         but the relevant code depended on CURLOPT_PINNEDPUBLICKEY, introduced
+         in 7.39.0.
+     
+    -    Let's also remove the macro check before we declare the ssl_pinnedkey
+    -    variable, the pattern for other such variables is to declare the
+    -    static variable unconditionally, we just may not use it on older
+    -    versions. This reduces macro verbosity.
+    -
+    -    The reduction in verbosity comes at the small cost of issuing a
+    -    warning about the unused variable if this code is compiled with curl
+    -    versions older than 7.39.0. I think that's an acceptable trade-off,
+    -    anyone compiling a new git with a 2014-era toolchain likely has at
+    -    least other warning that'll have prompted them not to use -Werror, and
+    -    if not maybe this'll prompt them to compile their new git with a more
+    -    modern libcurl.
+    -
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## http.c ##
+    @@ http.c: static struct {
+      static const char *ssl_capath;
+      static const char *curl_no_proxy;
+     -#if LIBCURL_VERSION_NUM >= 0x072c00
+    ++#if LIBCURL_VERSION_NUM >= 0x072700
+      static const char *ssl_pinnedkey;
+    --#endif
+    + #endif
+      static const char *ssl_cainfo;
+    - static long curl_low_speed_limit = -1;
+    - static long curl_low_speed_time = -1;
+     @@ http.c: static int http_options(const char *var, const char *value, void *cb)
+      	}
+      
+4:  47b513a261b ! 7:  804d874574d http: centralize the accounting of libcurl dependencies
+    @@ Commit message
+     
+         As discussed in 644de29e220 (http: drop support for curl < 7.19.4,
+         2021-07-30) checking against LIBCURL_VERSION_NUM isn't as reliable as
+    -    checking specific defines in curl, as some distros have been known to
+    -    backport features. Furthermore as shown in the preceding commit doing
+    -    these version checks makes for hard to read and possibly buggy code,
+    -    as shown by the bug fixed there where we were conflating base 10 for
+    -    base 16 when comparing the version.
+    +    checking specific symbols present in curl, as some distros have been
+    +    known to backport features.
+     
+    -    Let's instead add a new git-curl-compat.h header that'll keep track of
+    -    these dependencies. Following this pattern will also make it much
+    -    easier to track when we should deprecate curl versions in the future,
+    -    as we just did post-v2.33 e48a623dea0 (Merge branch
+    -    'ab/http-drop-old-curl', 2021-08-24).
+    +    However, while some of the curl_easy_setopt() arguments we rely on are
+    +    macros, others are enum, and we can't assume that those that are
+    +    macros won't change into enums in the future.
+    +
+    +    So we're still going to have to check LIBCURL_VERSION_NUM, but by
+    +    doing that in one central place and using a macro definition of our
+    +    own, anyone who's backporting features can define it themselves, and
+    +    thus have access to more modern curl features that they backported,
+    +    even if they didn't bump the LIBCURL_VERSION_NUM.
+    +
+    +    More importantly, as shown in a preceding commit doing these version
+    +    checks makes for hard to read and possibly buggy code, as shown by the
+    +    bug fixed there where we were conflating base 10 for base 16 when
+    +    comparing the version.
+    +
+    +    By doing them all in one place we'll hopefully reduce the chances of
+    +    such future mistakes, furthermore it now becomes easier to see at a
+    +    glance what the oldest supported version is, which makes it easier to
+    +    reason about any future deprecation similar to the recent
+    +    e48a623dea0 (Merge branch 'ab/http-drop-old-curl', 2021-08-24).
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ git-curl-compat.h (new)
+     @@
+     +#ifndef GIT_CURL_COMPAT_H
+     +#define GIT_CURL_COMPAT_H
+    ++#include <curl/curl.h>
+     +
+     +/**
+     + * This header centralizes the declaration of our libcurl dependencies
+    @@ git-curl-compat.h (new)
+     + * inform decisions about removing support for older libcurl in the
+     + * future.
+     + *
+    ++ * The oldest supported version of curl is documented in the "INSTALL"
+    ++ * document.
+    ++ *
+     + * The source of truth for what versions have which symbols is
+     + * https://github.com/curl/curl/blob/master/docs/libcurl/symbols-in-versions;
+     + * the release dates are taken from curl.git (at
+     + * https://github.com/curl/curl/).
+     + *
+    -+ * For each X symbol we need from curl we check if it exists and
+    -+ * declare our own GIT_CURL_HAVE_X, or if it's for both X and Y
+    -+ * GIT_CURL_HAVE_X_and_Y, where the "Y" in "X_and_Y" is only the part
+    -+ * of the symbol name that "X" and "Y" don't have in common.
+    -+ *
+    -+ * We avoid comparisons against LIBCURL_VERSION_NUM, enterprise
+    -+ * distros have been known to backport symbols to their older curl
+    -+ * versions.
+    ++ * For each X symbol we need from curl we define our own
+    ++ * GIT_CURL_HAVE_X. If multiple similar symbols with the same prefix
+    ++ * were defined in the same version we pick one and check for that name.
+     + *
+     + * Keep any symbols in date order of when their support was
+     + * introduced, oldest first, in the official version of cURL library.
+    @@ git-curl-compat.h (new)
+     +/**
+     + * CURLOPT_TCP_KEEPALIVE was added in 7.25.0, released in March 2012.
+     + */
+    -+#ifdef CURLOPT_TCP_KEEPALIVE
+    ++#if LIBCURL_VERSION_NUM >= 0x071900
+     +#define GITCURL_HAVE_CURLOPT_TCP_KEEPALIVE 1
+     +#endif
+     +
+    @@ git-curl-compat.h (new)
+     +/**
+     + * CURLOPT_LOGIN_OPTIONS was added in 7.34.0, released in December
+     + * 2013.
+    ++ *
+    ++ * If we start requiring 7.34.0 we might also be able to remove the
+    ++ * code conditional on USE_CURL_FOR_IMAP_SEND in imap-send.c, see
+    ++ * 1e16b255b95 (git-imap-send: use libcurl for implementation,
+    ++ * 2014-11-09) and the check it added for "072200" in the Makefile.
+    ++
+     + */
+    -+#ifdef CURLOPT_LOGIN_OPTIONS
+    ++#if LIBCURL_VERSION_NUM >= 0x072200
+     +#define GIT_CURL_HAVE_CURLOPT_LOGIN_OPTIONS 1
+     +#endif
+     +
+    @@ git-curl-compat.h (new)
+     + * CURL_SSLVERSION_TLSv1_[012] was added in 7.34.0, released in
+     + * December 2013.
+     + */
+    -+#if defined(CURL_SSLVERSION_TLSv1_0) && \
+    -+    defined(CURL_SSLVERSION_TLSv1_1) && \
+    -+    defined(CURL_SSLVERSION_TLSv1_2)
+    -+#define GIT_CURL_HAVE_CURL_SSLVERSION_TLSv1_0_and_1_and_2
+    ++#if LIBCURL_VERSION_NUM >= 0x072200
+    ++#define GIT_CURL_HAVE_CURL_SSLVERSION_TLSv1_0
+     +#endif
+     +
+     +/**
+     + * CURLOPT_PINNEDPUBLICKEY was added in 7.39.0, released in November
+     + * 2014.
+     + */
+    -+#ifdef CURLOPT_PINNEDPUBLICKEY
+    ++#if LIBCURL_VERSION_NUM >= 0x072c00
+     +#define GIT_CURL_HAVE_CURLOPT_PINNEDPUBLICKEY 1
+     +#endif
+     +
+     +/**
+     + * CURL_HTTP_VERSION_2 was added in 7.43.0, released in June 2015.
+    ++ *
+    ++ * The CURL_HTTP_VERSION_2 alias (but not CURL_HTTP_VERSION_2_0) is a
+    ++ * macro, not an enum field.
+     + */
+    -+#ifdef CURL_HTTP_VERSION_2
+    ++#if LIBCURL_VERSION_NUM >= 0x072b00
+     +#define GIT_CURL_HAVE_CURL_HTTP_VERSION_2 1
+     +#endif
+     +
+     +/**
+     + * CURLSSLOPT_NO_REVOKE was added in 7.44.0, released in August 2015.
+    ++ *
+    ++ * The CURLSSLOPT_NO_REVOKE is a macro, not an enum field.
+     + */
+    -+#ifdef CURLSSLOPT_NO_REVOKE
+    ++#if LIBCURL_VERSION_NUM >= 0x072c00
+     +#define GIT_CURL_HAVE_CURLSSLOPT_NO_REVOKE 1
+     +#endif
+     +
+     +/**
+     + * CURLOPT_PROXY_CAINFO was added in 7.52.0, released in August 2017.
+     + */
+    -+#ifdef CURLOPT_PROXY_CAINFO
+    ++#if LIBCURL_VERSION_NUM >= 0x073400
+     +#define GIT_CURL_HAVE_CURLOPT_PROXY_CAINFO 1
+     +#endif
+     +
+    @@ git-curl-compat.h (new)
+     + * CURLOPT_PROXY_{KEYPASSWD,SSLCERT,SSLKEY} was added in 7.52.0,
+     + * released in August 2017.
+     + */
+    -+#if defined(CURLOPT_PROXY_KEYPASSWD) && \
+    -+    defined(CURLOPT_PROXY_SSLCERT) && \
+    -+    defined(CURLOPT_PROXY_SSLKEY)
+    -+#define GIT_CURL_HAVE_CURLOPT_PROXY_KEYPASSWD_and_SSLCERT_and_SSLKEY 1
+    ++#if LIBCURL_VERSION_NUM >= 0x073400
+    ++#define GIT_CURL_HAVE_CURLOPT_PROXY_KEYPASSWD 1
+     +#endif
+     +
+     +/**
+     + * CURL_SSLVERSION_TLSv1_3 was added in 7.53.0, released in February
+     + * 2017.
+     + */
+    -+#ifdef CURL_SSLVERSION_TLSv1_3
+    ++#if LIBCURL_VERSION_NUM >= 0x073400
+     +#define GIT_CURL_HAVE_CURL_SSLVERSION_TLSv1_3 1
+     +#endif
+     +
+    @@ git-curl-compat.h (new)
+     + * CURLSSLSET_{NO_BACKENDS,OK,TOO_LATE,UNKNOWN_BACKEND} were added in
+     + * 7.56.0, released in September 2017.
+     + */
+    -+#if defined(CURLSSLSET_NO_BACKENDS) && \
+    -+    defined(CURLSSLSET_OK) && \
+    -+    defined(CURLSSLSET_TOO_LATE) && \
+    -+    defined(CURLSSLSET_UNKNOWN_BACKEND)
+    -+#define GIT_CURL_HAVE_CURLSSLSET_NO_BACKENDS_and_OK_and_TOO_LATE_and_UNKNOWN_BACKEND 1
+    ++#if LIBCURL_VERSION_NUM >= 0x073800
+    ++#define GIT_CURL_HAVE_CURLSSLSET_NO_BACKENDS
+     +#endif
+     +
+     +#endif
+    @@ http.c: static struct {
+      	{ "sslv3", CURL_SSLVERSION_SSLv3 },
+      	{ "tlsv1", CURL_SSLVERSION_TLSv1 },
+     -#if LIBCURL_VERSION_NUM >= 0x072200
+    -+#if GIT_CURL_HAVE_CURL_SSLVERSION_TLSv1_0_AND_1_AND_2
+    ++#ifdef GIT_CURL_HAVE_CURL_SSLVERSION_TLSv1_0
+      	{ "tlsv1.0", CURL_SSLVERSION_TLSv1_0 },
+      	{ "tlsv1.1", CURL_SSLVERSION_TLSv1_1 },
+      	{ "tlsv1.2", CURL_SSLVERSION_TLSv1_2 },
+      #endif
+     -#if LIBCURL_VERSION_NUM >= 0x073400
+    -+#if GIT_CURL_HAVE_CURL_SSLVERSION_TLSv1_3
+    ++#ifdef GIT_CURL_HAVE_CURL_SSLVERSION_TLSv1_3
+      	{ "tlsv1.3", CURL_SSLVERSION_TLSv1_3 },
+      #endif
+      };
+    + static const char *ssl_key;
+    + static const char *ssl_capath;
+    + static const char *curl_no_proxy;
+    +-#if LIBCURL_VERSION_NUM >= 0x072700
+    ++#ifdef GIT_CURL_HAVE_CURLOPT_PINNEDPUBLICKEY
+    + static const char *ssl_pinnedkey;
+    + #endif
+    + static const char *ssl_cainfo;
+     @@ http.c: static int http_options(const char *var, const char *value, void *cb)
+      	}
+      
+      	if (!strcmp("http.pinnedpubkey", var)) {
+     -#if LIBCURL_VERSION_NUM >= 0x072700
+    --		return git_config_pathname(&ssl_pinnedkey, var, value);
+    --#else
+    -+#ifndef GIT_CURL_HAVE_CURLOPT_PINNEDPUBLICKEY
+    ++#ifdef GIT_CURL_HAVE_CURLOPT_PINNEDPUBLICKEY
+    + 		return git_config_pathname(&ssl_pinnedkey, var, value);
+    + #else
+      		warning(_("Public key pinning not supported with cURL < 7.39.0"));
+    --		return 0;
+    - #endif
+    -+		return git_config_pathname(&ssl_pinnedkey, var, value);
+    - 	}
+    - 
+    - 	if (!strcmp("http.extraheader", var)) {
+     @@ http.c: static int has_cert_password(void)
+      	return 1;
+      }
+      
+     -#if LIBCURL_VERSION_NUM >= 0x073400
+    -+#ifdef GIT_CURL_HAVE_CURLOPT_PROXY_KEYPASSWD_and_SSLCERT_and_SSLKEY
+    ++#ifdef GIT_CURL_HAVE_CURLOPT_PROXY_KEYPASSWD
+      static int has_proxy_cert_password(void)
+      {
+      	if (http_proxy_ssl_cert == NULL || proxy_ssl_cert_password_required != 1)
+    @@ http.c: static CURL *get_curl_handle(void)
+      			curl_easy_setopt(result,
+      				CURLOPT_PROXYTYPE, CURLPROXY_SOCKS4);
+     -#if LIBCURL_VERSION_NUM >= 0x073400
+    -+#ifdef GIT_CURL_HAVE_CURLOPT_PROXY_KEYPASSWD_and_SSLCERT_and_SSLKEY
+    ++#ifdef GIT_CURL_HAVE_CURLOPT_PROXY_KEYPASSWD
+      		else if (starts_with(curl_http_proxy, "https")) {
+      			curl_easy_setopt(result, CURLOPT_PROXYTYPE, CURLPROXY_HTTPS);
+      
+    @@ http.c: void http_init(struct remote *remote, const char *url, int proactive_aut
+      	string_list_clear(&config.vars, 1);
+      
+     -#if LIBCURL_VERSION_NUM >= 0x073800
+    -+#ifdef GIT_CURL_HAVE_CURLSSLSET_NO_BACKENDS_and_OK_and_TOO_LATE_and_UNKNOWN_BACKEND
+    ++#ifdef GIT_CURL_HAVE_CURLSSLSET_NO_BACKENDS
+      	if (http_ssl_backend) {
+      		const curl_ssl_backend **backends;
+      		struct strbuf buf = STRBUF_INIT;
+5:  4f42c0e48b0 ! 8:  56c59b51219 http: don't hardcode the value of CURL_SOCKOPT_OK
+    @@ Commit message
+     
+      ## git-curl-compat.h ##
+     @@
+    -  * GIT_CURL_HAVE_X_and_Y, where the "Y" in "X_and_Y" is only the part
+    -  * of the symbol name that "X" and "Y" don't have in common.
+    +  * GIT_CURL_HAVE_X. If multiple similar symbols with the same prefix
+    +  * were defined in the same version we pick one and check for that name.
+       *
+     + * We may also define a missing CURL_* symbol to its known value, if
+     + * doing so is sufficient to add support for it to older versions that
+     + * don't have it.
+     + *
+    -  * We avoid comparisons against LIBCURL_VERSION_NUM, enterprise
+    -  * distros have been known to backport symbols to their older curl
+    -  * versions.
+    -@@
+    +  * Keep any symbols in date order of when their support was
+       * introduced, oldest first, in the official version of cURL library.
+       */
+      
+     +/**
+     + * CURL_SOCKOPT_OK was added in 7.21.5, released in April 2011.
+    ++ *
+    ++ * This should be safe as CURL_SOCKOPT_OK is known to be defined as a
+    ++ * macro, not an enum field, and even if that were to change the value
+    ++ * "0" for "OK" is unlikely to change.
+     + */
+     +#ifndef CURL_SOCKOPT_OK
+     +#define CURL_SOCKOPT_OK 0
 -- 
 2.33.0.867.gd5d659bf226
 
