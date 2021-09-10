@@ -1,9 +1,9 @@
-From a636b72893beec8e69a670a04a7c9456459cffe4 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-0.6-00000000000-20210910T134933Z-avarab@gmail.com>
+From 9447f46c4159a19f57b35151f242bb740c62722c Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.6-00000000000-20210910T151417Z-avarab@gmail.com>
 In-Reply-To: <cover-0.2-00000000000-20210901T110917Z-avarab@gmail.com>
 References: <cover-0.2-00000000000-20210901T110917Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 10 Sep 2021 15:49:33 +0200
+Date: Fri, 10 Sep 2021 17:14:17 +0200
 Subject: [PATCH v2 0/6] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -14,8 +14,8 @@ Content-Transfer-Encoding: 8bit
 Ævar Arnfjörð Bjarmason (6):
   test-lib.sh: add a UNIX_SOCKETS prerequisite
   git: add a NEED_UNIX_SOCKETS option for built-ins
-  built-ins: "properly" align continued usage output
   parse-options: stop supporting "" in the usagestr
+  built-ins: "properly" align continued usage output
   parse-options: properly align continued usage output
   send-pack: properly use parse_options() API for usage string
 
@@ -31,19 +31,20 @@ Content-Transfer-Encoding: 8bit
  builtin/stash.c                    |  2 +-
  builtin/tag.c                      |  4 +-
  git.c                              | 15 +++++--
- parse-options.c                    | 71 ++++++++++++++++++++++++------
+ parse-options.c                    | 71 +++++++++++++++++++++++++-----
  t/helper/test-parse-options.c      |  2 -
  t/t0012-help.sh                    | 10 +++++
  t/t0040-parse-options.sh           |  2 -
  t/t0301-credential-cache.sh        |  5 ++-
- t/t1502-rev-parse-parseopt.sh      | 16 -------
+ t/t1502-rev-parse-parseopt.sh      | 34 +++++++-------
  t/test-lib.sh                      |  1 +
- 19 files changed, 112 insertions(+), 78 deletions(-)
+ 19 files changed, 131 insertions(+), 77 deletions(-)
 
 Range-diff against v1:
 -:  ----------- > 1:  7f75efbf751 test-lib.sh: add a UNIX_SOCKETS prerequisite
 -:  ----------- > 2:  20168988212 git: add a NEED_UNIX_SOCKETS option for built-ins
-1:  ccc024c414f ! 3:  509a89a5273 built-ins: "properly" align continued usage output
+-:  ----------- > 3:  9643601c263 parse-options: stop supporting "" in the usagestr
+1:  ccc024c414f ! 4:  23e6df457b7 built-ins: "properly" align continued usage output
     @@ builtin/stash.c: static const char * const git_stash_push_usage[] = {
       
      
@@ -59,8 +60,7 @@ Range-diff against v1:
       	N_("git tag -d <tagname>..."),
       	N_("git tag -l [-n[<num>]] [--contains <commit>] [--no-contains <commit>] [--points-at <object>]\n"
      -		"\t\t[--format=<format>] [--merged <commit>] [--no-merged <commit>] [<pattern>...]"),
--:  ----------- > 4:  2a1d8346cc5 parse-options: stop supporting "" in the usagestr
-2:  ab4bb70902b ! 5:  27044b4cd8d parse-options: properly align continued usage output
+2:  ab4bb70902b ! 5:  2574d25a200 parse-options: properly align continued usage output
     @@ Commit message
      
                  N_("git stash [push [-p|--patch] [-k|--[no-]keep-index] [-q|--quiet]\n"
@@ -99,6 +99,27 @@ Range-diff against v1:
      
          We could skip the string_list_split() with a strchr(str, '\n') check,
          but we'd then need to duplicate our state machine for strings that do
+    @@ Commit message
+         automatically, 2007-10-15) which isn't RTL-safe, but that code would
+         be easy to fix. Let's not introduce new RTL translation problems here.
+     
+    +    I'm also adding a check to catch the mistake of needlessly adding a
+    +    trailing "\n", such as:
+    +
+    +            N_("git stash save [-p|--patch] [-k|--[no-]keep-index] [-q|--quiet]\n"
+    +               "          [-u|--include-untracked] [-a|--all] [<message>]\n"),
+    +
+    +    Or even a mistake like adding just one "\n" in a string with no other
+    +    newlines:
+    +
+    +            N_("git stash list [<options>]\n"),
+    +
+    +    This catches the cases already tested for in cmd_parseopt(), but this
+    +    covers the purely C API.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## parse-options.c ##
     @@ parse-options.c: static int usage_with_options_internal(struct parse_opt_ctx_t *
       
      +	const char *usage_prefix = _("usage: %s");
@@ -154,7 +175,6 @@ Range-diff against v1:
     -+	int i;
     -+	int saw_empty_line = 0;
     ++	const char *prefix = usage_prefix;
-    ++	size_t i;
      +
       	if (!usagestr)
       		return PARSE_OPT_HELP;
@@ -163,7 +183,7 @@ Range-diff against v1:
       
      -	fprintf_ln(outfile, _("usage: %s"), _(*usagestr++));
     --	while (*usagestr && **usagestr)
-    +-	while (*usagestr) {
+    + 	while (*usagestr) {
      -		/*
      -		 * TRANSLATORS: the colon here should align with the
      -		 * one in "usage: %s" translation.
@@ -175,7 +195,7 @@ Range-diff against v1:
     --		else
     --			fputc('\n', outfile);
     --		usagestr++;
-     +	for (i = 0; *usagestr; i++) {
+    -+	for (i = 0; *usagestr; i++) {
     -+		const char *str = _(*usagestr++);
      +		struct string_list list = STRING_LIST_INIT_DUP;
      +		unsigned int j;
@@ -187,7 +207,9 @@ Range-diff against v1:
      +
     -+			if (!saw_empty_line && !*line)
     -+				saw_empty_line = 1;
-    -+
+    ++			if (!*line)
+    ++				BUG("empty or trailing line in usage string");
+     +
     -+			if (saw_empty_line && *line)
     -+				fprintf_ln(outfile, _("    %s"), line);
     -+			else if (saw_empty_line)
@@ -209,7 +231,7 @@ Range-diff against v1:
       	}
       
       	need_newline = 1;
--:  ----------- > 6:  a636b72893b send-pack: properly use parse_options() API for usage string
+-:  ----------- > 6:  9447f46c415 send-pack: properly use parse_options() API for usage string
 -- 
-2.33.0.873.g125ff7b9940
+2.33.0.876.g423ac861752
 

@@ -1,8 +1,8 @@
-From 27044b4cd8dfe1816a38444eb24064d8c82a9eb0 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-5.6-27044b4cd8d-20210910T134933Z-avarab@gmail.com>
-In-Reply-To: <cover-v2-0.6-00000000000-20210910T134933Z-avarab@gmail.com>
+From 2574d25a2002a434329e8aa948abff16959afbbc Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.6-2574d25a200-20210910T151418Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20210910T151417Z-avarab@gmail.com>
 References: <cover-0.2-00000000000-20210901T110917Z-avarab@gmail.com>
-	<cover-v2-0.6-00000000000-20210910T134933Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20210910T151417Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Wed, 1 Sep 2021 12:20:45 +0200
@@ -78,16 +78,30 @@ dating back to d7a38c54a6c (parse-options: be able to generate usages
 automatically, 2007-10-15) which isn't RTL-safe, but that code would
 be easy to fix. Let's not introduce new RTL translation problems here.
 
+I'm also adding a check to catch the mistake of needlessly adding a
+trailing "\n", such as:
+
+	N_("git stash save [-p|--patch] [-k|--[no-]keep-index] [-q|--quiet]\n"
+	   "          [-u|--include-untracked] [-a|--all] [<message>]\n"),
+
+Or even a mistake like adding just one "\n" in a string with no other
+newlines:
+
+	N_("git stash list [<options>]\n"),
+
+This catches the cases already tested for in cmd_parseopt(), but this
+covers the purely C API.
+
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- parse-options.c | 65 +++++++++++++++++++++++++++++++++++++++++++------
- 1 file changed, 58 insertions(+), 7 deletions(-)
+ parse-options.c | 65 ++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 59 insertions(+), 6 deletions(-)
 
 diff --git a/parse-options.c b/parse-options.c
-index 950a8279beb..8420b450306 100644
+index 950a8279beb..ff28869d2c9 100644
 --- a/parse-options.c
 +++ b/parse-options.c
-@@ -917,19 +917,70 @@ static int usage_with_options_internal(struct parse_opt_ctx_t *ctx,
+@@ -917,19 +917,72 @@ static int usage_with_options_internal(struct parse_opt_ctx_t *ctx,
  	FILE *outfile = err ? stderr : stdout;
  	int need_newline;
  
@@ -130,7 +144,6 @@ index 950a8279beb..8420b450306 100644
 +	 */
 +	const char *usage_continued = _("%*s%s");
 +	const char *prefix = usage_prefix;
-+	size_t i;
 +
  	if (!usagestr)
  		return PARSE_OPT_HELP;
@@ -139,19 +152,21 @@ index 950a8279beb..8420b450306 100644
  		fprintf(outfile, "cat <<\\EOF\n");
  
 -	fprintf_ln(outfile, _("usage: %s"), _(*usagestr++));
--	while (*usagestr) {
+ 	while (*usagestr) {
 -		/*
 -		 * TRANSLATORS: the colon here should align with the
 -		 * one in "usage: %s" translation.
 -		 */
 -		fprintf_ln(outfile, _("   or: %s"), _(*usagestr++));
-+	for (i = 0; *usagestr; i++) {
 +		struct string_list list = STRING_LIST_INIT_DUP;
 +		unsigned int j;
 +
 +		string_list_split(&list, _(*usagestr++), '\n', -1);
 +		for (j = 0; j < list.nr; j++) {
 +			const char *line = list.items[j].string;
++
++			if (!*line)
++				BUG("empty or trailing line in usage string");
 +
 +			if (!j)
 +				fprintf_ln(outfile, prefix, line);
@@ -166,5 +181,5 @@ index 950a8279beb..8420b450306 100644
  
  	need_newline = 1;
 -- 
-2.33.0.873.g125ff7b9940
+2.33.0.876.g423ac861752
 
