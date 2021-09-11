@@ -1,0 +1,74 @@
+From bc7d31d6043cc560d7048aaa0fefdfd4fd61b869 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-4.6-bc7d31d6043-20210911T235158Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-0.6-00000000000-20210911T235158Z-avarab@gmail.com>
+References: <5e5e7fd9-83d7-87f7-b1ef-1292912b6c00@iee.email>
+	<RFC-cover-v2-0.6-00000000000-20210911T235158Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 11 Sep 2021 18:30:33 +0200
+Subject: [RFC PATCH v2 4/6] rebase: don't have loop over "struct strvec"
+ depend on signed "nr"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We'll be changing the "int nr" in the "struct strvec" to "int size_t"
+soon, i.e. from signed to unsigned. It will then make sense to use the
+"size_t" type for things that mirror that "nr" member.
+
+Let's change this code added in f57696802c3 (rebase: really just
+passthru the `git am` options, 2018-11-14) so that it won't cause a
+bug if the "i" variable here is updated to be a "size_t" instead of an
+"int".
+
+The reason it would be buggy is because this for-loop relied on
+"counting down" from nr-1 to 0, we'll then decrement the variable one
+last time, so a value of -1 indicates that we've visited all
+elements. Since we're looking for a needle in the haystack having
+looked at all the hay means that the needle isn't there.
+
+Let's replace this with simpler code that loops overthe "struct
+strvec" and checks the current needle is "-q", if it isn't and we're
+doing a merge we die, otherwise we do a "REBASE_APPLY".
+
+We've been able to simplify this code since 8295ed690bf (rebase: make
+the backend configurable via config setting, 2020-02-15) when we
+stopped using this for anything except this one check, so let's do
+that and move the check into the loop itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c | 16 +++++++---------
+ 1 file changed, 7 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index 27669880918..dcd897fda9c 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -1750,16 +1750,14 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 
+ 	if (options.git_am_opts.nr || options.type == REBASE_APPLY) {
+ 		/* all am options except -q are compatible only with --apply */
+-		for (i = options.git_am_opts.nr - 1; i >= 0; i--)
+-			if (strcmp(options.git_am_opts.v[i], "-q"))
+-				break;
+-
+-		if (i >= 0) {
+-			if (is_merge(&options))
+-				die(_("cannot combine apply options with "
+-				      "merge options"));
+-			else
++		for (i = 0; i < options.git_am_opts.nr; i++) {
++			if (strcmp(options.git_am_opts.v[i], "-q")) {
++				if (is_merge(&options))
++					die(_("cannot combine apply options with "
++					      "merge options"));
+ 				options.type = REBASE_APPLY;
++				break;
++			}
+ 		}
+ 	}
+ 
+-- 
+2.33.0.998.ga4d44345d43
+

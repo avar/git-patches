@@ -1,0 +1,220 @@
+From 3bf955eaf588516e752b37eca9f0aa73185d7129 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-6.6-3bf955eaf58-20210911T235158Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-0.6-00000000000-20210911T235158Z-avarab@gmail.com>
+References: <5e5e7fd9-83d7-87f7-b1ef-1292912b6c00@iee.email>
+	<RFC-cover-v2-0.6-00000000000-20210911T235158Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 3 Sep 2021 01:18:52 +0200
+Subject: [RFC PATCH v2 6/6] strvec API users: change some "int" tracking "nr"
+ to "size_t"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Now that the strvec.h "int nr" has been changed to "size_t nr" in the
+preceding commit change various users of the API so that their local
+tracking (usually for-loop iteration) of the number of items in the
+array uses "size_t" as well.
+
+These were found by changing the "nr" member to a pointer temporarily,
+and manually looking at the codepaths that the compiler complained
+about.
+
+As argued in <YTIBnT8Ue1HZXs82@coredump.intra.peff.net>[1] these
+changes are not strictly necessary as a follow-up, but let's do them
+anyway so we don't need to wonder about the "size_t" v.s. "int"
+inconsistency going forward.
+
+As noted in <87v93i8svd.fsf@evledraar.gmail.com> in that thread we
+have various things that interact with the "int argc" passed from
+main() (e.g. setup_revisions()) and "struct strvec". Those things
+could consistently use "int" before, but will now use some mixture of
+"int" and "size_t". That's OK, but is the reason we're not converting
+all API users to use "size_t" here for their own copies of "nr", or
+when they pass that "nr" to other functions.
+
+1. https://lore.kernel.org/git/YTIBnT8Ue1HZXs82@coredump.intra.peff.net/
+2. https://lore.kernel.org/git/87v93i8svd.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c | 7 ++++---
+ connect.c        | 8 ++++----
+ fetch-pack.c     | 4 ++--
+ ls-refs.c        | 2 +-
+ remote-curl.c    | 2 +-
+ sequencer.c      | 2 +-
+ serve.c          | 2 +-
+ submodule.c      | 2 +-
+ upload-pack.c    | 2 +-
+ 9 files changed, 16 insertions(+), 15 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index dcd897fda9c..b96faaa7fea 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -1424,7 +1424,8 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 			 N_("apply all changes, even those already present upstream")),
+ 		OPT_END(),
+ 	};
+-	int i;
++	size_t i;
++	unsigned int j;
+ 
+ 	if (argc == 2 && !strcmp(argv[1], "-h"))
+ 		usage_with_options(builtin_rebase_usage,
+@@ -1654,8 +1655,8 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 		}
+ 	}
+ 
+-	for (i = 0; i < exec.nr; i++)
+-		if (check_exec_cmd(exec.items[i].string))
++	for (j = 0; j < exec.nr; j++)
++		if (check_exec_cmd(exec.items[j].string))
+ 			exit(1);
+ 
+ 	if (!(options.flags & REBASE_NO_QUIET))
+diff --git a/connect.c b/connect.c
+index aff13a270e6..a54d4aa4d90 100644
+--- a/connect.c
++++ b/connect.c
+@@ -68,7 +68,7 @@ static NORETURN void die_initial_contact(int unexpected)
+ /* Checks if the server supports the capability 'c' */
+ int server_supports_v2(const char *c, int die_on_error)
+ {
+-	int i;
++	size_t i;
+ 
+ 	for (i = 0; i < server_capabilities_v2.nr; i++) {
+ 		const char *out;
+@@ -85,7 +85,7 @@ int server_supports_v2(const char *c, int die_on_error)
+ 
+ int server_feature_v2(const char *c, const char **v)
+ {
+-	int i;
++	size_t i;
+ 
+ 	for (i = 0; i < server_capabilities_v2.nr; i++) {
+ 		const char *out;
+@@ -101,7 +101,7 @@ int server_feature_v2(const char *c, const char **v)
+ int server_supports_feature(const char *c, const char *feature,
+ 			    int die_on_error)
+ {
+-	int i;
++	size_t i;
+ 
+ 	for (i = 0; i < server_capabilities_v2.nr; i++) {
+ 		const char *out;
+@@ -479,7 +479,7 @@ struct ref **get_remote_refs(int fd_out, struct packet_reader *reader,
+ 			     const struct string_list *server_options,
+ 			     int stateless_rpc)
+ {
+-	int i;
++	size_t i;
+ 	const char *hash_name;
+ 	struct strvec *ref_prefixes = transport_options ?
+ 		&transport_options->ref_prefixes : NULL;
+diff --git a/fetch-pack.c b/fetch-pack.c
+index 0bf7ed7e477..d20f9a046f7 100644
+--- a/fetch-pack.c
++++ b/fetch-pack.c
+@@ -945,7 +945,7 @@ static int get_pack(struct fetch_pack_args *args,
+ 	}
+ 
+ 	if (index_pack_args) {
+-		int i;
++		size_t i;
+ 
+ 		for (i = 0; i < cmd.args.nr; i++)
+ 			strvec_push(index_pack_args, cmd.args.v[i]);
+@@ -1674,7 +1674,7 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
+ 	}
+ 
+ 	for (i = 0; i < packfile_uris.nr; i++) {
+-		int j;
++		size_t j;
+ 		struct child_process cmd = CHILD_PROCESS_INIT;
+ 		char packname[GIT_MAX_HEXSZ + 1];
+ 		const char *uri = packfile_uris.items[i].string +
+diff --git a/ls-refs.c b/ls-refs.c
+index 84021416ca5..9622bc46072 100644
+--- a/ls-refs.c
++++ b/ls-refs.c
+@@ -46,7 +46,7 @@ static void ensure_config_read(void)
+  */
+ static int ref_match(const struct strvec *prefixes, const char *refname)
+ {
+-	int i;
++	size_t i;
+ 
+ 	if (!prefixes->nr)
+ 		return 1; /* no restriction */
+diff --git a/remote-curl.c b/remote-curl.c
+index 1f177e86f11..682643bb842 100644
+--- a/remote-curl.c
++++ b/remote-curl.c
+@@ -1288,7 +1288,7 @@ static int push_dav(struct strvec *specs)
+ static int push_git(struct discovery *heads, struct strvec *specs)
+ {
+ 	struct rpc_state rpc;
+-	int i;
++	size_t i;
+ 	int err;
+ 	struct strvec args;
+ 	struct string_list_item *cas_option;
+diff --git a/sequencer.c b/sequencer.c
+index a4ba434f173..ca3ee2e4167 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -919,7 +919,7 @@ static char *get_author(const char *message)
+ 
+ static const char *author_date_from_env_array(const struct strvec *env)
+ {
+-	int i;
++	size_t i;
+ 	const char *date;
+ 
+ 	for (i = 0; i < env->nr; i++)
+diff --git a/serve.c b/serve.c
+index f11c0e07c45..0271bf946cc 100644
+--- a/serve.c
++++ b/serve.c
+@@ -159,7 +159,7 @@ static int is_command(const char *key, struct protocol_capability **command)
+ int has_capability(const struct strvec *keys, const char *capability,
+ 		   const char **value)
+ {
+-	int i;
++	size_t i;
+ 	for (i = 0; i < keys->nr; i++) {
+ 		const char *out;
+ 		if (skip_prefix(keys->v[i], capability, &out) &&
+diff --git a/submodule.c b/submodule.c
+index 8e611fe1dbf..38ee56782c7 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -1606,7 +1606,7 @@ int fetch_populated_submodules(struct repository *r,
+ 			       int default_option,
+ 			       int quiet, int max_parallel_jobs)
+ {
+-	int i;
++	size_t i;
+ 	struct submodule_parallel_fetch spf = SPF_INIT;
+ 
+ 	spf.r = r;
+diff --git a/upload-pack.c b/upload-pack.c
+index 6ce07231d3d..73272fed43d 100644
+--- a/upload-pack.c
++++ b/upload-pack.c
+@@ -859,7 +859,7 @@ static void deepen(struct upload_pack_data *data, int depth)
+ }
+ 
+ static void deepen_by_rev_list(struct upload_pack_data *data,
+-			       int ac,
++			       size_t ac,
+ 			       const char **av)
+ {
+ 	struct commit_list *result;
+-- 
+2.33.0.998.ga4d44345d43
+
