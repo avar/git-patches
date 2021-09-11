@@ -1,0 +1,120 @@
+From 5638d2bc832dd03c62d29787f49e76bcb7f57945 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.6-5638d2bc832-20210911T190209Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20210911T190209Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20210901T110917Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20210911T190209Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Sep 2021 12:41:53 +0200
+Subject: [PATCH v2 4/6] built-ins: "properly" align continued usage output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Let's "fix" various "git <cmd> -h" output by "properly" aligning the
+output in cases where we continue usage output after a "\n". The "fix"
+and "properly" scare quotes are because this actually makes things
+worse in some cases, because e.g. in the case of "git tag -h" the
+"\t\t" effectively works around how parse-options.c aligns this
+output.
+
+But two wrongs don't make a right, let's "fix" this by making it worse
+temporarily, in anticipation of improving parse-options.c to handle
+this alignment.
+
+The issue is that we should have whitespace corresponding to the
+length of the command name here, e.g. in the case of "git ls-remote"
+it should be 14 characters, or the length of ""git ls-remote
+". Instead we had 21 characters in builtin/ls-remote.c, those extra 7
+characters are the length of "usage: " (and also " or:"). So in the C
+locale the resulting output aligns nicely:
+
+    $ git ls-remote -h
+    usage: git ls-remote [--heads] [--tags] [--refs] [--upload-pack=<exec>]
+                         [-q | --quiet] [--exit-code] [--get-url]
+                         [--symref] [<repository> [<refs>...]]
+
+But that's fragile, we might not be under the C locale. We really
+should have parse-options.c itself add this padding. In a subsequent
+commit I'll make it do that.
+
+In the case of "tag" and "show-branch" and "stash save" the output was
+not properly aligned, although in the "git tag" case it was
+near-enough (aligned with the "-" in "git tag -l") to look good,
+assuming C locale & a tab-width of 8. In any case, let's align this in
+a way that looks obviously correct when looking at the source itself,
+and then improve parse-options.c itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-remote.c   | 4 ++--
+ builtin/show-branch.c | 6 +++---
+ builtin/stash.c       | 2 +-
+ builtin/tag.c         | 4 ++--
+ 4 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/ls-remote.c b/builtin/ls-remote.c
+index f4fd823af83..318949c3d75 100644
+--- a/builtin/ls-remote.c
++++ b/builtin/ls-remote.c
+@@ -7,8 +7,8 @@
+ 
+ static const char * const ls_remote_usage[] = {
+ 	N_("git ls-remote [--heads] [--tags] [--refs] [--upload-pack=<exec>]\n"
+-	   "                     [-q | --quiet] [--exit-code] [--get-url]\n"
+-	   "                     [--symref] [<repository> [<refs>...]]"),
++	   "              [-q | --quiet] [--exit-code] [--get-url]\n"
++	   "              [--symref] [<repository> [<refs>...]]"),
+ 	NULL
+ };
+ 
+diff --git a/builtin/show-branch.c b/builtin/show-branch.c
+index bea4bbf4680..082449293b5 100644
+--- a/builtin/show-branch.c
++++ b/builtin/show-branch.c
+@@ -11,9 +11,9 @@
+ 
+ static const char* show_branch_usage[] = {
+     N_("git show-branch [-a | --all] [-r | --remotes] [--topo-order | --date-order]\n"
+-       "		[--current] [--color[=<when>] | --no-color] [--sparse]\n"
+-       "		[--more=<n> | --list | --independent | --merge-base]\n"
+-       "		[--no-name | --sha1-name] [--topics] [(<rev> | <glob>)...]"),
++       "                [--current] [--color[=<when>] | --no-color] [--sparse]\n"
++       "                [--more=<n> | --list | --independent | --merge-base]\n"
++       "                [--no-name | --sha1-name] [--topics] [(<rev> | <glob>)...]"),
+     N_("git show-branch (-g | --reflog)[=<n>[,<base>]] [--list] [<ref>]"),
+     NULL
+ };
+diff --git a/builtin/stash.c b/builtin/stash.c
+index 8f42360ca91..45b19007d7c 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -85,7 +85,7 @@ static const char * const git_stash_push_usage[] = {
+ 
+ static const char * const git_stash_save_usage[] = {
+ 	N_("git stash save [-p|--patch] [-k|--[no-]keep-index] [-q|--quiet]\n"
+-	   "          [-u|--include-untracked] [-a|--all] [<message>]"),
++	   "               [-u|--include-untracked] [-a|--all] [<message>]"),
+ 	NULL
+ };
+ 
+diff --git a/builtin/tag.c b/builtin/tag.c
+index 065b6bf093e..6535ed27ee9 100644
+--- a/builtin/tag.c
++++ b/builtin/tag.c
+@@ -23,10 +23,10 @@
+ 
+ static const char * const git_tag_usage[] = {
+ 	N_("git tag [-a | -s | -u <key-id>] [-f] [-m <msg> | -F <file>]\n"
+-		"\t\t<tagname> [<head>]"),
++	   "        <tagname> [<head>]"),
+ 	N_("git tag -d <tagname>..."),
+ 	N_("git tag -l [-n[<num>]] [--contains <commit>] [--no-contains <commit>] [--points-at <object>]\n"
+-		"\t\t[--format=<format>] [--merged <commit>] [--no-merged <commit>] [<pattern>...]"),
++	   "        [--format=<format>] [--merged <commit>] [--no-merged <commit>] [<pattern>...]"),
+ 	N_("git tag -v [--format=<format>] <tagname>..."),
+ 	NULL
+ };
+-- 
+2.33.0.995.ga5ea46173a2
+

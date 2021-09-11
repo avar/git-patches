@@ -1,0 +1,95 @@
+From 036eb0efb5bee0d5936bf2b6e2230b162fe57c7b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.6-036eb0efb5b-20210911T190209Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20210911T190209Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20210901T110917Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20210911T190209Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Sep 2021 14:30:05 +0200
+Subject: [PATCH v2 2/6] blame: replace usage end blurb with better option spec
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "git blame -h" output to be consistent with "git bundle
+-h"'s, i.e. before this we'd emit:
+
+    $ git blame -h
+    usage: git blame [<options>] [<rev-opts>] [<rev>] [--] <file>
+
+        <rev-opts> are documented in git-rev-list(1)
+    [...]
+
+Now instead of that we'll emit:
+
+    $ git blame -h
+    usage: git blame [<options>] [<git rev-list args>] [<rev>] [--] <file>
+    [...]
+
+This makes it consistent with the usage spec used for "git bundle":
+
+    $ git bundle -h
+    usage: git bundle create [<options>] <file> <git-rev-list args>
+    [...]
+
+The use of this in "blame" dated back to 5817da01434 (git-blame:
+migrate to incremental parse-option [1/2], 2008-07-08), and the use in
+"bundle" to 2e0afafebd8 (Add git-bundle: move objects and
+references by archive, 2007-02-22).
+
+Once we get rid of this special case we can also use usage_msg_opt()
+to emit the error message we'd get on an invalid "-L <range>"
+argument, which means we can get rid of the old-style "blame_usage"
+variable entirely. This makes the output friendlier, before we'd emit say:
+
+    $ git blame -L1,2,3,4 Makefile
+    usage: git blame [<options>] [<rev-opts>] [<rev>] [--] <file>
+    $
+
+Now we'll instead emit:
+
+    $ git blame -L1,2,3,4 Makefile
+    fatal: Invalid -L <range> parameter
+
+    usage: git blame [<options>] [<git rev-list args>] [<rev>] [--] <file>
+    [...]
+    $
+
+The "[...]" there elides the "git blame" option summary.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/blame.c | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/blame.c b/builtin/blame.c
+index 641523ff9af..e469829bc76 100644
+--- a/builtin/blame.c
++++ b/builtin/blame.c
+@@ -29,12 +29,8 @@
+ #include "refs.h"
+ #include "tag.h"
+ 
+-static char blame_usage[] = N_("git blame [<options>] [<rev-opts>] [<rev>] [--] <file>");
+-
+ static const char *blame_opt_usage[] = {
+-	blame_usage,
+-	"",
+-	N_("<rev-opts> are documented in git-rev-list(1)"),
++	N_("git blame [<options>] [<git rev-list args>] [<rev>] [--] <file>"),
+ 	NULL
+ };
+ 
+@@ -1107,7 +1103,8 @@ int cmd_blame(int argc, const char **argv, const char *prefix)
+ 				    nth_line_cb, &sb, lno, anchor,
+ 				    &bottom, &top, sb.path,
+ 				    the_repository->index))
+-			usage(blame_usage);
++			usage_msg_opt(_("Invalid -L <range> parameter"),
++				      blame_opt_usage, options);
+ 		if ((!lno && (top || bottom)) || lno < bottom)
+ 			die(Q_("file %s has only %lu line",
+ 			       "file %s has only %lu lines",
+-- 
+2.33.0.995.ga5ea46173a2
+
