@@ -1,0 +1,115 @@
+From 49e79bc7487be1e6b5b9bc96bc9dad7af1062131 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.7-49e79bc7487-20210912T000817Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.7-00000000000-20210912T000817Z-avarab@gmail.com>
+References: <5e5e7fd9-83d7-87f7-b1ef-1292912b6c00@iee.email>
+	<cover-v2-0.7-00000000000-20210912T000817Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 12 Sep 2021 02:05:40 +0200
+Subject: [PATCH v2 4/7] {upload-pack,shallow}.[ch]: pass "struct strvec *"
+ instead of int/char ** pair
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We'll be changing the "int nr" in the "struct strvec" to "int size_t"
+soon, i.e. from signed to unsigned. It will then make sense to use the
+"size_t" type for things that mirror that "nr" member.
+
+In this case we end up passing the "nr" to setup_revisions(), which
+expects to take an argc/argv pair passed to main(), so we can't change
+its type.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ shallow.c     | 5 +++--
+ shallow.h     | 6 ++++--
+ upload-pack.c | 7 +++----
+ 3 files changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/shallow.c b/shallow.c
+index 9ed18eb8849..6928db36669 100644
+--- a/shallow.c
++++ b/shallow.c
+@@ -15,6 +15,7 @@
+ #include "list-objects.h"
+ #include "commit-reach.h"
+ #include "shallow.h"
++#include "strvec.h"
+ 
+ void set_alternate_shallow_file(struct repository *r, const char *path, int override)
+ {
+@@ -196,7 +197,7 @@ static void show_commit(struct commit *commit, void *data)
+  * are marked with shallow_flag. The list of border/shallow commits
+  * are also returned.
+  */
+-struct commit_list *get_shallow_commits_by_rev_list(int ac, const char **av,
++struct commit_list *get_shallow_commits_by_rev_list(struct strvec *args,
+ 						    int shallow_flag,
+ 						    int not_shallow_flag)
+ {
+@@ -215,7 +216,7 @@ struct commit_list *get_shallow_commits_by_rev_list(int ac, const char **av,
+ 
+ 	repo_init_revisions(the_repository, &revs, NULL);
+ 	save_commit_buffer = 0;
+-	setup_revisions(ac, av, &revs, NULL);
++	setup_revisions(args->nr, args->v, &revs, NULL);
+ 
+ 	if (prepare_revision_walk(&revs))
+ 		die("revision walk setup failed");
+diff --git a/shallow.h b/shallow.h
+index 5b4a96dcd69..206405ec8ca 100644
+--- a/shallow.h
++++ b/shallow.h
+@@ -5,6 +5,7 @@
+ #include "object.h"
+ #include "repository.h"
+ #include "strbuf.h"
++#include "strvec.h"
+ 
+ void set_alternate_shallow_file(struct repository *r, const char *path, int override);
+ int register_shallow(struct repository *r, const struct object_id *oid);
+@@ -32,8 +33,9 @@ void rollback_shallow_file(struct repository *r, struct shallow_lock *lk);
+ 
+ struct commit_list *get_shallow_commits(struct object_array *heads,
+ 					int depth, int shallow_flag, int not_shallow_flag);
+-struct commit_list *get_shallow_commits_by_rev_list(
+-		int ac, const char **av, int shallow_flag, int not_shallow_flag);
++struct commit_list *get_shallow_commits_by_rev_list(struct strvec *args,
++						    int shallow_flag,
++						    int not_shallow_flag);
+ int write_shallow_commits(struct strbuf *out, int use_pack_protocol,
+ 			  const struct oid_array *extra);
+ 
+diff --git a/upload-pack.c b/upload-pack.c
+index 6ce07231d3d..5928973bcc3 100644
+--- a/upload-pack.c
++++ b/upload-pack.c
+@@ -859,13 +859,12 @@ static void deepen(struct upload_pack_data *data, int depth)
+ }
+ 
+ static void deepen_by_rev_list(struct upload_pack_data *data,
+-			       int ac,
+-			       const char **av)
++			       struct strvec *args)
+ {
+ 	struct commit_list *result;
+ 
+ 	disable_commit_graph(the_repository);
+-	result = get_shallow_commits_by_rev_list(ac, av, SHALLOW, NOT_SHALLOW);
++	result = get_shallow_commits_by_rev_list(args, SHALLOW, NOT_SHALLOW);
+ 	send_shallow(data, result);
+ 	free_commit_list(result);
+ 	send_unshallow(data);
+@@ -900,7 +899,7 @@ static int send_shallow_list(struct upload_pack_data *data)
+ 			struct object *o = data->want_obj.objects[i].item;
+ 			strvec_push(&av, oid_to_hex(&o->oid));
+ 		}
+-		deepen_by_rev_list(data, av.nr, av.v);
++		deepen_by_rev_list(data, &av);
+ 		strvec_clear(&av);
+ 		ret = 1;
+ 	} else {
+-- 
+2.33.0.998.ga4d44345d43
+
