@@ -4,10 +4,100 @@ In-Reply-To: <5e5e7fd9-83d7-87f7-b1ef-1292912b6c00@iee.email>
 References: <5e5e7fd9-83d7-87f7-b1ef-1292912b6c00@iee.email>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Sun, 12 Sep 2021 02:08:17 +0200
-Subject: [PATCH v2 0/7] *** SUBJECT HERE ***
+Subject: [PATCH v2 0/7] strvec: use size_t to store nr and alloc
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
+
+This is a proposed v2 of Jeff King's one-patch change to change
+strvec's nr/alloc from "int" to "size_t". As noted below I think it's
+worthwhile to not only change that in the struct, but also in code
+that directly references the "nr" member.
+
+On Sat, Sep 11 2021, Philip Oakley wrote:
+
+> On 11/09/2021 17:13, Ævar Arnfjörð Bjarmason wrote:
+>> On Sat, Sep 11 2021, Jeff King wrote:
+>>
+>>> We converted argv_array (which later became strvec) to use size_t in
+>>> 819f0e76b1 (argv-array: use size_t for count and alloc, 2020-07-28) in
+>>> order to avoid the possibility of integer overflow. But later, commit
+>>> d70a9eb611 (strvec: rename struct fields, 2020-07-28) accidentally
+>>> converted these back to ints!
+>>>
+>>> Those two commits were part of the same patch series. I'm pretty sure
+>>> what happened is that they were originally written in the opposite order
+>>> and then cleaned up and re-ordered during an interactive rebase. And
+>>> when resolving the inevitable conflict, I mistakenly took the "rename"
+>>> patch completely, accidentally dropping the type change.
+>>>
+>>> We can correct it now; better late than never.
+>>>
+>>> Signed-off-by: Jeff King <peff@peff.net>
+>>> ---
+>>> This was posted previously in the midst of another thread, but I don't
+>>> think was picked up. There was some positive reaction, but one "do we
+>>> really need this?" to which I responded in detail:
+>>>
+>>>   https://lore.kernel.org/git/YTIBnT8Ue1HZXs82@coredump.intra.peff.net/
+>>>
+>>> I don't really think any of that needs to go into the commit message,
+>>> but if that's a hold-up, I can try to summarize it (though I think
+>>> referring to the commit which _already_ did this and was accidentally
+>>> reverted would be sufficient).
+>> Thanks, I have a WIP version of this outstanding starting with this
+>> patch that I was planning to submit sometime, but I'm happy to have you
+>> pursue it, especially with the ~100 outstanding patches I have in
+>> master..seen.
+>>
+>> It does feel somewhere between iffy and a landmine waiting to be stepped
+>> on to only convert the member itself, and not any of the corresponding
+>> "int" variables that track it to "size_t".
+>>
+>> If you do the change I suggested in
+>> https://lore.kernel.org/git/87v93i8svd.fsf@evledraar.gmail.com/ you'll
+>> find that there's at least one first-order reference to this that now
+>> uses "int" that if converted to "size_t" will result in a wrap-around
+>> error, we're lucky that one has a test failure.
+>>
+>> I can tell you what that bug is, but maybe it's better if you find it
+>> yourself :) I.e. I found *that* one, but I'm not sure I found them
+>> all. I just s/int nr/size_t *nr/ and eyeballed the wall off compiler
+>> errors & the code context (note: pointer, obviously broken, but makes
+>> the compiler yell).
+>>
+>> That particular bug will be caught by the compiler as it involves a >= 0
+>> comparison against unsigned, but we may not not have that everywhere...
+>
+> I'm particularly interested in the int -> size_t change problem as part
+> of the wider 4GB limitations for the LLP64 systems [0] such as the
+> RaspPi, git-lfs (on windows [1]), and Git-for-Windows[2]. It is a big
+> problem.
+
+Okey, fine, no fun excercise for the reader then ;)
+
+This is what I'd been sitting on locally since that recent thread, I
+polished it up a bit since Jeff King posted his version.
+
+The potential overflow bug I mentioned is in rebase.c. See
+5/6. "Potential" because it's not a bug now, but that code
+intentionally considers a strvec, and then iterates it from nr-1 to 0,
+and if it reaches 0 intentionally counts down one more to -1 to
+indicate that it's visited all elements.
+
+We then check that with i >= 0, except of course if it becomes
+unsigned that doesn't become -1, but rather it wraps around.
+
+The rest of this is all changes to have that s/int/size_t/ radiate
+outwards, i.e. when we assign that value to a variable somewhere its
+now a "size_t" instead of an "int" etc.
+
+> [0]
+> http://nickdesaulniers.github.io/blog/2016/05/30/data-models-and-word-size/
+> [1] https://github.com/git-lfs/git-lfs/issues/2434  Git on Windows
+> client corrupts files > 4Gb
+> [2] https://github.com/git-for-windows/git/pull/2179  [DRAFT] for
+> testing : Fix 4Gb limit for large files on Git for Windows
 
 *** BLURB HERE ***
 
