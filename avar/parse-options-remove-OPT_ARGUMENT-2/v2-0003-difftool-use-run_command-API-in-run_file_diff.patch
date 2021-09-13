@@ -1,0 +1,70 @@
+From 2b093bd71fc14111b4b36ec78a630e1cd61b3fb6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.4-2b093bd71fc-20210913T033204Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-00000000000-20210913T033204Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20210911T182009Z-avarab@gmail.com>
+	<cover-v2-0.4-00000000000-20210913T033204Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 11 Sep 2021 13:48:51 +0200
+Subject: [PATCH v2 3/4] difftool: use run_command() API in run_file_diff()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the run_file_diff() function to use the run_command() API
+directly, instead of invoking the run_command_v_opt_cd_env() wrapper.
+
+This allows it, like run_dir_diff(), to use the "args" from "struct
+strvec", instead of the "const char **argv" passed into
+cmd_difftool(). This will be used in the subsequent commit to get rid
+of OPT_ARGUMENT() from cmd_difftool().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/difftool.c | 13 ++++++-------
+ 1 file changed, 6 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/difftool.c b/builtin/difftool.c
+index f8fcc67640f..de2e5545c81 100644
+--- a/builtin/difftool.c
++++ b/builtin/difftool.c
+@@ -663,24 +663,23 @@ static int run_dir_diff(const char *extcmd, int symlinks, const char *prefix,
+ }
+ 
+ static int run_file_diff(int prompt, const char *prefix,
+-			 int argc, const char **argv)
++			 struct child_process *child)
+ {
+-	struct strvec args = STRVEC_INIT;
+ 	const char *env[] = {
+ 		"GIT_PAGER=", "GIT_EXTERNAL_DIFF=git-difftool--helper", NULL,
+ 		NULL
+ 	};
+-	int i;
+ 
+ 	if (prompt > 0)
+ 		env[2] = "GIT_DIFFTOOL_PROMPT=true";
+ 	else if (!prompt)
+ 		env[2] = "GIT_DIFFTOOL_NO_PROMPT=true";
+ 
++	child->git_cmd = 1;
++	child->dir = prefix;
++	strvec_pushv(&child->env_array, env);
+ 
+-	for (i = 0; i < argc; i++)
+-		strvec_push(&args, argv[i]);
+-	return run_command_v_opt_cd_env(args.v, RUN_GIT_CMD, prefix, env);
++	return run_command(child);
+ }
+ 
+ int cmd_difftool(int argc, const char **argv, const char *prefix)
+@@ -770,5 +769,5 @@ int cmd_difftool(int argc, const char **argv, const char *prefix)
+ 
+ 	if (dir_diff)
+ 		return run_dir_diff(extcmd, symlinks, prefix, &child);
+-	return run_file_diff(prompt, prefix, child.args.nr, child.args.v);
++	return run_file_diff(prompt, prefix, &child);
+ }
+-- 
+2.33.0.999.ga5f89b684e9
+

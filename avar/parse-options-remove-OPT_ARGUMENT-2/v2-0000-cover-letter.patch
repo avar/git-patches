@@ -1,0 +1,214 @@
+From 4fddce0a38d2977d51923fc6fb2d4dc46170f4a7 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.4-00000000000-20210913T033204Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20210911T182009Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20210911T182009Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 13 Sep 2021 05:32:04 +0200
+Subject: [PATCH v2 0/4] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Jeff King (1):
+  difftool: prepare "diff" cmdline in cmd_difftool()
+
+Ævar Arnfjörð Bjarmason (3):
+  difftool: prepare "struct child_process" in cmd_difftool()
+  difftool: use run_command() API in run_file_diff()
+  parse-options API: remove OPTION_ARGUMENT feature
+
+ Documentation/technical/api-parse-options.txt |  5 --
+ builtin/difftool.c                            | 51 ++++++++++---------
+ parse-options.c                               | 13 -----
+ parse-options.h                               |  3 --
+ t/helper/test-parse-options.c                 |  1 -
+ t/t0040-parse-options.sh                      |  5 --
+ 6 files changed, 26 insertions(+), 52 deletions(-)
+
+Range-diff against v1:
+1:  e7481eb0c0c ! 1:  f57c6c9b069 difftool: use "struct strvec" API in run_{dir,file}_diff()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    difftool: use "struct strvec" API in run_{dir,file}_diff()
+    +    difftool: prepare "struct child_process" in cmd_difftool()
+     
+    -    The underlying run_command() API can take either the "struct strvec
+    -    args", or a "const char **argv". Let's move to the former to use the
+    -    more "native" version of run_command() in both of these functions.
+    -
+    -    This change probably isn't worth in on its own, but sets us up to
+    -    simplify API use even more in a subsequent commit.
+    +    Move the preparation of the "struct child_process" from run_dir_diff()
+    +    to its only caller, cmd_difftool(). This is in preparation for
+    +    migrating run_file_diff() to using the run_command() API directly, and
+    +    to move more of the shared setup of the two to cmd_difftool().
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ builtin/difftool.c: static int checkout_path(unsigned mode, struct object_id *oi
+      
+      static int run_dir_diff(const char *extcmd, int symlinks, const char *prefix,
+     -			int argc, const char **argv)
+    -+			struct strvec *args)
+    ++			int argc, const char **argv,
+    ++			struct child_process *child)
+      {
+      	char tmpdir[PATH_MAX];
+      	struct strbuf info = STRBUF_INIT, lpath = STRBUF_INIT;
+     @@ builtin/difftool.c: static int run_dir_diff(const char *extcmd, int symlinks, const char *prefix,
+    - 	child.clean_on_exit = 1;
+    - 	child.dir = prefix;
+    - 	child.out = -1;
+    + 	struct index_state wtindex;
+    + 	struct checkout lstate, rstate;
+    + 	int rc, flags = RUN_GIT_CMD, err = 0;
+    +-	struct child_process child = CHILD_PROCESS_INIT;
+    + 	const char *helper_argv[] = { "difftool--helper", NULL, NULL, NULL };
+    + 	struct hashmap wt_modified, tmp_modified;
+    + 	int indices_loaded = 0;
+    +@@ builtin/difftool.c: static int run_dir_diff(const char *extcmd, int symlinks, const char *prefix,
+    + 	rdir_len = rdir.len;
+    + 	wtdir_len = wtdir.len;
+    + 
+    +-	child.no_stdin = 1;
+    +-	child.git_cmd = 1;
+    +-	child.use_shell = 0;
+    +-	child.clean_on_exit = 1;
+    +-	child.dir = prefix;
+    +-	child.out = -1;
+     -	strvec_pushl(&child.args, "diff", "--raw", "--no-abbrev", "-z",
+    --		     NULL);
+    --	for (i = 0; i < argc; i++)
+    ++	child->no_stdin = 1;
+    ++	child->git_cmd = 1;
+    ++	child->use_shell = 0;
+    ++	child->clean_on_exit = 1;
+    ++	child->dir = prefix;
+    ++	child->out = -1;
+    ++	strvec_pushl(&child->args, "diff", "--raw", "--no-abbrev", "-z",
+    + 		     NULL);
+    + 	for (i = 0; i < argc; i++)
+     -		strvec_push(&child.args, argv[i]);
+    -+	child.argv = args->v;
+    -+
+    - 	if (start_command(&child))
+    +-	if (start_command(&child))
+    ++		strvec_push(&child->args, argv[i]);
+    ++	if (start_command(child))
+      		die("could not obtain raw diff");
+    - 	fp = xfdopen(child.out, "r");
+    -@@ builtin/difftool.c: static int run_dir_diff(const char *extcmd, int symlinks, const char *prefix,
+    - 	strbuf_release(&rdir);
+    - 	strbuf_release(&wtdir);
+    - 	strbuf_release(&buf);
+    -+	strvec_clear(args);
+    - 
+    - 	return ret;
+    - }
+    +-	fp = xfdopen(child.out, "r");
+    ++	fp = xfdopen(child->out, "r");
+      
+    --static int run_file_diff(int prompt, const char *prefix,
+    --			 int argc, const char **argv)
+    -+static int run_file_diff(int prompt, const char *prefix, struct strvec *args)
+    - {
+    --	struct strvec args = STRVEC_INIT;
+    --	const char *env[] = {
+    --		"GIT_PAGER=", "GIT_EXTERNAL_DIFF=git-difftool--helper", NULL,
+    --		NULL
+    --	};
+    --	int i;
+    -+	struct child_process cmd = CHILD_PROCESS_INIT;
+    -+	int ret;
+    - 
+    -+	strvec_pushl(&cmd.env_array, "GIT_PAGER=",
+    -+		     "GIT_EXTERNAL_DIFF=git-difftool--helper", NULL);
+    - 	if (prompt > 0)
+    --		env[2] = "GIT_DIFFTOOL_PROMPT=true";
+    -+		strvec_push(&cmd.env_array, "GIT_DIFFTOOL_PROMPT=true");
+    - 	else if (!prompt)
+    --		env[2] = "GIT_DIFFTOOL_NO_PROMPT=true";
+    -+		strvec_push(&cmd.env_array, "GIT_DIFFTOOL_NO_PROMPT=true");
+    - 
+    -+	cmd.git_cmd = 1;
+    -+	cmd.dir = prefix;
+    -+	cmd.argv = args->v;
+    - 
+    --	strvec_push(&args, "diff");
+    --	for (i = 0; i < argc; i++)
+    --		strvec_push(&args, argv[i]);
+    --	return run_command_v_opt_cd_env(args.v, RUN_GIT_CMD, prefix, env);
+    -+	ret = run_command(&cmd);
+    -+	strvec_clear(args);
+    -+	return ret;
+    - }
+    + 	/* Build index info for left and right sides of the diff */
+    + 	i = 0;
+    +@@ builtin/difftool.c: static int run_dir_diff(const char *extcmd, int symlinks, const char *prefix,
+      
+    - int cmd_difftool(int argc, const char **argv, const char *prefix)
+    + 	fclose(fp);
+    + 	fp = NULL;
+    +-	if (finish_command(&child)) {
+    ++	if (finish_command(child)) {
+    + 		ret = error("error occurred running diff --raw");
+    + 		goto finish;
+    + 	}
+     @@ builtin/difftool.c: int cmd_difftool(int argc, const char **argv, const char *prefix)
+      		OPT_ARGUMENT("no-index", &no_index, N_("passed to `diff`")),
+      		OPT_END()
+      	};
+    -+	struct strvec args = STRVEC_INIT;
+    ++	struct child_process child = CHILD_PROCESS_INIT;
+      
+      	git_config(difftool_config, NULL);
+      	symlinks = has_symlinks;
+     @@ builtin/difftool.c: int cmd_difftool(int argc, const char **argv, const char *prefix)
+    - 	 * will invoke a separate instance of 'git-difftool--helper' for
+      	 * each file that changed.
+      	 */
+    -+	strvec_push(&args, "diff");
+    -+	if (dir_diff)
+    -+		strvec_pushl(&args, "--raw", "--no-abbrev", "-z", NULL);
+    -+	strvec_pushv(&args, argv);
+    -+
+      	if (dir_diff)
+     -		return run_dir_diff(extcmd, symlinks, prefix, argc, argv);
+    --	return run_file_diff(prompt, prefix, argc, argv);
+    -+		return run_dir_diff(extcmd, symlinks, prefix, &args);
+    -+	return run_file_diff(prompt, prefix, &args);
+    ++		return run_dir_diff(extcmd, symlinks, prefix, argc, argv, &child);
+    + 	return run_file_diff(prompt, prefix, argc, argv);
+      }
+-:  ----------- > 2:  1c2794115c7 difftool: prepare "diff" cmdline in cmd_difftool()
+-:  ----------- > 3:  2b093bd71fc difftool: use run_command() API in run_file_diff()
+2:  28b43789b11 ! 4:  4fddce0a38d parse-options API: remove OPTION_ARGUMENT feature
+    @@ builtin/difftool.c: int cmd_difftool(int argc, const char **argv, const char *pr
+     +		OPT_BOOL(0, "no-index", &no_index, N_("passed to `diff`")),
+      		OPT_END()
+      	};
+    - 	struct strvec args = STRVEC_INIT;
+    + 	struct child_process child = CHILD_PROCESS_INIT;
+     @@ builtin/difftool.c: int cmd_difftool(int argc, const char **argv, const char *prefix)
+      	 * each file that changed.
+      	 */
+    - 	strvec_push(&args, "diff");
+    + 	strvec_push(&child.args, "diff");
+     +	if (no_index)
+    -+		strvec_push(&args, "--no-index");
+    ++		strvec_push(&child.args, "--no-index");
+      	if (dir_diff)
+    - 		strvec_pushl(&args, "--raw", "--no-abbrev", "-z", NULL);
+    - 	strvec_pushv(&args, argv);
+    + 		strvec_pushl(&child.args, "--raw", "--no-abbrev", "-z", NULL);
+    + 	strvec_pushv(&child.args, argv);
+     
+      ## parse-options.c ##
+     @@ parse-options.c: static enum parse_opt_result parse_long_opt(
+-- 
+2.33.0.999.ga5f89b684e9
+
