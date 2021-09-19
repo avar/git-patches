@@ -1,0 +1,113 @@
+From c223440a065b2e92f34ff5691b7b8c24ae1d3cf7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.5-c223440a065-20210919T084152Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20210919T084152Z-avarab@gmail.com>
+References: <cover-v2-0.5-00000000000-20210916T182918Z-avarab@gmail.com>
+	<cover-v2-0.5-00000000000-20210919T084152Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 16 Sep 2021 08:50:14 +0200
+Subject: [PATCH v2 1/5] wrapper.c: add x{un,}setenv(), and use xsetenv() in
+ environment.c
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add fatal wrappers for setenv() and unsetenv(). In d7ac12b25d3 (Add
+set_git_dir() function, 2007-08-01) we started checking its return
+value, and since 48988c4d0c3 (set_git_dir: die when setenv() fails,
+2018-03-30) we've had set_git_dir_1() die if we couldn't set it.
+
+Let's provide a wrapper for both, this will be useful in many other
+places, a subsequent patch will make another use of xsetenv().
+
+The checking of the return value here is over-eager according to
+setenv(3) and POSIX. It's documented as returning just -1 or 0, so
+perhaps we should be checking -1 explicitly.
+
+Let's just instead die on any non-zero, if our C library is so broken
+as to return something else than -1 on error (and perhaps not set
+errno?) the worst we'll do is die with a nonsensical errno value, but
+we'll want to die in either case.
+
+We could make these return "void" (as far as I can tell there's no
+other x*() wrappers that needed to make that decision before),
+i.e. our "return 0" is only to indicate that we didn't error, which we
+would have died on. Let's return "int" instead to be consistent with
+the C library function signatures, including for any future code that
+expects a pointer to a setenv()-like function.
+
+I think it would be OK skip the NULL check of the "name" here for the
+calls to die_errno(). Almost all of our setenv() callers are taking a
+constant string hardcoded in the source as the first argument, and for
+the rest we can probably assume they've done the NULL check
+themselves. Even if they didn't, modern C libraries are forgiving
+about it (e.g. glibc formatting it as "(null)"), on those that aren't,
+well, we were about to die anyway. But let's include the check anyway
+for good measure.
+
+1. https://pubs.opengroup.org/onlinepubs/009604499/functions/setenv.html
+2. https://lore.kernel.org/git/87czp7dn2u.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ environment.c     |  3 +--
+ git-compat-util.h |  2 ++
+ wrapper.c         | 15 +++++++++++++++
+ 3 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/environment.c b/environment.c
+index d6b22ede7ea..7d8a949285c 100644
+--- a/environment.c
++++ b/environment.c
+@@ -330,8 +330,7 @@ char *get_graft_file(struct repository *r)
+ 
+ static void set_git_dir_1(const char *path)
+ {
+-	if (setenv(GIT_DIR_ENVIRONMENT, path, 1))
+-		die(_("could not set GIT_DIR to '%s'"), path);
++	xsetenv(GIT_DIR_ENVIRONMENT, path, 1);
+ 	setup_git_env(path);
+ }
+ 
+diff --git a/git-compat-util.h b/git-compat-util.h
+index b46605300ab..0b0c0305165 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -875,6 +875,8 @@ void *xmemdupz(const void *data, size_t len);
+ char *xstrndup(const char *str, size_t len);
+ void *xrealloc(void *ptr, size_t size);
+ void *xcalloc(size_t nmemb, size_t size);
++int xsetenv(const char *name, const char *value, int overwrite);
++int xunsetenv(const char *name);
+ void *xmmap(void *start, size_t length, int prot, int flags, int fd, off_t offset);
+ const char *mmap_os_err(void);
+ void *xmmap_gently(void *start, size_t length, int prot, int flags, int fd, off_t offset);
+diff --git a/wrapper.c b/wrapper.c
+index 7c6586af321..95f989260cd 100644
+--- a/wrapper.c
++++ b/wrapper.c
+@@ -145,6 +145,21 @@ void *xcalloc(size_t nmemb, size_t size)
+ 	return ret;
+ }
+ 
++int xsetenv(const char *name, const char *value, int overwrite)
++{
++	if (setenv(name, value, overwrite))
++		die_errno("setenv(%s, '%s', %d) failed", name ? name : "(null)",
++			  value, overwrite);
++	return 0;
++}
++
++int xunsetenv(const char *name)
++{
++	if (!unsetenv(name))
++		die_errno("unsetenv(%s) failed", name ? name : "(null)");
++	return 0;
++}
++
+ /*
+  * Limit size of IO chunks, because huge chunks only cause pain.  OS X
+  * 64-bit is buggy, returning EINVAL if len >= INT_MAX; and even in
+-- 
+2.33.0.1092.g44c994ea1be
+

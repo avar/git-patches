@@ -1,0 +1,120 @@
+From 0dbf4460ee02c8b555ceae144c8129571599ed4a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.5-0dbf4460ee0-20210919T084152Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20210919T084152Z-avarab@gmail.com>
+References: <cover-v2-0.5-00000000000-20210916T182918Z-avarab@gmail.com>
+	<cover-v2-0.5-00000000000-20210919T084152Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 28 Apr 2021 17:34:11 +0200
+Subject: [PATCH v2 2/5] environment.c: remove test-specific
+ "ignore_untracked..." variable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Instead of the global ignore_untracked_cache_config variable added in
+dae6c322fa1 (test-dump-untracked-cache: don't modify the untracked
+cache, 2016-01-27) we can make use of the new facility to set config
+via environment variables added in d8d77153eaf (config: allow
+specifying config entries via envvar pairs, 2021-01-12).
+
+It's arguably a bit hacky to use setenv() and getenv() to pass
+messages between the same program, but since the test helpers are not
+the main intended audience of repo-settings.c I think it's better than
+hardcoding the test-only special-case in prepare_repo_settings().
+
+This uses the xsetenv() wrapper added in the preceding commit, if we
+don't set these in the environment we'll fail in
+t7063-status-untracked-cache.sh, but let's fail earlier anyway if that
+were to happen.
+
+This breaks any parent process that's potentially using the
+GIT_CONFIG_* and GIT_CONFIG_PARAMETERS mechanism to pass one-shot
+config setting down to a git subprocess, but in this case we don't
+care about the general case of such potential parents. This process
+neither spawns other "git" processes, nor is it interested in other
+configuration. We might want to pick up other test modes here, but
+those will be passed via GIT_TEST_* environment variables.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ cache.h                              | 7 -------
+ environment.c                        | 7 -------
+ repo-settings.c                      | 7 +------
+ t/helper/test-dump-untracked-cache.c | 6 ++++--
+ 4 files changed, 5 insertions(+), 22 deletions(-)
+
+diff --git a/cache.h b/cache.h
+index d23de693680..8e60fdd2a12 100644
+--- a/cache.h
++++ b/cache.h
+@@ -1719,13 +1719,6 @@ int update_server_info(int);
+ const char *get_log_output_encoding(void);
+ const char *get_commit_output_encoding(void);
+ 
+-/*
+- * This is a hack for test programs like test-dump-untracked-cache to
+- * ensure that they do not modify the untracked cache when reading it.
+- * Do not use it otherwise!
+- */
+-extern int ignore_untracked_cache_config;
+-
+ int committer_ident_sufficiently_given(void);
+ int author_ident_sufficiently_given(void);
+ 
+diff --git a/environment.c b/environment.c
+index 7d8a949285c..d73dd0c42f7 100644
+--- a/environment.c
++++ b/environment.c
+@@ -96,13 +96,6 @@ int auto_comment_line_char;
+ /* Parallel index stat data preload? */
+ int core_preload_index = 1;
+ 
+-/*
+- * This is a hack for test programs like test-dump-untracked-cache to
+- * ensure that they do not modify the untracked cache when reading it.
+- * Do not use it otherwise!
+- */
+-int ignore_untracked_cache_config;
+-
+ /* This is set by setup_git_dir_gently() and/or git_default_config() */
+ char *git_work_tree_cfg;
+ 
+diff --git a/repo-settings.c b/repo-settings.c
+index 0cfe8b787db..b0df8b93b86 100644
+--- a/repo-settings.c
++++ b/repo-settings.c
+@@ -70,12 +70,7 @@ void prepare_repo_settings(struct repository *r)
+ 	if (!repo_config_get_bool(r, "feature.experimental", &value) && value)
+ 		UPDATE_DEFAULT_BOOL(r->settings.fetch_negotiation_algorithm, FETCH_NEGOTIATION_SKIPPING);
+ 
+-	/* Hack for test programs like test-dump-untracked-cache */
+-	if (ignore_untracked_cache_config)
+-		r->settings.core_untracked_cache = UNTRACKED_CACHE_KEEP;
+-	else
+-		UPDATE_DEFAULT_BOOL(r->settings.core_untracked_cache, UNTRACKED_CACHE_KEEP);
+-
++	UPDATE_DEFAULT_BOOL(r->settings.core_untracked_cache, UNTRACKED_CACHE_KEEP);
+ 	UPDATE_DEFAULT_BOOL(r->settings.fetch_negotiation_algorithm, FETCH_NEGOTIATION_DEFAULT);
+ 
+ 	/*
+diff --git a/t/helper/test-dump-untracked-cache.c b/t/helper/test-dump-untracked-cache.c
+index cf0f2c7228e..99010614f6d 100644
+--- a/t/helper/test-dump-untracked-cache.c
++++ b/t/helper/test-dump-untracked-cache.c
+@@ -45,8 +45,10 @@ int cmd__dump_untracked_cache(int ac, const char **av)
+ 	struct untracked_cache *uc;
+ 	struct strbuf base = STRBUF_INIT;
+ 
+-	/* Hack to avoid modifying the untracked cache when we read it */
+-	ignore_untracked_cache_config = 1;
++	/* Set core.untrackedCache=keep before setup_git_directory() */
++	xsetenv("GIT_CONFIG_COUNT", "1", 1);
++	xsetenv("GIT_CONFIG_KEY_0", "core.untrackedCache", 1);
++	xsetenv("GIT_CONFIG_VALUE_0", "keep", 1);
+ 
+ 	setup_git_directory();
+ 	if (read_cache() < 0)
+-- 
+2.33.0.1092.g44c994ea1be
+
