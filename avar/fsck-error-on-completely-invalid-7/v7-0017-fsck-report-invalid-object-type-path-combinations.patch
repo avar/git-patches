@@ -1,8 +1,8 @@
-From b121216ac5da9f9039ce3ce35d688872b402811e Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v7-17.17-b121216ac5d-20210920T184748Z-avarab@gmail.com>
-In-Reply-To: <cover-v7-00.17-00000000000-20210920T184747Z-avarab@gmail.com>
+From a2aaf6a2d55e8e800f4f1f574237914a19d554f6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-17.17-a2aaf6a2d55-20210920T185447Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-00.17-00000000000-20210920T185446Z-avarab@gmail.com>
 References: <cover-v6-00.22-00000000000-20210907T104558Z-avarab@gmail.com>
-	<cover-v7-00.17-00000000000-20210920T184747Z-avarab@gmail.com>
+	<cover-v7-00.17-00000000000-20210920T185446Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Sat, 27 Mar 2021 19:34:45 +0100
@@ -73,6 +73,11 @@ content:
     error: unable to unpack contents of ./objects/e6/9d[...]
     error: e69d[...]: object corrupt or missing: ./objects/e6/9d[...]
 
+There is currently some weird messaging in the edge case when the two
+are combined, i.e. because we're not explicitly passing along an error
+state about this specific scenario from check_stream_oid() via
+read_loose_object() we'll end up printing the null OID if an object is
+of an unknown type *and* it can't be unpacked by zlib, e.g.:
 TODO: We do have this weird case though where we combine the two:
 
     $ git hash-object --stdin -w -t garbage --literally </dev/null
@@ -88,11 +93,17 @@ TODO: We do have this weird case though where we combine the two:
     error: 0000000000000000000000000000000000000000: object is of unknown type 'garbage': ./objects/83/15a83d2acc4c174aed59430f9a9c4ed926440f
     [...]
 
-We have other such potential cases, e.g. if check_object_signature()
-returns and oideq(real_oid, null_oid()) is true, which could happen if
-it returns -1 due to the read_istream() call having failed. In these
+I think it's OK to leave that for future improvements, which would
+involve enum-ifying more error state as we've done with "enum
+unpack_loose_header_result" in preceding commits. In these
 increasingly more obscure cases the worst that can happen is that
 we'll get slightly nonsensical or inapplicable error messages.
+
+There's other such potential edge cases, all of which might produce
+some confusing messaging, but still be handled correctly as far as
+passing along errors goes. E.g. if check_object_signature() returns
+and oideq(real_oid, null_oid()) is true, which could happen if it
+returns -1 due to the read_istream() call having failed.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
@@ -377,5 +388,5 @@ index 167c319823a..eb0e772f098 100755
  '
  
 -- 
-2.33.0.1089.g9ac884c2693
+2.33.0.1098.g29a6526ae47
 
