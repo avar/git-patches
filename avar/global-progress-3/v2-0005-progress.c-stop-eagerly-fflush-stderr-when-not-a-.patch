@@ -1,0 +1,52 @@
+From 250e50667c2d440c6acb9bbd21e07995da252198 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.8-250e50667c2-20210920T225612Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.8-00000000000-20210920T225612Z-avarab@gmail.com>
+References: <cover-0.8-0000000000-20210722T125012Z-avarab@gmail.com>
+	<cover-v2-0.8-00000000000-20210920T225612Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Jun 2021 01:43:12 +0200
+Subject: [PATCH v2 5/8] progress.c: stop eagerly fflush(stderr) when not a
+ terminal
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+It's the clear intention of the combination of 137a0d0ef56 (Flush
+progress message buffer in display()., 2007-11-19) and
+85cb8906f0e (progress: no progress in background, 2015-04-13) to call
+fflush(stderr) when we have a stderr in the foreground, but we ended
+up always calling fflush(stderr) seemingly by omission. Let's not.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ progress.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/progress.c b/progress.c
+index 7fcc513717a..1fade5808de 100644
+--- a/progress.c
++++ b/progress.c
+@@ -91,7 +91,8 @@ static void display(struct progress *progress, uint64_t n, const char *done)
+ 	}
+ 
+ 	if (show_update) {
+-		if (is_foreground_fd(fileno(stderr)) || done) {
++		int stderr_is_foreground_fd = is_foreground_fd(fileno(stderr));
++		if (stderr_is_foreground_fd || done) {
+ 			const char *eol = done ? done : "\r";
+ 			size_t clear_len = counters_sb->len < last_count_len ?
+ 					last_count_len - counters_sb->len + 1 :
+@@ -115,7 +116,8 @@ static void display(struct progress *progress, uint64_t n, const char *done)
+ 				fprintf(stderr, "%s: %s%*s", progress->title,
+ 					counters_sb->buf, (int) clear_len, eol);
+ 			}
+-			fflush(stderr);
++			if (stderr_is_foreground_fd)
++				fflush(stderr);
+ 		}
+ 		progress_update = 0;
+ 	}
+-- 
+2.33.0.1098.gf02a64c1a2d
+
