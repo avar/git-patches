@@ -1,0 +1,109 @@
+From aadd4c42923e752b46b6617730ee07c60ed40b62 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-5.5-aadd4c42923-20210921T131003Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.5-00000000000-20210921T131003Z-avarab@gmail.com>
+References: <cover-v3-0.5-00000000000-20210919T084703Z-avarab@gmail.com>
+	<cover-v4-0.5-00000000000-20210921T131003Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 5 May 2021 10:10:36 +0200
+Subject: [PATCH v4 5/5] repository.h: don't use a mix of int and bitfields
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the bitfield added in 58300f47432 (sparse-index: add
+index.sparse config option, 2021-03-30) and 3964fc2aae7 (sparse-index:
+add guard to ensure full index, 2021-03-30) to just use an "int"
+boolean instead.
+
+It might be smart to optimize the space here in the future, but by
+consistently using an "int" we can take its address and pass it to
+repo_cfg_bool(), and therefore don't need to handle "sparse_index" as
+a special-case when reading the "index.sparse" setting.
+
+There's no corresponding config for "command_requires_full_index", but
+let's change it too for consistency and to prevent future bugs
+creeping in due to one of these being "unsigned".
+
+Using "int" consistently also prevents subtle bugs or undesired
+control flow creeping in here. Before the preceding commit the
+initialization of "command_requires_full_index" in
+prepare_repo_settings() did nothing, i.e. this:
+
+    r->settings.command_requires_full_index = 1
+
+Was redundant to the earlier memset() to -1. Likewise for
+"sparse_index" added in 58300f47432 (sparse-index: add index.sparse
+config option, 2021-03-30) the code and comment added there was
+misleading, we weren't initializing it to off, but re-initializing it
+from "1" to "0", and then finally checking the config, and perhaps
+setting it to "1" again. I.e. we could have applied this patch before
+the preceding commit:
+
+	+	assert(r->settings.command_requires_full_index == 1);
+	 	r->settings.command_requires_full_index = 1;
+
+	 	/*
+	 	 * Initialize this as off.
+	 	 */
+	+	assert(r->settings.sparse_index == 1);
+	 	r->settings.sparse_index = 0;
+	 	if (!repo_config_get_bool(r, "index.sparse", &value) && value)
+	 		r->settings.sparse_index = 1;
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ repo-settings.c | 8 +-------
+ repository.h    | 5 ++---
+ 2 files changed, 3 insertions(+), 10 deletions(-)
+
+diff --git a/repo-settings.c b/repo-settings.c
+index 46b9d56aeac..b93e91a212e 100644
+--- a/repo-settings.c
++++ b/repo-settings.c
+@@ -45,6 +45,7 @@ void prepare_repo_settings(struct repository *r)
+ 	repo_cfg_bool(r, "fetch.writecommitgraph", &r->settings.fetch_write_commit_graph, 0);
+ 	repo_cfg_bool(r, "pack.usesparse", &r->settings.pack_use_sparse, 1);
+ 	repo_cfg_bool(r, "core.multipackindex", &r->settings.core_multi_pack_index, 1);
++	repo_cfg_bool(r, "index.sparse", &r->settings.sparse_index, 0);
+ 
+ 	/*
+ 	 * The GIT_TEST_MULTI_PACK_INDEX variable is special in that
+@@ -90,11 +91,4 @@ void prepare_repo_settings(struct repository *r)
+ 	 * removed.
+ 	 */
+ 	r->settings.command_requires_full_index = 1;
+-
+-	/*
+-	 * Initialize this as off.
+-	 */
+-	r->settings.sparse_index = 0;
+-	if (!repo_config_get_bool(r, "index.sparse", &value) && value)
+-		r->settings.sparse_index = 1;
+ }
+diff --git a/repository.h b/repository.h
+index bf36744e0a7..02599ae2c98 100644
+--- a/repository.h
++++ b/repository.h
+@@ -31,6 +31,8 @@ struct repo_settings {
+ 	int commit_graph_read_changed_paths;
+ 	int gc_write_commit_graph;
+ 	int fetch_write_commit_graph;
++	int command_requires_full_index;
++	int sparse_index;
+ 
+ 	int index_version;
+ 	enum untracked_cache_setting core_untracked_cache;
+@@ -39,9 +41,6 @@ struct repo_settings {
+ 	enum fetch_negotiation_setting fetch_negotiation_algorithm;
+ 
+ 	int core_multi_pack_index;
+-
+-	unsigned command_requires_full_index:1,
+-		 sparse_index:1;
+ };
+ 
+ struct repository {
+-- 
+2.33.0.1098.gf02a64c1a2d
+

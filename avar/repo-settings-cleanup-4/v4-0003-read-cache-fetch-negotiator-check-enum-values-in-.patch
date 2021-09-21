@@ -1,0 +1,85 @@
+From b36b23ee1732c20f68e6b9c2deb54d841d64054d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-3.5-b36b23ee173-20210921T131003Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.5-00000000000-20210921T131003Z-avarab@gmail.com>
+References: <cover-v3-0.5-00000000000-20210919T084703Z-avarab@gmail.com>
+	<cover-v4-0.5-00000000000-20210921T131003Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 28 Apr 2021 17:34:11 +0200
+Subject: [PATCH v4 3/5] read-cache & fetch-negotiator: check "enum" values in
+ switch()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change tweak_untracked_cache() in "read-cache.c" to use a switch() to
+have the compiler assert that we checked all possible values in the
+"enum untracked_cache_setting" type, and likewise remove the "default"
+case in fetch_negotiator_init() in favor of checking for
+"FETCH_NEGOTIATION_UNSET" and "FETCH_NEGOTIATION_NONE".
+
+As will be discussed in a subsequent we'll only ever have either of
+these set to FETCH_NEGOTIATION_NONE, FETCH_NEGOTIATION_UNSET and
+UNTRACKED_CACHE_UNSET within the prepare_repo_settings() function
+itself. In preparation for fixing that code let's add a BUG() here to
+mark this as unreachable code.
+
+See ad0fb659993 (repo-settings: parse core.untrackedCache, 2019-08-13)
+for when the "unset" and "keep" handling for core.untrackedCache was
+consolidated, and aaf633c2ad1 (repo-settings: create
+feature.experimental setting, 2019-08-13) for the addition of the
+"default" pattern in "fetch-negotiator.c".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fetch-negotiator.c |  4 +++-
+ read-cache.c       | 15 ++++++++++-----
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/fetch-negotiator.c b/fetch-negotiator.c
+index 57ed5784e14..e61e40cb299 100644
+--- a/fetch-negotiator.c
++++ b/fetch-negotiator.c
+@@ -19,8 +19,10 @@ void fetch_negotiator_init(struct repository *r,
+ 		return;
+ 
+ 	case FETCH_NEGOTIATION_DEFAULT:
+-	default:
+ 		default_negotiator_init(negotiator);
+ 		return;
++	case FETCH_NEGOTIATION_NONE:
++	case FETCH_NEGOTIATION_UNSET:
++		BUG("FETCH_NEGOTIATION_{NONE,UNSET} used outside of prepare_repo_settings()!");
+ 	}
+ }
+diff --git a/read-cache.c b/read-cache.c
+index f5d4385c408..e4ae35ccdb2 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -1944,13 +1944,18 @@ static void tweak_untracked_cache(struct index_state *istate)
+ 
+ 	prepare_repo_settings(r);
+ 
+-	if (r->settings.core_untracked_cache  == UNTRACKED_CACHE_REMOVE) {
++	switch (r->settings.core_untracked_cache) {
++	case UNTRACKED_CACHE_REMOVE:
+ 		remove_untracked_cache(istate);
+-		return;
+-	}
+-
+-	if (r->settings.core_untracked_cache == UNTRACKED_CACHE_WRITE)
++		break;
++	case UNTRACKED_CACHE_WRITE:
+ 		add_untracked_cache(istate);
++		break;
++	case UNTRACKED_CACHE_KEEP:
++		break;
++	case UNTRACKED_CACHE_UNSET:
++		BUG("UNTRACKED_CACHE_UNSET used outside of prepare_repo_settings()!");
++	}
+ }
+ 
+ static void tweak_split_index(struct index_state *istate)
+-- 
+2.33.0.1098.gf02a64c1a2d
+
