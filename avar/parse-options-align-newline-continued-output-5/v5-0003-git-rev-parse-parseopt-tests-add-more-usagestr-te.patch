@@ -1,0 +1,95 @@
+From 8262999b45654b5398644c725ba036bd54fa143a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-3.4-8262999b456-20210921T132350Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.4-00000000000-20210921T132350Z-avarab@gmail.com>
+References: <cover-v4-0.4-00000000000-20210912T235347Z-avarab@gmail.com>
+	<cover-v5-0.4-00000000000-20210921T132350Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Sep 2021 01:23:31 +0200
+Subject: [PATCH v5 3/4] git rev-parse --parseopt tests: add more usagestr
+ tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests for the "usagestr" passed to parse-options.c
+usage_with_options_internal() through cmd_parseopt().
+
+These test for edge cases in the existing behavior related to the
+"--parseopt" interface doing its own line-splitting with
+strbuf_getline(), and the native C interface expecting and potentially
+needing to handle newlines within the strings in the array it
+accepts. The results are probably something that wasn't anticipated,
+but let's make sure we stay backwards compatible with it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1502-rev-parse-parseopt.sh | 54 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 54 insertions(+)
+
+diff --git a/t/t1502-rev-parse-parseopt.sh b/t/t1502-rev-parse-parseopt.sh
+index b29563fc997..284fe18e726 100755
+--- a/t/t1502-rev-parse-parseopt.sh
++++ b/t/t1502-rev-parse-parseopt.sh
+@@ -282,4 +282,58 @@ test_expect_success 'test --parseopt --stuck-long and short option with unset op
+ 	test_cmp expect output
+ '
+ 
++test_expect_success 'test --parseopt help output: "wrapped" options normal "or:" lines' '
++	sed -e "s/^|//" >spec <<-\EOF &&
++	|cmd [--some-option]
++	|    [--another-option]
++	|cmd [--yet-another-option]
++	|--
++	|h,help    show the help
++	EOF
++
++	sed -e "s/^|//" >expect <<-\END_EXPECT &&
++	|cat <<\EOF
++	|usage: cmd [--some-option]
++	|   or:     [--another-option]
++	|   or: cmd [--yet-another-option]
++	|
++	|    -h, --help            show the help
++	|
++	|EOF
++	END_EXPECT
++
++	test_must_fail git rev-parse --parseopt -- -h >out <spec >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'test --parseopt help output: multi-line blurb after empty line' '
++	sed -e "s/^|//" >spec <<-\EOF &&
++	|cmd [--some-option]
++	|    [--another-option]
++	|
++	|multi
++	|line
++	|blurb
++	|--
++	|h,help    show the help
++	EOF
++
++	sed -e "s/^|//" >expect <<-\END_EXPECT &&
++	|cat <<\EOF
++	|usage: cmd [--some-option]
++	|   or:     [--another-option]
++	|
++	|    multi
++	|    line
++	|    blurb
++	|
++	|    -h, --help            show the help
++	|
++	|EOF
++	END_EXPECT
++
++	test_must_fail git rev-parse --parseopt -- -h >out <spec >actual &&
++	test_cmp expect actual
++'
++
+ test_done
+-- 
+2.33.0.1098.gf02a64c1a2d
+
