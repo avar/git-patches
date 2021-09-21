@@ -1,0 +1,54 @@
+From 21281c5fdca304c0e9280100a49c8050af8b6c6f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.6-21281c5fdca-20210921T123804Z-avarab@gmail.com>
+In-Reply-To: <YUlVZk1xXulAqdef@coredump.intra.peff.net>
+References: <YUlVZk1xXulAqdef@coredump.intra.peff.net>
+From: Jeff King <peff@peff.net>
+Date: Mon, 20 Sep 2021 23:48:44 -0400
+Subject: [PATCH 3/6] grep: stop modifying buffer in grep_source_1()
+
+We find the end of each matching line of a buffer, and then temporarily
+write a NUL to turn it into a regular C string. But we don't need to do
+so, because the only thing we do in the interim is pass the line and its
+length (via an "eol" pointer) to match_line(). And that function should
+only look at the bytes we passed it, whether it has a terminating NUL or
+not.
+
+We can drop this temporary write in order to simplify the code and make
+it easier to use const buffers in more of grep.c.
+
+Signed-off-by: Jeff King <peff@peff.net>
+---
+ grep.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 70af01d1c11..32c4641443b 100644
+--- a/grep.c
++++ b/grep.c
+@@ -1616,7 +1616,7 @@ static int grep_source_1(struct grep_opt *opt, struct grep_source *gs, int colle
+ 	bol = gs->buf;
+ 	left = gs->size;
+ 	while (left) {
+-		char *eol, ch;
++		char *eol;
+ 		int hit;
+ 		ssize_t cno;
+ 		ssize_t col = -1, icol = -1;
+@@ -1637,14 +1637,11 @@ static int grep_source_1(struct grep_opt *opt, struct grep_source *gs, int colle
+ 		    && look_ahead(opt, &left, &lno, &bol))
+ 			break;
+ 		eol = end_of_line(bol, &left);
+-		ch = *eol;
+-		*eol = 0;
+ 
+ 		if ((ctx == GREP_CONTEXT_HEAD) && (eol == bol))
+ 			ctx = GREP_CONTEXT_BODY;
+ 
+ 		hit = match_line(opt, bol, eol, &col, &icol, ctx, collect_hits);
+-		*eol = ch;
+ 
+ 		if (collect_hits)
+ 			goto next_line;
+-- 
+2.33.0.1098.gf02a64c1a2d
+

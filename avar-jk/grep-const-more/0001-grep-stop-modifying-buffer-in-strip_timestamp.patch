@@ -1,0 +1,84 @@
+From 5a1d568305b068f122eb45cc7b1509ff03dbbc4f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.6-5a1d568305b-20210921T123804Z-avarab@gmail.com>
+In-Reply-To: <YUlVZk1xXulAqdef@coredump.intra.peff.net>
+References: <YUlVZk1xXulAqdef@coredump.intra.peff.net>
+From: Jeff King <peff@peff.net>
+Date: Mon, 20 Sep 2021 23:46:56 -0400
+Subject: [PATCH 1/6] grep: stop modifying buffer in strip_timestamp
+
+When grepping for headers in commit objects, we receive individual
+lines (e.g., "author Name <email> 1234 -0000"), and then strip off the
+timestamp to do our match. We do so by writing a NUL byte over the
+whitespace separator, and then remembering to restore it later.
+
+We had to do it this way when this was added back in a4d7d2c6db (log
+--author/--committer: really match only with name part, 2008-09-04),
+because we fed the result directly to regexec(), which expects a
+NUL-terminated string. But since b7d36ffca0 (regex: use regexec_buf(),
+2016-09-21), we have a function which can match part of a buffer.
+
+So instead of modifying the string, we can instead just move the "eol"
+pointer, and the rest of the code will do the right thing. This will let
+further patches mark more buffers as "const".
+
+Signed-off-by: Jeff King <peff@peff.net>
+---
+ grep.c | 13 +++----------
+ 1 file changed, 3 insertions(+), 10 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 79598f245f2..5b1f2da4d3c 100644
+--- a/grep.c
++++ b/grep.c
+@@ -922,20 +922,16 @@ static int patmatch(struct grep_pat *p, char *line, char *eol,
+ 	return hit;
+ }
+ 
+-static int strip_timestamp(char *bol, char **eol_p)
++static void strip_timestamp(char *bol, char **eol_p)
+ {
+ 	char *eol = *eol_p;
+-	int ch;
+ 
+ 	while (bol < --eol) {
+ 		if (*eol != '>')
+ 			continue;
+ 		*eol_p = ++eol;
+-		ch = *eol;
+-		*eol = '\0';
+-		return ch;
++		break;
+ 	}
+-	return 0;
+ }
+ 
+ static struct {
+@@ -952,7 +948,6 @@ static int match_one_pattern(struct grep_pat *p, char *bol, char *eol,
+ 			     regmatch_t *pmatch, int eflags)
+ {
+ 	int hit = 0;
+-	int saved_ch = 0;
+ 	const char *start = bol;
+ 
+ 	if ((p->token != GREP_PATTERN) &&
+@@ -971,7 +966,7 @@ static int match_one_pattern(struct grep_pat *p, char *bol, char *eol,
+ 		switch (p->field) {
+ 		case GREP_HEADER_AUTHOR:
+ 		case GREP_HEADER_COMMITTER:
+-			saved_ch = strip_timestamp(bol, &eol);
++			strip_timestamp(bol, &eol);
+ 			break;
+ 		default:
+ 			break;
+@@ -1021,8 +1016,6 @@ static int match_one_pattern(struct grep_pat *p, char *bol, char *eol,
+ 				goto again;
+ 		}
+ 	}
+-	if (p->token == GREP_PATTERN_HEAD && saved_ch)
+-		*eol = saved_ch;
+ 	if (hit) {
+ 		pmatch[0].rm_so += bol - start;
+ 		pmatch[0].rm_eo += bol - start;
+-- 
+2.33.0.1098.gf02a64c1a2d
+
