@@ -1,0 +1,129 @@
+From d5df231954a65523b59751f29a3bd6b3d1a0194c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-4.8-d5df231954a-20210921T192953Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.8-00000000000-20210921T192953Z-avarab@gmail.com>
+References: <cover-v2-0.5-00000000000-20210910T112545Z-avarab@gmail.com>
+	<cover-v3-0.8-00000000000-20210921T192953Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 5 Jun 2021 00:22:25 +0200
+Subject: [PATCH v3 4/8] help: correct logic error in combining --all and
+ --config
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a bug in the --config option that's been there ever since its
+introduction in 3ac68a93fd2 (help: add --config to list all available
+config, 2018-05-26). Die when --all and --config are combined,
+combining them doesn't make sense.
+
+The code for the --config option when combined with an earlier
+refactoring done to support the --guide option in
+65f98358c0c (builtin/help.c: add --guide option, 2013-04-02) would
+cause us to take the "--all" branch early and ignore the --config
+option.
+
+Let's instead list these as incompatible, both in the synopsis and
+help output, and enforce it in the code itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-help.txt |  1 +
+ builtin/help.c             | 31 ++++++++++++++++++++++---------
+ t/t0012-help.sh            |  3 ++-
+ 3 files changed, 25 insertions(+), 10 deletions(-)
+
+diff --git a/Documentation/git-help.txt b/Documentation/git-help.txt
+index cb8e3d4da9e..96d5f598b4b 100644
+--- a/Documentation/git-help.txt
++++ b/Documentation/git-help.txt
+@@ -11,6 +11,7 @@ SYNOPSIS
+ 'git help' [-a|--all [--[no-]verbose]]
+ 	   [[-i|--info] [-m|--man] [-w|--web]] [COMMAND|GUIDE]
+ 'git help' [-g|--guides]
++'git help' [-c|--config]
+ 
+ DESCRIPTION
+ -----------
+diff --git a/builtin/help.c b/builtin/help.c
+index 51b18c291d8..d0c9605dbb5 100644
+--- a/builtin/help.c
++++ b/builtin/help.c
+@@ -62,6 +62,7 @@ static const char * const builtin_help_usage[] = {
+ 	N_("git help [-a|--all] [--[no-]verbose]]\n"
+ 	   "         [[-i|--info] [-m|--man] [-w|--web]] [<command>]"),
+ 	N_("git help [-g|--guides]"),
++	N_("git help [-c|--config]"),
+ 	NULL
+ };
+ 
+@@ -553,9 +554,21 @@ int cmd_help(int argc, const char **argv, const char *prefix)
+ 			builtin_help_usage, 0);
+ 	parsed_help_format = help_format;
+ 
++	/* Incompatible options */
++	if (show_all && show_config)
++		usage_msg_opt(_("--config and --all cannot be combined"),
++			      builtin_help_usage, builtin_help_options);
++
++	if (show_config && show_guides)
++		usage_msg_opt(_("--config and --guides cannot be combined"),
++			      builtin_help_usage, builtin_help_options);
++
+ 	/* Options that take no further arguments */
++	if (argc && show_config)
++		usage_msg_opt(_("--config cannot be combined with command or guide names"),
++			      builtin_help_usage, builtin_help_options);
+ 	if (argc && show_guides)
+-		usage_msg_opt(_("--guides cannot be combined with other options"),
++		usage_msg_opt(_("--guides cannot be combined with command or guide names"),
+ 			      builtin_help_usage, builtin_help_options);
+ 
+ 	if (show_all) {
+@@ -570,6 +583,14 @@ int cmd_help(int argc, const char **argv, const char *prefix)
+ 		list_commands(colopts, &main_cmds, &other_cmds);
+ 	}
+ 
++	if (show_guides)
++		list_guides_help();
++
++	if (show_all || show_guides) {
++		printf("%s\n", _(git_more_info_string));
++		return 0;
++	}
++
+ 	if (show_config) {
+ 		int for_human = show_config == 1;
+ 
+@@ -583,14 +604,6 @@ int cmd_help(int argc, const char **argv, const char *prefix)
+ 		return 0;
+ 	}
+ 
+-	if (show_guides)
+-		list_guides_help();
+-
+-	if (show_all || show_guides) {
+-		printf("%s\n", _(git_more_info_string));
+-		return 0;
+-	}
+-
+ 	if (!argv[0]) {
+ 		printf(_("usage: %s%s"), _(git_usage_string), "\n\n");
+ 		list_common_cmds_help();
+diff --git a/t/t0012-help.sh b/t/t0012-help.sh
+index 63c4adb99be..b4ed6229ed8 100755
+--- a/t/t0012-help.sh
++++ b/t/t0012-help.sh
+@@ -35,7 +35,8 @@ test_expect_success 'basic help commands' '
+ '
+ 
+ test_expect_success 'invalid usage' '
+-	test_expect_code 129 git help -g add
++	test_expect_code 129 git help -g add &&
++	test_expect_code 129 git help -a -c
+ '
+ 
+ test_expect_success "works for commands and guides by default" '
+-- 
+2.33.0.1098.gf02a64c1a2d
+
