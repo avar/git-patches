@@ -1,0 +1,79 @@
+From e03fde1b642dd3c73d35ec5014d52be3e24fcb77 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.3-e03fde1b642-20210921T224944Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210921T224944Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20210921T224944Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Sep 2021 12:35:50 +0200
+Subject: [PATCH 1/3] Makefile: make the "sparse" target non-.PHONY
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "sparse" target and its *.sp dependencies to be
+non-.PHONY. It's now viable to run it as part of a normal compilation
+target, as we'll only re-generate these checks if the source *.c file
+has changed.
+
+On my box with -j8 it was fast before, or around 5 seconds, now it
+only takes that long the first time, and the common case is <100ms, or
+however long it takes GNU make to stat the *.sp file and see that all
+the corresponding *.c files are older.
+
+See 0bcd9ae85d7 (sparse: Fix errors due to missing target-specific
+variables, 2011-04-21) for the modern implementation of the sparse
+target being changed here.
+
+It is critical that we use -Wsparse-error here, otherwise the error
+would only show up once, but we'd successfully create the empty *.sp
+file, and running a second time wouldn't show the error. I'm therefore
+not putting it into SPARSE_FLAGS or SP_EXTRA_FLAGS, it's not optional,
+the Makefile logic won't behave properly without it.
+
+Appending to $@ without a move is OK here because we're using the
+.DELETE_ON_ERROR Makefile feature. See 7b76d6bf221 (Makefile: add and
+use the ".DELETE_ON_ERROR" flag, 2021-06-29). GNU make ensures that on
+error this file will be removed.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .gitignore | 1 +
+ Makefile   | 8 +++++---
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index 311841f9bed..b02250a50c4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -224,6 +224,7 @@
+ *.lib
+ *.res
+ *.sln
++*.sp
+ *.suo
+ *.ncb
+ *.vcproj
+diff --git a/Makefile b/Makefile
+index a9f9b689f0c..5b09f67aab0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2896,11 +2896,13 @@ check-sha1:: t/helper/test-tool$X
+ 
+ SP_OBJ = $(patsubst %.o,%.sp,$(C_OBJ))
+ 
+-$(SP_OBJ): %.sp: %.c GIT-CFLAGS FORCE
++$(SP_OBJ): %.sp: %.c GIT-CFLAGS
+ 	$(QUIET_SP)cgcc -no-compile $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) \
+-		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $<
++		-Wsparse-error \
++		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $< && \
++	>$@
+ 
+-.PHONY: sparse $(SP_OBJ)
++.PHONY: sparse
+ sparse: $(SP_OBJ)
+ 
+ EXCEPT_HDRS := command-list.h config-list.h unicode-width.h compat/% xdiff/%
+-- 
+2.33.0.1098.gf02a64c1a2d
+
