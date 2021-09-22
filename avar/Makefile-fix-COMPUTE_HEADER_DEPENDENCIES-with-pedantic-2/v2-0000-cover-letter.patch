@@ -1,0 +1,134 @@
+From 6b18bd088949640334eccb247e3e38b8750a73fc Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.2-00000000000-20210922T220532Z-avarab@gmail.com>
+In-Reply-To: <patch-1.1-6b2e9af5e67-20210922T103749Z-avarab@gmail.com>
+References: <patch-1.1-6b2e9af5e67-20210922T103749Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 23 Sep 2021 00:05:32 +0200
+Subject: [PATCH v2 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  Makefile: make COMPUTE_HEADER_DEPENDENCIES=auto work with
+    DEVOPTS=pedantic
+  Makefile: pass -Wno-pendantic under GENERATE_COMPILATION_DATABASE=yes
+
+ Makefile | 2 ++
+ 1 file changed, 2 insertions(+)
+
+Range-diff against v1:
+1:  3ff8ea12bf3 ! 1:  31c871e9bf6 Makefile: make COMPUTE_HEADER_DEPENDENCIES=auto work with DEVOPTS=pedantic
+    @@ Commit message
+         Makefile: make COMPUTE_HEADER_DEPENDENCIES=auto work with DEVOPTS=pedantic
+     
+         The "COMPUTE_HEADER_DEPENDENCIES" feature added in [1] was extended to
+    -    use auto-detection in [2]. Then when -Wpedantic support was added to
+    -    DEVOPTS in [3] we started passing -Wpedantic in combination with
+    -    -Werror to the compiler here.
+    +    use auto-detection in [2], that "auto" detection has always piped
+    +    STDERR to /dev/null, so any failures on compilers that didn't support
+    +    these GCC flags would silently fall back to
+    +    "COMPUTE_HEADER_DEPENDENCIES=no".
+     
+    -    This broke the auto-detection, but since we'd quieted it in [4] we
+    -    didn't find out. It was emitting all of this on STDERR under GCC:
+    +    Later when -Wpedantic support was added to DEVOPTS in [3] we started
+    +    passing -Wpedantic in combination with -Werror to the compiler
+    +    here. Note (to the pedantic): [3] actually passed "-pedantic", but it
+    +    and "-Wpedantic" are synonyms.
+    +
+    +    Turning on -Wpedantic in [3] broke the auto-detection, since this
+    +    relies on compiling an empty program. GCC would loudly complain on
+    +    STDERR:
+     
+             /dev/null:1: error: ISO C forbids an empty translation unit
+             [-Werror=pedantic]
+    @@ Commit message
+             earlier diagnostics
+             cc1: all warnings being treated as errors
+     
+    -    Let's fix that bug by maintaining a NON_DEVELOPER_CFLAGS, it's like
+    -    ALL_CFLAGS but without anything we add in config.mak.dev, and
+    -    furthermore stop redirecting STDERR to /dev/null, this means that
+    -    someone whose compiler doesn't support this will see this output, but
+    -    also this new message:
+    +    But as that ended up in the "$(dep_check)" variable due to the "2>&1"
+    +    in [2] we didn't see it.
+     
+    -        Non-zero 1 exit with COMPUTE_HEADER_DEPENDENCIES=auto, set it to "yes" or "no" to quiet auto-detect
+    +    Then when [4] made DEVOPTS=pedantic the default specifying
+    +    "DEVELOPER=1" would effectively set "COMPUTE_HEADER_DEPENDENCIES=no".
+    +
+    +    To fix these issues let's unconditionally pass -Wno-pedantic after
+    +    $(ALL_CFLAGS), we might get a -Wpedantic via config.mak.dev after, or
+    +    the builder might specify it via CFLAGS. In either case this will undo
+    +    current and future problems with -Wpedantic.
+     
+    -    It's also possible that some compilers will emit warnings but still
+    -    give a zero exit code, anyone using a compiler like that will
+    -    potentially get more verbose output from the Makefile until they set
+    -    COMPUTE_HEADER_DEPENDENCIES=no. E.g. on AIX's xlc we'll now emit:
+    +    I think it would make sense to simply remove the "2>&1", it would mean
+    +    that anyone using a non-GCC-like compiler would get warnings under
+    +    COMPUTE_HEADER_DEPENDENCIES=auto, e.g on AIX's xlc would emit:
+     
+             /opt/IBM/xlc/13.1.3/bin/.orig/xlc: 1501-208 (S) command option D is missing a subargument
+             Non-zero 40 exit with COMPUTE_HEADER_DEPENDENCIES=auto, set it to "yes" or "no" to quiet auto-detect
+    @@ Commit message
+             cc: refused to overwrite input file by output file: /dev/null
+             Non-zero 1 exit with COMPUTE_HEADER_DEPENDENCIES=auto, set it to "yes" or "no" to quiet auto-detect
+     
+    -    Both are quieted by setting COMPUTE_HEADER_DEPENDENCIES=no as
+    -    suggested.
+    -
+    -    I considered piping the output and the exit code to a variable
+    -    instead, but e.g. under GCC that would lose the coloring in the error
+    -    messages.
+    +    Both could be quieted by setting COMPUTE_HEADER_DEPENDENCIES=no
+    +    explicitly, as suggested, but let's see if this'll fix it without
+    +    emitting too much noise at those that aren't using "gcc" or "clang".
+     
+         1. f2fabbf76e4 (Teach Makefile to check header dependencies,
+            2010-01-26)
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Makefile ##
+    -@@ Makefile: ALL_COMMANDS_TO_INSTALL += git-upload-archive$(X)
+    - ALL_COMMANDS_TO_INSTALL += git-upload-pack$(X)
+    - endif
+    - 
+    --ALL_CFLAGS = $(DEVELOPER_CFLAGS) $(CPPFLAGS) $(CFLAGS)
+    -+NON_DEVELOPER_CFLAGS = $(CPPFLAGS) $(CFLAGS)
+    -+ALL_CFLAGS = $(DEVELOPER_CFLAGS) $(NON_DEVELOPER_CFLAGS)
+    - ALL_LDFLAGS = $(LDFLAGS)
+    - 
+    - comma := ,
+    -@@ Makefile: COMPUTE_HEADER_DEPENDENCIES = auto
+    - endif
+    +@@ Makefile: endif
+      
+      ifeq ($(COMPUTE_HEADER_DEPENDENCIES),auto)
+    --dep_check = $(shell $(CC) $(ALL_CFLAGS) \
+    -+dep_check = $(shell $(CC) $(NON_DEVELOPER_CFLAGS) \
+    + dep_check = $(shell $(CC) $(ALL_CFLAGS) \
+    ++	-Wno-pedantic \
+      	-c -MF /dev/null -MQ /dev/null -MMD -MP \
+    --	-x c /dev/null -o /dev/null 2>&1; \
+    -+	-x c /dev/null -o /dev/null; \
+    + 	-x c /dev/null -o /dev/null 2>&1; \
+      	echo $$?)
+    - ifeq ($(dep_check),0)
+    - override COMPUTE_HEADER_DEPENDENCIES = yes
+    - else
+    -+$(info Non-zero $(dep_check) exit with COMPUTE_HEADER_DEPENDENCIES=auto, set it to "yes" or "no" to quiet auto-detect)
+    - override COMPUTE_HEADER_DEPENDENCIES = no
+    - endif
+    - endif
+-:  ----------- > 2:  6b18bd08894 Makefile: pass -Wno-pendantic under GENERATE_COMPILATION_DATABASE=yes
+-- 
+2.33.0.1225.g9f062250122
+

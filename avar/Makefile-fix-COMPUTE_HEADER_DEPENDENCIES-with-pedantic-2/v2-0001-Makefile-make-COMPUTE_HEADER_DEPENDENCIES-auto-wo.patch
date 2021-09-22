@@ -1,0 +1,94 @@
+From 31c871e9bf630169059614c023d158bec2b8c2aa Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.2-31c871e9bf6-20210922T220532Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.2-00000000000-20210922T220532Z-avarab@gmail.com>
+References: <patch-1.1-6b2e9af5e67-20210922T103749Z-avarab@gmail.com>
+	<cover-v2-0.2-00000000000-20210922T220532Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 22 Sep 2021 12:15:05 +0200
+Subject: [PATCH v2 1/2] Makefile: make COMPUTE_HEADER_DEPENDENCIES=auto work
+ with DEVOPTS=pedantic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "COMPUTE_HEADER_DEPENDENCIES" feature added in [1] was extended to
+use auto-detection in [2], that "auto" detection has always piped
+STDERR to /dev/null, so any failures on compilers that didn't support
+these GCC flags would silently fall back to
+"COMPUTE_HEADER_DEPENDENCIES=no".
+
+Later when -Wpedantic support was added to DEVOPTS in [3] we started
+passing -Wpedantic in combination with -Werror to the compiler
+here. Note (to the pedantic): [3] actually passed "-pedantic", but it
+and "-Wpedantic" are synonyms.
+
+Turning on -Wpedantic in [3] broke the auto-detection, since this
+relies on compiling an empty program. GCC would loudly complain on
+STDERR:
+
+    /dev/null:1: error: ISO C forbids an empty translation unit
+    [-Werror=pedantic]
+    cc1: note: unrecognized command-line option
+    ‘-Wno-pedantic-ms-format’ may have been intended to silence
+    earlier diagnostics
+    cc1: all warnings being treated as errors
+
+But as that ended up in the "$(dep_check)" variable due to the "2>&1"
+in [2] we didn't see it.
+
+Then when [4] made DEVOPTS=pedantic the default specifying
+"DEVELOPER=1" would effectively set "COMPUTE_HEADER_DEPENDENCIES=no".
+
+To fix these issues let's unconditionally pass -Wno-pedantic after
+$(ALL_CFLAGS), we might get a -Wpedantic via config.mak.dev after, or
+the builder might specify it via CFLAGS. In either case this will undo
+current and future problems with -Wpedantic.
+
+I think it would make sense to simply remove the "2>&1", it would mean
+that anyone using a non-GCC-like compiler would get warnings under
+COMPUTE_HEADER_DEPENDENCIES=auto, e.g on AIX's xlc would emit:
+
+    /opt/IBM/xlc/13.1.3/bin/.orig/xlc: 1501-208 (S) command option D is missing a subargument
+    Non-zero 40 exit with COMPUTE_HEADER_DEPENDENCIES=auto, set it to "yes" or "no" to quiet auto-detect
+
+And on Solaris with SunCC:
+
+    cc: Warning: Option -x passed to ld, if ld is invoked, ignored otherwise
+    cc: refused to overwrite input file by output file: /dev/null
+    cc: Warning: Option -x passed to ld, if ld is invoked, ignored otherwise
+    cc: refused to overwrite input file by output file: /dev/null
+    Non-zero 1 exit with COMPUTE_HEADER_DEPENDENCIES=auto, set it to "yes" or "no" to quiet auto-detect
+
+Both could be quieted by setting COMPUTE_HEADER_DEPENDENCIES=no
+explicitly, as suggested, but let's see if this'll fix it without
+emitting too much noise at those that aren't using "gcc" or "clang".
+
+1. f2fabbf76e4 (Teach Makefile to check header dependencies,
+   2010-01-26)
+2. 111ee18c31f (Makefile: Use computed header dependencies if the
+   compiler supports it, 2011-08-18)
+3. 729b3925ed9 (Makefile: add a DEVOPTS flag to get pedantic
+   compilation, 2018-07-24)
+4. 6a8cbc41bac (developer: enable pedantic by default, 2021-09-03)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Makefile b/Makefile
+index 9df565f27bb..10ea12aae21 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1278,6 +1278,7 @@ endif
+ 
+ ifeq ($(COMPUTE_HEADER_DEPENDENCIES),auto)
+ dep_check = $(shell $(CC) $(ALL_CFLAGS) \
++	-Wno-pedantic \
+ 	-c -MF /dev/null -MQ /dev/null -MMD -MP \
+ 	-x c /dev/null -o /dev/null 2>&1; \
+ 	echo $$?)
+-- 
+2.33.0.1225.g9f062250122
+
