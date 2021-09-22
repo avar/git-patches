@@ -1,0 +1,90 @@
+From 1da247273fbb3e821ba07ea74ce9c5a2357ebe2d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-1da247273fb-20210922T103101Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 22 Sep 2021 12:15:05 +0200
+Subject: [PATCH] Makefile: make COMPUTE_HEADER_DEPENDENCIES=auto work with
+ DEVOPTS=pedantic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "COMPUTE_HEADER_DEPENDENCIES" feature added in [1] was extended to
+use auto-detection in [2]. Then when -Wpedantic support was added to
+DEVOPTS in [3] we started passing -Wpedantic in combination with
+-Werror to the compiler here.
+
+This broke the auto-detection, but since we'd quieted it in [4] we
+didn't find out. It was emitting all of this on STDERR under GCC:
+
+    /dev/null:1: error: ISO C forbids an empty translation unit
+    [-Werror=pedantic]
+    cc1: note: unrecognized command-line option
+    ‘-Wno-pedantic-ms-format’ may have been intended to silence
+    earlier diagnostics
+    cc1: all warnings being treated as errors
+
+Let's fix that bug by maintaining a NON_DEVELOPER_CFLAGS, it's like
+ALL_CFLAGS but without anything we add in config.mak.dev, and
+furthermore stop redirecting STDERR to /dev/null, this means that
+someone whose compiler doesn't support this will see this output, but
+also this new message:
+
+    Non-zero 1 exit with COMPUTE_HEADER_DEPENDENCIES=auto, set it to "yes" or "no" to quiet auto-detect
+
+It's also possible that some compilers will emit warnings but still
+give a zero exit code, anyone using a compiler like that will
+potentially get more verbose output from the Makefile until they set
+COMPUTE_HEADER_DEPENDENCIES=no.
+
+I considered piping the output and the exit code to a variable
+instead, but e.g. under GCC that would lose the coloring in the error
+messages.
+
+1. f2fabbf76e4 (Teach Makefile to check header dependencies,
+   2010-01-26)
+2. 111ee18c31f (Makefile: Use computed header dependencies if the
+   compiler supports it, 2011-08-18)
+3. 729b3925ed9 (Makefile: add a DEVOPTS flag to get pedantic
+   compilation, 2018-07-24)
+4. 6a8cbc41bac (developer: enable pedantic by default, 2021-09-03)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 9df565f27bb..c30f3b8b204 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1242,7 +1242,8 @@ ALL_COMMANDS_TO_INSTALL += git-upload-archive$(X)
+ ALL_COMMANDS_TO_INSTALL += git-upload-pack$(X)
+ endif
+ 
+-ALL_CFLAGS = $(DEVELOPER_CFLAGS) $(CPPFLAGS) $(CFLAGS)
++NON_DEVELOPER_CFLAGS = $(CPPFLAGS) $(CFLAGS)
++ALL_CFLAGS = $(DEVELOPER_CFLAGS) $(NON_DEVELOPER_CFLAGS)
+ ALL_LDFLAGS = $(LDFLAGS)
+ 
+ comma := ,
+@@ -1277,13 +1278,14 @@ COMPUTE_HEADER_DEPENDENCIES = auto
+ endif
+ 
+ ifeq ($(COMPUTE_HEADER_DEPENDENCIES),auto)
+-dep_check = $(shell $(CC) $(ALL_CFLAGS) \
++dep_check = $(shell $(CC) $(NON_DEVELOPER_CFLAGS) \
+ 	-c -MF /dev/null -MQ /dev/null -MMD -MP \
+-	-x c /dev/null -o /dev/null 2>&1; \
++	-x c /dev/null -o /dev/null; \
+ 	echo $$?)
+ ifeq ($(dep_check),0)
+ override COMPUTE_HEADER_DEPENDENCIES = yes
+ else
++$(info Non-zero $(dep_check) exit with COMPUTE_HEADER_DEPENDENCIES=auto, set it to "yes" or "no" to quiet auto-detect)
+ override COMPUTE_HEADER_DEPENDENCIES = no
+ endif
+ endif
+-- 
+2.33.0.1225.g17f21f53d74
+
