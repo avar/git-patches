@@ -1,0 +1,134 @@
+From a8e9799099ed4013388ebab2d5bd4e6b6eef227d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-a8e9799099e-20210923T000538Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210921T224944Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20210921T224944Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Sep 2021 12:35:50 +0200
+Subject: [PATCH v2] Makefile: make the "sparse" target non-.PHONY
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "sparse" target and its *.sp dependencies to be non-.PHONY. This means that
+
+we'll now create an empty *.sp as a marker for having checked the
+corresponding *.c file. We can ensure that we'll re-make the *.sp file
+by making it depend on the *.o file.
+
+. It's now viable to run it as part of a normal compilation
+target, as we'll only re-generate these checks if the source *.c file
+has changed.
+
+On my box with -j8 it was fast before, or around 5 seconds, now it
+only takes that long the first time, and the common case is <100ms, or
+however long it takes GNU make to stat the *.sp file and see that all
+the corresponding *.c files are older.
+
+See 0bcd9ae85d7 (sparse: Fix errors due to missing target-specific
+variables, 2011-04-21) for the modern implementation of the sparse
+target being changed here.
+
+It is critical that we use -Wsparse-error here, otherwise the error
+would only show up once, but we'd successfully create the empty *.sp
+file, and running a second time wouldn't show the error. I'm therefore
+not putting it into SPARSE_FLAGS or SP_EXTRA_FLAGS, it's not optional,
+the Makefile logic won't behave properly without it.
+
+Appending to $@ without a move is OK here because we're using the
+.DELETE_ON_ERROR Makefile feature. See 7b76d6bf221 (Makefile: add and
+use the ".DELETE_ON_ERROR" flag, 2021-06-29). GNU make ensures that on
+error this file will be removed.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff against v1:
+1:  e03fde1b642 ! 1:  a8e9799099e Makefile: make the "sparse" target non-.PHONY
+    @@ Metadata
+      ## Commit message ##
+         Makefile: make the "sparse" target non-.PHONY
+     
+    -    Change the "sparse" target and its *.sp dependencies to be
+    -    non-.PHONY. It's now viable to run it as part of a normal compilation
+    +    Change the "sparse" target and its *.sp dependencies to be non-.PHONY. This means that
+    +
+    +    we'll now create an empty *.sp as a marker for having checked the
+    +    corresponding *.c file. We can ensure that we'll re-make the *.sp file
+    +    by making it depend on the *.o file.
+    +
+    +    . It's now viable to run it as part of a normal compilation
+         target, as we'll only re-generate these checks if the source *.c file
+         has changed.
+     
+    @@ Makefile: check-sha1:: t/helper/test-tool$X
+      SP_OBJ = $(patsubst %.o,%.sp,$(C_OBJ))
+      
+     -$(SP_OBJ): %.sp: %.c GIT-CFLAGS FORCE
+    -+$(SP_OBJ): %.sp: %.c GIT-CFLAGS
+    ++$(SP_OBJ): %.sp: %.c %.o GIT-CFLAGS
+      	$(QUIET_SP)cgcc -no-compile $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) \
+     -		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $<
+     +		-Wsparse-error \
+    @@ Makefile: check-sha1:: t/helper/test-tool$X
+      sparse: $(SP_OBJ)
+      
+      EXCEPT_HDRS := command-list.h config-list.h unicode-width.h compat/% xdiff/%
+    +@@ Makefile: clean: profile-clean coverage-clean cocciclean
+    + 	$(RM) $(ALL_PROGRAMS) $(SCRIPT_LIB) $(BUILT_INS) git$X
+    + 	$(RM) $(TEST_PROGRAMS)
+    + 	$(RM) $(FUZZ_PROGRAMS)
+    ++	$(RM) $(SP_OBJ)
+    + 	$(RM) $(HCC)
+    + 	$(RM) -r bin-wrappers $(dep_dirs) $(compdb_dir) compile_commands.json
+    + 	$(RM) -r po/build/
+2:  9c4cedacdce < -:  ----------- Makefile: do one append in %.hcc rule
+3:  e2ad1700f9e < -:  ----------- Makefile: make the "hdr-check" target non-.PHONY
+
+ .gitignore | 1 +
+ Makefile   | 9 ++++++---
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index 311841f9bed..b02250a50c4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -224,6 +224,7 @@
+ *.lib
+ *.res
+ *.sln
++*.sp
+ *.suo
+ *.ncb
+ *.vcproj
+diff --git a/Makefile b/Makefile
+index a9f9b689f0c..0bae65889fe 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2896,11 +2896,13 @@ check-sha1:: t/helper/test-tool$X
+ 
+ SP_OBJ = $(patsubst %.o,%.sp,$(C_OBJ))
+ 
+-$(SP_OBJ): %.sp: %.c GIT-CFLAGS FORCE
++$(SP_OBJ): %.sp: %.c %.o GIT-CFLAGS
+ 	$(QUIET_SP)cgcc -no-compile $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) \
+-		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $<
++		-Wsparse-error \
++		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $< && \
++	>$@
+ 
+-.PHONY: sparse $(SP_OBJ)
++.PHONY: sparse
+ sparse: $(SP_OBJ)
+ 
+ EXCEPT_HDRS := command-list.h config-list.h unicode-width.h compat/% xdiff/%
+@@ -3227,6 +3229,7 @@ clean: profile-clean coverage-clean cocciclean
+ 	$(RM) $(ALL_PROGRAMS) $(SCRIPT_LIB) $(BUILT_INS) git$X
+ 	$(RM) $(TEST_PROGRAMS)
+ 	$(RM) $(FUZZ_PROGRAMS)
++	$(RM) $(SP_OBJ)
+ 	$(RM) $(HCC)
+ 	$(RM) -r bin-wrappers $(dep_dirs) $(compdb_dir) compile_commands.json
+ 	$(RM) -r po/build/
+-- 
+2.33.0.1225.g9f062250122
+
