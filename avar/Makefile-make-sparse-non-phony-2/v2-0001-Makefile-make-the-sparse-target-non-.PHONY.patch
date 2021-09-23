@@ -1,5 +1,5 @@
-From a8e9799099ed4013388ebab2d5bd4e6b6eef227d Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-1.1-a8e9799099e-20210923T000538Z-avarab@gmail.com>
+From 059829f2195fa774c3ba54946d76cb1009e53a2f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-059829f2195-20210923T000654Z-avarab@gmail.com>
 In-Reply-To: <cover-0.3-00000000000-20210921T224944Z-avarab@gmail.com>
 References: <cover-0.3-00000000000-20210921T224944Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -10,20 +10,28 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Change the "sparse" target and its *.sp dependencies to be non-.PHONY. This means that
+Change the "sparse" target and its *.sp dependencies to be
+non-.PHONY. Before this change "make sparse" would take ~5s to re-run
+all the *.c files through "cgcc", after it it'll create an empty *.sp
+file sitting alongside the *.c file, only if the *.c file or its
+dependencies are newer than the *.sp is the *.sp re-made.
 
-we'll now create an empty *.sp as a marker for having checked the
-corresponding *.c file. We can ensure that we'll re-make the *.sp file
-by making it depend on the *.o file.
+We ensure that the recursive dependencies are correct by depending on
+the *.o file, which in turn will have correct dependencies by either
+depending on all header files, or under
+"COMPUTE_HEADER_DEPENDENCIES=yes" the headers it needs.
 
-. It's now viable to run it as part of a normal compilation
-target, as we'll only re-generate these checks if the source *.c file
-has changed.
+This means that a plain "make sparse" is much slower, as we'll now
+need to make the *.o files just to create the *.sp files, but
+incrementally creating the *.sp files is *much* faster and less
+verbose, it thus becomes viable to run "sparse" along with "all" as
+e.g. "git rebase --exec 'make all sparse'".
 
-On my box with -j8 it was fast before, or around 5 seconds, now it
-only takes that long the first time, and the common case is <100ms, or
-however long it takes GNU make to stat the *.sp file and see that all
-the corresponding *.c files are older.
+On my box with -j8 "make sparse" was fast before, or around 5 seconds,
+now it only takes that long the first time, and the common case is
+<100ms, or however long it takes GNU make to stat the *.sp file and
+see that all the corresponding *.c file and its dependencies are
+older.
 
 See 0bcd9ae85d7 (sparse: Fix errors due to missing target-specific
 variables, 2011-04-21) for the modern implementation of the sparse
@@ -43,23 +51,42 @@ error this file will be removed.
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
 Range-diff against v1:
-1:  e03fde1b642 ! 1:  a8e9799099e Makefile: make the "sparse" target non-.PHONY
-    @@ Metadata
-      ## Commit message ##
+1:  e03fde1b642 ! 1:  059829f2195 Makefile: make the "sparse" target non-.PHONY
+    @@ Commit message
          Makefile: make the "sparse" target non-.PHONY
      
-    -    Change the "sparse" target and its *.sp dependencies to be
+         Change the "sparse" target and its *.sp dependencies to be
     -    non-.PHONY. It's now viable to run it as part of a normal compilation
-    +    Change the "sparse" target and its *.sp dependencies to be non-.PHONY. This means that
-    +
-    +    we'll now create an empty *.sp as a marker for having checked the
-    +    corresponding *.c file. We can ensure that we'll re-make the *.sp file
-    +    by making it depend on the *.o file.
-    +
-    +    . It's now viable to run it as part of a normal compilation
-         target, as we'll only re-generate these checks if the source *.c file
-         has changed.
+    -    target, as we'll only re-generate these checks if the source *.c file
+    -    has changed.
+    +    non-.PHONY. Before this change "make sparse" would take ~5s to re-run
+    +    all the *.c files through "cgcc", after it it'll create an empty *.sp
+    +    file sitting alongside the *.c file, only if the *.c file or its
+    +    dependencies are newer than the *.sp is the *.sp re-made.
      
+    -    On my box with -j8 it was fast before, or around 5 seconds, now it
+    -    only takes that long the first time, and the common case is <100ms, or
+    -    however long it takes GNU make to stat the *.sp file and see that all
+    -    the corresponding *.c files are older.
+    +    We ensure that the recursive dependencies are correct by depending on
+    +    the *.o file, which in turn will have correct dependencies by either
+    +    depending on all header files, or under
+    +    "COMPUTE_HEADER_DEPENDENCIES=yes" the headers it needs.
+    +
+    +    This means that a plain "make sparse" is much slower, as we'll now
+    +    need to make the *.o files just to create the *.sp files, but
+    +    incrementally creating the *.sp files is *much* faster and less
+    +    verbose, it thus becomes viable to run "sparse" along with "all" as
+    +    e.g. "git rebase --exec 'make all sparse'".
+    +
+    +    On my box with -j8 "make sparse" was fast before, or around 5 seconds,
+    +    now it only takes that long the first time, and the common case is
+    +    <100ms, or however long it takes GNU make to stat the *.sp file and
+    +    see that all the corresponding *.c file and its dependencies are
+    +    older.
+     
+         See 0bcd9ae85d7 (sparse: Fix errors due to missing target-specific
+         variables, 2011-04-21) for the modern implementation of the sparse
     @@ Makefile: check-sha1:: t/helper/test-tool$X
       SP_OBJ = $(patsubst %.o,%.sp,$(C_OBJ))
       
