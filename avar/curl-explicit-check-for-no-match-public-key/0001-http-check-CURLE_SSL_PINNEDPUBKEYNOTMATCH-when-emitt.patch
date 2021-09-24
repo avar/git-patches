@@ -1,0 +1,123 @@
+From 9d0919d7999a9b2cbab392fb3ee8efe8b81afce1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-9d0919d7999-20210924T100201Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Sep 2021 11:35:14 +0200
+Subject: [PATCH] http: check CURLE_SSL_PINNEDPUBKEYNOTMATCH when emitting
+ errors
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the error shown when a http.pinnedPubKey doesn't match to point
+the http.pinnedPubKey variable added in aeff8a61216 (http: implement
+public key pinning, 2016-02-15), e.g.:
+
+    git -c http.pinnedPubKey=sha256/someNonMatchingKey ls-remote https://github.com/git/git.git
+    fatal: unable to access 'https://github.com/git/git.git/' with http.pinnedPubkey configuration: SSL: public key does not match pinned public key!
+
+Before this we'd emit the exact same thing without the " with
+http.pinnedPubkey configuration".
+
+Unfortunately we can't test this easily, as there are no tests that
+require https:// in the test suite, and t/lib-httpd.sh doesn't know
+how to set up such tests. See [1] for the start of a discussion about
+what it would take to have divergent "t/lib-httpd/apache.conf" test
+setups. #leftoverbits
+
+1. https://lore.kernel.org/git/YUonS1uoZlZEt+Yd@coredump.intra.peff.net/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-curl-compat.h | 3 ++-
+ http.c            | 4 ++++
+ http.h            | 1 +
+ remote-curl.c     | 4 ++++
+ 4 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/git-curl-compat.h b/git-curl-compat.h
+index a308bdb3b9b..56a83b6bbd8 100644
+--- a/git-curl-compat.h
++++ b/git-curl-compat.h
+@@ -64,16 +64,17 @@
+ #if LIBCURL_VERSION_NUM >= 0x072200
+ #define GIT_CURL_HAVE_CURL_SSLVERSION_TLSv1_0
+ #endif
+ 
+ /**
+  * CURLOPT_PINNEDPUBLICKEY was added in 7.39.0, released in November
+- * 2014.
++ * 2014. CURLE_SSL_PINNEDPUBKEYNOTMATCH was added in that same version.
+  */
+ #if LIBCURL_VERSION_NUM >= 0x072c00
+ #define GIT_CURL_HAVE_CURLOPT_PINNEDPUBLICKEY 1
++#define GIT_CURL_HAVE_CURLE_SSL_PINNEDPUBKEYNOTMATCH 1
+ #endif
+ 
+ /**
+  * CURL_HTTP_VERSION_2 was added in 7.43.0, released in June 2015.
+  *
+  * The CURL_HTTP_VERSION_2 alias (but not CURL_HTTP_VERSION_2_0) has
+diff --git a/http.c b/http.c
+index d7c20493d7f..b6735b51c31 100644
+--- a/http.c
++++ b/http.c
+@@ -1486,12 +1486,16 @@ static int handle_curl_result(struct slot_results *results)
+ 		 * certificate, bad password, or something else wrong
+ 		 * with the certificate.  So we reject the credential to
+ 		 * avoid caching or saving a bad password.
+ 		 */
+ 		credential_reject(&cert_auth);
+ 		return HTTP_NOAUTH;
++#ifdef GIT_CURL_HAVE_CURLE_SSL_PINNEDPUBKEYNOTMATCH
++	} else if (results->curl_result == CURLE_SSL_PINNEDPUBKEYNOTMATCH) {
++		return HTTP_NOMATCHPUBLICKEY;
++#endif
+ 	} else if (missing_target(results))
+ 		return HTTP_MISSING_TARGET;
+ 	else if (results->http_code == 401) {
+ 		if (http_auth.username && http_auth.password) {
+ 			credential_reject(&http_auth);
+ 			return HTTP_NOAUTH;
+diff --git a/http.h b/http.h
+index 3db5a0cf320..df1590e53a4 100644
+--- a/http.h
++++ b/http.h
+@@ -151,12 +151,13 @@ struct http_get_options {
+ #define HTTP_OK			0
+ #define HTTP_MISSING_TARGET	1
+ #define HTTP_ERROR		2
+ #define HTTP_START_FAILED	3
+ #define HTTP_REAUTH	4
+ #define HTTP_NOAUTH	5
++#define HTTP_NOMATCHPUBLICKEY	6
+ 
+ /*
+  * Requests a URL and stores the result in a strbuf.
+  *
+  * If the result pointer is NULL, a HTTP HEAD request is made instead of GET.
+  */
+diff --git a/remote-curl.c b/remote-curl.c
+index 598cff7cde6..1f1f9066e40 100644
+--- a/remote-curl.c
++++ b/remote-curl.c
+@@ -496,12 +496,16 @@ static struct discovery *discover_refs(const char *service, int for_push)
+ 		die(_("repository '%s' not found"),
+ 		    transport_anonymize_url(url.buf));
+ 	case HTTP_NOAUTH:
+ 		show_http_message(&type, &charset, &buffer);
+ 		die(_("Authentication failed for '%s'"),
+ 		    transport_anonymize_url(url.buf));
++	case HTTP_NOMATCHPUBLICKEY:
++		show_http_message(&type, &charset, &buffer);
++		die(_("unable to access '%s' with http.pinnedPubkey configuration: %s")
++		    transport_anonymize_url(url.buf), curl_errorstr);
+ 	default:
+ 		show_http_message(&type, &charset, &buffer);
+ 		die(_("unable to access '%s': %s"),
+ 		    transport_anonymize_url(url.buf), curl_errorstr);
+ 	}
+ 
+-- 
+2.33.0.1231.g24d802460a8
+
