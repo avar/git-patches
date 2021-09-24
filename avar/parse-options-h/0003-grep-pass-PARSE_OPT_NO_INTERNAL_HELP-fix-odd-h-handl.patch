@@ -1,0 +1,86 @@
+From 996f3dae2a721fdc54924b155dbc39877e8a533d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.3-996f3dae2a7-20210924T164820Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20210924T164820Z-avarab@gmail.com>
+References: <20210924141920.ezfpyf4uutob2h5z@zenon.in.qult.net>
+	<cover-0.3-00000000000-20210924T164820Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 24 Sep 2021 18:05:20 +0200
+Subject: [PATCH 3/3] grep: pass PARSE_OPT_NO_INTERNAL_HELP, fix odd -h
+ handling
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "grep" command supports both "-h" and "-H" options, along with a
+mandatory pattern, but this has been partially usurped by the "-h"
+handling in parse_options().
+
+The reason it's just been "odd" instead of a bug is that we'll only
+print out "-h" usage with parse_options() if there's no further
+non-option arguments, so instead of printing this brief blurb on a
+stand-alone -h we'd print out the full usage:
+
+    $ git grep -H
+    fatal: no pattern given
+
+But for the aforementioned reason a "git grep -h <pattern>" would
+work, we wouldn't take the !PARSE_OPT_NO_INTERNAL_HELP branch in
+parse_options_step(), would handle our own custom 'h' option, and
+builtin/grep.c itself would know what to do at that point.
+
+Reported-by: Ignacy Gawedzki <ignacy.gawedzki@green-communications.fr>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/grep.c  | 3 ++-
+ t/t0012-help.sh | 4 +++-
+ t/t7810-grep.sh | 4 ++++
+ 3 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/grep.c b/builtin/grep.c
+index 51278b01fa2..a2d6704aa41 100644
+--- a/builtin/grep.c
++++ b/builtin/grep.c
+@@ -981,7 +981,8 @@ int cmd_grep(int argc, const char **argv, const char *prefix)
+ 	 */
+ 	argc = parse_options(argc, argv, prefix, options, grep_usage,
+ 			     PARSE_OPT_KEEP_DASHDASH |
+-			     PARSE_OPT_STOP_AT_NON_OPTION);
++			     PARSE_OPT_STOP_AT_NON_OPTION |
++			     PARSE_OPT_NO_INTERNAL_HELP);
+ 	grep_commit_pattern_type(pattern_type_arg, &opt);
+ 
+ 	if (use_index && !startup_info->have_repository) {
+diff --git a/t/t0012-help.sh b/t/t0012-help.sh
+index 913f34c8e9d..0b623fe794a 100755
+--- a/t/t0012-help.sh
++++ b/t/t0012-help.sh
+@@ -90,7 +90,9 @@ test_expect_success 'git help succeeds without git.html' '
+ '
+ 
+ test_expect_success 'generate builtin list' '
+-	git --list-cmds=builtins >builtins
++	git --list-cmds=builtins >builtins &&
++	grep -v "^grep$" builtins >builtins+ &&
++	mv builtins+ builtins
+ '
+ 
+ while read builtin
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index 6b6423a07c3..4c2777120b0 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -11,6 +11,10 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
+ . ./test-lib.sh
+ 
++test_expect_success 'usage' '
++	test_expect_code 128 git grep -h
++'
++
+ test_invalid_grep_expression() {
+ 	params="$@" &&
+ 	test_expect_success "invalid expression: grep $params" '
+-- 
+2.33.0.1285.g7aff81f6560
+
