@@ -1,0 +1,65 @@
+From 312b353c651dd99192d71f2cc3dabdc5438d8168 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.8-312b353c651-20210926T185501Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.8-00000000000-20210926T185501Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20210923T095326Z-avarab@gmail.com>
+	<cover-v2-0.8-00000000000-20210926T185501Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 23 Sep 2021 11:34:51 +0200
+Subject: [PATCH v2 3/8] Makefile: don't perform "mv $@+ $@" dance for
+ $(GENERATED_H)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "cmd.sh > $@+ && mv $@+ $@" pattern used for generating the
+config-list.h and command-list.h to just "cmd.sh >$@". This was needed
+as a guard to ensure that we don't have an empty file if the script
+failed, but since 7b76d6bf221 (Makefile: add and use the
+".DELETE_ON_ERROR" flag, 2021-06-29) GNU make ensures that doesn't
+happen.
+
+There's still a lot of other places in the Makefile where we
+needlessly use this pattern, but I'm just changing these because I'm
+about to add a new $(GENERATED_H) target, let's have them all look and
+act the same way.
+
+Even with ".DELETE_ON_ERROR" there is still a point to using the "mv
+$@+ $@" pattern in some cases, e.g. to ensure that you have a working
+binary during recompilation (see [1] for the start of a long
+discussion about that), but that doesn't apply here. Nothing external
+uses $(GENERATED_H) directly, it's only ever used in the context of
+the Makefile's own dependency (re-)generation.
+
+1. https://lore.kernel.org/git/8735t93h0u.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 47e79a6252a..e6b8d00f221 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2231,15 +2231,14 @@ $(BUILT_INS): git$X
+ config-list.h: generate-configlist.sh
+ 
+ config-list.h: Documentation/*config.txt Documentation/config/*.txt
+-	$(QUIET_GEN)$(SHELL_PATH) ./generate-configlist.sh \
+-		>$@+ && mv $@+ $@
++	$(QUIET_GEN)$(SHELL_PATH) ./generate-configlist.sh >$@
+ 
+ command-list.h: generate-cmdlist.sh command-list.txt
+ 
+ command-list.h: $(wildcard Documentation/git*.txt)
+ 	$(QUIET_GEN)$(SHELL_PATH) ./generate-cmdlist.sh \
+ 		$(patsubst %,--exclude-program %,$(EXCLUDED_PROGRAMS)) \
+-		command-list.txt >$@+ && mv $@+ $@
++		command-list.txt >$@
+ 
+ SCRIPT_DEFINES = $(SHELL_PATH_SQ):$(DIFF_SQ):$(GIT_VERSION):\
+ 	$(localedir_SQ):$(NO_CURL):$(USE_GETTEXT_SCHEME):$(SANE_TOOL_PATH_SQ):\
+-- 
+2.33.0.1291.g8857a6a91ac
+
