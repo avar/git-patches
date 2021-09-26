@@ -1,0 +1,133 @@
+From 7bf90915c1b253c8520b067260b961f9752b74d3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-7bf90915c1b-20210926T231736Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 26 Sep 2021 23:33:51 +0200
+Subject: [PATCH] config.c: remove unused git_config_key_is_valid()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The git_config_key_is_valid() function got left behind in a
+refactoring in a9bcf6586d1 (alias: use the early config machinery to
+expand aliases, 2017-06-14),
+
+It previously had two users when it was added in 9e9de18f1ad (config:
+silence warnings for command names with invalid keys, 2015-08-24), and
+after 6a1e1bc0a15 (pager: use callbacks instead of configset,
+2016-09-12) only one remained.
+
+By removing it we can get rid of the "quiet" branches in this
+function, as well as cases where "store_key" is NULL, for which there
+are no other users.
+
+Out of the 5 callers of git_config_parse_key() only one needs to pass
+a non-NULL "size_t *baselen_", so we could remove the third parameter
+from the public interface. I did not find that potential
+simplification to be worthwhile.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ config.c | 34 ++++++++--------------------------
+ config.h |  1 -
+ 2 files changed, 8 insertions(+), 27 deletions(-)
+
+diff --git a/config.c b/config.c
+index 2edf835262f..2dcbe901b6b 100644
+--- a/config.c
++++ b/config.c
+@@ -425,7 +425,7 @@ static inline int iskeychar(int c)
+  * baselen - pointer to size_t which will hold the length of the
+  *           section + subsection part, can be NULL
+  */
+-static int git_config_parse_key_1(const char *key, char **store_key, size_t *baselen_, int quiet)
++int git_config_parse_key(const char *key, char **store_key, size_t *baselen_)
+ {
+ 	size_t i, baselen;
+ 	int dot;
+@@ -437,14 +437,12 @@ static int git_config_parse_key_1(const char *key, char **store_key, size_t *bas
+ 	 */
+ 
+ 	if (last_dot == NULL || last_dot == key) {
+-		if (!quiet)
+-			error(_("key does not contain a section: %s"), key);
++		error(_("key does not contain a section: %s"), key);
+ 		return -CONFIG_NO_SECTION_OR_NAME;
+ 	}
+ 
+ 	if (!last_dot[1]) {
+-		if (!quiet)
+-			error(_("key does not contain variable name: %s"), key);
++		error(_("key does not contain variable name: %s"), key);
+ 		return -CONFIG_NO_SECTION_OR_NAME;
+ 	}
+ 
+@@ -455,8 +453,7 @@ static int git_config_parse_key_1(const char *key, char **store_key, size_t *bas
+ 	/*
+ 	 * Validate the key and while at it, lower case it for matching.
+ 	 */
+-	if (store_key)
+-		*store_key = xmallocz(strlen(key));
++	*store_key = xmallocz(strlen(key));
+ 
+ 	dot = 0;
+ 	for (i = 0; key[i]; i++) {
+@@ -467,39 +464,24 @@ static int git_config_parse_key_1(const char *key, char **store_key, size_t *bas
+ 		if (!dot || i > baselen) {
+ 			if (!iskeychar(c) ||
+ 			    (i == baselen + 1 && !isalpha(c))) {
+-				if (!quiet)
+-					error(_("invalid key: %s"), key);
++				error(_("invalid key: %s"), key);
+ 				goto out_free_ret_1;
+ 			}
+ 			c = tolower(c);
+ 		} else if (c == '\n') {
+-			if (!quiet)
+-				error(_("invalid key (newline): %s"), key);
++			error(_("invalid key (newline): %s"), key);
+ 			goto out_free_ret_1;
+ 		}
+-		if (store_key)
+-			(*store_key)[i] = c;
++		(*store_key)[i] = c;
+ 	}
+ 
+ 	return 0;
+ 
+ out_free_ret_1:
+-	if (store_key) {
+-		FREE_AND_NULL(*store_key);
+-	}
++	FREE_AND_NULL(*store_key);
+ 	return -CONFIG_INVALID_KEY;
+ }
+ 
+-int git_config_parse_key(const char *key, char **store_key, size_t *baselen)
+-{
+-	return git_config_parse_key_1(key, store_key, baselen, 0);
+-}
+-
+-int git_config_key_is_valid(const char *key)
+-{
+-	return !git_config_parse_key_1(key, NULL, NULL, 1);
+-}
+-
+ static int config_parse_pair(const char *key, const char *value,
+ 			  config_fn_t fn, void *data)
+ {
+diff --git a/config.h b/config.h
+index 147f5e0490e..8b79441ee0c 100644
+--- a/config.h
++++ b/config.h
+@@ -259,7 +259,6 @@ int git_config_set_gently(const char *, const char *);
+ void git_config_set(const char *, const char *);
+ 
+ int git_config_parse_key(const char *, char **, size_t *);
+-int git_config_key_is_valid(const char *key);
+ 
+ /*
+  * The following macros specify flag bits that alter the behavior
+-- 
+2.33.0.1294.g2bdf2798764
+
