@@ -1,0 +1,154 @@
+From b78a9ec08460f3470d2c0412788672a4e4eacff1 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.5-00000000000-20210927T125652Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210927T004920Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210927T004920Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 27 Sep 2021 14:56:52 +0200
+Subject: [PATCH v2 0/5] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (5):
+  daemon.c: refactor hostinfo_init() to HOSTINFO_INIT macro
+  builtin/blame.c: refactor commit_info_init() to COMMIT_INFO_INIT macro
+  urlmatch.[ch]: add and use URLMATCH_CONFIG_INIT
+  builtin/remote.c: add and use a REF_STATES_INIT
+  builtin/remote.c: add and use SHOW_INFO_INIT
+
+ builtin/blame.c  |  30 ++++++-------
+ builtin/config.c |   3 +-
+ builtin/remote.c | 111 +++++++++++++++++++++++------------------------
+ credential.c     |   4 +-
+ daemon.c         |  19 +++-----
+ http.c           |   4 +-
+ urlmatch.h       |   4 ++
+ 7 files changed, 82 insertions(+), 93 deletions(-)
+
+Range-diff against v1:
+-:  ----------- > 1:  3130693b416 daemon.c: refactor hostinfo_init() to HOSTINFO_INIT macro
+1:  c9db107fcb1 ! 2:  65c5295c1ac shortlog: use designated initializer for "struct shortlog"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    shortlog: use designated initializer for "struct shortlog"
+    +    builtin/blame.c: refactor commit_info_init() to COMMIT_INFO_INIT macro
+     
+    -    Change code added in 64093fc06a (blame,shortlog: don't make local
+    -    option variables static, 2016-06-13) to use a designated initializer
+    -    via a typical *_INIT macro pattern.
+    +    Remove the commit_info_init() function addded in ea02ffa3857 (mailmap:
+    +    simplify map_user() interface, 2013-01-05) and instead initialize the
+    +    "struct commit_info" with a macro.
+     
+    -    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    This is the more idiomatic pattern in the codebase, and doesn't leave
+    +    us wondering when we see the *_init() function if this struct needs
+    +    more complex initialization than a macro can provide.
+     
+    - ## builtin/shortlog.c ##
+    -@@ builtin/shortlog.c: void shortlog_init(struct shortlog *log)
+    - 
+    - int cmd_shortlog(int argc, const char **argv, const char *prefix)
+    - {
+    --	struct shortlog log = { STRING_LIST_INIT_NODUP };
+    -+	struct shortlog log = SHORTLOG_INIT;
+    - 	struct rev_info rev;
+    - 	int nongit = !startup_info->have_repository;
+    - 
+    +    The get_commit_info() function is only called by the three callers
+    +    being changed here immediately after initializing the struct with the
+    +    macros, so by moving the initialization to the callers we don't need
+    +    to do it in get_commit_info() anymore.
+    +
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## shortlog.h ##
+    -@@ shortlog.h: struct shortlog {
+    - 	FILE *file;
+    + ## builtin/blame.c ##
+    +@@ builtin/blame.c: struct commit_info {
+    + 	struct strbuf summary;
+      };
+      
+    -+#define SHORTLOG_INIT { \
+    -+	.list = STRING_LIST_INIT_NODUP, \
+    ++#define COMMIT_INFO_INIT { \
+    ++	.author = STRBUF_INIT, \
+    ++	.author_mail = STRBUF_INIT, \
+    ++	.author_tz = STRBUF_INIT, \
+    ++	.committer = STRBUF_INIT, \
+    ++	.committer_mail = STRBUF_INIT, \
+    ++	.committer_tz = STRBUF_INIT, \
+    ++	.summary = STRBUF_INIT, \
+     +}
+     +
+    - void shortlog_init(struct shortlog *log);
+    + /*
+    +  * Parse author/committer line in the commit object buffer
+    +  */
+    +@@ builtin/blame.c: static void get_ac_line(const char *inbuf, const char *what,
+    + 	strbuf_add(name, namebuf, namelen);
+    + }
+    + 
+    +-static void commit_info_init(struct commit_info *ci)
+    +-{
+    +-
+    +-	strbuf_init(&ci->author, 0);
+    +-	strbuf_init(&ci->author_mail, 0);
+    +-	strbuf_init(&ci->author_tz, 0);
+    +-	strbuf_init(&ci->committer, 0);
+    +-	strbuf_init(&ci->committer_mail, 0);
+    +-	strbuf_init(&ci->committer_tz, 0);
+    +-	strbuf_init(&ci->summary, 0);
+    +-}
+    +-
+    + static void commit_info_destroy(struct commit_info *ci)
+    + {
+    + 
+    +@@ builtin/blame.c: static void get_commit_info(struct commit *commit,
+    + 	const char *subject, *encoding;
+    + 	const char *message;
+    + 
+    +-	commit_info_init(ret);
+    +-
+    + 	encoding = get_log_output_encoding();
+    + 	message = logmsg_reencode(commit, NULL, encoding);
+    + 	get_ac_line(message, "\nauthor ",
+    +@@ builtin/blame.c: static void write_filename_info(struct blame_origin *suspect)
+    +  */
+    + static int emit_one_suspect_detail(struct blame_origin *suspect, int repeat)
+    + {
+    +-	struct commit_info ci;
+    ++	struct commit_info ci = COMMIT_INFO_INIT;
+      
+    - void shortlog_add_commit(struct shortlog *log, struct commit *commit);
+    + 	if (!repeat && (suspect->commit->object.flags & METAINFO_SHOWN))
+    + 		return 0;
+    +@@ builtin/blame.c: static void emit_other(struct blame_scoreboard *sb, struct blame_entry *ent, int
+    + 	int cnt;
+    + 	const char *cp;
+    + 	struct blame_origin *suspect = ent->suspect;
+    +-	struct commit_info ci;
+    ++	struct commit_info ci = COMMIT_INFO_INIT;
+    + 	char hex[GIT_MAX_HEXSZ + 1];
+    + 	int show_raw_time = !!(opt & OUTPUT_RAW_TIMESTAMP);
+    + 	const char *default_color = NULL, *color = NULL, *reset = NULL;
+    +@@ builtin/blame.c: static void find_alignment(struct blame_scoreboard *sb, int *option)
+    + 		if (longest_file < num)
+    + 			longest_file = num;
+    + 		if (!(suspect->commit->object.flags & METAINFO_SHOWN)) {
+    +-			struct commit_info ci;
+    ++			struct commit_info ci = COMMIT_INFO_INIT;
+    + 			suspect->commit->object.flags |= METAINFO_SHOWN;
+    + 			get_commit_info(suspect->commit, &ci, 1);
+    + 			if (*option & OUTPUT_SHOW_EMAIL)
+2:  cb4c81dcc83 = 3:  3783788b553 urlmatch.[ch]: add and use URLMATCH_CONFIG_INIT
+3:  1c34c00feb5 = 4:  13ef9566903 builtin/remote.c: add and use a REF_STATES_INIT
+4:  76fa070e89c = 5:  b78a9ec0846 builtin/remote.c: add and use SHOW_INFO_INIT
+-- 
+2.33.0.1316.gb2e9b3ba3ae
+
