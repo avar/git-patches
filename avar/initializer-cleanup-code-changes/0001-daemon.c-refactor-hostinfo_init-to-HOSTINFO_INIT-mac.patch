@@ -1,0 +1,74 @@
+From 3130693b4165933b20f50a4fe800f5724f34f14e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.6-3130693b416-20210927T004920Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20210927T004920Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20210927T004920Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 1 Jul 2021 11:25:20 +0200
+Subject: [PATCH 1/6] daemon.c: refactor hostinfo_init() to HOSTINFO_INIT macro
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the hostinfo_init() function added in 01cec54e135 (daemon:
+deglobalize hostname information, 2015-03-07) and instead initialize
+the "struct hostinfo" with a macro.
+
+This is the more idiomatic pattern in the codebase, and doesn't leave
+us wondering when we see the *_init() function if this struct needs
+more complex initialization than a macro can provide.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ daemon.c | 19 +++++++------------
+ 1 file changed, 7 insertions(+), 12 deletions(-)
+
+diff --git a/daemon.c b/daemon.c
+index 5c4cbad62d0..d80d009d1a1 100644
+--- a/daemon.c
++++ b/daemon.c
+@@ -63,6 +63,12 @@ struct hostinfo {
+ 	unsigned int hostname_lookup_done:1;
+ 	unsigned int saw_extended_args:1;
+ };
++#define HOSTINFO_INIT { \
++	.hostname = STRBUF_INIT, \
++	.canon_hostname = STRBUF_INIT, \
++	.ip_address = STRBUF_INIT, \
++	.tcp_port = STRBUF_INIT, \
++}
+ 
+ static void lookup_hostname(struct hostinfo *hi);
+ 
+@@ -727,15 +733,6 @@ static void lookup_hostname(struct hostinfo *hi)
+ 	}
+ }
+ 
+-static void hostinfo_init(struct hostinfo *hi)
+-{
+-	memset(hi, 0, sizeof(*hi));
+-	strbuf_init(&hi->hostname, 0);
+-	strbuf_init(&hi->canon_hostname, 0);
+-	strbuf_init(&hi->ip_address, 0);
+-	strbuf_init(&hi->tcp_port, 0);
+-}
+-
+ static void hostinfo_clear(struct hostinfo *hi)
+ {
+ 	strbuf_release(&hi->hostname);
+@@ -760,11 +757,9 @@ static int execute(void)
+ 	char *line = packet_buffer;
+ 	int pktlen, len, i;
+ 	char *addr = getenv("REMOTE_ADDR"), *port = getenv("REMOTE_PORT");
+-	struct hostinfo hi;
++	struct hostinfo hi = HOSTINFO_INIT;
+ 	struct strvec env = STRVEC_INIT;
+ 
+-	hostinfo_init(&hi);
+-
+ 	if (addr)
+ 		loginfo("Connection from %s:%s", addr, port);
+ 
+-- 
+2.33.0.1316.gb2e9b3ba3ae
+
