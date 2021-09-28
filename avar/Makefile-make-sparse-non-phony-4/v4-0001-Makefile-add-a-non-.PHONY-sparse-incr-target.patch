@@ -1,0 +1,151 @@
+From f31fa3e8282210b357e2bb69488e695dcbc18b0a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-1.1-f31fa3e8282-20210928T014023Z-avarab@gmail.com>
+In-Reply-To: <patch-v3-1.1-b6ba99ca4cc-20210928T011319Z-avarab@gmail.com>
+References: <patch-v3-1.1-b6ba99ca4cc-20210928T011319Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Sep 2021 12:35:50 +0200
+Subject: [PATCH v4] Makefile: add a non-.PHONY "sparse-incr" target
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a "sparse-incr" target to compliment the existing "sparse"
+target. The new "sparse-incr" target doesn't depend on "FORCE", and
+will create empty *.sp files as markers for the corresponding *.c file
+having been checked.
+
+Those *.sp files in turn depend on the *.o files, so we can be certain
+that the dependencies are correct by either depending on all header
+files, or under "COMPUTE_HEADER_DEPENDENCIES=yes" the headers the
+relevant file needs.
+
+The "sparse-incr" target is slower on a fresh git.git checkout, as it
+depends on the creation of the *.o files. But once the *.o and *.sp
+files are built it's able to incrementally update them. It's thus
+viable to run:
+
+    make all sparse-incr
+
+As part of a regular edit/compile/test cycle, or as a fast "git rebase
+--exec" command.
+
+On my box (with -j8) the initial run of the "sparse" target takes ~5s,
+but ~16s for "sparse-incr". When using CC="ccache cc" the difference
+between the two is negligible.
+
+Running e.g.:
+
+    make grep.sp
+
+Will behave the same way and will always re-run "cgcc", we'll only use
+the new dependency chain of "sparse-incr" is part of the MAKECMDGOALS.
+
+I think it would make sense to just remove the "sparse" target
+entirely, and to say that anyone who cares about the speed of an
+initial "sparse" run should use "CC='ccache cc'". But per [1] and [2]
+there are existing users of "make sparse" and "make <file>.sp" that
+prefer the current semantics.
+
+I.e. per [2] want "make <file>.sp" to *always* run "sparse", even
+though a corresponding "make <file>.o" would only re-run the "real"
+compilation if needed. I don't think that makes any sense, especially
+in combination with DEVELOPER=1 which'll ensure that -Werror would
+have made any errors in a "make <file>.sp" sticky.
+
+But since we have existing users relying on it, and I don't really
+care at al about "make <file>.sp", I just want an incremental target I
+can use, let's create this new "make sparse-incr" instead of "fixing"
+the existing "make sparse".
+
+See 0bcd9ae85d7 (sparse: Fix errors due to missing target-specific
+variables, 2011-04-21) for the modern implementation of the "sparse"
+target being changed here.
+
+Appending to $@ without a move is OK here because we're using the
+.DELETE_ON_ERROR Makefile feature. See 7b76d6bf221 (Makefile: add and
+use the ".DELETE_ON_ERROR" flag, 2021-06-29). GNU make ensures that on
+error this file will be removed.
+
+1. https://lore.kernel.org/git/xmqqtuib199x.fsf@gitster.g/
+2. https://lore.kernel.org/git/457ec039-1e26-9da9-55f6-9ea79b962bfe@ramsayjones.plus.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff against v3:
+1:  b6ba99ca4cc ! 1:  f31fa3e8282 Makefile: add a non-.PHONY "sparse-incr" target
+    @@ Makefile: check-sha1:: t/helper/test-tool$X
+      		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $<
+     +endef
+     +
+    -+ifneq ($(filter sparse-incr,$(MAKECMDGOALS)),sparse-incr)
+    -+ifneq ($(filter sparse,$(MAKECMDGOALS)),)
+    ++ifeq ($(sort $(filter sparse sparse-incr,$(MAKECMDGOALS))),sparse sparse-incr)
+     +$(error The sparse and sparse-incr targets cannot be combined!)
+     +endif
+    ++
+    ++ifneq ($(filter sparse-incr,$(MAKECMDGOALS)),sparse-incr)
+     +$(SP_OBJ): %.sp: %.c GIT-CFLAGS FORCE
+     +	$(cmd_run_sparse)
+     +else
+
+ .gitignore |  1 +
+ Makefile   | 19 +++++++++++++++++--
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index 311841f9bed..b02250a50c4 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -224,6 +224,7 @@
+ *.lib
+ *.res
+ *.sln
++*.sp
+ *.suo
+ *.ncb
+ *.vcproj
+diff --git a/Makefile b/Makefile
+index a9f9b689f0c..fd623523394 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2896,12 +2896,26 @@ check-sha1:: t/helper/test-tool$X
+ 
+ SP_OBJ = $(patsubst %.o,%.sp,$(C_OBJ))
+ 
+-$(SP_OBJ): %.sp: %.c GIT-CFLAGS FORCE
++define cmd_run_sparse
+ 	$(QUIET_SP)cgcc -no-compile $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) \
+ 		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $<
++endef
++
++ifeq ($(sort $(filter sparse sparse-incr,$(MAKECMDGOALS))),sparse sparse-incr)
++$(error The sparse and sparse-incr targets cannot be combined!)
++endif
++
++ifneq ($(filter sparse-incr,$(MAKECMDGOALS)),sparse-incr)
++$(SP_OBJ): %.sp: %.c GIT-CFLAGS FORCE
++	$(cmd_run_sparse)
++else
++$(SP_OBJ): %.sp: %.c %.o GIT-CFLAGS
++	$(cmd_run_sparse) >$@
++endif
+ 
+-.PHONY: sparse $(SP_OBJ)
++.PHONY: sparse sparse-incr
+ sparse: $(SP_OBJ)
++sparse-incr: $(SP_OBJ)
+ 
+ EXCEPT_HDRS := command-list.h config-list.h unicode-width.h compat/% xdiff/%
+ ifndef GCRYPT_SHA256
+@@ -3227,6 +3241,7 @@ clean: profile-clean coverage-clean cocciclean
+ 	$(RM) $(ALL_PROGRAMS) $(SCRIPT_LIB) $(BUILT_INS) git$X
+ 	$(RM) $(TEST_PROGRAMS)
+ 	$(RM) $(FUZZ_PROGRAMS)
++	$(RM) $(SP_OBJ)
+ 	$(RM) $(HCC)
+ 	$(RM) -r bin-wrappers $(dep_dirs) $(compdb_dir) compile_commands.json
+ 	$(RM) -r po/build/
+-- 
+2.33.0.1326.g5e4342b7bef
+
