@@ -1,0 +1,140 @@
+From 91229b94fac4e90a506615620877e0f83abb8122 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v8-06.17-91229b94fac-20210928T021616Z-avarab@gmail.com>
+In-Reply-To: <cover-v8-00.17-00000000000-20210928T021616Z-avarab@gmail.com>
+References: <cover-v7-00.17-00000000000-20210920T190304Z-avarab@gmail.com>
+	<cover-v8-00.17-00000000000-20210928T021616Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 17 May 2021 12:37:45 +0200
+Subject: [PATCH v8 06/17] cat-file tests: test for missing/bogus object with
+ -t, -s and -p
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When we look up a missing object with cat_one_file() what error we
+print out currently depends on whether we'll error out early in
+get_oid_with_context(), or if we'll get an error later from
+oid_object_info_extended().
+
+The --allow-unknown-type flag then changes whether we pass the
+"OBJECT_INFO_ALLOW_UNKNOWN_TYPE" flag to get_oid_with_context() or
+not.
+
+The "-p" flag is yet another special-case in printing the same output
+on the deadbeef OID as we'd emit on the deadbeef_short OID for the
+"-s" and "-t" options, it also doesn't support the
+"--allow-unknown-type" flag at all.
+
+Let's test the combination of the two sets of [-t, -s, -p] and
+[--{no-}allow-unknown-type] (the --no-allow-unknown-type is implicit
+in not supplying it), as well as a [missing,bogus] object pair.
+
+This extends tests added in 3e370f9faf0 (t1006: add tests for git
+cat-file --allow-unknown-type, 2015-05-03).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/oid-info/oid      |  2 ++
+ t/t1006-cat-file.sh | 75 +++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 77 insertions(+)
+
+diff --git a/t/oid-info/oid b/t/oid-info/oid
+index a754970523c..7547d2c7903 100644
+--- a/t/oid-info/oid
++++ b/t/oid-info/oid
+@@ -27,3 +27,5 @@ numeric		sha1:0123456789012345678901234567890123456789
+ numeric		sha256:0123456789012345678901234567890123456789012345678901234567890123
+ deadbeef	sha1:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+ deadbeef	sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
++deadbeef_short	sha1:deadbeefdeadbeefdeadbeefdeadbeefdeadbee
++deadbeef_short	sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbee
+diff --git a/t/t1006-cat-file.sh b/t/t1006-cat-file.sh
+index ea6a53d425b..abf57339a29 100755
+--- a/t/t1006-cat-file.sh
++++ b/t/t1006-cat-file.sh
+@@ -327,6 +327,81 @@ test_expect_success 'setup bogus data' '
+ 	bogus_long_sha1=$(echo_without_newline "$bogus_long_content" | git hash-object -t $bogus_long_type --literally -w --stdin)
+ '
+ 
++for arg1 in '' --allow-unknown-type
++do
++	for arg2 in -s -t -p
++	do
++		if test "$arg1" = "--allow-unknown-type" && test "$arg2" = "-p"
++		then
++			continue
++		fi
++
++
++		test_expect_success "cat-file $arg1 $arg2 error on bogus short OID" '
++			cat >expect <<-\EOF &&
++			fatal: invalid object type
++			EOF
++
++			if test "$arg1" = "--allow-unknown-type"
++			then
++				git cat-file $arg1 $arg2 $bogus_short_sha1
++			else
++				test_must_fail git cat-file $arg1 $arg2 $bogus_short_sha1 >out 2>actual &&
++				test_must_be_empty out &&
++				test_cmp expect actual
++			fi
++		'
++
++		test_expect_success "cat-file $arg1 $arg2 error on bogus full OID" '
++			if test "$arg2" = "-p"
++			then
++				cat >expect <<-EOF
++				error: unable to unpack $bogus_long_sha1 header
++				fatal: Not a valid object name $bogus_long_sha1
++				EOF
++			else
++				cat >expect <<-EOF
++				error: unable to unpack $bogus_long_sha1 header
++				fatal: git cat-file: could not get object info
++				EOF
++			fi &&
++
++			if test "$arg1" = "--allow-unknown-type"
++			then
++				git cat-file $arg1 $arg2 $bogus_short_sha1
++			else
++				test_must_fail git cat-file $arg1 $arg2 $bogus_long_sha1 >out 2>actual &&
++				test_must_be_empty out &&
++				test_cmp expect actual
++			fi
++		'
++
++		test_expect_success "cat-file $arg1 $arg2 error on missing short OID" '
++			cat >expect.err <<-EOF &&
++			fatal: Not a valid object name $(test_oid deadbeef_short)
++			EOF
++			test_must_fail git cat-file $arg1 $arg2 $(test_oid deadbeef_short) >out 2>err.actual &&
++			test_must_be_empty out
++		'
++
++		test_expect_success "cat-file $arg1 $arg2 error on missing full OID" '
++			if test "$arg2" = "-p"
++			then
++				cat >expect.err <<-EOF
++				fatal: Not a valid object name $(test_oid deadbeef)
++				EOF
++			else
++				cat >expect.err <<-\EOF
++				fatal: git cat-file: could not get object info
++				EOF
++			fi &&
++			test_must_fail git cat-file $arg1 $arg2 $(test_oid deadbeef) >out 2>err.actual &&
++			test_must_be_empty out &&
++			test_cmp expect.err err.actual
++		'
++	done
++done
++
+ test_expect_success "Type of broken object is correct" '
+ 	echo $bogus_short_type >expect &&
+ 	git cat-file -t --allow-unknown-type $bogus_short_sha1 >actual &&
+-- 
+2.33.0.1327.g9926af6cb02
+
