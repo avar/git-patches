@@ -1,0 +1,103 @@
+From 1623819fb56fa7205b63f37a88986dd1a8411fc5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.5-1623819fb56-20210928T130023Z-avarab@gmail.com>
+In-Reply-To: <patch-1.5-7a252061b51-20210928T130023Z-avarab@gmail.com>
+References: <patch-1.5-7a252061b51-20210928T130023Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 27 Sep 2021 14:31:48 +0200
+Subject: [PATCH 5/5] refs/ref-cache.[ch]: remove "incomplete" from
+ create_dir_entry()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the now-unused "incomplete" parameter from create_dir_entry(),
+all its callers specify it as "1", so let's drop the "incomplete=0"
+case. The last caller to use it was search_for_subdir(), but that code
+was removed in the preceding commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 6 +++---
+ refs/ref-cache.c     | 7 +++----
+ refs/ref-cache.h     | 3 +--
+ 3 files changed, 7 insertions(+), 9 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 74c03858736..8fa328108ac 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -227,7 +227,7 @@ static void add_per_worktree_entries_to_dir(struct ref_dir *dir, const char *dir
+ 		pos = search_ref_dir(dir, prefix, prefix_len);
+ 		if (pos >= 0)
+ 			continue;
+-		child_entry = create_dir_entry(dir->cache, prefix, prefix_len, 1);
++		child_entry = create_dir_entry(dir->cache, prefix, prefix_len);
+ 		add_entry_to_dir(dir, child_entry);
+ 	}
+ }
+@@ -278,7 +278,7 @@ static void loose_fill_ref_dir(struct ref_store *ref_store,
+ 			strbuf_addch(&refname, '/');
+ 			add_entry_to_dir(dir,
+ 					 create_dir_entry(dir->cache, refname.buf,
+-							  refname.len, 1));
++							  refname.len));
+ 		} else {
+ 			if (!refs_resolve_ref_unsafe(&refs->base,
+ 						     refname.buf,
+@@ -336,7 +336,7 @@ static struct ref_cache *get_loose_ref_cache(struct files_ref_store *refs)
+ 		 * lazily):
+ 		 */
+ 		add_entry_to_dir(get_ref_dir(refs->loose->root),
+-				 create_dir_entry(refs->loose, "refs/", 5, 1));
++				 create_dir_entry(refs->loose, "refs/", 5));
+ 	}
+ 	return refs->loose;
+ }
+diff --git a/refs/ref-cache.c b/refs/ref-cache.c
+index 73b338f5ff2..a5ad8a39fb4 100644
+--- a/refs/ref-cache.c
++++ b/refs/ref-cache.c
+@@ -49,7 +49,7 @@ struct ref_cache *create_ref_cache(struct ref_store *refs,
+ 
+ 	ret->ref_store = refs;
+ 	ret->fill_ref_dir = fill_ref_dir;
+-	ret->root = create_dir_entry(ret, "", 0, 1);
++	ret->root = create_dir_entry(ret, "", 0);
+ 	return ret;
+ }
+ 
+@@ -86,14 +86,13 @@ static void clear_ref_dir(struct ref_dir *dir)
+ }
+ 
+ struct ref_entry *create_dir_entry(struct ref_cache *cache,
+-				   const char *dirname, size_t len,
+-				   int incomplete)
++				   const char *dirname, size_t len)
+ {
+ 	struct ref_entry *direntry;
+ 
+ 	FLEX_ALLOC_MEM(direntry, name, dirname, len);
+ 	direntry->u.subdir.cache = cache;
+-	direntry->flag = REF_DIR | (incomplete ? REF_INCOMPLETE : 0);
++	direntry->flag = REF_DIR | REF_INCOMPLETE;
+ 	return direntry;
+ }
+ 
+diff --git a/refs/ref-cache.h b/refs/ref-cache.h
+index 580d4038f62..5c042ae718c 100644
+--- a/refs/ref-cache.h
++++ b/refs/ref-cache.h
+@@ -169,8 +169,7 @@ struct ref_dir *get_ref_dir(struct ref_entry *entry);
+  * "refs/heads/") or "" for the top-level directory.
+  */
+ struct ref_entry *create_dir_entry(struct ref_cache *cache,
+-				   const char *dirname, size_t len,
+-				   int incomplete);
++				   const char *dirname, size_t len);
+ 
+ struct ref_entry *create_ref_entry(const char *refname,
+ 				   const struct object_id *oid, int flag);
+-- 
+2.33.0.1340.ge9f77250f2b
+
