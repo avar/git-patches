@@ -1,0 +1,125 @@
+From f4cc7271df7fb26af4824e49eb8c64e4ec959dee Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v9-14.17-f4cc7271df7-20210930T133300Z-avarab@gmail.com>
+In-Reply-To: <cover-v9-00.17-00000000000-20210930T133300Z-avarab@gmail.com>
+References: <cover-v8-00.17-00000000000-20210928T021616Z-avarab@gmail.com>
+	<cover-v9-00.17-00000000000-20210930T133300Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 18 May 2021 13:57:27 +0200
+Subject: [PATCH v9 14/17] object-file.c: return ULHR_TOO_LONG on "header too
+ long"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Split up the return code for "header too long" from the generic
+negative return value unpack_loose_header() returns, and report via
+error() if we exceed MAX_HEADER_LEN.
+
+As a test added earlier in this series in t1006-cat-file.sh shows
+we'll correctly emit zlib errors from zlib.c already in this case, so
+we have no need to carry those return codes further down the
+stack. Let's instead just return ULHR_TOO_LONG saying we ran into the
+MAX_HEADER_LEN limit, or other negative values for "unable to unpack
+<OID> header".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ cache.h             | 5 ++++-
+ object-file.c       | 8 ++++++--
+ streaming.c         | 1 +
+ t/t1006-cat-file.sh | 4 ++--
+ 4 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/cache.h b/cache.h
+index 7239e20a625..8e05392fda8 100644
+--- a/cache.h
++++ b/cache.h
+@@ -1328,16 +1328,19 @@ int git_open_cloexec(const char *name, int flags);
+  *
+  * - ULHR_OK on success
+  * - ULHR_BAD on error
++ * - ULHR_TOO_LONG if the header was too long
+  *
+  * It will only parse up to MAX_HEADER_LEN bytes unless an optional
+  * "hdrbuf" argument is non-NULL. This is intended for use with
+  * OBJECT_INFO_ALLOW_UNKNOWN_TYPE to extract the bad type for (error)
+  * reporting. The full header will be extracted to "hdrbuf" for use
+- * with parse_loose_header().
++ * with parse_loose_header(), ULHR_TOO_LONG will still be returned
++ * from this function to indicate that the header was too long.
+  */
+ enum unpack_loose_header_result {
+ 	ULHR_OK,
+ 	ULHR_BAD,
++	ULHR_TOO_LONG,
+ };
+ enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+ 						    unsigned char *map,
+diff --git a/object-file.c b/object-file.c
+index e0f508415dd..3589c5a2e33 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1290,7 +1290,7 @@ enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+ 	 * --allow-unknown-type".
+ 	 */
+ 	if (!header)
+-		return ULHR_BAD;
++		return ULHR_TOO_LONG;
+ 
+ 	/*
+ 	 * buffer[0..bufsiz] was not large enough.  Copy the partial
+@@ -1311,7 +1311,7 @@ enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+ 		stream->next_out = buffer;
+ 		stream->avail_out = bufsiz;
+ 	} while (status != Z_STREAM_END);
+-	return ULHR_BAD;
++	return ULHR_TOO_LONG;
+ }
+ 
+ static void *unpack_loose_rest(git_zstream *stream,
+@@ -1484,6 +1484,10 @@ static int loose_object_info(struct repository *r,
+ 		status = error(_("unable to unpack %s header"),
+ 			       oid_to_hex(oid));
+ 		break;
++	case ULHR_TOO_LONG:
++		status = error(_("header for %s too long, exceeds %d bytes"),
++			       oid_to_hex(oid), MAX_HEADER_LEN);
++		break;
+ 	}
+ 
+ 	if (status < 0) {
+diff --git a/streaming.c b/streaming.c
+index 6df0247a4cb..bd89c50e7b3 100644
+--- a/streaming.c
++++ b/streaming.c
+@@ -235,6 +235,7 @@ static int open_istream_loose(struct git_istream *st, struct repository *r,
+ 	case ULHR_OK:
+ 		break;
+ 	case ULHR_BAD:
++	case ULHR_TOO_LONG:
+ 		goto error;
+ 	}
+ 	if (parse_loose_header(st->u.loose.hdr, &oi, 0) < 0)
+diff --git a/t/t1006-cat-file.sh b/t/t1006-cat-file.sh
+index 5b16c69c286..a5e7401af8b 100755
+--- a/t/t1006-cat-file.sh
++++ b/t/t1006-cat-file.sh
+@@ -356,12 +356,12 @@ do
+ 			if test "$arg2" = "-p"
+ 			then
+ 				cat >expect <<-EOF
+-				error: unable to unpack $bogus_long_sha1 header
++				error: header for $bogus_long_sha1 too long, exceeds 32 bytes
+ 				fatal: Not a valid object name $bogus_long_sha1
+ 				EOF
+ 			else
+ 				cat >expect <<-EOF
+-				error: unable to unpack $bogus_long_sha1 header
++				error: header for $bogus_long_sha1 too long, exceeds 32 bytes
+ 				fatal: git cat-file: could not get object info
+ 				EOF
+ 			fi &&
+-- 
+2.33.0.1374.g05459a61530
+

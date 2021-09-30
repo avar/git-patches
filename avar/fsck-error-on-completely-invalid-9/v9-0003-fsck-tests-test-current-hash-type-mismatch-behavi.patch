@@ -1,0 +1,61 @@
+From 102bc4f0176989be6186fff61fec762e8123c8e0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v9-03.17-102bc4f0176-20210930T133300Z-avarab@gmail.com>
+In-Reply-To: <cover-v9-00.17-00000000000-20210930T133300Z-avarab@gmail.com>
+References: <cover-v8-00.17-00000000000-20210928T021616Z-avarab@gmail.com>
+	<cover-v9-00.17-00000000000-20210930T133300Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 18 Sep 2021 01:18:03 +0200
+Subject: [PATCH v9 03/17] fsck tests: test current hash/type mismatch behavior
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+If fsck we move an object around between .git/objects/?? directories
+to simulate a hash mismatch "git fsck" will currently hard die() in
+object-file.c. This behavior will be fixed in subsequent commits, but
+let's test for it as-is for now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1450-fsck.sh | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/t/t1450-fsck.sh b/t/t1450-fsck.sh
+index f8edd15abf8..175ed304637 100755
+--- a/t/t1450-fsck.sh
++++ b/t/t1450-fsck.sh
+@@ -69,6 +69,30 @@ test_expect_success 'object with hash mismatch' '
+ 	)
+ '
+ 
++test_expect_success 'object with hash and type mismatch' '
++	git init --bare hash-type-mismatch &&
++	(
++		cd hash-type-mismatch &&
++
++		oid=$(echo blob | git hash-object -w --stdin -t garbage --literally) &&
++		old=$(test_oid_to_path "$oid") &&
++		new=$(dirname $old)/$(test_oid ff_2) &&
++		oid="$(dirname $new)$(basename $new)" &&
++
++		mv objects/$old objects/$new &&
++		git update-index --add --cacheinfo 100644 $oid foo &&
++		tree=$(git write-tree) &&
++		cmt=$(echo bogus | git commit-tree $tree) &&
++		git update-ref refs/heads/bogus $cmt &&
++
++		cat >expect <<-\EOF &&
++		fatal: invalid object type
++		EOF
++		test_must_fail git fsck 2>actual &&
++		test_cmp expect actual
++	)
++'
++
+ test_expect_success 'branch pointing to non-commit' '
+ 	git rev-parse HEAD^{tree} >.git/refs/heads/invalid &&
+ 	test_when_finished "git update-ref -d refs/heads/invalid" &&
+-- 
+2.33.0.1374.g05459a61530
+
