@@ -1,0 +1,56 @@
+From ff7fc09d5a1fe9c8d265fa6a4f58a1678027d18f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v10-04.17-ff7fc09d5a1-20211001T085902Z-avarab@gmail.com>
+In-Reply-To: <cover-v10-00.17-00000000000-20211001T085902Z-avarab@gmail.com>
+References: <cover-v9-00.17-00000000000-20210930T133300Z-avarab@gmail.com>
+	<cover-v10-00.17-00000000000-20211001T085902Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 18 Sep 2021 01:37:04 +0200
+Subject: [PATCH v10 04/17] fsck tests: test for garbage appended to a loose
+ object
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There wasn't any output tests for this scenario, let's ensure that we
+don't regress on it in the changes that come after this.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1450-fsck.sh | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/t/t1450-fsck.sh b/t/t1450-fsck.sh
+index 175ed304637..bd696d21dba 100755
+--- a/t/t1450-fsck.sh
++++ b/t/t1450-fsck.sh
+@@ -93,6 +93,26 @@ test_expect_success 'object with hash and type mismatch' '
+ 	)
+ '
+ 
++test_expect_success POSIXPERM 'zlib corrupt loose object output ' '
++	git init --bare corrupt-loose-output &&
++	(
++		cd corrupt-loose-output &&
++		oid=$(git hash-object -w --stdin --literally </dev/null) &&
++		oidf=objects/$(test_oid_to_path "$oid") &&
++		chmod 755 $oidf &&
++		echo extra garbage >>$oidf &&
++
++		cat >expect.error <<-EOF &&
++		error: garbage at end of loose object '\''$oid'\''
++		error: unable to unpack contents of ./$oidf
++		error: $oid: object corrupt or missing: ./$oidf
++		EOF
++		test_must_fail git fsck 2>actual &&
++		grep ^error: actual >error &&
++		test_cmp expect.error error
++	)
++'
++
+ test_expect_success 'branch pointing to non-commit' '
+ 	git rev-parse HEAD^{tree} >.git/refs/heads/invalid &&
+ 	test_when_finished "git update-ref -d refs/heads/invalid" &&
+-- 
+2.33.0.1375.g5eed55aa1b5
+

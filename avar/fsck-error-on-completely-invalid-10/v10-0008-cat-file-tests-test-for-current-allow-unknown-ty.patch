@@ -1,0 +1,100 @@
+From cedeb11733036a3ed9ae60054f49a8d623ba1b02 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v10-08.17-cedeb117330-20211001T085902Z-avarab@gmail.com>
+In-Reply-To: <cover-v10-00.17-00000000000-20211001T085902Z-avarab@gmail.com>
+References: <cover-v9-00.17-00000000000-20210930T133300Z-avarab@gmail.com>
+	<cover-v10-00.17-00000000000-20211001T085902Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 19 May 2021 13:32:54 +0200
+Subject: [PATCH v10 08/17] cat-file tests: test for current
+ --allow-unknown-type behavior
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add more tests for the current --allow-unknown-type behavior. As noted
+in [1] I don't think much of this makes sense, but let's test for it
+as-is so we can see if the behavior changes in the future.
+
+1. https://lore.kernel.org/git/87r1i4qf4h.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1006-cat-file.sh | 61 +++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 61 insertions(+)
+
+diff --git a/t/t1006-cat-file.sh b/t/t1006-cat-file.sh
+index 15774979ad3..5b16c69c286 100755
+--- a/t/t1006-cat-file.sh
++++ b/t/t1006-cat-file.sh
+@@ -402,6 +402,67 @@ do
+ 	done
+ done
+ 
++test_expect_success '-e is OK with a broken object without --allow-unknown-type' '
++	git cat-file -e $bogus_short_sha1
++'
++
++test_expect_success '-e can not be combined with --allow-unknown-type' '
++	test_expect_code 128 git cat-file -e --allow-unknown-type $bogus_short_sha1
++'
++
++test_expect_success '-p cannot print a broken object even with --allow-unknown-type' '
++	test_must_fail git cat-file -p $bogus_short_sha1 &&
++	test_expect_code 128 git cat-file -p --allow-unknown-type $bogus_short_sha1
++'
++
++test_expect_success '<type> <hash> does not work with objects of broken types' '
++	cat >err.expect <<-\EOF &&
++	fatal: invalid object type "bogus"
++	EOF
++	test_must_fail git cat-file $bogus_short_type $bogus_short_sha1 2>err.actual &&
++	test_cmp err.expect err.actual
++'
++
++test_expect_success 'broken types combined with --batch and --batch-check' '
++	echo $bogus_short_sha1 >bogus-oid &&
++
++	cat >err.expect <<-\EOF &&
++	fatal: invalid object type
++	EOF
++
++	test_must_fail git cat-file --batch <bogus-oid 2>err.actual &&
++	test_cmp err.expect err.actual &&
++
++	test_must_fail git cat-file --batch-check <bogus-oid 2>err.actual &&
++	test_cmp err.expect err.actual
++'
++
++test_expect_success 'the --batch and --batch-check options do not combine with --allow-unknown-type' '
++	test_expect_code 128 git cat-file --batch --allow-unknown-type <bogus-oid &&
++	test_expect_code 128 git cat-file --batch-check --allow-unknown-type <bogus-oid
++'
++
++test_expect_success 'the --allow-unknown-type option does not consider replacement refs' '
++	cat >expect <<-EOF &&
++	$bogus_short_type
++	EOF
++	git cat-file -t --allow-unknown-type $bogus_short_sha1 >actual &&
++	test_cmp expect actual &&
++
++	# Create it manually, as "git replace" will die on bogus
++	# types.
++	head=$(git rev-parse --verify HEAD) &&
++	test_when_finished "rm -rf .git/refs/replace" &&
++	mkdir -p .git/refs/replace &&
++	echo $head >.git/refs/replace/$bogus_short_sha1 &&
++
++	cat >expect <<-EOF &&
++	commit
++	EOF
++	git cat-file -t --allow-unknown-type $bogus_short_sha1 >actual &&
++	test_cmp expect actual
++'
++
+ test_expect_success "Type of broken object is correct" '
+ 	echo $bogus_short_type >expect &&
+ 	git cat-file -t --allow-unknown-type $bogus_short_sha1 >actual &&
+-- 
+2.33.0.1375.g5eed55aa1b5
+
