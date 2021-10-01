@@ -1,0 +1,130 @@
+From 18358f5d57afcda26860ef7fb2ac3067dbd6240f Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.6-00000000000-20211001T102056Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20210927T125715Z-avarab@gmail.com>
+References: <cover-v2-0.5-00000000000-20210927T125715Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 1 Oct 2021 12:20:56 +0200
+Subject: [PATCH v3 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  daemon.c: refactor hostinfo_init() to HOSTINFO_INIT macro
+  builtin/blame.c: refactor commit_info_init() to COMMIT_INFO_INIT macro
+  urlmatch.[ch]: add and use URLMATCH_CONFIG_INIT
+  builtin/remote.c: add and use a REF_STATES_INIT
+  builtin/remote.c: add and use SHOW_INFO_INIT
+  unpack-trees.[ch]: define and use a UNPACK_TREES_OPTIONS_INIT
+
+ archive.c                 |   3 +-
+ builtin/am.c              |   6 +--
+ builtin/blame.c           |  30 +++++------
+ builtin/checkout.c        |   6 +--
+ builtin/clone.c           |   3 +-
+ builtin/commit.c          |   3 +-
+ builtin/config.c          |   2 +-
+ builtin/merge.c           |   3 +-
+ builtin/read-tree.c       |   3 +-
+ builtin/remote.c          | 111 +++++++++++++++++++-------------------
+ builtin/reset.c           |   3 +-
+ builtin/sparse-checkout.c |   3 +-
+ builtin/stash.c           |   6 +--
+ credential.c              |   2 +-
+ daemon.c                  |  19 +++----
+ diff-lib.c                |   3 +-
+ http.c                    |   2 +-
+ merge-ort.c               |   3 +-
+ merge-recursive.c         |   4 +-
+ reset.c                   |   2 +-
+ sequencer.c               |   3 +-
+ unpack-trees.h            |   1 +
+ urlmatch.h                |   4 ++
+ 23 files changed, 103 insertions(+), 122 deletions(-)
+
+Range-diff against v2:
+1:  3130693b416 = 1:  8f3f3f97fcb daemon.c: refactor hostinfo_init() to HOSTINFO_INIT macro
+2:  65c5295c1ac = 2:  ced1d581f15 builtin/blame.c: refactor commit_info_init() to COMMIT_INFO_INIT macro
+3:  3783788b553 ! 3:  266948e604c urlmatch.[ch]: add and use URLMATCH_CONFIG_INIT
+    @@ Commit message
+         urlmatch.[ch]: add and use URLMATCH_CONFIG_INIT
+     
+         Change the initialization pattern of "struct urlmatch_config" to use
+    -    an *_INIT macro and designated initializers.
+    +    an *_INIT macro and designated initializers. Right now there's no
+    +    other "struct" member of "struct urlmatch_config" which would require
+    +    its own *_INIT, but it's good practice not to assume that. Let's also
+    +    change this to a designated initializer while we're at it.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ builtin/config.c: static int get_urlmatch(const char *var, const char *url)
+      	struct string_list values = STRING_LIST_INIT_DUP;
+      
+      	config.collect_fn = urlmatch_collect_fn;
+    --	config.cascade_fn = NULL;
+    - 	config.cb = &values;
+    - 
+    - 	if (!url_normalize(url, &config.url))
+     
+      ## credential.c ##
+     @@ credential.c: static int match_partial_url(const char *url, void *cb)
+    @@ credential.c: static int match_partial_url(const char *url, void *cb)
+      	struct strbuf url = STRBUF_INIT;
+      
+      	if (!c->host)
+    -@@ credential.c: static void credential_apply_config(struct credential *c)
+    - 		return;
+    - 
+    - 	config.section = "credential";
+    --	config.key = NULL;
+    - 	config.collect_fn = credential_config_callback;
+    --	config.cascade_fn = NULL;
+    - 	config.select_fn = select_all;
+    - 	config.fallback_match_fn = match_partial_url;
+    - 	config.cb = c;
+     
+      ## http.c ##
+     @@ http.c: void http_init(struct remote *remote, const char *url, int proactive_auth)
+    @@ http.c: void http_init(struct remote *remote, const char *url, int proactive_aut
+     +	struct urlmatch_config config = URLMATCH_CONFIG_INIT;
+      
+      	config.section = "http";
+    --	config.key = NULL;
+    - 	config.collect_fn = http_options;
+    - 	config.cascade_fn = git_default_config;
+    --	config.cb = NULL;
+    - 
+    - 	http_is_verbose = 0;
+    - 	normalized_url = url_normalize(url, &config.url);
+    + 	config.key = NULL;
+     
+      ## urlmatch.h ##
+     @@ urlmatch.h: struct urlmatch_config {
+4:  13ef9566903 ! 4:  41fcb0a45e5 builtin/remote.c: add and use a REF_STATES_INIT
+    @@ Commit message
+         initialize it in those three places, skip the memset(), and pass those
+         structs down appropriately.
+     
+    +    This would be a behavior change if we had codepaths that relied say on
+    +    implicitly having had "new_refs" initialized to STRING_LIST_INIT_NODUP
+    +    with the memset(), but only set the "strdup_strings" on some other
+    +    struct, but then called string_list_append() on "new_refs". There
+    +    isn't any such codepath, all of the late assignments to
+    +    "strdup_strings" assigned to those structs that we'd use for those
+    +    codepaths.
+    +
+    +    So just initializing them all up-front makes for easier to understand
+    +    code, i.e. in the pre-image it looked as though we had that tricky
+    +    edge case, but we didn't.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/remote.c ##
+5:  b78a9ec0846 = 5:  25fec54877b builtin/remote.c: add and use SHOW_INFO_INIT
+-:  ----------- > 6:  18358f5d57a unpack-trees.[ch]: define and use a UNPACK_TREES_OPTIONS_INIT
+-- 
+2.33.0.1375.gbbd823cc90f
+
