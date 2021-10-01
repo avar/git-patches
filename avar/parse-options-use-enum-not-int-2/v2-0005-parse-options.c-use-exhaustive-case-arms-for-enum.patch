@@ -1,0 +1,172 @@
+From 467828780d07686f6ad1d6a9c468d4f288cc0371 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-05.11-467828780d0-20211001T142603Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20211001T142603Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20210928T130905Z-avarab@gmail.com>
+	<cover-v2-00.11-00000000000-20211001T142603Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 29 Jul 2021 16:46:33 +0200
+Subject: [PATCH v2 05/11] parse-options.c: use exhaustive "case" arms for
+ "enum parse_opt_type"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code in get_value(), parse_options_check() etc. to do away with
+the "default" case in favor of exhaustively checking the relevant
+fields.
+
+The added "return -1" is needed for the GCC version commented on
+inline, my local clang 11.0.1-2 does not require it. Let's add it for
+now to appease GCC.
+
+The added "special types" etc. comments correspond to the relevant
+comments and ordering on the "enum parse_opt_type". Let's try to keep
+the same order and commentary as there where possible for
+clarity. This doesn't reach that end-state, and due to the different
+handling of options it's probably not worth it to get there, but let's
+match its ordering where it's easy to do so.
+
+There was a discussion about whether this was worth the added
+verbosity, as argued in[1] I think it's worth it for getting
+compile-time checking when adding new option types. We *should* have
+tests for some of these, but e.g. in the show_gitcomp() case one might
+run through the whole test suite and only hit a missing case at the
+end on the completion tests.
+
+This technically changes the handling of OPTION_END, but it's
+obviously the right thing to do. We're calling this code from within a
+loop that uses OPTION_END as a break condition, so it was never caught
+by the "default" case.
+
+So let's make encountering OPTION_END a BUG(), just like it already is
+in the get_value() handling added in 4a59fd13122 (Add a simple option
+parser., 2007-10-15).
+
+1. https://lore.kernel.org/git/87tui3vk8y.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ parse-options.c | 48 +++++++++++++++++++++++++++++++++++++++++++-----
+ parse-options.h |  2 +-
+ 2 files changed, 44 insertions(+), 6 deletions(-)
+
+diff --git a/parse-options.c b/parse-options.c
+index e33700d6e71..dedd40efec5 100644
+--- a/parse-options.c
++++ b/parse-options.c
+@@ -219,9 +219,14 @@ static enum parse_opt_result get_value(struct parse_opt_ctx_t *p,
+ 				     optname(opt, flags));
+ 		return 0;
+ 
+-	default:
++	/* special types */
++	case OPTION_END:
++	case OPTION_GROUP:
++	case OPTION_NUMBER:
++	case OPTION_ALIAS:
+ 		BUG("opt->type %d should not happen", opt->type);
+ 	}
++	return -1; /* gcc 10.2.1-6's -Werror=return-type */
+ }
+ 
+ static enum parse_opt_result parse_short_opt(struct parse_opt_ctx_t *p,
+@@ -443,6 +448,9 @@ static void parse_options_check(const struct option *opts)
+ 			err |= optbug(opts, "uses feature "
+ 					"not supported for dashless options");
+ 		switch (opts->type) {
++		case OPTION_END:
++			BUG("unreachable");
++
+ 		case OPTION_COUNTUP:
+ 		case OPTION_BIT:
+ 		case OPTION_NEGBIT:
+@@ -468,8 +476,14 @@ static void parse_options_check(const struct option *opts)
+ 			BUG("OPT_ALIAS() should not remain at this point. "
+ 			    "Are you using parse_options_step() directly?\n"
+ 			    "That case is not supported yet.");
+-		default:
+-			; /* ok. (usually accepts an argument) */
++
++		case OPTION_BITOP:
++		case OPTION_FILENAME:
++		case OPTION_GROUP:
++		case OPTION_INTEGER:
++		case OPTION_MAGNITUDE:
++		case OPTION_STRING:
++			break;
+ 		}
+ 		if (opts->argh &&
+ 		    strcspn(opts->argh, " _") != strlen(opts->argh))
+@@ -532,6 +546,9 @@ static void show_negated_gitcomp(const struct option *opts, int show_all,
+ 			continue;
+ 
+ 		switch (opts->type) {
++		case OPTION_END:
++			BUG("unreachable");
++
+ 		case OPTION_STRING:
+ 		case OPTION_FILENAME:
+ 		case OPTION_INTEGER:
+@@ -543,7 +560,14 @@ static void show_negated_gitcomp(const struct option *opts, int show_all,
+ 		case OPTION_SET_INT:
+ 			has_unset_form = 1;
+ 			break;
+-		default:
++		/* special types */
++		case OPTION_GROUP:
++		case OPTION_NUMBER:
++		case OPTION_ALIAS:
++		/* options with no arguments */
++		case OPTION_BITOP:
++		/* options with arguments (usually) */
++		case OPTION_LOWLEVEL_CALLBACK:
+ 			break;
+ 		}
+ 		if (!has_unset_form)
+@@ -578,6 +602,8 @@ static int show_gitcomp(const struct option *opts, int show_all)
+ 			continue;
+ 
+ 		switch (opts->type) {
++		case OPTION_END:
++			BUG("unreachable");
+ 		case OPTION_GROUP:
+ 			continue;
+ 		case OPTION_STRING:
+@@ -593,7 +619,19 @@ static int show_gitcomp(const struct option *opts, int show_all)
+ 				break;
+ 			suffix = "=";
+ 			break;
+-		default:
++		/* special types */
++		case OPTION_NUMBER:
++		case OPTION_ALIAS:
++
++		/* options with no arguments */
++		case OPTION_BIT:
++		case OPTION_NEGBIT:
++		case OPTION_BITOP:
++		case OPTION_COUNTUP:
++		case OPTION_SET_INT:
++
++		/* options with arguments (usually) */
++		case OPTION_LOWLEVEL_CALLBACK:
+ 			break;
+ 		}
+ 		if (opts->flags & PARSE_OPT_COMP_ARG)
+diff --git a/parse-options.h b/parse-options.h
+index d931300f4d6..a1c7c86ad30 100644
+--- a/parse-options.h
++++ b/parse-options.h
+@@ -264,7 +264,7 @@ struct parse_opt_ctx_t {
+ 	const char **out;
+ 	int argc, cpidx, total;
+ 	const char *opt;
+-	int flags;
++	enum parse_opt_flags flags;
+ 	const char *prefix;
+ 	const char **alias_groups; /* must be in groups of 3 elements! */
+ 	struct option *updated_options;
+-- 
+2.33.0.1374.gc8f4fa74caf
+
