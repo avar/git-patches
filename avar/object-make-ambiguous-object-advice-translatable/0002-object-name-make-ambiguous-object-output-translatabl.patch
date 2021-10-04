@@ -1,0 +1,127 @@
+From b6136380c2879d3326a3889c447280712dd8ad0a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-b6136380c28-20211004T013611Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20211004T013611Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20211004T013611Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 6 Aug 2021 18:06:21 +0200
+Subject: [PATCH 2/2] object-name: make ambiguous object output translatable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the output of show_ambiguous_object() added in [1] and last
+tweaked in [2] to be more friendly to translators. By being able to
+customize the sprintf formats we're even ready for RTL languages.
+
+1. ef9b0370da6 (sha1-name.c: store and use repo in struct
+   disambiguate_state, 2019-04-16)
+2. 5cc044e0257 (get_short_oid: sort ambiguous objects by type,
+   then SHA-1, 2018-05-10)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-name.c | 53 ++++++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 44 insertions(+), 9 deletions(-)
+
+diff --git a/object-name.c b/object-name.c
+index fdff4601b2c..7e7f671e337 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -351,9 +351,16 @@ static int init_object_disambiguation(struct repository *r,
+ 	return 0;
+ }
+ 
++struct show_ambiguous_state {
++	const struct disambiguate_state *ds;
++	struct strbuf *advice;
++};
++
+ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ {
+-	const struct disambiguate_state *ds = data;
++	struct show_ambiguous_state *state = data;
++	const struct disambiguate_state *ds = state->ds;
++	struct strbuf *advice = state->advice;
+ 	struct strbuf desc = STRBUF_INIT;
+ 	int type;
+ 
+@@ -366,18 +373,34 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 		if (commit) {
+ 			struct pretty_print_context pp = {0};
+ 			pp.date_mode.type = DATE_SHORT;
+-			format_commit_message(commit, " %ad - %s", &desc, &pp);
++			format_commit_message(commit, _(" %ad - %s"), &desc, &pp);
+ 		}
+ 	} else if (type == OBJ_TAG) {
+ 		struct tag *tag = lookup_tag(ds->repo, oid);
+ 		if (!parse_tag(tag) && tag->tag)
+-			strbuf_addf(&desc, " %s", tag->tag);
++			strbuf_addf(&desc, _(" %s"), tag->tag);
+ 	}
+ 
+-	advise("  %s %s%s",
+-	       repo_find_unique_abbrev(ds->repo, oid, DEFAULT_ABBREV),
+-	       type_name(type) ? type_name(type) : "unknown type",
+-	       desc.buf);
++	strbuf_addf(advice,
++		    /*
++		     * TRANSLATORS: This is a line of ambiguous object
++		     * output. E.g.:
++		     *
++		     *    "deadbeef commit 2021-01-01 - Some Commit Message\n"
++		     *    "deadbeef tag Some Tag Message\n"
++		     *    "deadbeef tree\n"
++		     *
++		     * I.e. the first argument is a short OID, the
++		     * second is the type name of the object, and the
++		     * third a description of the object, if it's a
++		     * commit or tag. In that case the " %ad - %s" and
++		     * " %s" formats above will be used for the third
++		     * argument.
++		     */
++		    _("  %s %s%s\n"),
++		    repo_find_unique_abbrev(ds->repo, oid, DEFAULT_ABBREV),
++		    type_name(type) ? type_name(type) : "unknown type",
++		    desc.buf);
+ 
+ 	strbuf_release(&desc);
+ 	return 0;
+@@ -475,7 +498,12 @@ static enum get_oid_result get_short_oid(struct repository *r,
+ 	}
+ 
+ 	if (!quietly && (status == SHORT_NAME_AMBIGUOUS)) {
++		struct strbuf sb = STRBUF_INIT;
+ 		struct oid_array collect = OID_ARRAY_INIT;
++		struct show_ambiguous_state as = {
++			.ds = &ds,
++			.advice = &sb,
++		};
+ 
+ 		error(_("short object ID %s is ambiguous"), ds.hex_pfx);
+ 
+@@ -488,12 +516,19 @@ static enum get_oid_result get_short_oid(struct repository *r,
+ 		if (!ds.ambiguous)
+ 			ds.fn = NULL;
+ 
+-		advise(_("The candidates are:"));
+ 		repo_for_each_abbrev(r, ds.hex_pfx, collect_ambiguous, &collect);
+ 		sort_ambiguous_oid_array(r, &collect);
+ 
+-		if (oid_array_for_each(&collect, show_ambiguous_object, &ds))
++		if (oid_array_for_each(&collect, show_ambiguous_object, &as))
+ 			BUG("show_ambiguous_object shouldn't return non-zero");
++
++		/*
++		 * TRANSLATORS: The argument is the list of ambiguous
++		 * objects composed in show_ambiguous_object(). See
++		 * its "TRANSLATORS" comment for details.
++		 */
++		advise(_("The candidates are:\n\n%s"), sb.buf);
++
+ 		oid_array_clear(&collect);
+ 	}
+ 
+-- 
+2.33.0.1404.g7bcfc82b295
+
