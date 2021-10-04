@@ -1,0 +1,265 @@
+From 739e9b871c4661b0bbcdeb7d068da566bebee5d0 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v4-03.10-739e9b871c4-20211004T004902Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v4-00.10-00000000000-20211004T004902Z-avarab@gmail.com>
+References: <pull.1036.v3.git.1632760428.gitgitgadget@gmail.com>
+	<RFC-cover-v4-00.10-00000000000-20211004T004902Z-avarab@gmail.com>
+From: Elijah Newren <newren@gmail.com>
+Date: Sat, 25 Sep 2021 13:25:17 -0700
+Subject: [RFC PATCH v4 03/10] unpack-trees: introduce preserve_ignored to
+ unpack_trees_options
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Currently, every caller of unpack_trees() that wants to ensure ignored
+files are overwritten by default needs to:
+
+   * flip the DIR_SHOW_IGNORED flag in unpack_trees_options.dir.flags
+   * call setup_standard_excludes(&unpack_trees_options.dir)
+
+Avoid that boilerplate by introducing a new boolean value where
+the default value (0) does what we want so that new callers of
+unpack_trees() automatically get the appropriate behavior.  And move all
+the handling of unpack_trees_options.dir into unpack_trees() itself.
+
+While preserve_ignored = 0 is the behavior we feel is the appropriate
+default, we defer fixing commands to use the appropriate default until a
+later commit.  So, this commit introduces several locations where we
+manually set preserve_ignored=1.  This makes it clear where code paths
+were previously preserving ignored files when they should not have been;
+a future commit will flip these to instead use a value of 0 to get the
+behavior we want.
+
+Signed-off-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c        | 3 +++
+ builtin/checkout.c  | 6 ++----
+ builtin/clone.c     | 2 ++
+ builtin/merge.c     | 2 ++
+ builtin/read-tree.c | 7 +++----
+ builtin/reset.c     | 2 ++
+ builtin/stash.c     | 3 +++
+ merge-ort.c         | 5 +----
+ merge-recursive.c   | 4 ++--
+ merge.c             | 6 +-----
+ reset.c             | 2 ++
+ sequencer.c         | 2 ++
+ unpack-trees.c      | 5 +++++
+ unpack-trees.h      | 1 +
+ 14 files changed, 31 insertions(+), 19 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 4d4bb473c0f..3c6efe2a46b 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -1918,6 +1918,9 @@ static int fast_forward_to(struct tree *head, struct tree *remote, int reset)
+ 	opts.update = 1;
+ 	opts.merge = 1;
+ 	opts.reset = reset;
++	if (!reset)
++		/* FIXME: Default should be to remove ignored files */
++		opts.preserve_ignored = 1;
+ 	opts.fn = twoway_merge;
+ 	init_tree_desc(&t[0], head->buffer, head->size);
+ 	init_tree_desc(&t[1], remote->buffer, remote->size);
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index fd76b504861..0c5187025c5 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -648,6 +648,7 @@ static int reset_tree(struct tree *tree, const struct checkout_opts *o,
+ 	opts.skip_unmerged = !worktree;
+ 	opts.reset = 1;
+ 	opts.merge = 1;
++	opts.preserve_ignored = 0;
+ 	opts.fn = oneway_merge;
+ 	opts.verbose_update = o->show_progress;
+ 	opts.src_index = &the_index;
+@@ -749,10 +750,7 @@ static int merge_working_tree(const struct checkout_opts *opts,
+ 				       new_branch_info->commit ?
+ 				       &new_branch_info->commit->object.oid :
+ 				       &new_branch_info->oid, NULL);
+-		if (opts->overwrite_ignore) {
+-			topts.dir.flags |= DIR_SHOW_IGNORED;
+-			setup_standard_excludes(&topts.dir);
+-		}
++		topts.preserve_ignored = !opts->overwrite_ignore;
+ 		tree = parse_tree_indirect(old_branch_info->commit ?
+ 					   &old_branch_info->commit->object.oid :
+ 					   the_hash_algo->empty_tree);
+diff --git a/builtin/clone.c b/builtin/clone.c
+index df3bb9a7884..e76c38e4e81 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -686,6 +686,8 @@ static int checkout(int submodule_progress)
+ 	opts.update = 1;
+ 	opts.merge = 1;
+ 	opts.clone = 1;
++	/* FIXME: Default should be to remove ignored files */
++	opts.preserve_ignored = 1;
+ 	opts.fn = oneway_merge;
+ 	opts.verbose_update = (option_verbosity >= 0);
+ 	opts.src_index = &the_index;
+diff --git a/builtin/merge.c b/builtin/merge.c
+index 28089e2c5ed..55aac869e5a 100644
+--- a/builtin/merge.c
++++ b/builtin/merge.c
+@@ -680,6 +680,8 @@ static int read_tree_trivial(struct object_id *common, struct object_id *head,
+ 	opts.verbose_update = 1;
+ 	opts.trivial_merges_only = 1;
+ 	opts.merge = 1;
++	/* FIXME: Default should be to remove ignored files */
++	opts.preserve_ignored = 1;
+ 	trees[nr_trees] = parse_tree_indirect(common);
+ 	if (!trees[nr_trees++])
+ 		return -1;
+diff --git a/builtin/read-tree.c b/builtin/read-tree.c
+index d0f88bbf3e3..7f3c987b126 100644
+--- a/builtin/read-tree.c
++++ b/builtin/read-tree.c
+@@ -201,10 +201,9 @@ int cmd_read_tree(int argc, const char **argv, const char *cmd_prefix)
+ 	if ((opts.update || opts.index_only) && !opts.merge)
+ 		die("%s is meaningless without -m, --reset, or --prefix",
+ 		    opts.update ? "-u" : "-i");
+-	if (opts.update && !opts.reset) {
+-		opts.dir.flags |= DIR_SHOW_IGNORED;
+-		setup_standard_excludes(&opts.dir);
+-	}
++	if (opts.update && !opts.reset)
++		opts.preserve_ignored = 0;
++	/* otherwise, opts.preserve_ignored is irrelevant */
+ 	if (opts.merge && !opts.index_only)
+ 		setup_work_tree();
+ 
+diff --git a/builtin/reset.c b/builtin/reset.c
+index 713d084c3eb..73477239146 100644
+--- a/builtin/reset.c
++++ b/builtin/reset.c
+@@ -66,6 +66,8 @@ static int reset_index(const char *ref, const struct object_id *oid, int reset_t
+ 	case KEEP:
+ 	case MERGE:
+ 		opts.update = 1;
++		/* FIXME: Default should be to remove ignored files */
++		opts.preserve_ignored = 1;
+ 		break;
+ 	case HARD:
+ 		opts.update = 1;
+diff --git a/builtin/stash.c b/builtin/stash.c
+index be6ecb1ae11..78492013529 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -257,6 +257,9 @@ static int reset_tree(struct object_id *i_tree, int update, int reset)
+ 	opts.merge = 1;
+ 	opts.reset = reset;
+ 	opts.update = update;
++	if (update && !reset)
++		/* FIXME: Default should be to remove ignored files */
++		opts.preserve_ignored = 1;
+ 	opts.fn = oneway_merge;
+ 
+ 	if (unpack_trees(nr_trees, t, &opts)) {
+diff --git a/merge-ort.c b/merge-ort.c
+index 0a5937364c9..e5620bda212 100644
+--- a/merge-ort.c
++++ b/merge-ort.c
+@@ -4044,10 +4044,7 @@ static int checkout(struct merge_options *opt,
+ 	unpack_opts.quiet = 0; /* FIXME: sequencer might want quiet? */
+ 	unpack_opts.verbose_update = (opt->verbosity > 2);
+ 	unpack_opts.fn = twoway_merge;
+-	if (1/* FIXME: opts->overwrite_ignore*/) {
+-		unpack_opts.dir.flags |= DIR_SHOW_IGNORED;
+-		setup_standard_excludes(&unpack_opts.dir);
+-	}
++	unpack_opts.preserve_ignored = 0; /* FIXME: !opts->overwrite_ignore*/
+ 	parse_tree(prev);
+ 	init_tree_desc(&trees[0], prev->buffer, prev->size);
+ 	parse_tree(next);
+diff --git a/merge-recursive.c b/merge-recursive.c
+index a4131b8837b..5c6b95a79c0 100644
+--- a/merge-recursive.c
++++ b/merge-recursive.c
+@@ -410,8 +410,8 @@ static int unpack_trees_start(struct merge_options *opt,
+ 		opt->priv->unpack_opts.index_only = 1;
+ 	else {
+ 		opt->priv->unpack_opts.update = 1;
+-		opt->priv->unpack_opts.dir.flags |= DIR_SHOW_IGNORED;
+-		setup_standard_excludes(&opt->priv->unpack_opts.dir);
++		/* FIXME: should only do this if !overwrite_ignore */
++		opt->priv->unpack_opts.preserve_ignored = 0;
+ 	}
+ 	opt->priv->unpack_opts.merge = 1;
+ 	opt->priv->unpack_opts.head_idx = 2;
+diff --git a/merge.c b/merge.c
+index 2e3714ccaa0..e1f3165e407 100644
+--- a/merge.c
++++ b/merge.c
+@@ -79,11 +79,7 @@ int checkout_fast_forward(struct repository *r,
+ 		init_tree_desc(t+i, trees[i]->buffer, trees[i]->size);
+ 	}
+ 
+-	if (overwrite_ignore) {
+-		opts.dir.flags |= DIR_SHOW_IGNORED;
+-		setup_standard_excludes(&opts.dir);
+-	}
+-
++	opts.preserve_ignored = !overwrite_ignore;
+ 	opts.head_idx = 1;
+ 	opts.src_index = r->index;
+ 	opts.dst_index = r->index;
+diff --git a/reset.c b/reset.c
+index f4bf3fbfac0..cd344f47f13 100644
+--- a/reset.c
++++ b/reset.c
+@@ -56,6 +56,8 @@ int reset_head(struct repository *r, struct object_id *oid, const char *action,
+ 	unpack_tree_opts.fn = reset_hard ? oneway_merge : twoway_merge;
+ 	unpack_tree_opts.update = 1;
+ 	unpack_tree_opts.merge = 1;
++	/* FIXME: Default should be to remove ignored files */
++	unpack_tree_opts.preserve_ignored = 1;
+ 	init_checkout_metadata(&unpack_tree_opts.meta, switch_to_branch, oid, NULL);
+ 	if (!detach_head)
+ 		unpack_tree_opts.reset = 1;
+diff --git a/sequencer.c b/sequencer.c
+index abd85b6c562..669ea15944c 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -3698,6 +3698,8 @@ static int do_reset(struct repository *r,
+ 	unpack_tree_opts.fn = oneway_merge;
+ 	unpack_tree_opts.merge = 1;
+ 	unpack_tree_opts.update = 1;
++	/* FIXME: Default should be to remove ignored files */
++	unpack_tree_opts.preserve_ignored = 1;
+ 	init_checkout_metadata(&unpack_tree_opts.meta, name, &oid, NULL);
+ 
+ 	if (repo_read_index_unmerged(r)) {
+diff --git a/unpack-trees.c b/unpack-trees.c
+index 260e7ec5bb4..02bc999c6c3 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -1711,6 +1711,11 @@ int unpack_trees(unsigned len, struct tree_desc *t, struct unpack_trees_options
+ 		ensure_full_index(o->dst_index);
+ 	}
+ 
++	if (!o->preserve_ignored) {
++		o->dir.flags |= DIR_SHOW_IGNORED;
++		setup_standard_excludes(&o->dir);
++	}
++
+ 	if (!core_apply_sparse_checkout || !o->update)
+ 		o->skip_sparse_checkout = 1;
+ 	if (!o->skip_sparse_checkout && !o->pl) {
+diff --git a/unpack-trees.h b/unpack-trees.h
+index a8d1f083b33..65a8d99d4ef 100644
+--- a/unpack-trees.h
++++ b/unpack-trees.h
+@@ -52,6 +52,7 @@ struct unpack_trees_options {
+ 	unsigned int reset,
+ 		     merge,
+ 		     update,
++		     preserve_ignored,
+ 		     clone,
+ 		     index_only,
+ 		     nontrivial_merge,
+-- 
+2.33.0.1404.g83021034c5d
+

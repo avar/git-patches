@@ -1,0 +1,105 @@
+From b2f27d961a9aed1a6258baa2b01925a52928f425 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v4-09.10-b2f27d961a9-20211004T004902Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v4-00.10-00000000000-20211004T004902Z-avarab@gmail.com>
+References: <pull.1036.v3.git.1632760428.gitgitgadget@gmail.com>
+	<RFC-cover-v4-00.10-00000000000-20211004T004902Z-avarab@gmail.com>
+From: Elijah Newren <newren@gmail.com>
+Date: Mon, 6 Sep 2021 10:53:15 -0700
+Subject: [RFC PATCH v4 09/10] Comment important codepaths regarding nuking
+ untracked files/dirs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the last few commits we focused on code in unpack-trees.c that
+mistakenly removed untracked files or directories.  There may be more of
+those, but in this commit we change our focus: callers of toplevel
+commands that are expected to remove untracked files or directories.
+
+As noted previously, we have toplevel commands that are expected to
+delete untracked files such as 'read-tree --reset', 'reset --hard', and
+'checkout --force'.  However, that does not mean that other highlevel
+commands that happen to call these other commands thought about or
+conveyed to users the possibility that untracked files could be removed.
+Audit the code for such callsites, and add comments near existing
+callsites to mention whether these are safe or not.
+
+My auditing is somewhat incomplete, though; it skipped several cases:
+  * git-rebase--preserve-merges.sh: is in the process of being
+    deprecated/removed, so I won't leave a note that there are
+    likely more bugs in that script.
+  * contrib/git-new-workdir: why is the -f flag being used in a new
+    empty directory??  It shouldn't hurt, but it seems useless.
+  * git-p4.py: Don't see why -f is needed for a new dir (maybe it's
+    not and is just superfluous), but I'm not at all familiar with
+    the p4 stuff
+  * git-archimport.perl: Don't care; arch is long since dead
+  * git-cvs*.perl: Don't care; cvs is long since dead
+
+Also, the reset --hard in builtin/worktree.c looks safe, due to only
+running in an empty directory.
+
+Signed-off-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/stash.c             | 1 +
+ builtin/submodule--helper.c | 4 ++++
+ contrib/rerere-train.sh     | 2 +-
+ submodule.c                 | 1 +
+ 4 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/stash.c b/builtin/stash.c
+index 061237cf9a4..fabfb63632e 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -1525,6 +1525,7 @@ static int do_push_stash(const struct pathspec *ps, const char *stash_msg, int q
+ 		} else {
+ 			struct child_process cp = CHILD_PROCESS_INIT;
+ 			cp.git_cmd = 1;
++			/* BUG: this nukes untracked files in the way */
+ 			strvec_pushl(&cp.args, "reset", "--hard", "-q",
+ 				     "--no-recurse-submodules", NULL);
+ 			if (run_command(&cp)) {
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 57f09925157..e40e4b6aacc 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -3091,6 +3091,10 @@ static int add_submodule(const struct add_data *add_data)
+ 		prepare_submodule_repo_env(&cp.env_array);
+ 		cp.git_cmd = 1;
+ 		cp.dir = add_data->sm_path;
++		/*
++		 * NOTE: we only get here if add_data->force is true, so
++		 * passing --force to checkout is reasonable.
++		 */
+ 		strvec_pushl(&cp.args, "checkout", "-f", "-q", NULL);
+ 
+ 		if (add_data->branch) {
+diff --git a/contrib/rerere-train.sh b/contrib/rerere-train.sh
+index eeee45dd341..75125d6ae00 100755
+--- a/contrib/rerere-train.sh
++++ b/contrib/rerere-train.sh
+@@ -91,7 +91,7 @@ do
+ 		git checkout -q $commit -- .
+ 		git rerere
+ 	fi
+-	git reset -q --hard
++	git reset -q --hard  # Might nuke untracked files...
+ done
+ 
+ if test -z "$branch"
+diff --git a/submodule.c b/submodule.c
+index 03cf36707ae..9f3d9b7ee73 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -1910,6 +1910,7 @@ static void submodule_reset_index(const char *path)
+ 
+ 	strvec_pushf(&cp.args, "--super-prefix=%s%s/",
+ 		     get_super_prefix_or_empty(), path);
++	/* TODO: determine if this might overwright untracked files */
+ 	strvec_pushl(&cp.args, "read-tree", "-u", "--reset", NULL);
+ 
+ 	strvec_push(&cp.args, empty_tree_oid_hex());
+-- 
+2.33.0.1404.g83021034c5d
+

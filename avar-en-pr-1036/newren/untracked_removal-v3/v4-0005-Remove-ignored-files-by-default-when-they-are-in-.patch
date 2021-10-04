@@ -1,0 +1,163 @@
+From 27496506430566540f85d7f4cdd18950799f142d Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v4-05.10-27496506430-20211004T004902Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v4-00.10-00000000000-20211004T004902Z-avarab@gmail.com>
+References: <pull.1036.v3.git.1632760428.gitgitgadget@gmail.com>
+	<RFC-cover-v4-00.10-00000000000-20211004T004902Z-avarab@gmail.com>
+From: Elijah Newren <newren@gmail.com>
+Date: Sat, 25 Sep 2021 15:02:38 -0700
+Subject: [RFC PATCH v4 05/10] Remove ignored files by default when they are in
+ the way
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change several commands to remove ignored files by default when they are
+in the way.  Since some commands (checkout, merge) take a
+--no-overwrite-ignore option to allow the user to configure this, and it
+may make sense to add that option to more commands (and in the case of
+merge, actually plumb that configuration option through to more of the
+backends than just the fast-forwarding special case), add little
+comments about where such flags would be used.
+
+Incidentally, this fixes a test failure in t7112.
+
+Signed-off-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c               | 3 +--
+ builtin/clone.c            | 3 +--
+ builtin/merge.c            | 3 +--
+ builtin/reset.c            | 3 +--
+ builtin/stash.c            | 3 +--
+ merge-ort.c                | 2 +-
+ reset.c                    | 3 +--
+ sequencer.c                | 3 +--
+ t/t7112-reset-submodule.sh | 1 -
+ 9 files changed, 8 insertions(+), 16 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 3c6efe2a46b..8cb7e72e6c5 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -1919,8 +1919,7 @@ static int fast_forward_to(struct tree *head, struct tree *remote, int reset)
+ 	opts.merge = 1;
+ 	opts.reset = reset;
+ 	if (!reset)
+-		/* FIXME: Default should be to remove ignored files */
+-		opts.preserve_ignored = 1;
++		opts.preserve_ignored = 0; /* FIXME: !overwrite_ignore */
+ 	opts.fn = twoway_merge;
+ 	init_tree_desc(&t[0], head->buffer, head->size);
+ 	init_tree_desc(&t[1], remote->buffer, remote->size);
+diff --git a/builtin/clone.c b/builtin/clone.c
+index e76c38e4e81..49edb4a2aaa 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -686,8 +686,7 @@ static int checkout(int submodule_progress)
+ 	opts.update = 1;
+ 	opts.merge = 1;
+ 	opts.clone = 1;
+-	/* FIXME: Default should be to remove ignored files */
+-	opts.preserve_ignored = 1;
++	opts.preserve_ignored = 0;
+ 	opts.fn = oneway_merge;
+ 	opts.verbose_update = (option_verbosity >= 0);
+ 	opts.src_index = &the_index;
+diff --git a/builtin/merge.c b/builtin/merge.c
+index 55aac869e5a..7f990e36651 100644
+--- a/builtin/merge.c
++++ b/builtin/merge.c
+@@ -680,8 +680,7 @@ static int read_tree_trivial(struct object_id *common, struct object_id *head,
+ 	opts.verbose_update = 1;
+ 	opts.trivial_merges_only = 1;
+ 	opts.merge = 1;
+-	/* FIXME: Default should be to remove ignored files */
+-	opts.preserve_ignored = 1;
++	opts.preserve_ignored = 0; /* FIXME: !overwrite_ignore */
+ 	trees[nr_trees] = parse_tree_indirect(common);
+ 	if (!trees[nr_trees++])
+ 		return -1;
+diff --git a/builtin/reset.c b/builtin/reset.c
+index 73477239146..9d1391335a1 100644
+--- a/builtin/reset.c
++++ b/builtin/reset.c
+@@ -66,8 +66,7 @@ static int reset_index(const char *ref, const struct object_id *oid, int reset_t
+ 	case KEEP:
+ 	case MERGE:
+ 		opts.update = 1;
+-		/* FIXME: Default should be to remove ignored files */
+-		opts.preserve_ignored = 1;
++		opts.preserve_ignored = 0; /* FIXME: !overwrite_ignore */
+ 		break;
+ 	case HARD:
+ 		opts.update = 1;
+diff --git a/builtin/stash.c b/builtin/stash.c
+index 78492013529..92ad3241270 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -258,8 +258,7 @@ static int reset_tree(struct object_id *i_tree, int update, int reset)
+ 	opts.reset = reset;
+ 	opts.update = update;
+ 	if (update && !reset)
+-		/* FIXME: Default should be to remove ignored files */
+-		opts.preserve_ignored = 1;
++		opts.preserve_ignored = 0; /* FIXME: !overwrite_ignore */
+ 	opts.fn = oneway_merge;
+ 
+ 	if (unpack_trees(nr_trees, t, &opts)) {
+diff --git a/merge-ort.c b/merge-ort.c
+index e5620bda212..5c443b2b00d 100644
+--- a/merge-ort.c
++++ b/merge-ort.c
+@@ -4044,7 +4044,7 @@ static int checkout(struct merge_options *opt,
+ 	unpack_opts.quiet = 0; /* FIXME: sequencer might want quiet? */
+ 	unpack_opts.verbose_update = (opt->verbosity > 2);
+ 	unpack_opts.fn = twoway_merge;
+-	unpack_opts.preserve_ignored = 0; /* FIXME: !opts->overwrite_ignore*/
++	unpack_opts.preserve_ignored = 0; /* FIXME: !opts->overwrite_ignore */
+ 	parse_tree(prev);
+ 	init_tree_desc(&trees[0], prev->buffer, prev->size);
+ 	parse_tree(next);
+diff --git a/reset.c b/reset.c
+index cd344f47f13..5f69311b9f4 100644
+--- a/reset.c
++++ b/reset.c
+@@ -56,8 +56,7 @@ int reset_head(struct repository *r, struct object_id *oid, const char *action,
+ 	unpack_tree_opts.fn = reset_hard ? oneway_merge : twoway_merge;
+ 	unpack_tree_opts.update = 1;
+ 	unpack_tree_opts.merge = 1;
+-	/* FIXME: Default should be to remove ignored files */
+-	unpack_tree_opts.preserve_ignored = 1;
++	unpack_tree_opts.preserve_ignored = 0; /* FIXME: !overwrite_ignore */
+ 	init_checkout_metadata(&unpack_tree_opts.meta, switch_to_branch, oid, NULL);
+ 	if (!detach_head)
+ 		unpack_tree_opts.reset = 1;
+diff --git a/sequencer.c b/sequencer.c
+index 669ea15944c..05395db9e01 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -3698,8 +3698,7 @@ static int do_reset(struct repository *r,
+ 	unpack_tree_opts.fn = oneway_merge;
+ 	unpack_tree_opts.merge = 1;
+ 	unpack_tree_opts.update = 1;
+-	/* FIXME: Default should be to remove ignored files */
+-	unpack_tree_opts.preserve_ignored = 1;
++	unpack_tree_opts.preserve_ignored = 0; /* FIXME: !overwrite_ignore */
+ 	init_checkout_metadata(&unpack_tree_opts.meta, name, &oid, NULL);
+ 
+ 	if (repo_read_index_unmerged(r)) {
+diff --git a/t/t7112-reset-submodule.sh b/t/t7112-reset-submodule.sh
+index 19830d90365..a3e2413bc33 100755
+--- a/t/t7112-reset-submodule.sh
++++ b/t/t7112-reset-submodule.sh
+@@ -6,7 +6,6 @@ test_description='reset can handle submodules'
+ . "$TEST_DIRECTORY"/lib-submodule-update.sh
+ 
+ KNOWN_FAILURE_DIRECTORY_SUBMODULE_CONFLICTS=1
+-KNOWN_FAILURE_SUBMODULE_OVERWRITE_IGNORED_UNTRACKED=1
+ 
+ test_submodule_switch_recursing_with_args "reset --keep"
+ 
+-- 
+2.33.0.1404.g83021034c5d
+

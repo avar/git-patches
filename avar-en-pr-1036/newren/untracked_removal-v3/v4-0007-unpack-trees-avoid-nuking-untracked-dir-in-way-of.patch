@@ -1,0 +1,133 @@
+From b6769f629ae21b429316a37d744e312135110058 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v4-07.10-b6769f629ae-20211004T004902Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v4-00.10-00000000000-20211004T004902Z-avarab@gmail.com>
+References: <pull.1036.v3.git.1632760428.gitgitgadget@gmail.com>
+	<RFC-cover-v4-00.10-00000000000-20211004T004902Z-avarab@gmail.com>
+From: Elijah Newren <newren@gmail.com>
+Date: Sat, 11 Sep 2021 13:42:25 -0700
+Subject: [RFC PATCH v4 07/10] unpack-trees: avoid nuking untracked dir in way
+ of unmerged file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t2500-untracked-overwriting.sh |  2 +-
+ unpack-trees.c                   | 35 ++++++++++++++++++++++++++++----
+ 2 files changed, 32 insertions(+), 5 deletions(-)
+
+diff --git a/t/t2500-untracked-overwriting.sh b/t/t2500-untracked-overwriting.sh
+index 18604360df8..5ec66058cfc 100755
+--- a/t/t2500-untracked-overwriting.sh
++++ b/t/t2500-untracked-overwriting.sh
+@@ -197,7 +197,7 @@ test_expect_failure 'git stash and untracked files' '
+ 	)
+ '
+ 
+-test_expect_failure 'git am --abort and untracked dir vs. unmerged file' '
++test_expect_success 'git am --abort and untracked dir vs. unmerged file' '
+ 	test_setup_sequencing am_abort_and_untracked &&
+ 	(
+ 		cd sequencing_am_abort_and_untracked &&
+diff --git a/unpack-trees.c b/unpack-trees.c
+index 37f769030ab..8408a8fcfff 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -2173,9 +2173,15 @@ static int icase_exists(struct unpack_trees_options *o, const char *name, int le
+ 	return src && !ie_match_stat(o->src_index, src, st, CE_MATCH_IGNORE_VALID|CE_MATCH_IGNORE_SKIP_WORKTREE);
+ }
+ 
++enum absent_checking_type {
++	COMPLETELY_ABSENT,
++	ABSENT_ANY_DIRECTORY
++};
++
+ static int check_ok_to_remove(const char *name, int len, int dtype,
+ 			      const struct cache_entry *ce, struct stat *st,
+ 			      enum unpack_trees_error_types error_type,
++			      enum absent_checking_type absent_type,
+ 			      struct unpack_trees_options *o)
+ {
+ 	const struct cache_entry *result;
+@@ -2209,6 +2215,10 @@ static int check_ok_to_remove(const char *name, int len, int dtype,
+ 		return 0;
+ 	}
+ 
++	/* If we only care about directories, then we can remove */
++	if (absent_type == ABSENT_ANY_DIRECTORY)
++		return 0;
++
+ 	/*
+ 	 * The previous round may already have decided to
+ 	 * delete this path, which is in a subdirectory that
+@@ -2229,6 +2239,7 @@ static int check_ok_to_remove(const char *name, int len, int dtype,
+  */
+ static int verify_absent_1(const struct cache_entry *ce,
+ 			   enum unpack_trees_error_types error_type,
++			   enum absent_checking_type absent_type,
+ 			   struct unpack_trees_options *o)
+ {
+ 	int len;
+@@ -2255,7 +2266,8 @@ static int verify_absent_1(const struct cache_entry *ce,
+ 								NULL, o);
+ 			else
+ 				ret = check_ok_to_remove(path, len, DT_UNKNOWN, NULL,
+-							 &st, error_type, o);
++							 &st, error_type,
++							 absent_type, o);
+ 		}
+ 		free(path);
+ 		return ret;
+@@ -2270,7 +2282,7 @@ static int verify_absent_1(const struct cache_entry *ce,
+ 
+ 		return check_ok_to_remove(ce->name, ce_namelen(ce),
+ 					  ce_to_dtype(ce), ce, &st,
+-					  error_type, o);
++					  error_type, absent_type, o);
+ 	}
+ }
+ 
+@@ -2280,14 +2292,23 @@ static int verify_absent(const struct cache_entry *ce,
+ {
+ 	if (!o->skip_sparse_checkout && (ce->ce_flags & CE_NEW_SKIP_WORKTREE))
+ 		return 0;
+-	return verify_absent_1(ce, error_type, o);
++	return verify_absent_1(ce, error_type, COMPLETELY_ABSENT, o);
++}
++
++static int verify_absent_if_directory(const struct cache_entry *ce,
++				      enum unpack_trees_error_types error_type,
++				      struct unpack_trees_options *o)
++{
++	if (!o->skip_sparse_checkout && (ce->ce_flags & CE_NEW_SKIP_WORKTREE))
++		return 0;
++	return verify_absent_1(ce, error_type, ABSENT_ANY_DIRECTORY, o);
+ }
+ 
+ static int verify_absent_sparse(const struct cache_entry *ce,
+ 				enum unpack_trees_error_types error_type,
+ 				struct unpack_trees_options *o)
+ {
+-	return verify_absent_1(ce, error_type, o);
++	return verify_absent_1(ce, error_type, COMPLETELY_ABSENT, o);
+ }
+ 
+ static int merged_entry(const struct cache_entry *ce,
+@@ -2361,6 +2382,12 @@ static int merged_entry(const struct cache_entry *ce,
+ 		 * Previously unmerged entry left as an existence
+ 		 * marker by read_index_unmerged();
+ 		 */
++		if (verify_absent_if_directory(merge,
++				  ERROR_WOULD_LOSE_UNTRACKED_OVERWRITTEN, o)) {
++			discard_cache_entry(merge);
++			return -1;
++		}
++
+ 		invalidate_ce_path(old, o);
+ 	}
+ 
+-- 
+2.33.0.1404.g83021034c5d
+
