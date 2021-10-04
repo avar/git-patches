@@ -1,0 +1,62 @@
+From aa2bec76f6edb8f68d52b78e07b629933280c0f8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.10-aa2bec76f6e-20211004T002059Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20211004T002059Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20211004T002059Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 2 Oct 2021 23:09:27 +0200
+Subject: [PATCH 09/10] merge.c: avoid duplicate unpack_trees_options_release()
+ code
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor code added in 1c41d2805e4 (unpack_trees_options: free
+messages when done, 2018-05-21) to use a ret/goto pattern, rather than
+duplicating the end cleanup in the function.
+
+This control flow will be matched in subsequent commits by various
+other similar code, which often needs to do more than just call
+unpack_trees_options_release(). Let's change this to consistently use
+the same pattern everywhere.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ merge.c | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/merge.c b/merge.c
+index 2f618425aff..2e3714ccaa0 100644
+--- a/merge.c
++++ b/merge.c
+@@ -54,6 +54,7 @@ int checkout_fast_forward(struct repository *r,
+ 	struct tree_desc t[MAX_UNPACK_TREES];
+ 	int i, nr_trees = 0;
+ 	struct lock_file lock_file = LOCK_INIT;
++	int ret = 0;
+ 
+ 	refresh_index(r->index, REFRESH_QUIET, NULL, NULL, NULL);
+ 
+@@ -95,12 +96,14 @@ int checkout_fast_forward(struct repository *r,
+ 
+ 	if (unpack_trees(nr_trees, t, &opts)) {
+ 		rollback_lock_file(&lock_file);
+-		unpack_trees_options_release(&opts);
+-		return -1;
++		ret = -1;
++		goto cleanup;
+ 	}
+-	unpack_trees_options_release(&opts);
+ 
+ 	if (write_locked_index(r->index, &lock_file, COMMIT_LOCK))
+-		return error(_("unable to write new index file"));
+-	return 0;
++		ret = error(_("unable to write new index file"));
++
++cleanup:
++	unpack_trees_options_release(&opts);
++	return ret;
+ }
+-- 
+2.33.0.1404.g83021034c5d
+

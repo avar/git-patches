@@ -1,0 +1,112 @@
+From 050399cbfbfb972eaef948f12c5dd6d07316104c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.10-050399cbfbf-20211004T002059Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20211004T002059Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20211004T002059Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 3 Oct 2021 12:11:52 +0200
+Subject: [PATCH 02/10] merge-recursive.c: call a new
+ unpack_trees_options_init() function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the preceding commit we introduced a new UNPACK_TREES_OPTIONS_INIT
+macro, but "merge-recursive.c" could not be converted to it since
+it (re-)initializes a "struct unpack_trees_options" on the heap.
+
+In order to convert use the macro as the source of truth for
+initialization we need to not only convert the initialization in
+unpack_trees_start(), but also call the new
+unpack_trees_options_init() just after the CALLOC_ARRAY() in
+merge_start().
+
+When we call merge_trees() we'll call merge_start() followed by
+merge_trees_internal(), and it will call unpack_trees_start() before
+it does much of anything. So it's covered by an initialization in
+unpack_trees_start().
+
+But when merge_recursive() is called it will call merge_start()
+followed by merge_recursive_internal(), which won't call
+unpack_trees_start() until its own call call to
+merge_trees_internal(), but in the meantime it might end up using that
+calloc'd "struct unpack_trees_options".
+
+This was OK before, as setup_unpack_trees_porcelain() would call
+strvec_init(), and our "struct dir_struct" in turn is OK with being
+NULL'd. Let's convert the former to macro initialization, we'll deal
+with the latter in a subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ merge-recursive.c | 3 ++-
+ unpack-trees.c    | 8 ++++++--
+ unpack-trees.h    | 5 ++++-
+ 3 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/merge-recursive.c b/merge-recursive.c
+index e594d4c3fa1..d24a4903f1d 100644
+--- a/merge-recursive.c
++++ b/merge-recursive.c
+@@ -405,7 +405,7 @@ static int unpack_trees_start(struct merge_options *opt,
+ 	struct tree_desc t[3];
+ 	struct index_state tmp_index = { NULL };
+ 
+-	memset(&opt->priv->unpack_opts, 0, sizeof(opt->priv->unpack_opts));
++	unpack_trees_options_init(&opt->priv->unpack_opts);
+ 	if (opt->priv->call_depth)
+ 		opt->priv->unpack_opts.index_only = 1;
+ 	else
+@@ -3704,6 +3704,7 @@ static int merge_start(struct merge_options *opt, struct tree *head)
+ 
+ 	CALLOC_ARRAY(opt->priv, 1);
+ 	string_list_init_dup(&opt->priv->df_conflict_file_set);
++	unpack_trees_options_init(&opt->priv->unpack_opts);
+ 	return 0;
+ }
+ 
+diff --git a/unpack-trees.c b/unpack-trees.c
+index 8ea0a542da8..393c1f35a5d 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -108,8 +108,6 @@ void setup_unpack_trees_porcelain(struct unpack_trees_options *opts,
+ 	const char **msgs = opts->msgs;
+ 	const char *msg;
+ 
+-	strvec_init(&opts->msgs_to_free);
+-
+ 	if (!strcmp(cmd, "checkout"))
+ 		msg = advice_enabled(ADVICE_COMMIT_BEFORE_MERGE)
+ 		      ? _("Your local changes to the following files would be overwritten by checkout:\n%%s"
+@@ -189,6 +187,12 @@ void setup_unpack_trees_porcelain(struct unpack_trees_options *opts,
+ 		opts->unpack_rejects[i].strdup_strings = 1;
+ }
+ 
++void unpack_trees_options_init(struct unpack_trees_options *o)
++{
++	struct unpack_trees_options blank = UNPACK_TREES_OPTIONS_INIT;
++	memcpy(o, &blank, sizeof(*o));
++}
++
+ void clear_unpack_trees_porcelain(struct unpack_trees_options *opts)
+ {
+ 	strvec_clear(&opts->msgs_to_free);
+diff --git a/unpack-trees.h b/unpack-trees.h
+index ecf256cbcea..892b65ea623 100644
+--- a/unpack-trees.h
++++ b/unpack-trees.h
+@@ -91,7 +91,10 @@ struct unpack_trees_options {
+ 	struct checkout_metadata meta;
+ };
+ 
+-#define UNPACK_TREES_OPTIONS_INIT { 0 }
++#define UNPACK_TREES_OPTIONS_INIT { \
++	.msgs_to_free = STRVEC_INIT, \
++}
++void unpack_trees_options_init(struct unpack_trees_options *o);
+ 
+ int unpack_trees(unsigned n, struct tree_desc *t,
+ 		 struct unpack_trees_options *options);
+-- 
+2.33.0.1404.g83021034c5d
+

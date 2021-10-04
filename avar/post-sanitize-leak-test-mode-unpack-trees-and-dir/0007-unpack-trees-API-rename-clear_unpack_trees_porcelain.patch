@@ -1,0 +1,157 @@
+From 646e610d8ddb0df8c09b4304e5dc1a515a95d8d7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.10-646e610d8dd-20211004T002059Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20211004T002059Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20211004T002059Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 2 Oct 2021 22:37:06 +0200
+Subject: [PATCH 07/10] unpack-trees API: rename clear_unpack_trees_porcelain()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since a preceding commit we've been using
+clear_unpack_trees_porcelain() to call dir_clear(). So it's no longer
+a function that corresponds to setup_unpack_trees_porcelain(), as it
+was when it was added in 1c41d2805e4 (unpack_trees_options: free
+messages when done, 2018-05-21).
+
+Instead it's similar to strbuf_release() and other similar generic
+"free" functions. Let's rename it to avoid any future confusion on the
+topic.
+
+Let's also update the API documentation for it to note this, and to
+cover e.g. the code added around update_sparsity() in
+4ee5d50fc39 (sparse-checkout: use improved unpack_trees porcelain
+messages, 2020-03-27).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/checkout.c        | 2 +-
+ builtin/sparse-checkout.c | 2 +-
+ merge-ort.c               | 2 +-
+ merge-recursive.c         | 2 +-
+ merge.c                   | 4 ++--
+ reset.c                   | 2 +-
+ unpack-trees.c            | 2 +-
+ unpack-trees.h            | 8 +++++---
+ 8 files changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index d4b88affba7..482d17676a0 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -757,7 +757,7 @@ static int merge_working_tree(const struct checkout_opts *opts,
+ 		init_tree_desc(&trees[1], tree->buffer, tree->size);
+ 
+ 		ret = unpack_trees(2, trees, &topts);
+-		clear_unpack_trees_porcelain(&topts);
++		unpack_trees_options_release(&topts);
+ 		if (ret == -1) {
+ 			/*
+ 			 * Unpack couldn't do a trivial merge; either
+diff --git a/builtin/sparse-checkout.c b/builtin/sparse-checkout.c
+index 4c3c29fb580..b1221fd01d3 100644
+--- a/builtin/sparse-checkout.c
++++ b/builtin/sparse-checkout.c
+@@ -219,7 +219,7 @@ static int update_working_directory(struct pattern_list *pl)
+ 
+ 	setup_unpack_trees_porcelain(&o, "sparse-checkout");
+ 	result = update_sparsity(&o);
+-	clear_unpack_trees_porcelain(&o);
++	unpack_trees_options_release(&o);
+ 
+ 	if (result == UPDATE_SPARSITY_WARNINGS)
+ 		/*
+diff --git a/merge-ort.c b/merge-ort.c
+index e526b78b88d..0a5937364c9 100644
+--- a/merge-ort.c
++++ b/merge-ort.c
+@@ -4054,7 +4054,7 @@ static int checkout(struct merge_options *opt,
+ 	init_tree_desc(&trees[1], next->buffer, next->size);
+ 
+ 	ret = unpack_trees(2, trees, &unpack_opts);
+-	clear_unpack_trees_porcelain(&unpack_opts);
++	unpack_trees_options_release(&unpack_opts);
+ 	return ret;
+ }
+ 
+diff --git a/merge-recursive.c b/merge-recursive.c
+index a77f66b006c..316cb2ca907 100644
+--- a/merge-recursive.c
++++ b/merge-recursive.c
+@@ -441,7 +441,7 @@ static int unpack_trees_start(struct merge_options *opt,
+ static void unpack_trees_finish(struct merge_options *opt)
+ {
+ 	discard_index(&opt->priv->orig_index);
+-	clear_unpack_trees_porcelain(&opt->priv->unpack_opts);
++	unpack_trees_options_release(&opt->priv->unpack_opts);
+ 	unpack_trees_options_init(&opt->priv->unpack_opts);
+ }
+ 
+diff --git a/merge.c b/merge.c
+index 9cb32990dd9..2f618425aff 100644
+--- a/merge.c
++++ b/merge.c
+@@ -95,10 +95,10 @@ int checkout_fast_forward(struct repository *r,
+ 
+ 	if (unpack_trees(nr_trees, t, &opts)) {
+ 		rollback_lock_file(&lock_file);
+-		clear_unpack_trees_porcelain(&opts);
++		unpack_trees_options_release(&opts);
+ 		return -1;
+ 	}
+-	clear_unpack_trees_porcelain(&opts);
++	unpack_trees_options_release(&opts);
+ 
+ 	if (write_locked_index(r->index, &lock_file, COMMIT_LOCK))
+ 		return error(_("unable to write new index file"));
+diff --git a/reset.c b/reset.c
+index d13984ab781..f4bf3fbfac0 100644
+--- a/reset.c
++++ b/reset.c
+@@ -133,7 +133,7 @@ int reset_head(struct repository *r, struct object_id *oid, const char *action,
+ leave_reset_head:
+ 	strbuf_release(&msg);
+ 	rollback_lock_file(&lock);
+-	clear_unpack_trees_porcelain(&unpack_tree_opts);
++	unpack_trees_options_release(&unpack_tree_opts);
+ 	while (nr)
+ 		free((void *)desc[--nr].buffer);
+ 	return ret;
+diff --git a/unpack-trees.c b/unpack-trees.c
+index e7365322e82..bea598c9ece 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -193,7 +193,7 @@ void unpack_trees_options_init(struct unpack_trees_options *o)
+ 	memcpy(o, &blank, sizeof(*o));
+ }
+ 
+-void clear_unpack_trees_porcelain(struct unpack_trees_options *opts)
++void unpack_trees_options_release(struct unpack_trees_options *opts)
+ {
+ 	strvec_clear(&opts->msgs_to_free);
+ 	dir_clear(&opts->dir);
+diff --git a/unpack-trees.h b/unpack-trees.h
+index 40c4841748d..a8d1f083b33 100644
+--- a/unpack-trees.h
++++ b/unpack-trees.h
+@@ -41,10 +41,12 @@ enum unpack_trees_error_types {
+ void setup_unpack_trees_porcelain(struct unpack_trees_options *opts,
+ 				  const char *cmd);
+ 
+-/*
+- * Frees resources allocated by setup_unpack_trees_porcelain().
++/**
++ * Frees resources allocated by function that take the "struct
++ * unpack_trees_options". Always call this after using unpack_trees(),
++ * update_sparsity() etc.
+  */
+-void clear_unpack_trees_porcelain(struct unpack_trees_options *opts);
++void unpack_trees_options_release(struct unpack_trees_options *opts);
+ 
+ struct unpack_trees_options {
+ 	unsigned int reset,
+-- 
+2.33.0.1404.g83021034c5d
+

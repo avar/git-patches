@@ -1,0 +1,86 @@
+From 2b243d91696f04160edbd979447b01d2269a67d3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.10-2b243d91696-20211004T002059Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20211004T002059Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20211004T002059Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 30 Sep 2021 09:54:38 +0200
+Subject: [PATCH 06/10] dir.c: get rid of lazy initialization
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the "Lazy initialization" in prep_exclude() left behind by
+aceb9429b37 (prep_exclude: remove the artificial PATH_MAX limit,
+2014-07-14).
+
+Now that every caller who sets up a "struct dir_struct" is using the
+DIR_INIT macro we can rely on it to have done the initialization. As
+noted in an analysis of the previous control flow[1] an earlier
+passing of of "dir->basebuf.buf" to strncmp() wasn't buggy, as we'd
+only reach that code on subsequent invocations of prep_exclude(),
+i.e. after this strbuf_init() had been run. But keeping track of that
+makes for hard-to-read code. Let's just rely on the initialization
+instead.
+
+This does change the behavior of this code in that it won't be
+pre-growing the strbuf to a size of PATH_MAX. I think that's OK.
+
+That we were using PATH_MAX at all is just a relic from this being a
+fixed buffer from way back in f87f9497486 (git-ls-files: --exclude
+mechanism updates., 2005-07-24).
+
+Pre-allocating PATH_MAX was the opposite of an optimization in this
+case. I logged all "basebuf.buf" values when running the test suite,
+and by far the most common one (around 80%) is "", which we now won't
+allocate at all for, and just use the "strbuf_slopbuf".
+
+The second most common one was "a/", followed by other common cases of
+short relative paths. So using the default "struct strbuf" growth
+pattern is a much better allocation optimization in this case.
+
+1. https://lore.kernel.org/git/87sfxhohsj.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ dir.c | 8 --------
+ dir.h | 4 +++-
+ 2 files changed, 3 insertions(+), 9 deletions(-)
+
+diff --git a/dir.c b/dir.c
+index 39fce3bcba7..efc87c2e405 100644
+--- a/dir.c
++++ b/dir.c
+@@ -1550,14 +1550,6 @@ static void prep_exclude(struct dir_struct *dir,
+ 	if (dir->pattern)
+ 		return;
+ 
+-	/*
+-	 * Lazy initialization. All call sites currently just
+-	 * memset(dir, 0, sizeof(*dir)) before use. Changing all of
+-	 * them seems lots of work for little benefit.
+-	 */
+-	if (!dir->basebuf.buf)
+-		strbuf_init(&dir->basebuf, PATH_MAX);
+-
+ 	/* Read from the parent directories and push them down. */
+ 	current = stk ? stk->baselen : -1;
+ 	strbuf_setlen(&dir->basebuf, current < 0 ? 0 : current);
+diff --git a/dir.h b/dir.h
+index ff3b4a7f602..e3757c6099e 100644
+--- a/dir.h
++++ b/dir.h
+@@ -342,7 +342,9 @@ struct dir_struct {
+ 	unsigned visited_directories;
+ };
+ 
+-#define DIR_INIT { 0 }
++#define DIR_INIT { \
++	.basebuf = STRBUF_INIT, \
++}
+ 
+ struct dirent *readdir_skip_dot_and_dotdot(DIR *dirp);
+ 
+-- 
+2.33.0.1404.g83021034c5d
+
