@@ -1,0 +1,79 @@
+From 2f93ef1eaba3aacd44eb1c5deed2ebfc87c6007e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.7-2f93ef1eaba-20211007T095205Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.7-00000000000-20211007T095205Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20211006T095426Z-avarab@gmail.com>
+	<cover-v2-0.7-00000000000-20211007T095205Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 31 Aug 2021 09:45:26 +0200
+Subject: [PATCH v2 2/7] tests: fix a memory leak in test-parse-options.c
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in t/helper/test-parse-options.c, we were not
+freeing the allocated "struct string_list" or its items. Let's move
+the declaration of the "list" variable into the cmd__parse_options()
+and release it at the end.
+
+In c8ba1639165 (parse-options: add OPT_STRING_LIST helper, 2011-06-09)
+the "list" variable was added, and later on in
+c8ba1639165 (parse-options: add OPT_STRING_LIST helper, 2011-06-09)
+the "expect" was added.
+
+The "list" variable was last touched in 2721ce21e43 (use string_list
+initializer consistently, 2016-06-13), but it was still left at the
+static scope, it's better to move it to the function for consistency.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-parse-options.c | 7 ++++++-
+ t/t0040-parse-options.sh      | 1 +
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/t/helper/test-parse-options.c b/t/helper/test-parse-options.c
+index a282b6ff13e..48d3cf6692d 100644
+--- a/t/helper/test-parse-options.c
++++ b/t/helper/test-parse-options.c
+@@ -14,7 +14,6 @@ static int dry_run = 0, quiet = 0;
+ static char *string = NULL;
+ static char *file = NULL;
+ static int ambiguous;
+-static struct string_list list = STRING_LIST_INIT_NODUP;
+ 
+ static struct {
+ 	int called;
+@@ -107,6 +106,8 @@ int cmd__parse_options(int argc, const char **argv)
+ 		NULL
+ 	};
+ 	struct string_list expect = STRING_LIST_INIT_NODUP;
++	struct string_list list = STRING_LIST_INIT_NODUP;
++
+ 	struct option options[] = {
+ 		OPT_BOOL(0, "yes", &boolean, "get a boolean"),
+ 		OPT_BOOL('D', "no-doubt", &boolean, "begins with 'no-'"),
+@@ -185,5 +186,9 @@ int cmd__parse_options(int argc, const char **argv)
+ 	for (i = 0; i < argc; i++)
+ 		show(&expect, &ret, "arg %02d: %s", i, argv[i]);
+ 
++	expect.strdup_strings = 1;
++	string_list_clear(&expect, 0);
++	string_list_clear(&list, 0);
++
+ 	return ret;
+ }
+diff --git a/t/t0040-parse-options.sh b/t/t0040-parse-options.sh
+index da310ed29b1..ed422a1a616 100755
+--- a/t/t0040-parse-options.sh
++++ b/t/t0040-parse-options.sh
+@@ -5,6 +5,7 @@
+ 
+ test_description='our own option parser'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ cat >expect <<\EOF
+-- 
+2.33.0.1446.g6af949f83bd
+
