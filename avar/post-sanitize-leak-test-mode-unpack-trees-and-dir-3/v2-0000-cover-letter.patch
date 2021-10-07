@@ -1,0 +1,426 @@
+From 66ae63db8fd281b448883d810772b5988857bf79 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.3-00000000000-20211007T093941Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20211006T093405Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20211006T093405Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 7 Oct 2021 11:39:41 +0200
+Subject: [PATCH v2 0/3] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (3):
+  unpack-trees: don't leak memory in verify_clean_subdirectory()
+  sequencer: add a "goto cleanup" to do_reset()
+  sequencer: fix a memory leak in do_reset()
+
+ sequencer.c                 | 36 +++++++++++++++---------------------
+ t/t1001-read-tree-m-2way.sh |  2 ++
+ unpack-trees.c              |  3 ++-
+ 3 files changed, 19 insertions(+), 22 deletions(-)
+
+Range-diff against v1:
+-:  ----------- > 1:  e5ef1be2aa9 unpack-trees: don't leak memory in verify_clean_subdirectory()
+1:  21f9da06b46 ! 2:  1d5f5e9fff0 built-ins & lib: plug memory leaks with unpack_trees_options_release()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    built-ins & lib: plug memory leaks with unpack_trees_options_release()
+    +    sequencer: add a "goto cleanup" to do_reset()
+     
+    -    Plug memory leaks in various built-ins and the "diff-lib.c" and
+    -    "sequencer.c" libraries that were missing
+    -    unpack_trees_options_release() calls.
+    +    Restructure code that's mostly added in 9055e401dd6 (sequencer:
+    +    introduce new commands to reset the revision, 2018-04-25) to avoid
+    +    code duplication, and to make freeing other resources easier in a
+    +    subsequent commit.
+     
+    -    In the case of "git archive" we'll need to memset() the "struct
+    -    unpack_trees_options" first, to avoid having to call
+    -    clear_unpack_trees_porcelain() twice within the
+    -    "!args->worktree_attributes" branch.
+    +    It's safe to initialize "tree_desc" to be zero'd out in order to
+    +    unconditionally free desc.buffer, it won't be initialized on the first
+    +    couple of "goto"'s.
+    +
+    +    There are three earlier "return"'s in this function that I'm not
+    +    bothering to covert, those don't need to rollback anything, or free
+    +    any resources, so let's leave, even though they could safely "goto
+    +    cleanup" as well.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## archive.c ##
+    -@@ archive.c: int write_archive_entries(struct archiver_args *args,
+    - 	/*
+    - 	 * Setup index and instruct attr to read index only
+    - 	 */
+    -+	memset(&opts, 0, sizeof(opts));
+    - 	if (!args->worktree_attributes) {
+    --		memset(&opts, 0, sizeof(opts));
+    - 		opts.index_only = 1;
+    - 		opts.head_idx = -1;
+    - 		opts.src_index = args->repo->index;
+    - 		opts.dst_index = args->repo->index;
+    - 		opts.fn = oneway_merge;
+    - 		init_tree_desc(&t, args->tree->buffer, args->tree->size);
+    --		if (unpack_trees(1, &t, &opts))
+    + ## sequencer.c ##
+    +@@ sequencer.c: static int do_reset(struct repository *r,
+    + 	struct strbuf ref_name = STRBUF_INIT;
+    + 	struct object_id oid;
+    + 	struct lock_file lock = LOCK_INIT;
+    +-	struct tree_desc desc;
+    ++	struct tree_desc desc = { 0 };
+    + 	struct tree *tree;
+    + 	struct unpack_trees_options unpack_tree_opts;
+    + 	int ret = 0;
+    +@@ sequencer.c: static int do_reset(struct repository *r,
+    + 		strbuf_addf(&ref_name, "refs/rewritten/%.*s", len, name);
+    + 		if (get_oid(ref_name.buf, &oid) &&
+    + 		    get_oid(ref_name.buf + strlen("refs/rewritten/"), &oid)) {
+    +-			error(_("could not read '%s'"), ref_name.buf);
+    +-			rollback_lock_file(&lock);
+    +-			strbuf_release(&ref_name);
+     -			return -1;
+    -+		if (unpack_trees(1, &t, &opts)) {
+    -+			err = -1;
+    ++			ret = error(_("could not read '%s'"), ref_name.buf);
+     +			goto cleanup;
+    -+		}
+    - 		git_attr_set_direction(GIT_ATTR_INDEX);
+    + 		}
+      	}
+      
+    -@@ archive.c: int write_archive_entries(struct archiver_args *args,
+    - 		if (err)
+    - 			break;
+    - 	}
+    -+
+    -+cleanup:
+    - 	strbuf_release(&path_in_archive);
+    - 	strbuf_release(&content);
+    -+	clear_unpack_trees_porcelain(&opts);
+    - 
+    - 	return err;
+    - }
+    -
+    - ## builtin/am.c ##
+    -@@ builtin/am.c: static int fast_forward_to(struct tree *head, struct tree *remote, int reset)
+    - 	struct lock_file lock_file = LOCK_INIT;
+    - 	struct unpack_trees_options opts;
+    - 	struct tree_desc t[2];
+    -+	int ret = 0;
+    - 
+    - 	if (parse_tree(head) || parse_tree(remote))
+    - 		return -1;
+    -@@ builtin/am.c: static int fast_forward_to(struct tree *head, struct tree *remote, int reset)
+    +@@ sequencer.c: static int do_reset(struct repository *r,
+    + 	init_checkout_metadata(&unpack_tree_opts.meta, name, &oid, NULL);
+      
+    - 	if (unpack_trees(2, t, &opts)) {
+    - 		rollback_lock_file(&lock_file);
+    --		return -1;
+    -+		ret = -1;
+    + 	if (repo_read_index_unmerged(r)) {
+    +-		rollback_lock_file(&lock);
+    +-		strbuf_release(&ref_name);
+    +-		return error_resolve_conflict(_(action_name(opts)));
+    ++		ret = error_resolve_conflict(_(action_name(opts)));
+     +		goto cleanup;
+      	}
+      
+    - 	if (write_locked_index(&the_index, &lock_file, COMMIT_LOCK))
+    - 		die(_("unable to write new index file"));
+    --
+    --	return 0;
+    -+cleanup:
+    -+	clear_unpack_trees_porcelain(&opts);
+    -+	return ret;
+    - }
+    - 
+    - /**
+    -@@ builtin/am.c: static int merge_tree(struct tree *tree)
+    - 	struct lock_file lock_file = LOCK_INIT;
+    - 	struct unpack_trees_options opts;
+    - 	struct tree_desc t[1];
+    -+	int ret = 0;
+    - 
+    - 	if (parse_tree(tree))
+    - 		return -1;
+    -@@ builtin/am.c: static int merge_tree(struct tree *tree)
+    - 
+    - 	if (unpack_trees(1, t, &opts)) {
+    - 		rollback_lock_file(&lock_file);
+    + 	if (!fill_tree_descriptor(r, &desc, &oid)) {
+    +-		error(_("failed to find tree of %s"), oid_to_hex(&oid));
+    +-		rollback_lock_file(&lock);
+    +-		free((void *)desc.buffer);
+    +-		strbuf_release(&ref_name);
+     -		return -1;
+    -+		ret = -1;
+    ++		ret = error(_("failed to find tree of %s"), oid_to_hex(&oid));
+     +		goto cleanup;
+      	}
+      
+    - 	if (write_locked_index(&the_index, &lock_file, COMMIT_LOCK))
+    - 		die(_("unable to write new index file"));
+    - 
+    --	return 0;
+    -+cleanup:
+    -+	clear_unpack_trees_porcelain(&opts);
+    -+	return ret;
+    - }
+    - 
+    - /**
+    -
+    - ## builtin/checkout.c ##
+    -@@ builtin/checkout.c: static int reset_tree(struct tree *tree, const struct checkout_opts *o,
+    - {
+    - 	struct unpack_trees_options opts;
+    - 	struct tree_desc tree_desc;
+    -+	int ret;
+    - 
+    - 	memset(&opts, 0, sizeof(opts));
+    - 	opts.head_idx = -1;
+    -@@ builtin/checkout.c: static int reset_tree(struct tree *tree, const struct checkout_opts *o,
+    - 		 */
+    - 		/* fallthrough */
+    - 	case 0:
+    --		return 0;
+    -+		ret = 0;
+    -+		break;
+    - 	default:
+    --		return 128;
+    -+		ret = 128;
+    - 	}
+    -+
+    -+	clear_unpack_trees_porcelain(&opts);
+    -+	return ret;
+    - }
+    - 
+    - static void setup_branch_path(struct branch_info *branch)
+    -
+    - ## builtin/clone.c ##
+    -@@ builtin/clone.c: static int checkout(int submodule_progress)
+    - 	init_tree_desc(&t, tree->buffer, tree->size);
+    - 	if (unpack_trees(1, &t, &opts) < 0)
+    - 		die(_("unable to checkout working tree"));
+    -+	clear_unpack_trees_porcelain(&opts);
+    - 
+    - 	free(head);
+    - 
+    -
+    - ## builtin/commit.c ##
+    -@@ builtin/commit.c: static void create_base_index(const struct commit *current_head)
+    - 	struct tree *tree;
+    - 	struct unpack_trees_options opts;
+    - 	struct tree_desc t;
+    -+	int exit_early = 0;
+    - 
+    - 	if (!current_head) {
+    - 		discard_cache();
+    -@@ builtin/commit.c: static void create_base_index(const struct commit *current_head)
+    - 	parse_tree(tree);
+    - 	init_tree_desc(&t, tree->buffer, tree->size);
+    - 	if (unpack_trees(1, &t, &opts))
+    --		exit(128); /* We've already reported the error, finish dying */
+    -+		exit_early = 1; /* We've already reported the error, finish dying */
+    -+	clear_unpack_trees_porcelain(&opts);
+    -+	if (exit_early)
+    -+		exit(128);
+    - }
+    - 
+    - static void refresh_cache_or_die(int refresh_flags)
+    -
+    - ## builtin/merge.c ##
+    -@@ builtin/merge.c: static int read_tree_trivial(struct object_id *common, struct object_id *head,
+    - 	struct tree *trees[MAX_UNPACK_TREES];
+    - 	struct tree_desc t[MAX_UNPACK_TREES];
+    - 	struct unpack_trees_options opts;
+    -+	int ret = 0;
+    - 
+    - 	memset(&opts, 0, sizeof(opts));
+    - 	opts.head_idx = 2;
+    -@@ builtin/merge.c: static int read_tree_trivial(struct object_id *common, struct object_id *head,
+    - 		init_tree_desc(t+i, trees[i]->buffer, trees[i]->size);
+    - 	}
+    - 	if (unpack_trees(nr_trees, t, &opts))
+    + 	if (unpack_trees(1, &desc, &unpack_tree_opts)) {
+    +-		rollback_lock_file(&lock);
+    +-		free((void *)desc.buffer);
+    +-		strbuf_release(&ref_name);
+     -		return -1;
+    --	return 0;
+     +		ret = -1;
+    -+	clear_unpack_trees_porcelain(&opts);
+    -+	return ret;
+    - }
+    - 
+    - static void write_tree_trivial(struct object_id *oid)
+    -
+    - ## builtin/read-tree.c ##
+    -@@ builtin/read-tree.c: int cmd_read_tree(int argc, const char **argv, const char *cmd_prefix)
+    - 		OPT__QUIET(&opts.quiet, N_("suppress feedback messages")),
+    - 		OPT_END()
+    - 	};
+    -+	int ret = 0;
+    - 
+    - 	memset(&opts, 0, sizeof(opts));
+    - 	opts.head_idx = -1;
+    -@@ builtin/read-tree.c: int cmd_read_tree(int argc, const char **argv, const char *cmd_prefix)
+    - 		parse_tree(tree);
+    - 		init_tree_desc(t+i, tree->buffer, tree->size);
+    - 	}
+    --	if (unpack_trees(nr_trees, t, &opts))
+    --		return 128;
+    -+	if (unpack_trees(nr_trees, t, &opts)) {
+    -+		ret = 128;
+     +		goto cleanup;
+    -+	}
+    - 
+    - 	if (opts.debug_unpack || opts.dry_run)
+    --		return 0; /* do not write the index out */
+    -+		goto cleanup; /* do not write the index out */
+    - 
+    - 	/*
+    - 	 * When reading only one tree (either the most basic form,
+    -@@ builtin/read-tree.c: int cmd_read_tree(int argc, const char **argv, const char *cmd_prefix)
+    - 
+    - 	if (write_locked_index(&the_index, &lock_file, COMMIT_LOCK))
+    - 		die("unable to write new index file");
+    --	return 0;
+    -+
+    -+cleanup:
+    -+	clear_unpack_trees_porcelain(&opts);
+    -+	return ret;
+    - }
+    -
+    - ## builtin/reset.c ##
+    -@@ builtin/reset.c: static int reset_index(const char *ref, const struct object_id *oid, int reset_t
+    - 
+    - 	if (reset_type == KEEP) {
+    - 		struct object_id head_oid;
+    --		if (get_oid("HEAD", &head_oid))
+    --			return error(_("You do not have a valid HEAD."));
+    --		if (!fill_tree_descriptor(the_repository, desc + nr, &head_oid))
+    --			return error(_("Failed to find tree of HEAD."));
+    -+		if (get_oid("HEAD", &head_oid)) {
+    -+			error(_("You do not have a valid HEAD."));
+    -+			goto out;
+    -+		}
+    -+		if (!fill_tree_descriptor(the_repository, desc + nr, &head_oid)) {
+    -+			error(_("Failed to find tree of HEAD."));
+    -+			goto out;
+    -+		}
+    - 		nr++;
+    - 		opts.fn = twoway_merge;
+      	}
+    -@@ builtin/reset.c: static int reset_index(const char *ref, const struct object_id *oid, int reset_t
+    - 	ret = 0;
+    - 
+    - out:
+    -+	clear_unpack_trees_porcelain(&opts);
+    - 	for (i = 0; i < nr; i++)
+    - 		free((void *)desc[i].buffer);
+    - 	return ret;
+    -
+    - ## builtin/stash.c ##
+    -@@ builtin/stash.c: static int reset_tree(struct object_id *i_tree, int update, int reset)
+    - 	struct tree_desc t[MAX_UNPACK_TREES];
+    - 	struct tree *tree;
+    - 	struct lock_file lock_file = LOCK_INIT;
+    -+	int ret = 0;
+    - 
+    - 	read_cache_preload(NULL);
+    - 	if (refresh_cache(REFRESH_QUIET))
+    -@@ builtin/stash.c: static int reset_tree(struct object_id *i_tree, int update, int reset)
+    - 		opts.preserve_ignored = 0; /* FIXME: !overwrite_ignore */
+    - 	opts.fn = oneway_merge;
+    - 
+    --	if (unpack_trees(nr_trees, t, &opts))
+    --		return -1;
+    -+	if (unpack_trees(nr_trees, t, &opts)) {
+    -+		ret = -1;
+    -+		goto cleanup;
+    -+	}
+    - 
+    - 	if (write_locked_index(&the_index, &lock_file, COMMIT_LOCK))
+    --		return error(_("unable to write new index file"));
+    -+		ret = error(_("unable to write new index file"));
+      
+    --	return 0;
+    -+cleanup:
+    -+	clear_unpack_trees_porcelain(&opts);
+    -+	return ret;
+    - }
+    - 
+    - static int diff_tree_binary(struct strbuf *out, struct object_id *w_commit)
+    -@@ builtin/stash.c: static void diff_include_untracked(const struct stash_info *info, struct diff_op
+    - 
+    - 	if (unpack_trees(ARRAY_SIZE(tree_desc), tree_desc, &unpack_tree_opt))
+    - 		die(_("failed to unpack trees"));
+    -+	clear_unpack_trees_porcelain(&unpack_tree_opt);
+    - 
+    - 	do_diff_cache(&info->b_commit, diff_opt);
+    - }
+    -
+    - ## diff-lib.c ##
+    -@@ diff-lib.c: static int diff_cache(struct rev_info *revs,
+    - 	struct tree *tree;
+    - 	struct tree_desc t;
+    - 	struct unpack_trees_options opts;
+    -+	int ret;
+    - 
+    - 	tree = parse_tree_indirect(tree_oid);
+    - 	if (!tree)
+    -@@ diff-lib.c: static int diff_cache(struct rev_info *revs,
+    - 	opts.pathspec->recursive = 1;
+    - 
+    - 	init_tree_desc(&t, tree->buffer, tree->size);
+    --	return unpack_trees(1, &t, &opts);
+    -+	ret = unpack_trees(1, &t, &opts);
+    -+	clear_unpack_trees_porcelain(&opts);
+    -+	return ret;
+    - }
+    - 
+    - void diff_get_merge_base(const struct rev_info *revs, struct object_id *mb)
+    -
+    - ## sequencer.c ##
+    + 	tree = parse_tree_indirect(&oid);
+     @@ sequencer.c: static int do_reset(struct repository *r,
+    - 		rollback_lock_file(&lock);
+    - 		free((void *)desc.buffer);
+    - 		strbuf_release(&ref_name);
+    -+		clear_unpack_trees_porcelain(&unpack_tree_opts);
+    - 		return -1;
+    - 	}
+      
+    -@@ sequencer.c: static int do_reset(struct repository *r,
+    - 				 NULL, 0, UPDATE_REFS_MSG_ON_ERR);
+    + 	if (write_locked_index(r->index, &lock, COMMIT_LOCK) < 0)
+    + 		ret = error(_("could not write index"));
+    +-	free((void *)desc.buffer);
+      
+    + 	if (!ret)
+    + 		ret = update_ref(reflog_message(opts, "reset", "'%.*s'",
+    + 						len, name), "HEAD", &oid,
+    + 				 NULL, 0, UPDATE_REFS_MSG_ON_ERR);
+    +-
+    ++cleanup:
+    ++	free((void *)desc.buffer);
+    ++	if (ret < 0)
+    ++		rollback_lock_file(&lock);
+      	strbuf_release(&ref_name);
+    -+	clear_unpack_trees_porcelain(&unpack_tree_opts);
+      	return ret;
+      }
+    - 
+-:  ----------- > 3:  66ae63db8fd sequencer: fix a memory leak in do_reset()
+-- 
+2.33.0.1446.g6af949f83bd
+
