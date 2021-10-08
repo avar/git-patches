@@ -1,8 +1,8 @@
-From 904d9f7153c2788aa1653f9e4fb3bd0da2278a54 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v3-2.3-904d9f7153c-20211008T191045Z-avarab@gmail.com>
-In-Reply-To: <cover-v3-0.3-00000000000-20211008T191045Z-avarab@gmail.com>
+From 587a5717e473536f8fb4a9b5efa2674ea2e8fcf8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-2.3-587a5717e47-20211008T193041Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.3-00000000000-20211008T193041Z-avarab@gmail.com>
 References: <cover-v2-0.2-00000000000-20211004T142523Z-avarab@gmail.com>
-	<cover-v3-0.3-00000000000-20211008T191045Z-avarab@gmail.com>
+	<cover-v3-0.3-00000000000-20211008T193041Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Fri, 6 Aug 2021 18:06:21 +0200
@@ -24,39 +24,32 @@ that to "%s<SP><SP>\n".
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- object-name.c | 77 ++++++++++++++++++++++++++++++++++++++++++++-------
- 1 file changed, 67 insertions(+), 10 deletions(-)
+ object-name.c | 58 ++++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 53 insertions(+), 5 deletions(-)
 
 diff --git a/object-name.c b/object-name.c
-index 59e934262e7..9ee6ec53412 100644
+index 59e934262e7..7a5355b4cf7 100644
 --- a/object-name.c
 +++ b/object-name.c
-@@ -354,8 +354,9 @@ static int init_object_disambiguation(struct repository *r,
- static int show_ambiguous_object(const struct object_id *oid, void *data)
- {
+@@ -356,6 +356,7 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
  	const struct disambiguate_state *ds = data;
--	struct strbuf desc = STRBUF_INIT;
--	int type;
-+	struct strbuf sb = STRBUF_INIT;
-+	enum object_type type;
+ 	struct strbuf desc = STRBUF_INIT;
+ 	int type;
 +	const char *hash;
  
  	if (ds->fn && !ds->fn(ds->repo, oid, ds->cb_data))
  		return 0;
-@@ -363,24 +364,80 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+@@ -363,22 +364,69 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
  	type = oid_object_info(ds->repo, oid, NULL);
  	assert(type == OBJ_TREE || type == OBJ_COMMIT ||
  	       type == OBJ_BLOB || type == OBJ_TAG);
--	if (type == OBJ_COMMIT) {
-+
 +	hash = repo_find_unique_abbrev(ds->repo, oid, DEFAULT_ABBREV);
 +
-+	switch (type) {
-+	case OBJ_COMMIT:
-+	{
+ 	if (type == OBJ_COMMIT) {
 +		struct strbuf ad = STRBUF_INIT;
 +		struct strbuf s = STRBUF_INIT;
  		struct commit *commit = lookup_commit(ds->repo, oid);
++
  		if (commit) {
  			struct pretty_print_context pp = {0};
  			pp.date_mode.type = DATE_SHORT;
@@ -64,7 +57,6 @@ index 59e934262e7..9ee6ec53412 100644
 +			format_commit_message(commit, "%ad", &ad, &pp);
 +			format_commit_message(commit, "%s", &s, &pp);
  		}
--	} else if (type == OBJ_TAG) {
 +
 +		/*
 +		 * TRANSLATORS: This is a line of ambiguous commit
@@ -72,14 +64,11 @@ index 59e934262e7..9ee6ec53412 100644
 +		 *
 +		 *    "deadbeef commit 2021-01-01 - Some Commit Message"
 +		 */
-+		strbuf_addf(&sb, _("%s commit %s - %s"), hash, ad.buf, s.buf);
++		strbuf_addf(&desc, _("%s commit %s - %s"), hash, ad.buf, s.buf);
 +
 +		strbuf_release(&ad);
 +		strbuf_release(&s);
-+		break;
-+	}
-+	case OBJ_TAG:
-+	{
+ 	} else if (type == OBJ_TAG) {
  		struct tag *tag = lookup_tag(ds->repo, oid);
 +		const char *tag_tag = "";
 +
@@ -97,24 +86,20 @@ index 59e934262e7..9ee6ec53412 100644
 +		 * object.c, it should (hopefully) already be
 +		 * translated.
 +		 */
-+		strbuf_addf(&sb, _("%s tag %s"), hash, tag_tag);
-+		break;
-+	}
-+	case OBJ_TREE:
++		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
++	} else if (type == OBJ_TREE) {
 +		/*
 +		 * TRANSLATORS: This is a line of ambiguous <type>
 +		 * object output. E.g. "deadbeef tree".
 +		 */
-+		strbuf_addf(&sb, _("%s tree"), hash);
-+		break;
-+	case OBJ_BLOB:
++		strbuf_addf(&desc, _("%s tree"), hash);
++	} else if (type == OBJ_BLOB) {
 +		/*
 +		 * TRANSLATORS: This is a line of ambiguous <type>
 +		 * object output. E.g. "deadbeef blob".
 +		 */
-+		strbuf_addf(&sb, _("%s blob"), hash);
-+		break;
-+	default:
++		strbuf_addf(&desc, _("%s blob"), hash);
++	} else {
 +		BUG("unreachable");
  	}
  
@@ -125,13 +110,10 @@ index 59e934262e7..9ee6ec53412 100644
 +	 * TRANSLATORS: This is line item of ambiguous object output,
 +	 * translated above.
 +	 */
-+	advise(_("  %s"), sb.buf);
++	advise(_("  %s"), desc.buf);
  
--	strbuf_release(&desc);
-+	strbuf_release(&sb);
+ 	strbuf_release(&desc);
  	return 0;
- }
- 
 -- 
 2.33.0.1492.g76eb1af92bc
 

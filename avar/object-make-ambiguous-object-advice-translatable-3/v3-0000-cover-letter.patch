@@ -1,9 +1,9 @@
-From c03a03297897b6108e8f142046b79628709baef9 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-0.3-00000000000-20211008T191045Z-avarab@gmail.com>
+From 8bde4e174b7c4b74d85aa7746ee626d9fa3f4526 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.3-00000000000-20211008T193041Z-avarab@gmail.com>
 In-Reply-To: <cover-v2-0.2-00000000000-20211004T142523Z-avarab@gmail.com>
 References: <cover-v2-0.2-00000000000-20211004T142523Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 8 Oct 2021 21:10:45 +0200
+Date: Fri, 8 Oct 2021 21:30:41 +0200
 Subject: [PATCH v3 0/3] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -16,13 +16,13 @@ Content-Transfer-Encoding: 8bit
   object-name: make ambiguous object output translatable
   object-name: show date for ambiguous tag objects
 
- object-name.c | 87 ++++++++++++++++++++++++++++++++++++++++++++-------
- 1 file changed, 75 insertions(+), 12 deletions(-)
+ object-name.c | 68 +++++++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 61 insertions(+), 7 deletions(-)
 
 Range-diff against v2:
 1:  55bde16aa23 < -:  ----------- object.[ch]: mark object type names for translation
 -:  ----------- > 1:  fb29e10ee35 object-name: remove unreachable "unknown type" handling
-2:  c0e873543f5 ! 2:  904d9f7153c object-name: make ambiguous object output translatable
+2:  c0e873543f5 ! 2:  587a5717e47 object-name: make ambiguous object output translatable
     @@ Commit message
          object-name: make ambiguous object output translatable
      
@@ -51,24 +51,17 @@ Range-diff against v2:
          1. 1ffa26c461 (get_short_sha1: list ambiguous objects on error,
             2016-09-26)
     @@ Commit message
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
       ## object-name.c ##
-    -@@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
-    +@@ object-name.c: static int init_object_disambiguation(struct repository *r,
-    + static int show_ambiguous_object(const struct object_id *oid, void *data)
-      {
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+    - {
       	const struct disambiguate_state *ds = data;
-    - 	struct strbuf desc = STRBUF_INIT;
+      	struct strbuf desc = STRBUF_INIT;
     -+	struct strbuf ci_ad = STRBUF_INIT;
     -+	struct strbuf ci_s = STRBUF_INIT;
-    - 	int type;
+      	int type;
     -+	const char *tag_desc = NULL;
     -+	const char *abbrev;
-    +-	struct strbuf desc = STRBUF_INIT;
-    +-	int type;
-    ++	struct strbuf sb = STRBUF_INIT;
-    ++	enum object_type type;
     ++	const char *hash;
       
       	if (ds->fn && !ds->fn(ds->repo, oid, ds->cb_data))
@@ -77,16 +70,13 @@ Range-diff against v2:
     + 	type = oid_object_info(ds->repo, oid, NULL);
     + 	assert(type == OBJ_TREE || type == OBJ_COMMIT ||
     + 	       type == OBJ_BLOB || type == OBJ_TAG);
-    +-	if (type == OBJ_COMMIT) {
-    ++
     ++	hash = repo_find_unique_abbrev(ds->repo, oid, DEFAULT_ABBREV);
     ++
-    ++	switch (type) {
-    ++	case OBJ_COMMIT:
-    ++	{
+    + 	if (type == OBJ_COMMIT) {
     ++		struct strbuf ad = STRBUF_INIT;
     ++		struct strbuf s = STRBUF_INIT;
     + 		struct commit *commit = lookup_commit(ds->repo, oid);
+    ++
       		if (commit) {
       			struct pretty_print_context pp = {0};
       			pp.date_mode.type = DATE_SHORT;
@@ -109,7 +99,6 @@ Range-diff against v2:
     --	       desc.buf);
     -+	abbrev = repo_find_unique_abbrev(ds->repo, oid, DEFAULT_ABBREV);
     -+	if (type == OBJ_COMMIT) {
-    +-	} else if (type == OBJ_TAG) {
     ++
      +		/*
      +		 * TRANSLATORS: This is a line of ambiguous commit
@@ -124,14 +113,11 @@ Range-diff against v2:
     -+		strbuf_addf(&desc, _("%s %s %s - %s"), abbrev, ci_ad.buf,
     -+			    _(type_name(type)), ci_s.buf);
     -+	} else if (tag_desc) {
-    ++		strbuf_addf(&sb, _("%s commit %s - %s"), hash, ad.buf, s.buf);
+    ++		strbuf_addf(&desc, _("%s commit %s - %s"), hash, ad.buf, s.buf);
     ++
     ++		strbuf_release(&ad);
     ++		strbuf_release(&s);
-    ++		break;
-    ++	}
-    ++	case OBJ_TAG:
-    ++	{
+    + 	} else if (type == OBJ_TAG) {
     + 		struct tag *tag = lookup_tag(ds->repo, oid);
     ++		const char *tag_tag = "";
     ++
@@ -151,10 +137,8 @@ Range-diff against v2:
     -+	} else {
     -+		const char *tname = type_name(type) ? _(type_name(type)) :
     -+			_(unknown_type);
-    ++		strbuf_addf(&sb, _("%s tag %s"), hash, tag_tag);
-    ++		break;
-    ++	}
-    ++	case OBJ_TREE:
+    ++		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
+    ++	} else if (type == OBJ_TREE) {
      +		/*
      +		 * TRANSLATORS: This is a line of ambiguous <type>
     -+		 * object output. Where <type> is one of the object
@@ -178,16 +162,14 @@ Range-diff against v2:
     -+		strbuf_addf(&desc, _("%s %s"), abbrev, tname);
     -+	}
     -+
-    ++		strbuf_addf(&sb, _("%s tree"), hash);
-    ++		break;
-    ++	case OBJ_BLOB:
+    ++		strbuf_addf(&desc, _("%s tree"), hash);
+    ++	} else if (type == OBJ_BLOB) {
     ++		/*
     ++		 * TRANSLATORS: This is a line of ambiguous <type>
     ++		 * object output. E.g. "deadbeef blob".
     ++		 */
-    ++		strbuf_addf(&sb, _("%s blob"), hash);
-    ++		break;
-    ++	default:
+    ++		strbuf_addf(&desc, _("%s blob"), hash);
+    ++	} else {
     ++		BUG("unreachable");
     + 	}
     + 
@@ -199,17 +181,15 @@ Range-diff against v2:
      +	 * translated above.
      +	 */
     -+	advise(_("  %s\n"), desc.buf);
-    ++	advise(_("  %s"), sb.buf);
+    ++	advise(_("  %s"), desc.buf);
       
-    - 	strbuf_release(&desc);
+      	strbuf_release(&desc);
     -+	strbuf_release(&ci_ad);
     -+	strbuf_release(&ci_s);
-    +-	strbuf_release(&desc);
-    ++	strbuf_release(&sb);
       	return 0;
-      }
-      
--:  ----------- > 3:  c03a0329789 object-name: show date for ambiguous tag objects
+    - }
+    - 
+-:  ----------- > 3:  8bde4e174b7 object-name: show date for ambiguous tag objects
 -- 
 2.33.0.1492.g76eb1af92bc
 
