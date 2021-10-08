@@ -1,9 +1,9 @@
 From c03a03297897b6108e8f142046b79628709baef9 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-0.3-00000000000-20211008T190927Z-avarab@gmail.com>
+Message-Id: <cover-v3-0.3-00000000000-20211008T190950Z-avarab@gmail.com>
 In-Reply-To: <cover-v2-0.2-00000000000-20211004T142523Z-avarab@gmail.com>
 References: <cover-v2-0.2-00000000000-20211004T142523Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 8 Oct 2021 21:09:27 +0200
+Date: Fri, 8 Oct 2021 21:09:50 +0200
 Subject: [PATCH v3 0/3] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -20,126 +20,8 @@ Content-Transfer-Encoding: 8bit
  1 file changed, 75 insertions(+), 12 deletions(-)
 
 Range-diff against v2:
-1:  55bde16aa23 ! 1:  fb29e10ee35 object.[ch]: mark object type names for translation
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    object.[ch]: mark object type names for translation
-    +    object-name: remove unreachable "unknown type" handling
-     
-    -    Mark the "commit", "tree", "blob" and "tag" types for translation, and
-    -    add an extern "unknown type" string for the OBJ_NONE case.
-    +    Remove the "unknown type" handling when displaying the ambiguous
-    +    object list. See [1] for the current output, and [1] for the commit
-    +    that added the "unknown type" handling.
-     
-    -    It is usually bad practice to translate individual words like this,
-    -    but for e.g. the list list output emitted by the "short object ID dead
-    -    is ambiguous" advice it makes sense.
-    +    The reason this code wasn't reachable is because we're not passing in
-    +    OBJECT_INFO_ALLOW_UNKNOWN_TYPE, so we'll just die in sort_ambiguous()
-    +    before we get to show_ambiguous_object():
-     
-    -    A subsequent commit will make that output translatable, and use these
-    -    translation markings to do so. Well, we won't use "commit", but let's
-    -    mark it up anyway for consistency. It'll probably come in handy sooner
-    -    than later to have it already be translated, and it's to much of a
-    -    burden to place on translators if they're translating the other three
-    -    object types anyway.
-    +        $ git rev-parse 8315
-    +        error: short object ID 8315 is ambiguous
-    +        hint: The candidates are:
-    +        fatal: invalid object type
-     
-    -    Aside: I think it would probably make sense to change the "NULL" entry
-    -    for type_name() to be the "unknown type". I've ran into cases where
-    -    type_name() was unconditionally interpolated in e.g. an sprintf()
-    -    format, but let's leave that for #leftoverbits as that would be
-    -    changing the behavior of the type_name() function.
-    +    We should do better here, but let's leave that for some future
-    +    improvement. In a subsequent commit I'll improve the output we do
-    +    show, and not having to handle the "unknown type" case simplifies that
-    +    change.
-     
-    -    All of these will be new in the git.pot file, except "blob" which will
-    -    be shared with a "cat-file" command-line option, see
-    -    7bcf3414535 (cat-file --textconv/--filters: allow specifying the path
-    -    separately, 2016-09-09) for its introduction.
-    +    Even though we know that this isn't reachable let's back that up with
-    +    an assert() both for self-documentation and sanity checking.
-    +
-    +    1. 5cc044e0257 (get_short_oid: sort ambiguous objects by type,
-    +       then SHA-1, 2018-05-10)
-    +    2. 1ffa26c461 (get_short_sha1: list ambiguous objects on error,
-    +       2016-09-26)
-     
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-    - ## object.c ##
-    -@@ object.c: struct object *get_indexed_object(unsigned int idx)
-    + ## object-name.c ##
-    +@@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
-    + 		return 0;
-      
-    - static const char *object_type_strings[] = {
-    - 	NULL,		/* OBJ_NONE = 0 */
-    --	"commit",	/* OBJ_COMMIT = 1 */
-    --	"tree",		/* OBJ_TREE = 2 */
-    --	"blob",		/* OBJ_BLOB = 3 */
-    --	"tag",		/* OBJ_TAG = 4 */
-    -+	/*
-    -+	 * TRANSLATORS: "commit", "tree", "blob" and "tag" are the
-    -+	 * name of Git's object types. These names are interpolated
-    -+	 * stand-alone when doing so is unambiguous for translation
-    -+	 * and doesn't require extra context. E.g. as part of an
-    -+	 * already-translated string that needs to have a type name
-    -+	 * quoted verbatim, or the short description of a command-line
-    -+	 * option expecting a given type.
-    -+	 */
-    -+	N_("commit"),	/* OBJ_COMMIT = 1 */
-    -+	N_("tree"),	/* OBJ_TREE = 2 */
-    -+	N_("blob"),	/* OBJ_BLOB = 3 */
-    -+	N_("tag"),	/* OBJ_TAG = 4 */
-    - };
-    + 	type = oid_object_info(ds->repo, oid, NULL);
-    ++	assert(type == OBJ_TREE || type == OBJ_COMMIT ||
-    ++	       type == OBJ_BLOB || type == OBJ_TAG);
-    + 	if (type == OBJ_COMMIT) {
-    + 		struct commit *commit = lookup_commit(ds->repo, oid);
-    + 		if (commit) {
-    +@@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
-      
-    -+/*
-    -+ * TRANSLATORS: This is the short type name of an object that's not
-    -+ * one of Git's known object types, as opposed to "commit", "tree",
-    -+ * "blob" and "tag" above.
-    -+ *
-    -+ * A user is unlikely to ever encounter these, but they can be
-    -+ * manually created with "git hash-object --literally".
-    -+ */
-    -+const char *unknown_type = N_("unknown type");
-    -+
-    - const char *type_name(unsigned int type)
-    - {
-    - 	if (type >= ARRAY_SIZE(object_type_strings))
-    -
-    - ## object.h ##
-    -@@ object.h: struct object {
-    - 	struct object_id oid;
-    - };
-    + 	advise("  %s %s%s",
-    + 	       repo_find_unique_abbrev(ds->repo, oid, DEFAULT_ABBREV),
-    +-	       type_name(type) ? type_name(type) : "unknown type",
-    +-	       desc.buf);
-    ++	       type_name(type), desc.buf);
-      
-    -+extern const char *unknown_type;
-    - const char *type_name(unsigned int type);
-    - int type_from_string_gently(const char *str, ssize_t, int gentle);
-    - #define type_from_string(str) type_from_string_gently(str, -1, 0)
-    + 	strbuf_release(&desc);
-    + 	return 0;
+1:  55bde16aa23 < -:  ----------- object.[ch]: mark object type names for translation
+-:  ----------- > 1:  fb29e10ee35 object-name: remove unreachable "unknown type" handling
 2:  c0e873543f5 ! 2:  904d9f7153c object-name: make ambiguous object output translatable
     @@ Commit message
          object-name: make ambiguous object output translatable
@@ -329,5 +211,5 @@ Range-diff against v2:
       
 -:  ----------- > 3:  c03a0329789 object-name: show date for ambiguous tag objects
 -- 
-2.33.0.1446.g6af949f83bd
+2.33.0.1492.g76eb1af92bc
 
