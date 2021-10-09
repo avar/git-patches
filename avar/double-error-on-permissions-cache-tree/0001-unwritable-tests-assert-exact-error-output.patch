@@ -1,0 +1,86 @@
+From a5ef8ea47f4b98e6df2955d1d61add0dc8280b32 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.2-a5ef8ea47f4-20211009T133344Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Oct 2021 11:33:18 +0200
+Subject: [PATCH 1/2] unwritable tests: assert exact error output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In preparation for fixing a regression where we started emitting some
+of these error messages twice, let's assert what the output from "git
+commit" and friends is now in the case of permission errors.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0004-unwritable.sh | 36 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/t/t0004-unwritable.sh b/t/t0004-unwritable.sh
+index e3137d638ee..998c9d1be69 100755
+--- a/t/t0004-unwritable.sh
++++ b/t/t0004-unwritable.sh
+@@ -18,27 +18,55 @@ test_expect_success setup '
+ test_expect_success POSIXPERM,SANITY 'write-tree should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+-	test_must_fail git write-tree
++
++	cat >expect <<-\EOF &&
++	error: insufficient permission for adding an object to repository database .git/objects
++	fatal: git-write-tree: error building trees
++	EOF
++	test_must_fail git write-tree 2>actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success POSIXPERM,SANITY 'commit should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+-	test_must_fail git commit -m second
++
++	cat >expect <<-\EOF &&
++	error: insufficient permission for adding an object to repository database .git/objects
++	error: insufficient permission for adding an object to repository database .git/objects
++	error: Error building trees
++	EOF
++	test_must_fail git commit -m second 2>actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success POSIXPERM,SANITY 'update-index should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	echo 6O >file &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+-	test_must_fail git update-index file
++
++	cat >expect <<-\EOF &&
++	error: insufficient permission for adding an object to repository database .git/objects
++	error: file: failed to insert into database
++	fatal: Unable to process path file
++	EOF
++	test_must_fail git update-index file 2>actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success POSIXPERM,SANITY 'add should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	echo b >file &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+-	test_must_fail git add file
++
++	cat >expect <<-\EOF &&
++	error: insufficient permission for adding an object to repository database .git/objects
++	error: file: failed to insert into database
++	error: unable to index file '\''file'\''
++	fatal: updating files failed
++	EOF
++	test_must_fail git add file 2>actual &&
++	test_cmp expect actual
+ '
+ 
+ test_done
+-- 
+2.33.0.1492.gcc3b81fc59a
+
