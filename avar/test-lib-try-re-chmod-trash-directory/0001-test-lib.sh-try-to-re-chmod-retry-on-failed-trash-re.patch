@@ -1,0 +1,110 @@
+From d7e88a77fef088d1cbb06f50fc0d5f217b9d137e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-d7e88a77fef-20211009T133025Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 4 Oct 2021 17:06:59 +0200
+Subject: [PATCH] test-lib.sh: try to re-chmod & retry on failed trash removal
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This fixes a regression in [1] where t0004-unwritable.sh was made to
+use "test_when_finished" for cleanup, we wouldn't re-chmod the
+".git/objects" on failure, leading to a persistent error when running
+the test.
+
+This can be demonstrated as e.g. (output snipped for less verbosity):
+
+    $ ./t0004-unwritable.sh --run=3 --immediate
+    ok 1 # skip setup (--run)
+    ok 2 # skip write-tree should notice unwritable repository (--run)
+    not ok 3 - commit should notice unwritable repository
+    [...]
+    $ ./t0004-unwritable.sh --run=3 --immediate
+    rm: cannot remove '[...]/trash directory.t0004-unwritable/.git/objects/info': Permission denied
+    FATAL: Cannot prepare test area
+    [...]
+
+I.e. if any of its tests failed, and the tests were being run under
+"--debug"[2] or "--immediate"[3] (which was introduced after [1]) we
+wouldn't re-chmod the object directory. We'd then fail on the next run
+since the test setup couldn't remove the trash files.
+
+Instead of some version of reverting [1] let's make the test-lib.sh
+resilient to this edge-case, it will happen due to [1], but also
+e.g. if the relevant "test-lib.sh" process is kill -9'd during the
+test run. We should try harder to recover in this case. If we fail to
+remove the test directory let's retry after (re-)chmod-ing it.
+
+This doesn't need to be guarded by something that's equivalent to
+"POSIXPERM" since if we don't support "chmod" we were about to fail
+anyway. Let's also discard any error output from (a possibly
+nonexisting) "chmod", we'll fail on the subsequent "rm -rf"
+anyway.
+
+The lack of &&-chaining between the "chmod" and "rm -rf" is
+intentional, if we fail the first "rm -rf", can't chmod, but then
+succeed the second time around that's what we were hoping for. We just
+want to nuke the directory, not carry forward every possible error
+code or error message.
+
+1. dbda967684d (t0004 (unwritable files): simplify error handling,
+   2010-09-06)
+2. 5a4a088add3 (test-lib: do not remove trash_directory if called with
+   --debug, 2008-08-21)
+3. b586744a864 (test: skip clean-up when running under --immediate
+   mode, 2011-06-27)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index aa1ad8180ed..706ce0cdeb9 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1210,10 +1210,10 @@ test_done () {
+ 			error "Tests passed but trash directory already removed before test cleanup; aborting"
+ 
+ 			cd "$TRASH_DIRECTORY/.." &&
+-			rm -fr "$TRASH_DIRECTORY" || {
++			remove_trash_directory "$TRASH_DIRECTORY" || {
+ 				# try again in a bit
+ 				sleep 5;
+-				rm -fr "$TRASH_DIRECTORY"
++				remove_trash_directory "$TRASH_DIRECTORY"
+ 			} ||
+ 			error "Tests passed but test cleanup failed; aborting"
+ 		fi
+@@ -1370,6 +1370,18 @@ then
+ 	exit 1
+ fi
+ 
++# Try really hard to clean up our mess
++remove_trash_directory() {
++	dir="$1"
++	if ! rm -rf "$dir"
++	then
++		say_color info >&3 "Failed to remove trash directory, trying to re-chmod it first..."
++		chmod -R u+w "$dir" 2>/dev/null
++		rm -rf "$dir"
++	fi
++	! test -d "$dir"
++}
++
+ # Are we running this test at all?
+ remove_trash=
+ this_test=${0##*/}
+@@ -1388,7 +1400,7 @@ GNUPGHOME="$HOME/gnupg-home-not-used"
+ export HOME GNUPGHOME USER_HOME
+ 
+ # Test repository
+-rm -fr "$TRASH_DIRECTORY" || {
++remove_trash_directory "$TRASH_DIRECTORY" || {
+ 	GIT_EXIT_OK=t
+ 	echo >&5 "FATAL: Cannot prepare test area"
+ 	exit 1
+-- 
+2.33.0.1492.gcc3b81fc59a
+
