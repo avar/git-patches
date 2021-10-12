@@ -1,0 +1,104 @@
+From dbac4204f7ba8655061f3a6e6e3b5e86efbca1f2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.13-dbac4204f7b-20211012T130541Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20211012T130541Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20211012T130541Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:39 -0700
+Subject: [PATCH 02/13] gc: use hook library for pre-auto-gc hook
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the pre-auto-gc hook away from run-command.h to and over to the
+new hook.h library.
+
+To do this introduce a simple run_hooks_oneshot() wrapper, we'll be
+using it extensively for these simple cases of wanting to run a single
+hook under a given name, and having it free the memory we allocate for
+us.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c |  3 ++-
+ hook.c       | 20 ++++++++++++++++++++
+ hook.h       | 13 +++++++++++++
+ 3 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 6b3de3dd514..95939e77f53 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -32,6 +32,7 @@
+ #include "remote.h"
+ #include "object-store.h"
+ #include "exec-cmd.h"
++#include "hook.h"
+ 
+ #define FAILED_RUN "failed to run %s"
+ 
+@@ -394,7 +395,7 @@ static int need_to_gc(void)
+ 	else
+ 		return 0;
+ 
+-	if (run_hook_le(NULL, "pre-auto-gc", NULL))
++	if (run_hooks_oneshot("pre-auto-gc", NULL))
+ 		return 0;
+ 	return 1;
+ }
+diff --git a/hook.c b/hook.c
+index 240270db64e..bfdc79e2f1a 100644
+--- a/hook.c
++++ b/hook.c
+@@ -141,3 +141,23 @@ int run_hooks(const char *hook_name, const char *hook_path,
+ 
+ 	return cb_data.rc;
+ }
++
++int run_hooks_oneshot(const char *hook_name, struct run_hooks_opt *options)
++{
++	const char *hook_path;
++	struct run_hooks_opt hook_opt_scratch = RUN_HOOKS_OPT_INIT;
++	int ret = 0;
++
++	if (!options)
++		options = &hook_opt_scratch;
++
++	hook_path = find_hook(hook_name);
++	if (!hook_path)
++		goto cleanup;
++
++	ret = run_hooks(hook_name, hook_path, options);
++cleanup:
++	run_hooks_opt_clear(options);
++
++	return ret;
++}
+diff --git a/hook.h b/hook.h
+index 111c5cf9296..a2b8d4fc6bd 100644
+--- a/hook.h
++++ b/hook.h
+@@ -49,7 +49,20 @@ void run_hooks_opt_clear(struct run_hooks_opt *o);
+ /**
+  * Takes an already resolved hook found via find_hook() and runs
+  * it. Does not call run_hooks_opt_clear() for you.
++ *
++ * See run_hooks_oneshot() for the simpler one-shot API.
+  */
+ int run_hooks(const char *hookname, const char *hook_path,
+ 	      struct run_hooks_opt *options);
++
++/**
++ * Calls find_hook() on your "hook_name" and runs the hooks (if any)
++ * with run_hooks().
++ *
++ * If "options" is provided calls run_hooks_opt_clear() on it for
++ * you. If "options" is NULL the default options from
++ * RUN_HOOKS_OPT_INIT will be used.
++ */
++int run_hooks_oneshot(const char *hook_name, struct run_hooks_opt *options);
++
+ #endif
+-- 
+2.33.0.1567.g7b23ce7ed9e
+

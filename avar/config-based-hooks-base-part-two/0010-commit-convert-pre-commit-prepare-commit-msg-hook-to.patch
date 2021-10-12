@@ -1,0 +1,66 @@
+From 1c22b2992cf92606e3de6460aa767558f424d96a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.13-1c22b2992cf-20211012T130541Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20211012T130541Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20211012T130541Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:36 -0700
+Subject: [PATCH 10/13] commit: convert {pre-commit,prepare-commit-msg} hook to
+ hook.h
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move these hooks hook away from run-command.h to and over to the new
+hook.h library.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit.c | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/commit.c b/commit.c
+index 551de4903c1..4e7cbd7585d 100644
+--- a/commit.c
++++ b/commit.c
+@@ -21,6 +21,7 @@
+ #include "commit-reach.h"
+ #include "run-command.h"
+ #include "shallow.h"
++#include "hook.h"
+ 
+ static struct commit_extra_header *read_commit_extra_header_lines(const char *buf, size_t len, const char **);
+ 
+@@ -1700,22 +1701,22 @@ size_t ignore_non_trailer(const char *buf, size_t len)
+ int run_commit_hook(int editor_is_used, const char *index_file,
+ 		    const char *name, ...)
+ {
+-	struct strvec hook_env = STRVEC_INIT;
++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
+ 	va_list args;
+-	int ret;
++	const char *arg;
+ 
+-	strvec_pushf(&hook_env, "GIT_INDEX_FILE=%s", index_file);
++	strvec_pushf(&opt.env, "GIT_INDEX_FILE=%s", index_file);
+ 
+ 	/*
+ 	 * Let the hook know that no editor will be launched.
+ 	 */
+ 	if (!editor_is_used)
+-		strvec_push(&hook_env, "GIT_EDITOR=:");
++		strvec_push(&opt.env, "GIT_EDITOR=:");
+ 
+ 	va_start(args, name);
+-	ret = run_hook_ve(hook_env.v, name, args);
++	while ((arg = va_arg(args, const char *)))
++		strvec_push(&opt.args, arg);
+ 	va_end(args);
+-	strvec_clear(&hook_env);
+ 
+-	return ret;
++	return run_hooks_oneshot(name, &opt);
+ }
+-- 
+2.33.0.1567.g7b23ce7ed9e
+
