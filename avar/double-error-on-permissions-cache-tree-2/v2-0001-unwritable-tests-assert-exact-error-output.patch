@@ -1,0 +1,109 @@
+From 74bc5568c889d4a5e6f34c0acdd2565e6c5fb9fd Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.2-74bc5568c88-20211012T142358Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.2-00000000000-20211012T142358Z-avarab@gmail.com>
+References: <patch-2.2-56b20f6024b-20211009T133354Z-avarab@gmail.com>
+	<cover-v2-0.2-00000000000-20211012T142358Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Oct 2021 11:33:18 +0200
+Subject: [PATCH v2 1/2] unwritable tests: assert exact error output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In preparation for fixing a regression where we started emitting some
+of these error messages twice, let's assert what the output from "git
+commit" and friends is now in the case of permission errors.
+
+As noted in [1] using test_expect_failure to mark up a TODO test has
+some unexpected edge cases, e.g. we don't want to break --run=3 by
+skipping the "test_lazy_prereq" here. This pattern allows us to test
+just the test_cmp (and the "cat", which shouldn't fail) with the added
+"test_expect_failure", we'll flip that to a "test_expect_success" in
+the next commit.
+
+1. https://lore.kernel.org/git/87tuhmk19c.fsf@evledraar.gmail.com/T/#u
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0004-unwritable.sh | 47 +++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 43 insertions(+), 4 deletions(-)
+
+diff --git a/t/t0004-unwritable.sh b/t/t0004-unwritable.sh
+index 37d68ef03be..3627ce367c0 100755
+--- a/t/t0004-unwritable.sh
++++ b/t/t0004-unwritable.sh
+@@ -19,27 +19,66 @@ test_expect_success setup '
+ test_expect_success POSIXPERM,SANITY 'write-tree should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+-	test_must_fail git write-tree
++	test_must_fail git write-tree 2>out.write-tree
++'
++
++test_lazy_prereq WRITE_TREE_OUT 'test -e "$TRASH_DIRECTORY"/out.write-tree'
++test_expect_success WRITE_TREE_OUT 'write-tree output on unwritable repository' '
++	cat >expect <<-\EOF &&
++	error: insufficient permission for adding an object to repository database .git/objects
++	fatal: git-write-tree: error building trees
++	EOF
++	test_cmp expect out.write-tree
+ '
+ 
+ test_expect_success POSIXPERM,SANITY,!SANITIZE_LEAK 'commit should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+-	test_must_fail git commit -m second
++	test_must_fail git commit -m second 2>out.commit
++'
++
++test_lazy_prereq COMMIT_OUT 'test -e "$TRASH_DIRECTORY"/out.commit'
++test_expect_failure COMMIT_OUT 'commit output on unwritable repository' '
++	cat >expect <<-\EOF &&
++	error: insufficient permission for adding an object to repository database .git/objects
++	error: Error building trees
++	EOF
++	test_cmp expect out.commit
+ '
+ 
+ test_expect_success POSIXPERM,SANITY 'update-index should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	echo 6O >file &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+-	test_must_fail git update-index file
++	test_must_fail git update-index file 2>out.update-index
++'
++
++test_lazy_prereq UPDATE_INDEX_OUT 'test -e "$TRASH_DIRECTORY"/out.update-index'
++test_expect_success UPDATE_INDEX_OUT 'update-index output on unwritable repository' '
++	cat >expect <<-\EOF &&
++	error: insufficient permission for adding an object to repository database .git/objects
++	error: file: failed to insert into database
++	fatal: Unable to process path file
++	EOF
++	test_cmp expect out.update-index
+ '
+ 
+ test_expect_success POSIXPERM,SANITY 'add should notice unwritable repository' '
+ 	test_when_finished "chmod 775 .git/objects .git/objects/??" &&
+ 	echo b >file &&
+ 	chmod a-w .git/objects .git/objects/?? &&
+-	test_must_fail git add file
++	test_must_fail git add file 2>out.add
++'
++
++test_lazy_prereq ADD_OUT 'test -e "$TRASH_DIRECTORY"/out.add'
++test_expect_success ADD_OUT 'add output on unwritable repository' '
++	cat >expect <<-\EOF &&
++	error: insufficient permission for adding an object to repository database .git/objects
++	error: file: failed to insert into database
++	error: unable to index file '\''file'\''
++	fatal: updating files failed
++	EOF
++	test_cmp expect out.add
+ '
+ 
+ test_done
+-- 
+2.33.0.1567.g7b23ce7ed9e
+
