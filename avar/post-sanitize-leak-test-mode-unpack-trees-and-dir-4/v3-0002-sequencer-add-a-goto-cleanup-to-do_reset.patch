@@ -1,0 +1,113 @@
+From ea871d506ad28cca14c36c74a5b2f89eb662d2f2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-2.3-ea871d506ad-20211013T132112Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.3-00000000000-20211013T132112Z-avarab@gmail.com>
+References: <cover-v2-0.3-00000000000-20211007T094019Z-avarab@gmail.com>
+	<cover-v3-0.3-00000000000-20211013T132112Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 7 Oct 2021 11:03:39 +0200
+Subject: [PATCH v3 2/3] sequencer: add a "goto cleanup" to do_reset()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Restructure code that's mostly added in 9055e401dd6 (sequencer:
+introduce new commands to reset the revision, 2018-04-25) to avoid
+code duplication, and to make freeing other resources easier in a
+subsequent commit.
+
+It's safe to initialize "tree_desc" to be zero'd out in order to
+unconditionally free desc.buffer, it won't be initialized on the first
+couple of "goto"'s.
+
+There are three earlier "return"'s in this function which should
+probably be made to use this new "cleanup" too, per [1] it looks like
+they're leaving behind stale locks. But let's not try to fix every
+potential bug here now, I'm just trying to narrowly plug a memory
+leak.
+
+1. CABPp-BH=3DP-dXRCphY53-3eZd1TU8h5GY_M12nnbEGm-UYB9Q@mail.gmail.com
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 32 +++++++++++++-------------------
+ 1 file changed, 13 insertions(+), 19 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index b92dae12166..14c37c4e25b 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -3644,7 +3644,7 @@ static int do_reset(struct repository *r,
+ 	struct strbuf ref_name = STRBUF_INIT;
+ 	struct object_id oid;
+ 	struct lock_file lock = LOCK_INIT;
+-	struct tree_desc desc;
++	struct tree_desc desc = { 0 };
+ 	struct tree *tree;
+ 	struct unpack_trees_options unpack_tree_opts;
+ 	int ret = 0;
+@@ -3678,10 +3678,8 @@ static int do_reset(struct repository *r,
+ 		strbuf_addf(&ref_name, "refs/rewritten/%.*s", len, name);
+ 		if (get_oid(ref_name.buf, &oid) &&
+ 		    get_oid(ref_name.buf + strlen("refs/rewritten/"), &oid)) {
+-			error(_("could not read '%s'"), ref_name.buf);
+-			rollback_lock_file(&lock);
+-			strbuf_release(&ref_name);
+-			return -1;
++			ret = error(_("could not read '%s'"), ref_name.buf);
++			goto cleanup;
+ 		}
+ 	}
+ 
+@@ -3697,24 +3695,18 @@ static int do_reset(struct repository *r,
+ 	init_checkout_metadata(&unpack_tree_opts.meta, name, &oid, NULL);
+ 
+ 	if (repo_read_index_unmerged(r)) {
+-		rollback_lock_file(&lock);
+-		strbuf_release(&ref_name);
+-		return error_resolve_conflict(_(action_name(opts)));
++		ret = error_resolve_conflict(_(action_name(opts)));
++		goto cleanup;
+ 	}
+ 
+ 	if (!fill_tree_descriptor(r, &desc, &oid)) {
+-		error(_("failed to find tree of %s"), oid_to_hex(&oid));
+-		rollback_lock_file(&lock);
+-		free((void *)desc.buffer);
+-		strbuf_release(&ref_name);
+-		return -1;
++		ret = error(_("failed to find tree of %s"), oid_to_hex(&oid));
++		goto cleanup;
+ 	}
+ 
+ 	if (unpack_trees(1, &desc, &unpack_tree_opts)) {
+-		rollback_lock_file(&lock);
+-		free((void *)desc.buffer);
+-		strbuf_release(&ref_name);
+-		return -1;
++		ret = -1;
++		goto cleanup;
+ 	}
+ 
+ 	tree = parse_tree_indirect(&oid);
+@@ -3722,13 +3714,15 @@ static int do_reset(struct repository *r,
+ 
+ 	if (write_locked_index(r->index, &lock, COMMIT_LOCK) < 0)
+ 		ret = error(_("could not write index"));
+-	free((void *)desc.buffer);
+ 
+ 	if (!ret)
+ 		ret = update_ref(reflog_message(opts, "reset", "'%.*s'",
+ 						len, name), "HEAD", &oid,
+ 				 NULL, 0, UPDATE_REFS_MSG_ON_ERR);
+-
++cleanup:
++	free((void *)desc.buffer);
++	if (ret < 0)
++		rollback_lock_file(&lock);
+ 	strbuf_release(&ref_name);
+ 	return ret;
+ }
+-- 
+2.33.0.1569.gd2dc77f7abf
+

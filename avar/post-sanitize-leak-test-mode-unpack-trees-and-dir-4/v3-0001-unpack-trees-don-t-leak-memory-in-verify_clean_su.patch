@@ -1,0 +1,83 @@
+From 0ab1e74f50d94306d941dd5c79e3d030f9a292eb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.3-0ab1e74f50d-20211013T132112Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.3-00000000000-20211013T132112Z-avarab@gmail.com>
+References: <cover-v2-0.3-00000000000-20211007T094019Z-avarab@gmail.com>
+	<cover-v3-0.3-00000000000-20211013T132112Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 2 Oct 2021 20:25:15 +0200
+Subject: [PATCH v3 1/3] unpack-trees: don't leak memory in
+ verify_clean_subdirectory()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix two different but related memory leaks in
+verify_clean_subdirectory(). We leaked both the "pathbuf" if
+read_directory() returned non-zero, and we never cleaned up our own
+"struct dir_struct" either.
+
+ * "pathbuf": When the read_directory() call followed by the
+   free(pathbuf) was added in c81935348be (Fix switching to a branch
+   with D/F when current branch has file D., 2007-03-15) we didn't
+   bother to free() before we called die().
+
+   But when this code was later libified in 203a2fe1170 (Allow callers
+   of unpack_trees() to handle failure, 2008-02-07) we started to leak
+   as we returned data to the caller. This fixes that memory leak,
+   which can be observed under SANITIZE=leak with e.g. the
+   "t1001-read-tree-m-2way.sh" test.
+
+ * "struct dir_struct": We've leaked the dir_struct ever since this
+   code was added back in c81935348be.
+
+   When that commit was written there wasn't an equivalent of
+   dir_clear(). Since it was added in 270be816049 (dir.c: provide
+   clear_directory() for reclaiming dir_struct memory, 2013-01-06)
+   we've omitted freeing the memory allocated here.
+
+   This memory leak could also be observed under SANITIZE=leak and the
+   "t1001-read-tree-m-2way.sh" test.
+
+This makes all the test in "t1001-read-tree-m-2way.sh" pass under
+"GIT_TEST_PASSING_SANITIZE_LEAK=true", we'd previously die in tests
+25, 26 & 28.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1001-read-tree-m-2way.sh | 2 ++
+ unpack-trees.c              | 3 ++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/t/t1001-read-tree-m-2way.sh b/t/t1001-read-tree-m-2way.sh
+index 1057a96b249..d1115528cb9 100755
+--- a/t/t1001-read-tree-m-2way.sh
++++ b/t/t1001-read-tree-m-2way.sh
+@@ -20,6 +20,8 @@ In the test, these paths are used:
+ 	rezrov  - in H, deleted in M
+ 	yomin   - not in H or M
+ '
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ . "$TEST_DIRECTORY"/lib-read-tree.sh
+ 
+diff --git a/unpack-trees.c b/unpack-trees.c
+index a7e1712d236..89ca95ce90b 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -2156,9 +2156,10 @@ static int verify_clean_subdirectory(const struct cache_entry *ce,
+ 	if (o->dir)
+ 		d.exclude_per_dir = o->dir->exclude_per_dir;
+ 	i = read_directory(&d, o->src_index, pathbuf, namelen+1, NULL);
++	dir_clear(&d);
++	free(pathbuf);
+ 	if (i)
+ 		return add_rejected_path(o, ERROR_NOT_UPTODATE_DIR, ce->name);
+-	free(pathbuf);
+ 	return cnt;
+ }
+ 
+-- 
+2.33.0.1569.gd2dc77f7abf
+

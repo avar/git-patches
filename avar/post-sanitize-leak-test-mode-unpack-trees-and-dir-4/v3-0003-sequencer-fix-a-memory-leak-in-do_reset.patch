@@ -1,0 +1,65 @@
+From 4923315a9783e149b4ae67bd1a449872401fce8d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-3.3-4923315a978-20211013T132112Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.3-00000000000-20211013T132112Z-avarab@gmail.com>
+References: <cover-v2-0.3-00000000000-20211007T094019Z-avarab@gmail.com>
+	<cover-v3-0.3-00000000000-20211013T132112Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 7 Oct 2021 11:08:31 +0200
+Subject: [PATCH v3 3/3] sequencer: fix a memory leak in do_reset()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak introduced in 9055e401dd6 (sequencer: introduce new
+commands to reset the revision, 2018-04-25), which called
+setup_unpack_trees_porcelain() without a corresponding call to
+clear_unpack_trees_porcelain().
+
+This introduces a change in behavior in that we now start calling
+clear_unpack_trees_porcelain() even without having called the
+setup_unpack_trees_porcelain(). That's OK, that clear function, like
+most others, will accept a zero'd out struct.
+
+This inches us closer to passing various tests in
+"t34*.sh" (e.g. "t3434-rebase-i18n.sh"), but because they have so many
+other memory leaks in revisions.c this doesn't make any test file or
+even a single test pass.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index 14c37c4e25b..98181b3186e 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -3646,7 +3646,7 @@ static int do_reset(struct repository *r,
+ 	struct lock_file lock = LOCK_INIT;
+ 	struct tree_desc desc = { 0 };
+ 	struct tree *tree;
+-	struct unpack_trees_options unpack_tree_opts;
++	struct unpack_trees_options unpack_tree_opts = { 0 };
+ 	int ret = 0;
+ 
+ 	if (repo_hold_locked_index(r, &lock, LOCK_REPORT_ON_ERROR) < 0)
+@@ -3683,7 +3683,6 @@ static int do_reset(struct repository *r,
+ 		}
+ 	}
+ 
+-	memset(&unpack_tree_opts, 0, sizeof(unpack_tree_opts));
+ 	setup_unpack_trees_porcelain(&unpack_tree_opts, "reset");
+ 	unpack_tree_opts.head_idx = 1;
+ 	unpack_tree_opts.src_index = r->index;
+@@ -3724,6 +3723,7 @@ static int do_reset(struct repository *r,
+ 	if (ret < 0)
+ 		rollback_lock_file(&lock);
+ 	strbuf_release(&ref_name);
++	clear_unpack_trees_porcelain(&unpack_tree_opts);
+ 	return ret;
+ }
+ 
+-- 
+2.33.0.1569.gd2dc77f7abf
+
