@@ -1,0 +1,65 @@
+From bea88e382c053d7eaf71b5294ddf38c423a93ea2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.20-bea88e382c0-20211013T235823Z-avarab@gmail.com>
+In-Reply-To: <cover-00.20-00000000000-20211013T235823Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20211013T235823Z-avarab@gmail.com>
+From: Han-Wen Nienhuys <hanwen@google.com>
+Date: Tue, 17 Aug 2021 12:31:29 +0000
+Subject: [PATCH 01/20] branch tests: test for errno propagating on failing
+ read
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test for "git branch" to cover the case where .git/refs is
+symlinked. To check availability, refs_verify_refname_available() will
+run refs_read_raw_ref() on each prefix, leading to a read() from
+.git/refs (which is a directory).
+
+It would probably be more robust to re-issue the lstat() as a normal
+stat(), in which case, we would fall back to the directory case, but
+for now let's just test for the existing behavior as-is. This test
+covers a regression in a commit that only ever made it to "next", see
+[1].
+
+1. http://lore.kernel.org/git/pull.1068.git.git.1629203489546.gitgitgadget@gmail.com
+
+Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3200-branch.sh | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/t/t3200-branch.sh b/t/t3200-branch.sh
+index e575ffb4ffb..b5242719159 100755
+--- a/t/t3200-branch.sh
++++ b/t/t3200-branch.sh
+@@ -731,6 +731,26 @@ test_expect_success SYMLINKS 'git branch -m u v should fail when the reflog for
+ 	test_must_fail git branch -m u v
+ '
+ 
++test_expect_success SYMLINKS 'git branch -m with symlinked .git/refs' '
++	test_when_finished "rm -rf subdir" &&
++	git init subdir &&
++
++	(
++		cd subdir &&
++		for d in refs objects packed-refs
++		do
++			rm -rf .git/$d &&
++			ln -s ../../.git/$d .git/$d
++		done
++	) &&
++	git --git-dir subdir/.git/ branch rename-src &&
++	git rev-parse rename-src >expect &&
++	git --git-dir subdir/.git/ branch -m rename-src rename-dest &&
++	git rev-parse rename-dest >actual &&
++	test_cmp expect actual &&
++	git branch -D rename-dest
++'
++
+ test_expect_success 'test tracking setup via --track' '
+ 	git config remote.local.url . &&
+ 	git config remote.local.fetch refs/heads/*:refs/remotes/local/* &&
+-- 
+2.33.1.1346.g48288c3c089
+

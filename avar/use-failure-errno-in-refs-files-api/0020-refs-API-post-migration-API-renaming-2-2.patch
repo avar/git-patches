@@ -1,0 +1,278 @@
+From 812430a79effd0946452814f6902972a686026f0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-20.20-812430a79ef-20211013T235823Z-avarab@gmail.com>
+In-Reply-To: <cover-00.20-00000000000-20211013T235823Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20211013T235823Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 11 Oct 2021 11:14:31 +0200
+Subject: [PATCH 20/20] refs API: post-migration API renaming [2/2]
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Rename the transitory refs_werrres_ref_unsafe() function to
+refs_resolve_ref_unsafe(), now that all callers of the old function
+have learned to pass in a "failure_errno" parameter.
+
+The coccinelle semantic patch added in the preceding commit works, but
+I couldn't figure out how to get spatch(1) to re-flow these argument
+lists (and sometimes make lines way too long), so this rename was done
+with:
+
+    perl -pi -e 's/refs_werrres_ref_unsafe/refs_resolve_ref_unsafe/g' \
+    $(git grep -l refs_werrres_ref_unsafe -- '*.c')
+
+But after that "make contrib/coccinelle/refs.cocci.patch" comes up
+empty, so the result would have been the same. Let's remove that
+transitory semantic patch file, we won't need to retain it for any
+other in-flight changes, refs_werrres_ref_unsafe() only existed within
+this patch series.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ contrib/coccinelle/refs.pending.cocci |  5 -----
+ refs.c                                | 16 ++++++++--------
+ refs.h                                |  2 --
+ refs/files-backend.c                  | 16 ++++++++--------
+ sequencer.c                           |  2 +-
+ t/helper/test-ref-store.c             |  2 +-
+ worktree.c                            |  6 +++---
+ 7 files changed, 21 insertions(+), 28 deletions(-)
+ delete mode 100644 contrib/coccinelle/refs.pending.cocci
+
+diff --git a/contrib/coccinelle/refs.pending.cocci b/contrib/coccinelle/refs.pending.cocci
+deleted file mode 100644
+index b33cb8a12aa..00000000000
+--- a/contrib/coccinelle/refs.pending.cocci
++++ /dev/null
+@@ -1,5 +0,0 @@
+-@@
+-expression refs, refname, resolve_flags, oid, flags, failure_errno;
+-@@
+-- refs_werrres_ref_unsafe(refs, refname, resolve_flags, oid, flags, failure_errno)
+-+ refs_resolve_ref_unsafe(refs, refname, resolve_flags, oid, flags, failure_errno)
+diff --git a/refs.c b/refs.c
+index a19f156b66a..75c6eafa847 100644
+--- a/refs.c
++++ b/refs.c
+@@ -269,7 +269,7 @@ char *refs_resolve_refdup(struct ref_store *refs,
+ 	const char *result;
+ 	int ignore_errno;
+ 
+-	result = refs_werrres_ref_unsafe(refs, refname, resolve_flags,
++	result = refs_resolve_ref_unsafe(refs, refname, resolve_flags,
+ 					 oid, flags, &ignore_errno);
+ 	return xstrdup_or_null(result);
+ }
+@@ -295,7 +295,7 @@ int read_ref_full(const char *refname, int resolve_flags, struct object_id *oid,
+ 	int ignore_errno;
+ 	struct ref_store *refs = get_main_ref_store(the_repository);
+ 
+-	if (refs_werrres_ref_unsafe(refs, refname, resolve_flags,
++	if (refs_resolve_ref_unsafe(refs, refname, resolve_flags,
+ 				    oid, flags, &ignore_errno))
+ 		return 0;
+ 	return -1;
+@@ -309,7 +309,7 @@ int read_ref(const char *refname, struct object_id *oid)
+ int refs_ref_exists(struct ref_store *refs, const char *refname)
+ {
+ 	int ignore_errno;
+-	return !!refs_werrres_ref_unsafe(refs, refname, RESOLVE_REF_READING,
++	return !!refs_resolve_ref_unsafe(refs, refname, RESOLVE_REF_READING,
+ 					 NULL, NULL, &ignore_errno);
+ }
+ 
+@@ -659,7 +659,7 @@ int expand_ref(struct repository *repo, const char *str, int len,
+ 		this_result = refs_found ? &oid_from_ref : oid;
+ 		strbuf_reset(&fullref);
+ 		strbuf_addf(&fullref, *p, len, str);
+-		r = refs_werrres_ref_unsafe(refs, fullref.buf,
++		r = refs_resolve_ref_unsafe(refs, fullref.buf,
+ 					    RESOLVE_REF_READING,
+ 					    this_result, &flag,
+ 					    &ignore_errno);
+@@ -695,7 +695,7 @@ int repo_dwim_log(struct repository *r, const char *str, int len,
+ 
+ 		strbuf_reset(&path);
+ 		strbuf_addf(&path, *p, len, str);
+-		ref = refs_werrres_ref_unsafe(refs, path.buf,
++		ref = refs_resolve_ref_unsafe(refs, path.buf,
+ 					      RESOLVE_REF_READING,
+ 					      oid ? &hash : NULL, NULL,
+ 					      &ignore_errno);
+@@ -1382,7 +1382,7 @@ int refs_head_ref(struct ref_store *refs, each_ref_fn fn, void *cb_data)
+ 	int flag;
+ 	int ignore_errno;
+ 
+-	if (refs_werrres_ref_unsafe(refs, "HEAD", RESOLVE_REF_READING,
++	if (refs_resolve_ref_unsafe(refs, "HEAD", RESOLVE_REF_READING,
+ 				    &oid, &flag, &ignore_errno))
+ 		return fn("HEAD", &oid, flag, cb_data);
+ 
+@@ -1778,7 +1778,7 @@ const char *resolve_ref_unsafe(const char *refname, int resolve_flags,
+ {
+ 	int ignore_errno;
+ 
+-	return refs_werrres_ref_unsafe(get_main_ref_store(the_repository), refname,
++	return refs_resolve_ref_unsafe(get_main_ref_store(the_repository), refname,
+ 				       resolve_flags, oid, flags, &ignore_errno);
+ }
+ 
+@@ -1794,7 +1794,7 @@ int resolve_gitlink_ref(const char *submodule, const char *refname,
+ 	if (!refs)
+ 		return -1;
+ 
+-	if (!refs_werrres_ref_unsafe(refs, refname, 0, oid, &flags,
++	if (!refs_resolve_ref_unsafe(refs, refname, 0, oid, &flags,
+ 				     &ignore_errno) || is_null_oid(oid))
+ 		return -1;
+ 	return 0;
+diff --git a/refs.h b/refs.h
+index d908a161c06..45c34e99e3a 100644
+--- a/refs.h
++++ b/refs.h
+@@ -68,8 +68,6 @@ struct worktree;
+ #define RESOLVE_REF_NO_RECURSE 0x02
+ #define RESOLVE_REF_ALLOW_BAD_NAME 0x04
+ 
+-#define refs_werrres_ref_unsafe(refs, refname, resolve_flags, oid, flags, failure_errno) \
+-	refs_resolve_ref_unsafe(refs, refname, resolve_flags, oid, flags, failure_errno)
+ const char *refs_resolve_ref_unsafe(struct ref_store *refs,
+ 				    const char *refname,
+ 				    int resolve_flags,
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index b3d4544dcf0..e9d754d5ad3 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -281,7 +281,7 @@ static void loose_fill_ref_dir(struct ref_store *ref_store,
+ 							  refname.len));
+ 		} else {
+ 			int ignore_errno;
+-			if (!refs_werrres_ref_unsafe(&refs->base,
++			if (!refs_resolve_ref_unsafe(&refs->base,
+ 						     refname.buf,
+ 						     RESOLVE_REF_READING,
+ 						     &oid, &flag, &ignore_errno)) {
+@@ -1034,7 +1034,7 @@ static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+ 		goto error_return;
+ 	}
+ 
+-	if (!refs_werrres_ref_unsafe(&refs->base, lock->ref_name, 0,
++	if (!refs_resolve_ref_unsafe(&refs->base, lock->ref_name, 0,
+ 				     &lock->old_oid, NULL, &ignore_errno))
+ 		oidclr(&lock->old_oid);
+ 	goto out;
+@@ -1410,7 +1410,7 @@ static int files_copy_or_rename_ref(struct ref_store *ref_store,
+ 		goto out;
+ 	}
+ 
+-	if (!refs_werrres_ref_unsafe(&refs->base, oldrefname,
++	if (!refs_resolve_ref_unsafe(&refs->base, oldrefname,
+ 				     RESOLVE_REF_READING | RESOLVE_REF_NO_RECURSE,
+ 				     &orig_oid, &flag, &ignore_errno)) {
+ 		ret = error("refname %s not found", oldrefname);
+@@ -1456,7 +1456,7 @@ static int files_copy_or_rename_ref(struct ref_store *ref_store,
+ 	 * the safety anyway; we want to delete the reference whatever
+ 	 * its current value.
+ 	 */
+-	if (!copy && refs_werrres_ref_unsafe(&refs->base, newrefname,
++	if (!copy && refs_resolve_ref_unsafe(&refs->base, newrefname,
+ 					     RESOLVE_REF_READING | RESOLVE_REF_NO_RECURSE,
+ 					     NULL, NULL, &ignore_errno) &&
+ 	    refs_delete_ref(&refs->base, NULL, newrefname,
+@@ -1825,7 +1825,7 @@ static int commit_ref_update(struct files_ref_store *refs,
+ 		const char *head_ref;
+ 		int ignore_errno;
+ 
+-		head_ref = refs_werrres_ref_unsafe(&refs->base, "HEAD",
++		head_ref = refs_resolve_ref_unsafe(&refs->base, "HEAD",
+ 						   RESOLVE_REF_READING,
+ 						   NULL, &head_flag,
+ 						   &ignore_errno);
+@@ -1875,7 +1875,7 @@ static void update_symref_reflog(struct files_ref_store *refs,
+ 	int ignore_errno;
+ 
+ 	if (logmsg &&
+-	    refs_werrres_ref_unsafe(&refs->base, target,
++	    refs_resolve_ref_unsafe(&refs->base, target,
+ 				    RESOLVE_REF_READING, &new_oid, NULL,
+ 				    &ignore_errno) &&
+ 	    files_log_ref_write(refs, refname, &lock->old_oid,
+@@ -2163,7 +2163,7 @@ static int files_reflog_iterator_advance(struct ref_iterator *ref_iterator)
+ 		if (ends_with(diter->basename, ".lock"))
+ 			continue;
+ 
+-		if (!refs_werrres_ref_unsafe(iter->ref_store,
++		if (!refs_resolve_ref_unsafe(iter->ref_store,
+ 					     diter->relative_path, 0,
+ 					     &iter->oid, &flags,
+ 					     &ignore_errno)) {
+@@ -2511,7 +2511,7 @@ static int lock_ref_for_update(struct files_ref_store *refs,
+ 			 * to record and possibly check old_oid:
+ 			 */
+ 			int ignore_errno;
+-			if (!refs_werrres_ref_unsafe(&refs->base,
++			if (!refs_resolve_ref_unsafe(&refs->base,
+ 						     referent.buf, 0,
+ 						     &lock->old_oid, NULL,
+ 						     &ignore_errno)) {
+diff --git a/sequencer.c b/sequencer.c
+index 7052f791410..d848c5dc985 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -1333,7 +1333,7 @@ void print_commit_summary(struct repository *r,
+ 	diff_setup_done(&rev.diffopt);
+ 
+ 	refs = get_main_ref_store(the_repository);
+-	head = refs_werrres_ref_unsafe(refs, "HEAD", 0, NULL, NULL,
++	head = refs_resolve_ref_unsafe(refs, "HEAD", 0, NULL, NULL,
+ 				       &resolve_errno);
+ 	if (!head) {
+ 		errno = resolve_errno;
+diff --git a/t/helper/test-ref-store.c b/t/helper/test-ref-store.c
+index 2f91fb9b227..3986665037a 100644
+--- a/t/helper/test-ref-store.c
++++ b/t/helper/test-ref-store.c
+@@ -125,7 +125,7 @@ static int cmd_resolve_ref(struct ref_store *refs, const char **argv)
+ 	const char *ref;
+ 	int ignore_errno;
+ 
+-	ref = refs_werrres_ref_unsafe(refs, refname, resolve_flags,
++	ref = refs_resolve_ref_unsafe(refs, refname, resolve_flags,
+ 				      &oid, &flags, &ignore_errno);
+ 	printf("%s %s 0x%x\n", oid_to_hex(&oid), ref ? ref : "(null)", flags);
+ 	return ref ? 0 : 1;
+diff --git a/worktree.c b/worktree.c
+index 7d7cf058154..2c155b10150 100644
+--- a/worktree.c
++++ b/worktree.c
+@@ -30,7 +30,7 @@ static void add_head_info(struct worktree *wt)
+ 	const char *target;
+ 	int ignore_errno;
+ 
+-	target = refs_werrres_ref_unsafe(get_worktree_ref_store(wt),
++	target = refs_resolve_ref_unsafe(get_worktree_ref_store(wt),
+ 					 "HEAD",
+ 					 0,
+ 					 &wt->head_oid, &flags,
+@@ -437,7 +437,7 @@ const struct worktree *find_shared_symref(const char *symref,
+ 		}
+ 
+ 		refs = get_worktree_ref_store(wt);
+-		symref_target = refs_werrres_ref_unsafe(refs, symref, 0,
++		symref_target = refs_resolve_ref_unsafe(refs, symref, 0,
+ 							NULL, &flags,
+ 							&ignore_errno);
+ 		if ((flags & REF_ISSYMREF) &&
+@@ -574,7 +574,7 @@ int other_head_refs(each_ref_fn fn, void *cb_data)
+ 
+ 		strbuf_reset(&refname);
+ 		strbuf_worktree_ref(wt, &refname, "HEAD");
+-		if (refs_werrres_ref_unsafe(get_main_ref_store(the_repository),
++		if (refs_resolve_ref_unsafe(get_main_ref_store(the_repository),
+ 					    refname.buf,
+ 					    RESOLVE_REF_READING,
+ 					    &oid, &flag, &ignore_errno))
+-- 
+2.33.1.1346.g48288c3c089
+

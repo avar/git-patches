@@ -1,0 +1,68 @@
+From fd56af8c4bfad8cc2883485b1008622d0ab87b6a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-17.20-fd56af8c4bf-20211013T235823Z-avarab@gmail.com>
+In-Reply-To: <cover-00.20-00000000000-20211013T235823Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20211013T235823Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 11 Jul 2021 17:17:46 +0200
+Subject: [PATCH 17/20] refs API: make expand_ref() & repo_dwim_log() not set
+ errno
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The use of these two is rather trivial, and it's easy to see none of
+their callers care about errno. So let's move them from
+refs_resolve_ref_unsafe() to refs_resolve_ref_unsafe_with_errno(),
+these were the last two callers, so we can get rid of that wrapper
+function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index 4b0c1a30a18..16f8220b108 100644
+--- a/refs.c
++++ b/refs.c
+@@ -653,13 +653,16 @@ int expand_ref(struct repository *repo, const char *str, int len,
+ 		struct object_id oid_from_ref;
+ 		struct object_id *this_result;
+ 		int flag;
++		struct ref_store *refs = get_main_ref_store(repo);
++		int ignore_errno;
+ 
+ 		this_result = refs_found ? &oid_from_ref : oid;
+ 		strbuf_reset(&fullref);
+ 		strbuf_addf(&fullref, *p, len, str);
+-		r = refs_resolve_ref_unsafe(get_main_ref_store(repo),
+-					    fullref.buf, RESOLVE_REF_READING,
+-					    this_result, &flag);
++		r = refs_werrres_ref_unsafe(refs, fullref.buf,
++					    RESOLVE_REF_READING,
++					    this_result, &flag,
++					    &ignore_errno);
+ 		if (r) {
+ 			if (!refs_found++)
+ 				*ref = xstrdup(r);
+@@ -688,12 +691,14 @@ int repo_dwim_log(struct repository *r, const char *str, int len,
+ 	for (p = ref_rev_parse_rules; *p; p++) {
+ 		struct object_id hash;
+ 		const char *ref, *it;
++		int ignore_errno;
+ 
+ 		strbuf_reset(&path);
+ 		strbuf_addf(&path, *p, len, str);
+-		ref = refs_resolve_ref_unsafe(refs, path.buf,
++		ref = refs_werrres_ref_unsafe(refs, path.buf,
+ 					      RESOLVE_REF_READING,
+-					      oid ? &hash : NULL, NULL);
++					      oid ? &hash : NULL, NULL,
++					      &ignore_errno);
+ 		if (!ref)
+ 			continue;
+ 		if (refs_reflog_exists(refs, path.buf))
+-- 
+2.33.1.1346.g48288c3c089
+

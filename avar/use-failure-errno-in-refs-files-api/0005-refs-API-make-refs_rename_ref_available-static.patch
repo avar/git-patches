@@ -1,0 +1,125 @@
+From cdf17fa34a40349412458515db4998cdcf722f88 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-05.20-cdf17fa34a4-20211013T235823Z-avarab@gmail.com>
+In-Reply-To: <cover-00.20-00000000000-20211013T235823Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20211013T235823Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 11 Oct 2021 13:09:02 +0200
+Subject: [PATCH 05/20] refs API: make refs_rename_ref_available() static
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the refs_rename_ref_available() function into
+"refs/files-backend.c". It is file-backend specific.
+
+This function was added in 5fe7d825da8 (refs.c: pass a list of names
+to skip to is_refname_available, 2014-05-01) as rename_ref_available()
+and was only ever used in this one file-backend specific codepath. So
+let's move it there.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c               | 19 -------------------
+ refs/files-backend.c | 29 +++++++++++++++++++++++++++++
+ refs/refs-internal.h | 14 --------------
+ 3 files changed, 29 insertions(+), 33 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index b1640b5d582..4398a4c0257 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1371,25 +1371,6 @@ const char *find_descendant_ref(const char *dirname,
+ 	return NULL;
+ }
+ 
+-int refs_rename_ref_available(struct ref_store *refs,
+-			      const char *old_refname,
+-			      const char *new_refname)
+-{
+-	struct string_list skip = STRING_LIST_INIT_NODUP;
+-	struct strbuf err = STRBUF_INIT;
+-	int ok;
+-
+-	string_list_insert(&skip, old_refname);
+-	ok = !refs_verify_refname_available(refs, new_refname,
+-					    NULL, &skip, &err);
+-	if (!ok)
+-		error("%s", err.buf);
+-
+-	string_list_clear(&skip, 0);
+-	strbuf_release(&err);
+-	return ok;
+-}
+-
+ int refs_head_ref(struct ref_store *refs, each_ref_fn fn, void *cb_data)
+ {
+ 	struct object_id oid;
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index c73ffd1ca33..0af6ee44552 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -1363,6 +1363,35 @@ static int commit_ref_update(struct files_ref_store *refs,
+ 			     const struct object_id *oid, const char *logmsg,
+ 			     struct strbuf *err);
+ 
++/*
++ * Check whether an attempt to rename old_refname to new_refname would
++ * cause a D/F conflict with any existing reference (other than
++ * possibly old_refname). If there would be a conflict, emit an error
++ * message and return false; otherwise, return true.
++ *
++ * Note that this function is not safe against all races with other
++ * processes (though rename_ref() catches some races that might get by
++ * this check).
++ */
++static int refs_rename_ref_available(struct ref_store *refs,
++			      const char *old_refname,
++			      const char *new_refname)
++{
++	struct string_list skip = STRING_LIST_INIT_NODUP;
++	struct strbuf err = STRBUF_INIT;
++	int ok;
++
++	string_list_insert(&skip, old_refname);
++	ok = !refs_verify_refname_available(refs, new_refname,
++					    NULL, &skip, &err);
++	if (!ok)
++		error("%s", err.buf);
++
++	string_list_clear(&skip, 0);
++	strbuf_release(&err);
++	return ok;
++}
++
+ static int files_copy_or_rename_ref(struct ref_store *ref_store,
+ 			    const char *oldrefname, const char *newrefname,
+ 			    const char *logmsg, int copy)
+diff --git a/refs/refs-internal.h b/refs/refs-internal.h
+index 121b8fdad08..2ecd3dea9fb 100644
+--- a/refs/refs-internal.h
++++ b/refs/refs-internal.h
+@@ -228,20 +228,6 @@ const char *find_descendant_ref(const char *dirname,
+ 				const struct string_list *extras,
+ 				const struct string_list *skip);
+ 
+-/*
+- * Check whether an attempt to rename old_refname to new_refname would
+- * cause a D/F conflict with any existing reference (other than
+- * possibly old_refname). If there would be a conflict, emit an error
+- * message and return false; otherwise, return true.
+- *
+- * Note that this function is not safe against all races with other
+- * processes (though rename_ref() catches some races that might get by
+- * this check).
+- */
+-int refs_rename_ref_available(struct ref_store *refs,
+-			      const char *old_refname,
+-			      const char *new_refname);
+-
+ /* We allow "recursive" symbolic refs. Only within reason, though */
+ #define SYMREF_MAXDEPTH 5
+ 
+-- 
+2.33.1.1346.g48288c3c089
+
