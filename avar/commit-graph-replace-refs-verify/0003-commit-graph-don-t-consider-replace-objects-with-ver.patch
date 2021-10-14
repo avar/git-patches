@@ -1,0 +1,71 @@
+From 56bb70518cbc919b81a404456c91697cfc76b461 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.3-56bb70518cb-20211014T233343Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20211014T233343Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20211014T233343Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 15 Oct 2021 01:02:02 +0200
+Subject: [PATCH 3/3] commit-graph: don't consider "replace" objects with
+ "verify"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the code added in d6538246d3d (commit-graph: not compatible
+with replace objects, 2018-08-20) which ignored replace objects in the
+"write" command to ignore it in the "verify" command too.
+
+We can just move this assignment to the cmd_commit_graph(), it
+dispatches to "write" and "verify", and we're unlikely to ever get a
+sub-command that would like to consider replace refs.
+
+This will make tests added in eddc1f556cd (mktag tests: test
+update-ref and reachable fsck, 2021-06-17) pass in combination with
+the "GIT_TEST_COMMIT_GRAPH" mode added in 859fdc0c3cf (commit-graph:
+define GIT_TEST_COMMIT_GRAPH, 2018-08-29), except that mode is
+currently broken (but is being fixed concurrently). See the discussion
+starting at [1].
+
+1. https://lore.kernel.org/git/87wnmihswp.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/commit-graph.c  | 2 +-
+ t/t5318-commit-graph.sh | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/commit-graph.c b/builtin/commit-graph.c
+index 3c3de3a156f..fb8e166a26f 100644
+--- a/builtin/commit-graph.c
++++ b/builtin/commit-graph.c
+@@ -263,7 +263,6 @@ static int graph_write(int argc, const char **argv)
+ 	    git_env_bool(GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS, 0))
+ 		flags |= COMMIT_GRAPH_WRITE_BLOOM_FILTERS;
+ 
+-	read_replace_refs = 0;
+ 	odb = find_odb(the_repository, opts.obj_dir);
+ 
+ 	if (opts.reachable) {
+@@ -318,6 +317,7 @@ int cmd_commit_graph(int argc, const char **argv, const char *prefix)
+ 	if (!argc)
+ 		goto usage;
+ 
++	read_replace_refs = 0;
+ 	save_commit_buffer = 0;
+ 
+ 	if (!strcmp(argv[0], "verify"))
+diff --git a/t/t5318-commit-graph.sh b/t/t5318-commit-graph.sh
+index 88fbe004a38..84d122a7ae7 100755
+--- a/t/t5318-commit-graph.sh
++++ b/t/t5318-commit-graph.sh
+@@ -385,6 +385,7 @@ test_expect_success 'replace-objects invalidates commit-graph' '
+ 		git commit-graph write --reachable &&
+ 		test_path_is_file .git/objects/info/commit-graph &&
+ 		git replace HEAD~1 HEAD~2 &&
++		graph_git_two_modes "commit-graph verify" &&
+ 		git -c core.commitGraph=false log >expect &&
+ 		git -c core.commitGraph=true log >actual &&
+ 		test_cmp expect actual &&
+-- 
+2.33.1.1338.g20da966911a
+
