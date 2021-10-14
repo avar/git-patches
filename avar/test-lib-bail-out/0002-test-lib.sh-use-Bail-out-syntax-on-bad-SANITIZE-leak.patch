@@ -1,7 +1,7 @@
-From 57473aecde3f80fd578f0ea3f6cefff43b5b1b16 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-2.2-57473aecde3-20211014T004137Z-avarab@gmail.com>
-In-Reply-To: <cover-0.2-00000000000-20211014T004137Z-avarab@gmail.com>
-References: <cover-0.2-00000000000-20211014T004137Z-avarab@gmail.com>
+From 6fd2a64bcfa7000650d7c3dd361b0886eb6ed5de Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-6fd2a64bcfa-20211014T004542Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20211014T004542Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20211014T004542Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Tue, 12 Oct 2021 12:30:48 +0200
@@ -13,15 +13,17 @@ Content-Transfer-Encoding: 8bit
 
 Improve the "GIT_TEST_PASSING_SANITIZE_LEAK=true" test mode added in
 956d2e4639b (tests: add a test mode for SANITIZE=leak, run it in CI,
-2021-09-23) to use a TAP "Bail out!" message when exiting.
+2021-09-23) to use a TAP "Bail out!" message when exiting. This will
+cause the test run to exit immediately under a TAP consumer like
+"prove(1)".
 
 See 614fe015212 (test-lib: bail out when "-v" used under "prove",
 2016-10-22) for the initial introduction of "Bail out!" to the
 --verbose being amended here.
 
 Before this compiling with "SANITIZE=" and running the tests with
-"prove" would cause all the tests to be run to the end (output trimmed
-for fewer columns):
+"prove(1)" would cause all the tests to be run to the end (output
+trimmed for fewer columns):
 
     $ GIT_TEST_PASSING_SANITIZE_LEAK=true make
     rm -f -r 'test-results'
@@ -51,15 +53,15 @@ the case of e.g.:
     Bailout called.  Further testing stopped:  verbose mode forbidden under TAP harness; try --verbose-log
     FAILED--Further testing stopped: verbose mode forbidden under TAP harness; try --verbose-log
 
-I experimented with making BUG() and error() always be a "BAIL_OUT". I
-think that's worth pursuing, but e.g. for the error about missing
-"&&-chains" we'd need to support emitting multi-line messages.
+We don't need to have a "Bail out! " prefix when we're not running
+under a TAP consumer (i.e. if test -n "$HARNESS_ACTIVE"), but let's
+not make the output conditional on that. Showing it under e.g.:
 
-TAP consumers only understand what follows the "Bail out!" message up
-to the first "\n", so we can't quote the entire "test_expect_success",
-as the "&&-chain" error does. I think emitting them with "say_error()"
-beforehand (piped with ">&7" in the case of "BUG()") should work, but
-let's leave those #leftoverbits for later.
+    $ GIT_TEST_PASSING_SANITIZE_LEAK=true ./t0095-bloom.sh
+    Bail out! GIT_TEST_PASSING_SANITIZE_LEAK=true has no effect except when compiled with SANITIZE=leak
+
+Doesn't harm anything, and I don't think the (small) complexity of
+only adding this if we're under "$HARNESS_ACTIVE" is worth it.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
