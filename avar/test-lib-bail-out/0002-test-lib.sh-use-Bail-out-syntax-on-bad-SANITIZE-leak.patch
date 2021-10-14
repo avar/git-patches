@@ -1,0 +1,114 @@
+From 57473aecde3f80fd578f0ea3f6cefff43b5b1b16 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-57473aecde3-20211014T004137Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20211014T004137Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20211014T004137Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 12 Oct 2021 12:30:48 +0200
+Subject: [PATCH 2/2] test-lib.sh: use "Bail out!" syntax on bad SANITIZE=leak
+ use
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Improve the "GIT_TEST_PASSING_SANITIZE_LEAK=true" test mode added in
+956d2e4639b (tests: add a test mode for SANITIZE=leak, run it in CI,
+2021-09-23) to use a TAP "Bail out!" message when exiting.
+
+See 614fe015212 (test-lib: bail out when "-v" used under "prove",
+2016-10-22) for the initial introduction of "Bail out!" to the
+--verbose being amended here.
+
+Before this compiling with "SANITIZE=" and running the tests with
+"prove" would cause all the tests to be run to the end (output trimmed
+for fewer columns):
+
+    $ GIT_TEST_PASSING_SANITIZE_LEAK=true make
+    rm -f -r 'test-results'
+    *** prove ***
+    t0000-basic.sh ......... Dubious, test returned 1 (wstat 256, 0x100)
+    No subtests run
+    t0001-init.sh .......... Dubious, test returned 1 (wstat 256, 0x100)
+    No subtests run
+    [...output where we list every single t[0-9]*.sh file as failing snipped]
+
+Whereas now we'll fail early, like this ("->" line wrapping added):
+
+    $ GIT_TEST_PASSING_SANITIZE_LEAK=true make
+    [...]
+
+    t0000-basic.sh ..................................... Bailout called.  Further testing stopped:
+    -> GIT_TEST_PASSING_SANITIZE_LEAK=true has no effect except when compiled with SANITIZE=leak
+    FAILED--Further testing stopped: GIT_TEST_PASSING_SANITIZE_LEAK=true has no effect except
+    -> when compiled with SANITIZE=leak
+    make: *** [Makefile:53: prove] Error 1
+
+This change also adds a red color to the "Bailout called" line, as
+we're now using "say_color error". That improves existing output in
+the case of e.g.:
+
+    $ prove -j8 t[0-9]*.sh :: -v
+    Bailout called.  Further testing stopped:  verbose mode forbidden under TAP harness; try --verbose-log
+    FAILED--Further testing stopped: verbose mode forbidden under TAP harness; try --verbose-log
+
+I experimented with making BUG() and error() always be a "BAIL_OUT". I
+think that's worth pursuing, but e.g. for the error about missing
+"&&-chains" we'd need to support emitting multi-line messages.
+
+TAP consumers only understand what follows the "Bail out!" message up
+to the first "\n", so we can't quote the entire "test_expect_success",
+as the "&&-chain" error does. I think emitting them with "say_error()"
+beforehand (piped with ">&7" in the case of "BUG()") should work, but
+let's leave those #leftoverbits for later.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index c610f09ddb1..617cda36f3a 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -604,6 +604,18 @@ BUG () {
+ 	error >&7 "bug in the test script: $*"
+ }
+ 
++BAIL_OUT () {
++	test $# -ne 1 && BUG "1 param"
++
++	# Do not change "Bail out! " string. It's part of TAP syntax:
++	# https://testanything.org/tap-specification.html
++	local bail_out="Bail out! "
++	local message="$1"
++
++	say_color error $bail_out "$message"
++	_error_exit
++}
++
+ say () {
+ 	say_color info "$*"
+ }
+@@ -612,9 +624,7 @@ if test -n "$HARNESS_ACTIVE"
+ then
+ 	if test "$verbose" = t || test -n "$verbose_only"
+ 	then
+-		printf 'Bail out! %s\n' \
+-		 'verbose mode forbidden under TAP harness; try --verbose-log'
+-		exit 1
++		BAIL_OUT 'verbose mode forbidden under TAP harness; try --verbose-log'
+ 	fi
+ fi
+ 
+@@ -1402,7 +1412,7 @@ then
+ 	fi
+ elif test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
+ then
+-	error "GIT_TEST_PASSING_SANITIZE_LEAK=true has no effect except when compiled with SANITIZE=leak"
++	BAIL_OUT "GIT_TEST_PASSING_SANITIZE_LEAK=true has no effect except when compiled with SANITIZE=leak"
+ fi
+ 
+ # Last-minute variable setup
+-- 
+2.33.1.1346.g48288c3c089
+
