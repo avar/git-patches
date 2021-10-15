@@ -1,7 +1,7 @@
 From 289d5a2d84907afbf3383d465a9066df0e2cd1f8 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-00.13-00000000000-20211015T093841Z-avarab@gmail.com>
+Message-Id: <cover-v2-00.13-00000000000-20211015T093855Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 15 Oct 2021 11:38:41 +0200
+Date: Fri, 15 Oct 2021 11:38:55 +0200
 Subject: [PATCH v2 00/13] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -59,19 +59,289 @@ Emily Shaffer (12):
  create mode 100755 t/t1800-hook.sh
 
 Range-diff against v1:
- -:  ----------- >  1:  ba64faf0580 hook: add 'run' subcommand
- -:  ----------- >  2:  e3dc0aed81b gc: use hook library for pre-auto-gc hook
- -:  ----------- >  3:  6227a1e644d rebase: convert pre-rebase to use hook.h
- -:  ----------- >  4:  0e34eb54054 am: convert applypatch to use hook.h
- -:  ----------- >  5:  a4df96c1719 hooks: convert 'post-checkout' hook to hook library
- -:  ----------- >  6:  327f916f8c3 merge: convert post-merge to use hook.h
- -:  ----------- >  7:  328767015b1 git hook run: add an --ignore-missing flag
- -:  ----------- >  8:  6c4ebd68d56 send-email: use 'git hook run' for 'sendemail-validate'
- -:  ----------- >  9:  b1f52733e3c git-p4: use 'git hook' to run hooks
- -:  ----------- > 10:  dc31d98acdf commit: convert {pre-commit,prepare-commit-msg} hook to hook.h
- -:  ----------- > 11:  58b7689e4af read-cache: convert post-index-change to use hook.h
- -:  ----------- > 12:  ae1e2a82147 receive-pack: convert push-to-checkout hook to hook.h
- -:  ----------- > 13:  289d5a2d849 run-command: remove old run_hook_{le,ve}() hook API
+ 1:  e2f0900a124 <  -:  ----------- Makefile: mark "check" target as .PHONY
+ 2:  383c4c14140 <  -:  ----------- Makefile: stop hardcoding {command,config}-list.h
+ 3:  20b2f9b47d6 <  -:  ----------- Makefile: don't perform "mv $@+ $@" dance for $(GENERATED_H)
+ 4:  19dfdc7a00c <  -:  ----------- Makefile: remove an out-of-date comment
+ 5:  c811231f34c <  -:  ----------- hook.[ch]: move find_hook() from run-command.c to hook.c
+ 6:  93dd44e23fa <  -:  ----------- hook.c: add a hook_exists() wrapper and use it in bugreport.c
+ 7:  8b708832af0 <  -:  ----------- hook.c users: use "hook_exists()" instead of "find_hook()"
+ 8:  56309397371 <  -:  ----------- hook-list.h: add a generated list of hooks, like config-list.h
+ 9:  a39c0748d3f !  1:  ba64faf0580 hook: add 'run' subcommand
+    @@ Commit message
+         pattern here mirrors that of
+         builtin/{commit-graph,multi-pack-index}.c.
+     
+    +    Some of the implementation here, such as a function being named
+    +    run_hooks() when it's tasked with running one hook, to using the
+    +    run_processes_parallel_tr2() API to run with jobs=1 is somewhere
+    +    between a bit odd and and an overkill for the current features of this
+    +    "hook run" command and the hook.[ch] API.
+    +
+    +    This code will eventually be able to run multiple hooks declared in
+    +    config in parallel, by starting out with these names and APIs we
+    +    reduce the later churn of renaming functions, switching from the
+    +    run_command() to run_processes_parallel_tr2() API etc.
+    +
+         Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ Documentation/git-hook.txt (new)
+     +
+     +NAME
+     +----
+    -+git-hook - run git hooks
+    ++git-hook - Run git hooks
+     +
+     +SYNOPSIS
+     +--------
+    @@ Documentation/git-hook.txt (new)
+     +DESCRIPTION
+     +-----------
+     +
+    -+This command is an interface to git hooks (see linkgit:githooks[5]).
+    -+Currently it only provides a convenience wrapper for running hooks for
+    -+use by git itself. In the future it might gain other functionality.
+    ++A command interface to running git hooks (see linkgit:githooks[5]),
+    ++for use by other scripted git commands.
+     +
+     +SUBCOMMANDS
+     +-----------
+     +
+     +run::
+     +	Run the `<hook-name>` hook. See linkgit:githooks[5] for
+    -+	the hook names we support.
+    ++	supported hook names.
+     ++
+    -+Any positional arguments to the hook should be passed after an
+    -+optional `--` (or `--end-of-options`, see linkgit:gitcli[7]). The
+    -+arguments (if any) differ by hook name, see linkgit:githooks[5] for
+    -+what those are.
+    ++
+    ++Any positional arguments to the hook should be passed after a
+    ++mandatory `--` (or `--end-of-options`, see linkgit:gitcli[7]). See
+    ++linkgit:githooks[5] for arguments hooks might expect (if any).
+     +
+     +SEE ALSO
+     +--------
+    @@ builtin/hook.c (new)
+     +	/* Need to take into account core.hooksPath */
+     +	git_config(git_default_config, NULL);
+     +
+    -+	/*
+    -+	 * We are not using a plain run_hooks() because we'd like to
+    -+	 * detect missing hooks. Let's find it ourselves and call
+    -+	 * run_hooks() instead.
+    -+	 */
+     +	hook_name = argv[0];
+     +	hook_path = find_hook(hook_name);
+     +	if (!hook_path) {
+    @@ command-list.txt: git-grep                                mainporcelain
+      git-gui                                 mainporcelain
+      git-hash-object                         plumbingmanipulators
+      git-help                                ancillaryinterrogators          complete
+    -+git-hook                                mainporcelain
+    ++git-hook                                purehelpers
+      git-http-backend                        synchingrepositories
+      git-http-fetch                          synchelpers
+      git-http-push                           synchelpers
+    @@ hook.c: int hook_exists(const char *name)
+     +			  void **pp_task_cb)
+     +{
+     +	struct hook_cb_data *hook_cb = pp_cb;
+    -+	struct hook *run_me = hook_cb->run_me;
+    ++	const char *hook_path = hook_cb->hook_path;
+     +
+    -+	if (!run_me)
+    ++	if (!hook_path)
+     +		return 0;
+     +
+     +	cp->no_stdin = 1;
+    @@ hook.c: int hook_exists(const char *name)
+     +	cp->stdout_to_stderr = 1;
+     +	cp->trace2_hook_name = hook_cb->hook_name;
+     +
+    -+	/* add command */
+    -+	strvec_push(&cp->args, run_me->hook_path);
+    -+
+    -+	/*
+    -+	 * add passed-in argv, without expanding - let the user get back
+    -+	 * exactly what they put in
+    -+	 */
+    ++	strvec_push(&cp->args, hook_path);
+     +	strvec_pushv(&cp->args, hook_cb->options->args.v);
+     +
+     +	/* Provide context for errors if necessary */
+    -+	*pp_task_cb = run_me;
+    ++	*pp_task_cb = (char *)hook_path;
+     +
+     +	/*
+     +	 * This pick_next_hook() will be called again, we're only
+     +	 * running one hook, so indicate that no more work will be
+     +	 * done.
+     +	 */
+    -+	hook_cb->run_me = NULL;
+    ++	hook_cb->hook_path = NULL;
+     +
+     +	return 1;
+     +}
+    @@ hook.c: int hook_exists(const char *name)
+     +				void *pp_task_cp)
+     +{
+     +	struct hook_cb_data *hook_cb = pp_cb;
+    -+	struct hook *attempted = pp_task_cp;
+    ++	const char *hook_path = pp_task_cp;
+     +
+     +	hook_cb->rc |= 1;
+     +
+     +	strbuf_addf(out, _("Couldn't start hook '%s'\n"),
+    -+		    attempted->hook_path);
+    ++		    hook_path);
+     +
+     +	return 1;
+     +}
+    @@ hook.c: int hook_exists(const char *name)
+     +int run_hooks(const char *hook_name, const char *hook_path,
+     +	      struct run_hooks_opt *options)
+     +{
+    -+	struct hook my_hook = {
+    -+		.hook_path = hook_path,
+    -+	};
+     +	struct hook_cb_data cb_data = {
+     +		.rc = 0,
+     +		.hook_name = hook_name,
+    ++		.hook_path = hook_path,
+     +		.options = options,
+     +	};
+     +	int jobs = 1;
+    @@ hook.c: int hook_exists(const char *name)
+     +	if (!options)
+     +		BUG("a struct run_hooks_opt must be provided to run_hooks");
+     +
+    -+	cb_data.run_me = &my_hook;
+    -+
+     +	run_processes_parallel_tr2(jobs,
+     +				   pick_next_hook,
+     +				   notify_start_failure,
+    @@ hook.h
+      #define HOOK_H
+     +#include "strvec.h"
+     +
+    -+struct hook {
+    -+	/* The path to the hook */
+    -+	const char *hook_path;
+    -+};
+    -+
+     +struct run_hooks_opt
+     +{
+     +	/* Environment vars to be set for each hook */
+    @@ hook.h
+     +	/* rc reflects the cumulative failure state */
+     +	int rc;
+     +	const char *hook_name;
+    -+	struct hook *run_me;
+    ++	const char *hook_path;
+     +	struct run_hooks_opt *options;
+     +};
+      
+    @@ hook.h: const char *find_hook(const char *name);
+      int hook_exists(const char *hookname);
+      
+     +/**
+    -+ * Clear data from an initialized "struct run_hooks-opt".
+    ++ * Clear data from an initialized "struct run_hooks_opt".
+     + */
+     +void run_hooks_opt_clear(struct run_hooks_opt *o);
+     +
+10:  dbac4204f7b =  2:  e3dc0aed81b gc: use hook library for pre-auto-gc hook
+11:  ff306debcb8 =  3:  6227a1e644d rebase: convert pre-rebase to use hook.h
+12:  b1d529ca485 =  4:  0e34eb54054 am: convert applypatch to use hook.h
+13:  15d71fc210b !  5:  a4df96c1719 hooks: convert 'post-checkout' hook to hook library
+    @@ hook.c: static int pick_next_hook(struct child_process *cp,
+      	cp->trace2_hook_name = hook_cb->hook_name;
+     +	cp->dir = hook_cb->options->dir;
+      
+    - 	/* add command */
+    - 	strvec_push(&cp->args, run_me->hook_path);
+    + 	strvec_push(&cp->args, hook_path);
+    + 	strvec_pushv(&cp->args, hook_cb->options->args.v);
+     @@ hook.c: static int notify_hook_finished(int result,
+      int run_hooks(const char *hook_name, const char *hook_path,
+      	      struct run_hooks_opt *options)
+      {
+     +	struct strbuf abs_path = STRBUF_INIT;
+    - 	struct hook my_hook = {
+    - 		.hook_path = hook_path,
+    - 	};
+    + 	struct hook_cb_data cb_data = {
+    + 		.rc = 0,
+    + 		.hook_name = hook_name,
+     @@ hook.c: int run_hooks(const char *hook_name, const char *hook_path,
+      	if (!options)
+      		BUG("a struct run_hooks_opt must be provided to run_hooks");
+      
+     +	if (options->absolute_path) {
+     +		strbuf_add_absolute_path(&abs_path, hook_path);
+    -+		my_hook.hook_path = abs_path.buf;
+    ++		hook_path = abs_path.buf;
+     +	}
+    - 	cb_data.run_me = &my_hook;
+    - 
+    ++
+      	run_processes_parallel_tr2(jobs,
+    + 				   pick_next_hook,
+    + 				   notify_start_failure,
+     @@ hook.c: int run_hooks(const char *hook_name, const char *hook_path,
+      				   "hook",
+      				   hook_name);
+14:  08f27f0d6be =  6:  327f916f8c3 merge: convert post-merge to use hook.h
+15:  107c14d740f !  7:  328767015b1 git hook run: add an --ignore-missing flag
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Documentation/git-hook.txt ##
+    -@@ Documentation/git-hook.txt: git-hook - run git hooks
+    +@@ Documentation/git-hook.txt: git-hook - Run git hooks
+      SYNOPSIS
+      --------
+      [verse]
+    @@ Documentation/git-hook.txt: git-hook - run git hooks
+      
+      DESCRIPTION
+      -----------
+    -@@ Documentation/git-hook.txt: optional `--` (or `--end-of-options`, see linkgit:gitcli[7]). The
+    - arguments (if any) differ by hook name, see linkgit:githooks[5] for
+    - what those are.
+    +@@ Documentation/git-hook.txt: Any positional arguments to the hook should be passed after a
+    + mandatory `--` (or `--end-of-options`, see linkgit:gitcli[7]). See
+    + linkgit:githooks[5] for arguments hooks might expect (if any).
+      
+     +OPTIONS
+     +-------
+    @@ builtin/hook.c: static int run(int argc, const char **argv, const char *prefix)
+      	};
+      	int ret;
+     @@ builtin/hook.c: static int run(int argc, const char **argv, const char *prefix)
+    - 	/*
+    - 	 * We are not using a plain run_hooks() because we'd like to
+    - 	 * detect missing hooks. Let's find it ourselves and call
+    --	 * run_hooks() instead.
+    -+	 * run_hooks() instead...
+    - 	 */
+    + 	git_config(git_default_config, NULL);
+    + 
+      	hook_name = argv[0];
+     +	if (ignore_missing)
+    -+		/* ... act like a plain run_hooks() under --ignore-missing */
+     +		return run_hooks_oneshot(hook_name, &opt);
+      	hook_path = find_hook(hook_name);
+      	if (!hook_path) {
+16:  1d30e2dbbe0 =  8:  6c4ebd68d56 send-email: use 'git hook run' for 'sendemail-validate'
+17:  69cc447a1e1 =  9:  b1f52733e3c git-p4: use 'git hook' to run hooks
+18:  1c22b2992cf = 10:  dc31d98acdf commit: convert {pre-commit,prepare-commit-msg} hook to hook.h
+19:  e762fce32af = 11:  58b7689e4af read-cache: convert post-index-change to use hook.h
+20:  d63b91196ae = 12:  ae1e2a82147 receive-pack: convert push-to-checkout hook to hook.h
+21:  fe8996dda3e = 13:  289d5a2d849 run-command: remove old run_hook_{le,ve}() hook API
 -- 
 2.33.1.1338.g20da966911a
 
