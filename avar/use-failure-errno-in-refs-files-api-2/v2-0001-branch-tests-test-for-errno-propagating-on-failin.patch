@@ -1,7 +1,7 @@
-From 1c2e34673edf1d90ccc73074056650bc12db004d Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-01.21-1c2e34673ed-20211016T072211Z-avarab@gmail.com>
-In-Reply-To: <cover-v2-00.21-00000000000-20211016T072211Z-avarab@gmail.com>
-References: <cover-v2-00.21-00000000000-20211016T072211Z-avarab@gmail.com>
+From 1863c597c98de671c3fb5aa1beb6d776ebc075ee Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-01.21-1863c597c98-20211016T075111Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.21-00000000000-20211016T075111Z-avarab@gmail.com>
+References: <cover-v2-00.21-00000000000-20211016T075111Z-avarab@gmail.com>
 From: Han-Wen Nienhuys <hanwen@google.com>
 Date: Tue, 17 Aug 2021 12:31:29 +0000
 Subject: [PATCH v2 01/21] branch tests: test for errno propagating on failing
@@ -26,32 +26,34 @@ covers a regression in a commit that only ever made it to "next", see
 Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- t/t3200-branch.sh | 20 ++++++++++++++++++++
- 1 file changed, 20 insertions(+)
+ t/t3200-branch.sh | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
 
 diff --git a/t/t3200-branch.sh b/t/t3200-branch.sh
-index e575ffb4ffb..b5242719159 100755
+index e575ffb4ffb..53e0d094bb4 100755
 --- a/t/t3200-branch.sh
 +++ b/t/t3200-branch.sh
-@@ -731,6 +731,26 @@ test_expect_success SYMLINKS 'git branch -m u v should fail when the reflog for
+@@ -731,6 +731,28 @@ test_expect_success SYMLINKS 'git branch -m u v should fail when the reflog for
  	test_must_fail git branch -m u v
  '
  
 +test_expect_success SYMLINKS 'git branch -m with symlinked .git/refs' '
 +	test_when_finished "rm -rf subdir" &&
-+	git init subdir &&
++	git init --bare subdir &&
 +
-+	(
-+		cd subdir &&
-+		for d in refs objects packed-refs
-+		do
-+			rm -rf .git/$d &&
-+			ln -s ../../.git/$d .git/$d
-+		done
-+	) &&
-+	git --git-dir subdir/.git/ branch rename-src &&
++	rm -rfv subdir/refs subdir/objects subdir/packed-refs &&
++	ln -s ../.git/refs subdir/refs &&
++	ln -s ../.git/objects subdir/objects &&
++	ln -s ../.git/packed-refs subdir/packed-refs &&
++
++	git -C subdir rev-parse --absolute-git-dir >subdir.dir &&
++	git rev-parse --absolute-git-dir >our.dir &&
++	! test_cmp subdir.dir our.dir &&
++
++	git -C subdir log &&
++	git -C subdir branch rename-src &&
 +	git rev-parse rename-src >expect &&
-+	git --git-dir subdir/.git/ branch -m rename-src rename-dest &&
++	git -C subdir branch -m rename-src rename-dest &&
 +	git rev-parse rename-dest >actual &&
 +	test_cmp expect actual &&
 +	git branch -D rename-dest
