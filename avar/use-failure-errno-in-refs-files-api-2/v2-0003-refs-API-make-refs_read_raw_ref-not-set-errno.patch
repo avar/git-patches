@@ -1,0 +1,172 @@
+From c1ef981c856e150e9c0749eca8e24308dea2cb70 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-03.21-c1ef981c856-20211016T072203Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+References: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+From: Han-Wen Nienhuys <hanwen@google.com>
+Date: Mon, 5 Jul 2021 21:17:58 +0200
+Subject: [PATCH v2 03/21] refs API: make refs_read_raw_ref() not set errno
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a "failure_errno" to refs_read_raw_ref(), his allows
+refs_werrres_ref_unsafe() to pass along its "failure_errno", as a
+first step before its own callers are migrated to pass it further up
+the chain.
+
+We are leaving out out the refs_read_special_head() in
+refs_read_raw_ref() for now, as noted in a subsequent commit moving it
+to "failure_errno" will require some special consideration.
+
+Signed-off-by: Han-Wen Nienhuys <hanwen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c                | 24 ++++++++++++++++--------
+ refs/files-backend.c  | 10 ++++++----
+ refs/packed-backend.c |  7 ++++---
+ refs/refs-internal.h  |  6 +++---
+ 4 files changed, 29 insertions(+), 18 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index ad56dbb0125..200c44e6963 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1666,17 +1666,18 @@ static int refs_read_special_head(struct ref_store *ref_store,
+ 	return result;
+ }
+ 
+-int refs_read_raw_ref(struct ref_store *ref_store,
+-		      const char *refname, struct object_id *oid,
+-		      struct strbuf *referent, unsigned int *type)
++int refs_read_raw_ref(struct ref_store *ref_store, const char *refname,
++		      struct object_id *oid, struct strbuf *referent,
++		      unsigned int *type, int *failure_errno)
+ {
++	assert(failure_errno);
+ 	if (!strcmp(refname, "FETCH_HEAD") || !strcmp(refname, "MERGE_HEAD")) {
+ 		return refs_read_special_head(ref_store, refname, oid, referent,
+ 					      type);
+ 	}
+ 
+ 	return ref_store->be->read_raw_ref(ref_store, refname, oid, referent,
+-					   type, &errno);
++					   type, failure_errno);
+ }
+ 
+ const char *refs_werrres_ref_unsafe(struct ref_store *refs,
+@@ -1720,9 +1721,8 @@ const char *refs_werrres_ref_unsafe(struct ref_store *refs,
+ 	for (symref_count = 0; symref_count < SYMREF_MAXDEPTH; symref_count++) {
+ 		unsigned int read_flags = 0;
+ 
+-		errno = 0;
+-		if (refs_read_raw_ref(refs, refname,
+-				      oid, &sb_refname, &read_flags)) {
++		if (refs_read_raw_ref(refs, refname, oid, &sb_refname,
++				      &read_flags, failure_errno)) {
+ 			*flags |= read_flags;
+ 			if (errno)
+ 				*failure_errno = errno;
+@@ -2240,6 +2240,13 @@ int refs_verify_refname_available(struct ref_store *refs,
+ 
+ 	strbuf_grow(&dirname, strlen(refname) + 1);
+ 	for (slash = strchr(refname, '/'); slash; slash = strchr(slash + 1, '/')) {
++		/*
++		 * Just saying "Is a directory" when we e.g. can't
++		 * lock some multi-level ref isn't very informative,
++		 * the user won't be told *what* is a directory, so
++		 * let's not use strerror() below.
++		 */
++		int ignore_errno;
+ 		/* Expand dirname to the new prefix, not including the trailing slash: */
+ 		strbuf_add(&dirname, refname + dirname.len, slash - refname - dirname.len);
+ 
+@@ -2251,7 +2258,8 @@ int refs_verify_refname_available(struct ref_store *refs,
+ 		if (skip && string_list_has_string(skip, dirname.buf))
+ 			continue;
+ 
+-		if (!refs_read_raw_ref(refs, dirname.buf, &oid, &referent, &type)) {
++		if (!refs_read_raw_ref(refs, dirname.buf, &oid, &referent,
++				       &type, &ignore_errno)) {
+ 			strbuf_addf(err, _("'%s' exists; cannot create '%s'"),
+ 				    dirname.buf, refname);
+ 			goto cleanup;
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 6a6ead0b99b..94c194665ed 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -381,10 +381,11 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ 		goto out;
+ 
+ 	if (lstat(path, &st) < 0) {
++		int ignore_errno;
+ 		if (errno != ENOENT)
+ 			goto out;
+-		if (refs_read_raw_ref(refs->packed_ref_store, refname,
+-				      oid, referent, type)) {
++		if (refs_read_raw_ref(refs->packed_ref_store, refname, oid,
++				      referent, type, &ignore_errno)) {
+ 			errno = ENOENT;
+ 			goto out;
+ 		}
+@@ -418,13 +419,14 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ 
+ 	/* Is it a directory? */
+ 	if (S_ISDIR(st.st_mode)) {
++		int ignore_errno;
+ 		/*
+ 		 * Even though there is a directory where the loose
+ 		 * ref is supposed to be, there could still be a
+ 		 * packed ref:
+ 		 */
+-		if (refs_read_raw_ref(refs->packed_ref_store, refname,
+-				      oid, referent, type)) {
++		if (refs_read_raw_ref(refs->packed_ref_store, refname, oid,
++				      referent, type, &ignore_errno)) {
+ 			errno = EISDIR;
+ 			goto out;
+ 		}
+diff --git a/refs/packed-backend.c b/refs/packed-backend.c
+index 47247a14917..52cdc94a26e 100644
+--- a/refs/packed-backend.c
++++ b/refs/packed-backend.c
+@@ -1347,6 +1347,7 @@ int is_packed_transaction_needed(struct ref_store *ref_store,
+ 	ret = 0;
+ 	for (i = 0; i < transaction->nr; i++) {
+ 		struct ref_update *update = transaction->updates[i];
++		int failure_errno;
+ 		unsigned int type;
+ 		struct object_id oid;
+ 
+@@ -1357,9 +1358,9 @@ int is_packed_transaction_needed(struct ref_store *ref_store,
+ 			 */
+ 			continue;
+ 
+-		if (!refs_read_raw_ref(ref_store, update->refname,
+-				       &oid, &referent, &type) ||
+-		    errno != ENOENT) {
++		if (!refs_read_raw_ref(ref_store, update->refname, &oid,
++				       &referent, &type, &failure_errno) ||
++		    failure_errno != ENOENT) {
+ 			/*
+ 			 * We have to actually delete that reference
+ 			 * -> this transaction is needed.
+diff --git a/refs/refs-internal.h b/refs/refs-internal.h
+index 72746407fc3..c87f1135e5b 100644
+--- a/refs/refs-internal.h
++++ b/refs/refs-internal.h
+@@ -149,9 +149,9 @@ struct ref_update {
+ 	const char refname[FLEX_ARRAY];
+ };
+ 
+-int refs_read_raw_ref(struct ref_store *ref_store,
+-		      const char *refname, struct object_id *oid,
+-		      struct strbuf *referent, unsigned int *type);
++int refs_read_raw_ref(struct ref_store *ref_store, const char *refname,
++		      struct object_id *oid, struct strbuf *referent,
++		      unsigned int *type, int *failure_errno);
+ 
+ /*
+  * Write an error to `err` and return a nonzero value iff the same
+-- 
+2.33.1.1338.g20da966911a
+

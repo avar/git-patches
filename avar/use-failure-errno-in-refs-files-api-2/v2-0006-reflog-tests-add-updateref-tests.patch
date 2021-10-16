@@ -1,0 +1,111 @@
+From 9c9a1d4a75184fbc1d1d7f2ebb4f66f2ef7b4d55 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-06.21-9c9a1d4a751-20211016T072203Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+References: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 15 Oct 2021 16:50:16 +0200
+Subject: [PATCH v2 06/21] reflog tests: add --updateref tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests that cover blindspots in "git reflog delete --updateref"
+behavior. Before this change removing the "type & REF_ISSYMREF" check
+added in 5e6f003ca8a (reflog_expire(): ignore --updateref for symbolic
+references, 2015-03-03) would not fail any tests.
+
+The "--updateref" option was added in 55f10565371 (git-reflog: add
+option --updateref to write the last reflog sha1 into the ref,
+2008-02-22) for use in git-stash.sh, see e25d5f9c82e (git-stash: add
+new 'drop' subcommand, 2008-02-22).
+
+Even though the regression test I need is just the "C" case here,
+let's test all these combinations for good measure.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1417-reflog-updateref.sh | 71 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 71 insertions(+)
+ create mode 100755 t/t1417-reflog-updateref.sh
+
+diff --git a/t/t1417-reflog-updateref.sh b/t/t1417-reflog-updateref.sh
+new file mode 100755
+index 00000000000..533daed8e81
+--- /dev/null
++++ b/t/t1417-reflog-updateref.sh
+@@ -0,0 +1,71 @@
++#!/bin/sh
++
++test_description='git reflog --updateref'
++
++TEST_PASSES_SANITIZE_LEAK=true
++. ./test-lib.sh
++
++test_expect_success 'setup' '
++	git init -b main repo &&
++	(
++		cd repo &&
++
++		test_commit A &&
++		test_commit B &&
++		test_commit C &&
++
++		cp .git/logs/HEAD HEAD.old &&
++		git reset --hard HEAD~ &&
++		cp HEAD.old .git/logs/HEAD
++	)
++'
++
++test_reflog_updateref () {
++	local exp=$1
++	local args=$2
++
++	test_expect_success REFFILES "get '$exp' with '$args'"  '
++		test_when_finished "rm -rf copy" &&
++		cp -R repo copy &&
++
++		(
++			cd copy &&
++
++			$args &&
++			git rev-parse $exp >expect &&
++			git rev-parse HEAD >actual &&
++
++			test_cmp expect actual
++		)
++	'
++}
++
++for cmd in \
++	"git reflog delete" \
++	"test_must_fail git reflog expire"
++do
++	for opts in \
++		"" \
++		"--updateref" \
++		"--updateref --rewrite"
++	do
++		for ref in HEAD main
++		do
++			for i in 0 1
++			do
++				exp=B
++				if test "$cmd" = "git reflog delete" &&
++					test -n "$opts" &&
++					test "$ref" = "main" &&
++					test $i -eq 0
++				then
++					exp=C
++				fi &&
++				rev=$(printf "%s@{%d}" $ref $i) &&
++				test_reflog_updateref $exp "$cmd $opts $rev"
++			done
++		done
++	done
++done
++
++test_done
+-- 
+2.33.1.1338.g20da966911a
+

@@ -1,0 +1,202 @@
+From cc863301931f3e22d938c76c3fa9743fd7e90c89 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Sat, 16 Oct 2021 09:22:03 +0200
+Subject: [PATCH v2 00/21] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Han-Wen Nienhuys (3):
+  branch tests: test for errno propagating on failing read
+  refs API: make refs_read_raw_ref() not set errno
+  refs API: make parse_loose_ref_contents() not set errno
+
+Ævar Arnfjörð Bjarmason (18):
+  refs API: add a version of refs_resolve_ref_unsafe() with "errno"
+  refs API: make refs_rename_ref_available() static
+  reflog tests: add --updateref tests
+  refs/files: remove "name exist?" check in lock_ref_oid_basic()
+  refs API: remove refs_read_ref_full() wrapper
+  refs API: make resolve_gitlink_ref() not set errno
+  refs API: make loose_fill_ref_dir() not set errno
+  refs API: make files_copy_or_rename_ref() et al not set errno
+  refs API: ignore errno in worktree.c's add_head_info()
+  refs API: ignore errno in worktree.c's find_shared_symref()
+  refs tests: ignore ignore errno in test-ref-store helper
+  refs API: make refs_resolve_refdup() not set errno
+  refs API: make refs_ref_exists() not set errno
+  refs API: make resolve_ref_unsafe() not set errno
+  refs API: make expand_ref() & repo_dwim_log() not set errno
+  refs API: don't expose "errno" in run_transaction_hook()
+  refs API: post-migration API renaming [1/2]
+  refs API: post-migration API renaming [2/2]
+
+ refs.c                      | 124 +++++++++++++++--------------
+ refs.h                      |  10 ++-
+ refs/files-backend.c        | 153 ++++++++++++++++++++++++------------
+ refs/packed-backend.c       |   7 +-
+ refs/refs-internal.h        |  26 ++----
+ sequencer.c                 |  10 ++-
+ t/helper/test-ref-store.c   |   3 +-
+ t/t1417-reflog-updateref.sh |  71 +++++++++++++++++
+ t/t3200-branch.sh           |  21 +++++
+ worktree.c                  |  17 ++--
+ 10 files changed, 299 insertions(+), 143 deletions(-)
+ create mode 100755 t/t1417-reflog-updateref.sh
+
+Range-diff against v1:
+ 1:  bea88e382c0 =  1:  1c2e34673ed branch tests: test for errno propagating on failing read
+ 2:  46641111885 =  2:  63c0448eb51 refs API: add a version of refs_resolve_ref_unsafe() with "errno"
+ 3:  a1a80715ffe =  3:  c1ef981c856 refs API: make refs_read_raw_ref() not set errno
+ 4:  758c761abcf =  4:  b89afba9d64 refs API: make parse_loose_ref_contents() not set errno
+ 5:  cdf17fa34a4 =  5:  735905c52dd refs API: make refs_rename_ref_available() static
+ -:  ----------- >  6:  9c9a1d4a751 reflog tests: add --updateref tests
+ 6:  3162bf28505 !  7:  09f607cc3c7 refs/files: remove "name exist?" check in lock_ref_oid_basic()
+    @@ Commit message
+         already, or something we're about to discover by trying to lock the
+         ref with raceproof_create_file().
+     
+    +    The one exception is the caller in files_reflog_expire(), who passes
+    +    us a "type" to find out if the reference is a symref or not. We can
+    +    move the that logic over to that caller, which can now defer its
+    +    discovery of whether or not the ref is a symref until it's needed. In
+    +    the preceding commit an exhaustive regression test was added for that
+    +    case in a new test in "t1417-reflog-updateref.sh".
+    +
+         The improved diagnostics here were added in
+         5b2d8d6f218 (lock_ref_sha1_basic(): improve diagnostics for ref D/F
+         conflicts, 2015-05-11), and then much of the surrounding code went
+    @@ Commit message
+           reflog we're expiring exists.
+     
+           See ae35e16cd43 (reflog expire: don't lock reflogs using previously
+    -      seen OID, 2021-08-23) for the current state of that code.
+    +      seen OID, 2021-08-23) for the current state of that code, and
+    +      5e6f003ca8a (reflog_expire(): ignore --updateref for symbolic
+    +      references, 2015-03-03) for the code we'd break if we only did a
+    +      "update = !!ref" here, which is covered by the aforementioned
+    +      regression test in "t1417-reflog-updateref.sh".
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## refs/files-backend.c ##
+    +@@ refs/files-backend.c: static int create_reflock(const char *path, void *cb)
+    +  * Locks a ref returning the lock on success and NULL on failure.
+    +  */
+    + static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+    +-					   const char *refname, int *type,
+    ++					   const char *refname,
+    + 					   struct strbuf *err)
+    + {
+    + 	struct strbuf ref_file = STRBUF_INIT;
+     @@ refs/files-backend.c: static struct ref_lock *lock_ref_oid_basic(struct files_ref_store *refs,
+      	CALLOC_ARRAY(lock, 1);
+      
+    @@ refs/files-backend.c: static int commit_ref_update(struct files_ref_store *refs,
+       */
+      static int refs_rename_ref_available(struct ref_store *refs,
+      			      const char *old_refname,
+    +@@ refs/files-backend.c: static int files_copy_or_rename_ref(struct ref_store *ref_store,
+    + 
+    + 	logmoved = log;
+    + 
+    +-	lock = lock_ref_oid_basic(refs, newrefname, NULL, &err);
+    ++	lock = lock_ref_oid_basic(refs, newrefname, &err);
+    + 	if (!lock) {
+    + 		if (copy)
+    + 			error("unable to copy '%s' to '%s': %s", oldrefname, newrefname, err.buf);
+    +@@ refs/files-backend.c: static int files_copy_or_rename_ref(struct ref_store *ref_store,
+    + 	goto out;
+    + 
+    +  rollback:
+    +-	lock = lock_ref_oid_basic(refs, oldrefname, NULL, &err);
+    ++	lock = lock_ref_oid_basic(refs, oldrefname, &err);
+    + 	if (!lock) {
+    + 		error("unable to lock %s for rollback: %s", oldrefname, err.buf);
+    + 		strbuf_release(&err);
+    +@@ refs/files-backend.c: static int files_create_symref(struct ref_store *ref_store,
+    + 	struct ref_lock *lock;
+    + 	int ret;
+    + 
+    +-	lock = lock_ref_oid_basic(refs, refname, NULL, &err);
+    ++	lock = lock_ref_oid_basic(refs, refname, &err);
+    + 	if (!lock) {
+    + 		error("%s", err.buf);
+    + 		strbuf_release(&err);
+    +@@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+    + 	struct strbuf log_file_sb = STRBUF_INIT;
+    + 	char *log_file;
+    + 	int status = 0;
+    +-	int type;
+    + 	struct strbuf err = STRBUF_INIT;
+    + 	const struct object_id *oid;
+    + 
+    +@@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+    + 	 * reference itself, plus we might need to update the
+    + 	 * reference if --updateref was specified:
+    + 	 */
+    +-	lock = lock_ref_oid_basic(refs, refname, &type, &err);
+    ++	lock = lock_ref_oid_basic(refs, refname, &err);
+    + 	if (!lock) {
+    + 		error("cannot lock ref '%s': %s", refname, err.buf);
+    + 		strbuf_release(&err);
+    +@@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+    + 		 * a reference if there are no remaining reflog
+    + 		 * entries.
+    + 		 */
+    +-		int update = (flags & EXPIRE_REFLOGS_UPDATE_REF) &&
+    +-			!(type & REF_ISSYMREF) &&
+    +-			!is_null_oid(&cb.last_kept_oid);
+    ++		int update = 0;
+    ++
+    ++		if ((flags & EXPIRE_REFLOGS_UPDATE_REF) &&
+    ++		    !is_null_oid(&cb.last_kept_oid)) {
+    ++			int ignore_errno;
+    ++			int type;
+    ++			const char *ref;
+    ++
+    ++			ref = refs_werrres_ref_unsafe(&refs->base, refname,
+    ++						      RESOLVE_REF_NO_RECURSE,
+    ++						      NULL, &type,
+    ++						      &ignore_errno);
+    ++			update = !!(ref && !(type & REF_ISSYMREF));
+    ++		}
+    + 
+    + 		if (close_lock_file_gently(&reflog_lock)) {
+    + 			status |= error("couldn't write %s: %s", log_file,
+ 7:  288237b1900 =  8:  8a8488475c1 refs API: remove refs_read_ref_full() wrapper
+ 8:  acb484ea547 =  9:  3c322427629 refs API: make resolve_gitlink_ref() not set errno
+ 9:  4be84c9bf53 = 10:  37852c967f7 refs API: make loose_fill_ref_dir() not set errno
+10:  8753210f9cc = 11:  db85b7e2dfc refs API: make files_copy_or_rename_ref() et al not set errno
+11:  9fe85926140 = 12:  6ffdbddb758 refs API: ignore errno in worktree.c's add_head_info()
+12:  8d87db98041 = 13:  6a06cf9d130 refs API: ignore errno in worktree.c's find_shared_symref()
+13:  954633bcbb2 = 14:  85e566a9d5a refs tests: ignore ignore errno in test-ref-store helper
+14:  fbbc08d3ebd = 15:  6caf80b2843 refs API: make refs_resolve_refdup() not set errno
+15:  4b2a4dbe7d5 = 16:  72deb286f6e refs API: make refs_ref_exists() not set errno
+16:  888b1884c29 = 17:  36dcf9b3a94 refs API: make resolve_ref_unsafe() not set errno
+17:  e2885f13c9b = 18:  bbb8c565f2b refs API: make expand_ref() & repo_dwim_log() not set errno
+18:  df50373a272 = 19:  93e88ae0395 refs API: don't expose "errno" in run_transaction_hook()
+19:  4c80b05bf1d = 20:  9346ff3b293 refs API: post-migration API renaming [1/2]
+20:  54b18e3a719 ! 21:  cc863301931 refs API: post-migration API renaming [2/2]
+    @@ refs/files-backend.c: static int lock_ref_for_update(struct files_ref_store *ref
+      						     referent.buf, 0,
+      						     &lock->old_oid, NULL,
+      						     &ignore_errno)) {
+    +@@ refs/files-backend.c: static int files_reflog_expire(struct ref_store *ref_store,
+    + 			int type;
+    + 			const char *ref;
+    + 
+    +-			ref = refs_werrres_ref_unsafe(&refs->base, refname,
+    ++			ref = refs_resolve_ref_unsafe(&refs->base, refname,
+    + 						      RESOLVE_REF_NO_RECURSE,
+    + 						      NULL, &type,
+    + 						      &ignore_errno);
+     
+      ## sequencer.c ##
+     @@ sequencer.c: void print_commit_summary(struct repository *r,
+-- 
+2.33.1.1338.g20da966911a
+

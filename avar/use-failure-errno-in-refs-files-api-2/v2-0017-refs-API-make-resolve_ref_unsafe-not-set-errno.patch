@@ -1,0 +1,82 @@
+From 36dcf9b3a949f04d348507fbc681fdc913d9609b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-17.21-36dcf9b3a94-20211016T072203Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+References: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 11 Jul 2021 17:10:48 +0200
+Subject: [PATCH v2 17/21] refs API: make resolve_ref_unsafe() not set errno
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the resolve_ref_unsafe() wrapper function to use the underlying
+refs_werrres_ref_unsafe() directly.
+
+From a reading of the callers I determined that the only one who cared
+about errno was a sequencer.c caller added in e47c6cafcb5 (commit:
+move print_commit_summary() to libgit, 2017-11-24), I'm migrating it
+to using refs_werrres_ref_unsafe() directly.
+
+This adds another "set errno" instance, but in this case it's OK and
+idiomatic. We are setting it just before calling die_errno(). We could
+have some hypothetical die_errno_var(&saved_errno, ...) here, but I
+don't think it's worth it. The problem with errno is subtle action at
+distance, not this sort of thing. We already use this pattern in a
+couple of places in wrapper.c
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c      |  6 ++++--
+ sequencer.c | 10 ++++++++--
+ 2 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index 8d5a76fbf29..b563729782b 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1785,8 +1785,10 @@ int refs_init_db(struct strbuf *err)
+ const char *resolve_ref_unsafe(const char *refname, int resolve_flags,
+ 			       struct object_id *oid, int *flags)
+ {
+-	return refs_resolve_ref_unsafe(get_main_ref_store(the_repository), refname,
+-				       resolve_flags, oid, flags);
++	int ignore_errno;
++
++	return refs_werrres_ref_unsafe(get_main_ref_store(the_repository), refname,
++				       resolve_flags, oid, flags, &ignore_errno);
+ }
+ 
+ int resolve_gitlink_ref(const char *submodule, const char *refname,
+diff --git a/sequencer.c b/sequencer.c
+index fac0b5162f6..1223dc2d2bf 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -1282,6 +1282,8 @@ void print_commit_summary(struct repository *r,
+ 	struct pretty_print_context pctx = {0};
+ 	struct strbuf author_ident = STRBUF_INIT;
+ 	struct strbuf committer_ident = STRBUF_INIT;
++	struct ref_store *refs;
++	int resolve_errno;
+ 
+ 	commit = lookup_commit(r, oid);
+ 	if (!commit)
+@@ -1331,9 +1333,13 @@ void print_commit_summary(struct repository *r,
+ 	rev.diffopt.break_opt = 0;
+ 	diff_setup_done(&rev.diffopt);
+ 
+-	head = resolve_ref_unsafe("HEAD", 0, NULL, NULL);
+-	if (!head)
++	refs = get_main_ref_store(the_repository);
++	head = refs_werrres_ref_unsafe(refs, "HEAD", 0, NULL, NULL,
++				       &resolve_errno);
++	if (!head) {
++		errno = resolve_errno;
+ 		die_errno(_("unable to resolve HEAD after creating commit"));
++	}
+ 	if (!strcmp(head, "HEAD"))
+ 		head = _("detached HEAD");
+ 	else
+-- 
+2.33.1.1338.g20da966911a
+

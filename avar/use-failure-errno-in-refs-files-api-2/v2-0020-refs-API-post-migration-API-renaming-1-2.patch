@@ -1,0 +1,125 @@
+From 9346ff3b29307a293d907c00bf86883964aa5c8f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-20.21-9346ff3b293-20211016T072203Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+References: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 11 Oct 2021 11:00:00 +0200
+Subject: [PATCH v2 20/21] refs API: post-migration API renaming [1/2]
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In preceding commits all callers of refs_resolve_ref_unsafe() were
+migrated to the transitory refs_werrres_ref_unsafe() function.
+
+As a first step in getting rid of it let's remove the old function
+from the public API (it went unused in a preceding commit).
+
+We then provide both a coccinelle rule to do the rename, and a macro
+to avoid breaking the existing callers.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ contrib/coccinelle/refs.pending.cocci |  5 +++++
+ refs.c                                | 15 +--------------
+ refs.h                                | 22 +++++++++-------------
+ 3 files changed, 15 insertions(+), 27 deletions(-)
+ create mode 100644 contrib/coccinelle/refs.pending.cocci
+
+diff --git a/contrib/coccinelle/refs.pending.cocci b/contrib/coccinelle/refs.pending.cocci
+new file mode 100644
+index 00000000000..b33cb8a12aa
+--- /dev/null
++++ b/contrib/coccinelle/refs.pending.cocci
+@@ -0,0 +1,5 @@
++@@
++expression refs, refname, resolve_flags, oid, flags, failure_errno;
++@@
++- refs_werrres_ref_unsafe(refs, refname, resolve_flags, oid, flags, failure_errno)
+++ refs_resolve_ref_unsafe(refs, refname, resolve_flags, oid, flags, failure_errno)
+diff --git a/refs.c b/refs.c
+index e90c59539b4..4e06745c97a 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1669,7 +1669,7 @@ int refs_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ 					   type, failure_errno);
+ }
+ 
+-const char *refs_werrres_ref_unsafe(struct ref_store *refs,
++const char *refs_resolve_ref_unsafe(struct ref_store *refs,
+ 				    const char *refname,
+ 				    int resolve_flags,
+ 				    struct object_id *oid,
+@@ -1766,19 +1766,6 @@ const char *refs_werrres_ref_unsafe(struct ref_store *refs,
+ 	return NULL;
+ }
+ 
+-const char *refs_resolve_ref_unsafe(struct ref_store *refs, const char *refname,
+-				    int resolve_flags, struct object_id *oid,
+-				    int *flags)
+-{
+-	int failure_errno = 0;
+-	const char *refn;
+-	refn = refs_werrres_ref_unsafe(refs, refname, resolve_flags,
+-				       oid, flags, &failure_errno);
+-	if (!refn)
+-		errno = failure_errno;
+-	return refn;
+-}
+-
+ /* backend functions */
+ int refs_init_db(struct strbuf *err)
+ {
+diff --git a/refs.h b/refs.h
+index 3938f99c902..d908a161c06 100644
+--- a/refs.h
++++ b/refs.h
+@@ -11,18 +11,6 @@ struct string_list;
+ struct string_list_item;
+ struct worktree;
+ 
+-/*
+- * Callers should not inspect "errno" on failure, but rather pass in a
+- * "failure_errno" parameter, on failure the "errno" will indicate the
+- * type of failure encountered, but not necessarily one that came from
+- * a syscall. We might have faked it up.
+- */
+-const char *refs_werrres_ref_unsafe(struct ref_store *refs,
+-				    const char *refname,
+-				    int resolve_flags,
+-				    struct object_id *oid,
+-				    int *flags, int *failure_errno);
+-
+ /*
+  * Resolve a reference, recursively following symbolic refererences.
+  *
+@@ -70,16 +58,24 @@ const char *refs_werrres_ref_unsafe(struct ref_store *refs,
+  * resolved. The function returns NULL for such ref names.
+  * Caps and underscores refers to the special refs, such as HEAD,
+  * FETCH_HEAD and friends, that all live outside of the refs/ directory.
++ *
++ * Callers should not inspect "errno" on failure, but rather pass in a
++ * "failure_errno" parameter, on failure the "errno" will indicate the
++ * type of failure encountered, but not necessarily one that came from
++ * a syscall. We might have faked it up.
+  */
+ #define RESOLVE_REF_READING 0x01
+ #define RESOLVE_REF_NO_RECURSE 0x02
+ #define RESOLVE_REF_ALLOW_BAD_NAME 0x04
+ 
++#define refs_werrres_ref_unsafe(refs, refname, resolve_flags, oid, flags, failure_errno) \
++	refs_resolve_ref_unsafe(refs, refname, resolve_flags, oid, flags, failure_errno)
+ const char *refs_resolve_ref_unsafe(struct ref_store *refs,
+ 				    const char *refname,
+ 				    int resolve_flags,
+ 				    struct object_id *oid,
+-				    int *flags);
++				    int *flags, int *failure_errno);
++
+ const char *resolve_ref_unsafe(const char *refname, int resolve_flags,
+ 			       struct object_id *oid, int *flags);
+ 
+-- 
+2.33.1.1338.g20da966911a
+

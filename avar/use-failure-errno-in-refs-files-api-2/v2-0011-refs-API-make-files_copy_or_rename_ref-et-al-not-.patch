@@ -1,0 +1,66 @@
+From db85b7e2dfcc063e913261b1e5f09f92fbd919de Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-11.21-db85b7e2dfc-20211016T072203Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+References: <cover-v2-00.21-00000000000-20211016T072203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 11 Oct 2021 10:28:15 +0200
+Subject: [PATCH v2 11/21] refs API: make files_copy_or_rename_ref() et al not
+ set errno
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+None of the callers of rename_ref() and copy_ref() care about errno,
+and as seen in the context here we already emit our own non-errno
+using error() in the case where we'd use it.
+
+So let's have it explicitly ignore errno, and do the same in
+commit_ref_update(), which is only used within other code in
+files_copy_or_rename_ref() itself which doesn't care about errno
+either.
+
+It might actually be sensible to have the callers use errno if the
+failure was filesystem-specific, and with the upcoming reftable
+backend we don't want to rely on that sort of thing, so let's keep
+ignoring that for now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 759c21e88ae..6c854dda533 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -1410,9 +1410,9 @@ static int files_copy_or_rename_ref(struct ref_store *ref_store,
+ 		goto out;
+ 	}
+ 
+-	if (!refs_resolve_ref_unsafe(&refs->base, oldrefname,
++	if (!refs_werrres_ref_unsafe(&refs->base, oldrefname,
+ 				     RESOLVE_REF_READING | RESOLVE_REF_NO_RECURSE,
+-				&orig_oid, &flag)) {
++				     &orig_oid, &flag, &ignore_errno)) {
+ 		ret = error("refname %s not found", oldrefname);
+ 		goto out;
+ 	}
+@@ -1823,10 +1823,12 @@ static int commit_ref_update(struct files_ref_store *refs,
+ 		 */
+ 		int head_flag;
+ 		const char *head_ref;
++		int ignore_errno;
+ 
+-		head_ref = refs_resolve_ref_unsafe(&refs->base, "HEAD",
++		head_ref = refs_werrres_ref_unsafe(&refs->base, "HEAD",
+ 						   RESOLVE_REF_READING,
+-						   NULL, &head_flag);
++						   NULL, &head_flag,
++						   &ignore_errno);
+ 		if (head_ref && (head_flag & REF_ISSYMREF) &&
+ 		    !strcmp(head_ref, lock->ref_name)) {
+ 			struct strbuf log_err = STRBUF_INIT;
+-- 
+2.33.1.1338.g20da966911a
+
