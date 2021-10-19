@@ -1,0 +1,106 @@
+From 840fb530df3349fd9624f8cf2fb29114bcb0f2d1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-07.13-840fb530df3-20211019T231647Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.13-00000000000-20211019T231647Z-avarab@gmail.com>
+References: <cover-v2-00.13-00000000000-20211015T093918Z-avarab@gmail.com>
+	<cover-v3-00.13-00000000000-20211019T231647Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 28 May 2021 02:25:36 +0200
+Subject: [PATCH v3 07/13] git hook run: add an --ignore-missing flag
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+For certain one-shot hooks we'd like to optimistically run them, and
+not complain if they don't exist. This will be used by send-email in a
+subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-hook.txt | 10 +++++++++-
+ builtin/hook.c             |  7 ++++++-
+ t/t1800-hook.sh            |  5 +++++
+ 3 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/git-hook.txt b/Documentation/git-hook.txt
+index e39b1b5d069..77c3a8ad909 100644
+--- a/Documentation/git-hook.txt
++++ b/Documentation/git-hook.txt
+@@ -8,7 +8,7 @@ git-hook - Run git hooks
+ SYNOPSIS
+ --------
+ [verse]
+-'git hook' run <hook-name> [-- <hook-args>]
++'git hook' run [--ignore-missing] <hook-name> [-- <hook-args>]
+ 
+ DESCRIPTION
+ -----------
+@@ -28,6 +28,14 @@ Any positional arguments to the hook should be passed after a
+ mandatory `--` (or `--end-of-options`, see linkgit:gitcli[7]). See
+ linkgit:githooks[5] for arguments hooks might expect (if any).
+ 
++OPTIONS
++-------
++
++--ignore-missing::
++	Ignore any missing hook by quietly returning zero. Used for
++	tools that want to do a blind one-shot run of a hook that may
++	or may not be present.
++
+ SEE ALSO
+ --------
+ linkgit:githooks[5]
+diff --git a/builtin/hook.c b/builtin/hook.c
+index 41dd15550cf..fa26454990d 100644
+--- a/builtin/hook.c
++++ b/builtin/hook.c
+@@ -7,7 +7,7 @@
+ #include "strvec.h"
+ 
+ #define BUILTIN_HOOK_RUN_USAGE \
+-	N_("git hook run <hook-name> [-- <hook-args>]")
++	N_("git hook run [--ignore-missing] <hook-name> [-- <hook-args>]")
+ 
+ static const char * const builtin_hook_usage[] = {
+ 	BUILTIN_HOOK_RUN_USAGE,
+@@ -23,9 +23,12 @@ static int run(int argc, const char **argv, const char *prefix)
+ {
+ 	int i;
+ 	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
++	int ignore_missing = 0;
+ 	const char *hook_name;
+ 	const char *hook_path;
+ 	struct option run_options[] = {
++		OPT_BOOL(0, "ignore-missing", &ignore_missing,
++			 N_("silently ignore missing requested <hook-name>")),
+ 		OPT_END(),
+ 	};
+ 	int ret;
+@@ -53,6 +56,8 @@ static int run(int argc, const char **argv, const char *prefix)
+ 	git_config(git_default_config, NULL);
+ 
+ 	hook_name = argv[0];
++	if (ignore_missing)
++		return run_hooks_oneshot(hook_name, &opt);
+ 	hook_path = find_hook(hook_name);
+ 	if (!hook_path) {
+ 		error("cannot find a hook named %s", hook_name);
+diff --git a/t/t1800-hook.sh b/t/t1800-hook.sh
+index 3aea1b105f0..29718aa9913 100755
+--- a/t/t1800-hook.sh
++++ b/t/t1800-hook.sh
+@@ -21,6 +21,11 @@ test_expect_success 'git hook run: nonexistent hook' '
+ 	test_cmp stderr.expect stderr.actual
+ '
+ 
++test_expect_success 'git hook run: nonexistent hook with --ignore-missing' '
++	git hook run --ignore-missing does-not-exist 2>stderr.actual &&
++	test_must_be_empty stderr.actual
++'
++
+ test_expect_success 'git hook run: basic' '
+ 	write_script .git/hooks/test-hook <<-EOF &&
+ 	echo Test hook
+-- 
+2.33.1.1338.g20da966911a
+

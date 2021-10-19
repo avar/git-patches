@@ -1,0 +1,175 @@
+From 1bc080d3611ca5879053f78d3b7fb68a73ed3b72 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-00.13-00000000000-20211019T231647Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.13-00000000000-20211015T093918Z-avarab@gmail.com>
+References: <cover-v2-00.13-00000000000-20211015T093918Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 20 Oct 2021 01:16:47 +0200
+Subject: [PATCH v3 00/13] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Emily Shaffer (12):
+  hook: add 'run' subcommand
+  gc: use hook library for pre-auto-gc hook
+  rebase: convert pre-rebase to use hook.h
+  am: convert applypatch to use hook.h
+  hooks: convert 'post-checkout' hook to hook library
+  merge: convert post-merge to use hook.h
+  send-email: use 'git hook run' for 'sendemail-validate'
+  git-p4: use 'git hook' to run hooks
+  commit: convert {pre-commit,prepare-commit-msg} hook to hook.h
+  read-cache: convert post-index-change to use hook.h
+  receive-pack: convert push-to-checkout hook to hook.h
+  run-command: remove old run_hook_{le,ve}() hook API
+
+Ævar Arnfjörð Bjarmason (1):
+  git hook run: add an --ignore-missing flag
+
+ .gitignore                 |   1 +
+ Documentation/git-hook.txt |  45 +++++++++++++
+ Documentation/githooks.txt |   4 ++
+ Makefile                   |   1 +
+ builtin.h                  |   1 +
+ builtin/am.c               |   8 ++-
+ builtin/checkout.c         |  14 ++--
+ builtin/clone.c            |   7 +-
+ builtin/gc.c               |   3 +-
+ builtin/hook.c             |  90 +++++++++++++++++++++++++
+ builtin/merge.c            |   4 +-
+ builtin/rebase.c           |   8 ++-
+ builtin/receive-pack.c     |   7 +-
+ builtin/worktree.c         |  28 ++++----
+ command-list.txt           |   1 +
+ commit.c                   |  15 +++--
+ git-p4.py                  |  70 ++-----------------
+ git-send-email.perl        |  22 +++---
+ git.c                      |   1 +
+ hook.c                     | 121 +++++++++++++++++++++++++++++++++
+ hook.h                     |  56 ++++++++++++++++
+ read-cache.c               |  11 ++-
+ reset.c                    |  14 ++--
+ run-command.c              |  32 ---------
+ run-command.h              |  17 -----
+ t/t1800-hook.sh            | 134 +++++++++++++++++++++++++++++++++++++
+ t/t9001-send-email.sh      |   4 +-
+ 27 files changed, 550 insertions(+), 169 deletions(-)
+ create mode 100644 Documentation/git-hook.txt
+ create mode 100644 builtin/hook.c
+ create mode 100755 t/t1800-hook.sh
+
+Range-diff against v2:
+ 1:  ba64faf0580 =  1:  02fd699e699 hook: add 'run' subcommand
+ 2:  e3dc0aed81b =  2:  42cc4d2c3c6 gc: use hook library for pre-auto-gc hook
+ 3:  6227a1e644d !  3:  cbbfd77a4f6 rebase: convert pre-rebase to use hook.h
+    @@ builtin/rebase.c
+      #define DEFAULT_REFLOG_ACTION "rebase"
+      
+     @@ builtin/rebase.c: int cmd_rebase(int argc, const char **argv, const char *prefix)
+    - 	char *squash_onto_name = NULL;
+      	int reschedule_failed_exec = -1;
+      	int allow_preemptive_ff = 1;
+    + 	int preserve_merges_selected = 0;
+     +	struct run_hooks_opt hook_opt = RUN_HOOKS_OPT_INIT;
+      	struct option builtin_rebase_options[] = {
+      		OPT_STRING(0, "onto", &options.onto_name,
+ 4:  0e34eb54054 =  4:  b26cef24f39 am: convert applypatch to use hook.h
+ 5:  a4df96c1719 !  5:  2a747a65829 hooks: convert 'post-checkout' hook to hook library
+    @@ hook.c: static int notify_hook_finished(int result,
+      	struct hook_cb_data cb_data = {
+      		.rc = 0,
+      		.hook_name = hook_name,
+    +-		.hook_path = hook_path,
+    + 		.options = options,
+    + 	};
+    + 	int jobs = 1;
+     @@ hook.c: int run_hooks(const char *hook_name, const char *hook_path,
+      	if (!options)
+      		BUG("a struct run_hooks_opt must be provided to run_hooks");
+    @@ hook.c: int run_hooks(const char *hook_name, const char *hook_path,
+     +		strbuf_add_absolute_path(&abs_path, hook_path);
+     +		hook_path = abs_path.buf;
+     +	}
+    ++	cb_data.hook_path = hook_path;
+     +
+      	run_processes_parallel_tr2(jobs,
+      				   pick_next_hook,
+    @@ hook.h: struct run_hooks_opt
+      
+      #define RUN_HOOKS_OPT_INIT { \
+     
+    - ## read-cache.c ##
+    -@@
+    - #include "sparse-index.h"
+    - #include "csum-file.h"
+    - #include "promisor-remote.h"
+    -+#include "hook.h"
+    - 
+    - /* Mask for the name length in ce_flags in the on-disk index */
+    - 
+    -
+      ## reset.c ##
+     @@
+      #include "tree-walk.h"
+ 6:  327f916f8c3 =  6:  7a9fd8627cd merge: convert post-merge to use hook.h
+ 7:  328767015b1 =  7:  840fb530df3 git hook run: add an --ignore-missing flag
+ 8:  6c4ebd68d56 =  8:  716ebabd794 send-email: use 'git hook run' for 'sendemail-validate'
+ 9:  b1f52733e3c !  9:  95782109270 git-p4: use 'git hook' to run hooks
+    @@ Commit message
+         Python, we can directly call 'git hook run'. We emulate the existence
+         check with the --ignore-missing flag.
+     
+    -    As this is the last hook execution in git.git to not go through "git
+    -    hook run" or the hook.[ch] library we can now be absolutely sure that
+    -    our assertion in hook.c that only hooks known by the generated (from
+    -    githooks(5)) hook-list.h are permitted.
+    +    We're dropping the "verbose" handling added in 9f59ca4d6af (git-p4:
+    +    create new function run_git_hook, 2020-02-11), those who want
+    +    diagnostic output about how hooks are run are now able to get that via
+    +    e.g. the trace2 facility and GIT_TRACE=1.
+     
+         Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## git-p4.py ##
+     @@ git-p4.py: def decode_path(path):
+    -         return path
+      
+      def run_git_hook(cmd, param=[]):
+    --    """Execute a hook if the hook exists."""
+    +     """Execute a hook if the hook exists."""
+     -    if verbose:
+     -        sys.stderr.write("Looking for hook: %s\n" % cmd)
+     -        sys.stderr.flush()
+    @@ git-p4.py: def decode_path(path):
+     -            use_shell = True
+     -    return subprocess.call(cli, shell=use_shell)
+     -
+    -+    """args are specified with -a <arg> -a <arg> -a <arg>"""
+     +    args = ['git', 'hook', 'run', '--ignore-missing', cmd]
+     +    if param:
+     +        args.append("--")
+10:  dc31d98acdf = 10:  706426c8a79 commit: convert {pre-commit,prepare-commit-msg} hook to hook.h
+11:  58b7689e4af ! 11:  39069a9c3ff read-cache: convert post-index-change to use hook.h
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## read-cache.c ##
+    +@@
+    + #include "sparse-index.h"
+    + #include "csum-file.h"
+    + #include "promisor-remote.h"
+    ++#include "hook.h"
+    + 
+    + /* Mask for the name length in ce_flags in the on-disk index */
+    + 
+     @@ read-cache.c: static int do_write_locked_index(struct index_state *istate, struct lock_file *l
+      {
+      	int ret;
+12:  ae1e2a82147 = 12:  9818078f1e5 receive-pack: convert push-to-checkout hook to hook.h
+13:  289d5a2d849 = 13:  1bc080d3611 run-command: remove old run_hook_{le,ve}() hook API
+-- 
+2.33.1.1338.g20da966911a
+
