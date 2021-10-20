@@ -1,0 +1,94 @@
+From 23d4cc77b6c66707dce8ef6bac7e87be3f4ef3b1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-8.8-23d4cc77b6c-20211020T183533Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20211020T183533Z-avarab@gmail.com>
+References: <YNqBtrXzUlJiuc7y@coredump.intra.peff.net>
+	<cover-0.8-00000000000-20211020T183533Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 15 Sep 2021 15:39:27 +0200
+Subject: [PATCH 8/8] Makefile: assert correct generate-cmdlist.sh output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Because generate-cmdlist.sh invokes "sed" to extract the "NAME" blurb
+from the Documentation/git-*.txt files, we can end up with bad content
+if those files aren't what we expected. E.g. we'll emit multiple lines
+from that "sed" one-liner if the "NAME" section were to move further
+down than what our "head -n 10" covers.
+
+Let's assert that this can't happen by checking that the number of
+lines we make is what we'd expect to get. This means we can remove an
+assertion added in cfb22a02ab5 (help: use command-list.h for common
+command list, 2018-05-10). We'll catch this during compilation
+instead.
+
+There are still other cases where it's possible to generate a bad
+command-list.h, but the rest should be caught by a C compilation
+error.
+
+It would be possible to change our generated "command-list.h" to
+simply include this new ".build/command-list.h.gen" instead of cat-ing
+it in the Makefile, but let's leave the generated file as it is.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile            | 7 ++++++-
+ generate-cmdlist.sh | 2 +-
+ help.c              | 3 ---
+ 3 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index ce4cce57eb8..711f0c064e6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2278,13 +2278,18 @@ $(COMMAND_LIST_GEN): .build/command-list.h.d/%.gen: Documentation/%.txt
+ 	$(QUIET)grep "^$(patsubst .build/command-list.h.d/%.gen,%,$@) " command-list.txt >$@.txt && \
+ 	./generate-cmdlist.sh --entry-only $@.txt >$@
+ 
++.build/command-list.h.gen: $(COMMAND_LIST_GEN)
++	$(QUIET)LC_ALL=C sort $(COMMAND_LIST_GEN) >$@ && \
++	test $$(wc -l <$@) -eq $(words $(COMMAND_LIST_GEN))
++
+ command-list.h: $(COMMAND_LIST_GEN)
+ command-list.h: generate-cmdlist.sh
+ command-list.h: command-list.txt
++command-list.h: .build/command-list.h.gen
+ 	$(QUIET_GEN){ \
+ 		$(SHELL_PATH) ./generate-cmdlist.sh --header-only command-list.txt && \
+ 		echo "static struct cmdname_help command_list[] = {" && \
+-		LC_ALL=C sort $(COMMAND_LIST_GEN) && \
++		cat $< && \
+ 		echo "};"; \
+ 	} >$@
+ 
+diff --git a/generate-cmdlist.sh b/generate-cmdlist.sh
+index 2bc528e8cae..bdefa151ae1 100755
+--- a/generate-cmdlist.sh
++++ b/generate-cmdlist.sh
+@@ -23,7 +23,7 @@ category_list () {
+ }
+ 
+ get_synopsis () {
+-	head -n 10 "Documentation/$1.txt" |
++	head -n 6 "Documentation/$1.txt" |
+ 	sed -n '
+ 		/^NAME/,/'"$1"'/H
+ 		${
+diff --git a/help.c b/help.c
+index 973e47cdc30..cd6dd4c2440 100644
+--- a/help.c
++++ b/help.c
+@@ -57,9 +57,6 @@ static void extract_cmds(struct cmdname_help **p_cmds, uint32_t mask)
+ 	int i, nr = 0;
+ 	struct cmdname_help *cmds;
+ 
+-	if (ARRAY_SIZE(command_list) == 0)
+-		BUG("empty command_list[] is a sign of broken generate-cmdlist.sh");
+-
+ 	ALLOC_ARRAY(cmds, ARRAY_SIZE(command_list) + 1);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(command_list); i++) {
+-- 
+2.33.1.1338.g20da966911a
+
