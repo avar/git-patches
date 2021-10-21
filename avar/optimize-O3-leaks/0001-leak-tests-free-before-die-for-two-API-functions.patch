@@ -1,0 +1,66 @@
+From 5a47bf2e9c9dcb3fadfba80230903ffb5cbdbe45 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-5a47bf2e9c9-20211021T114223Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Oct 2021 02:27:02 +0200
+Subject: [PATCH] leak tests: free() before die for two API functions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Call free() just before die() in two API functions whose tests are
+asserted under SANITIZE=leak. Normally this would not be needed due to
+how SANITIZE=leak works, but in these cases my GCC version (10.2.1-6)
+will fail tests t0001 and t0017 under SANITIZE=leak depending on the
+optimization level.
+
+See 956d2e4639b (tests: add a test mode for SANITIZE=leak, run it in
+CI, 2021-09-23) for the commit that marked t0017 for testing with
+SANITIZE=leak, and c150064dbe2 (leak tests: run various built-in tests
+in t00*.sh SANITIZE=leak, 2021-10-12) for t0001 (currently in "next").
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ config.c | 4 +++-
+ refs.c   | 5 ++++-
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/config.c b/config.c
+index 2dcbe901b6b..93979d39b21 100644
+--- a/config.c
++++ b/config.c
+@@ -159,11 +159,13 @@ static int handle_path_include(const char *path, struct config_include_data *inc
+ 	}
+ 
+ 	if (!access_or_die(path, R_OK, 0)) {
+-		if (++inc->depth > MAX_INCLUDE_DEPTH)
++		if (++inc->depth > MAX_INCLUDE_DEPTH) {
++			free(expanded);
+ 			die(_(include_depth_advice), MAX_INCLUDE_DEPTH, path,
+ 			    !cf ? "<unknown>" :
+ 			    cf->name ? cf->name :
+ 			    "the command line");
++		}
+ 		ret = git_config_from_file(git_config_include, path, inc);
+ 		inc->depth--;
+ 	}
+diff --git a/refs.c b/refs.c
+index 7f019c2377e..52929286032 100644
+--- a/refs.c
++++ b/refs.c
+@@ -590,8 +590,11 @@ char *repo_default_branch_name(struct repository *r, int quiet)
+ 	}
+ 
+ 	full_ref = xstrfmt("refs/heads/%s", ret);
+-	if (check_refname_format(full_ref, 0))
++	if (check_refname_format(full_ref, 0)) {
++		free(ret);
++		free(full_ref);
+ 		die(_("invalid branch name: %s = %s"), config_display_key, ret);
++	}
+ 	free(full_ref);
+ 
+ 	return ret;
+-- 
+2.33.1.1486.gb2bc4955b90
+
