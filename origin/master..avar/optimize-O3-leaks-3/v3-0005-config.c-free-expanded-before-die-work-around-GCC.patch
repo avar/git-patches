@@ -1,0 +1,78 @@
+From 9a44204c4c9b68ce8a9e20104fc9ea40447e5ac4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-5.6-9a44204c4c9-20211022T175227Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.6-00000000000-20211022T175227Z-avarab@gmail.com>
+References: <cover-v2-0.3-00000000000-20211021T195133Z-avarab@gmail.com>
+	<cover-v3-0.6-00000000000-20211022T175227Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 19:34:12 +0200
+Subject: [PATCH v3 5/6] config.c: free(expanded) before die(), work around GCC
+ oddity
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On my GCC version (10.2.1-6), but not the clang I have available t0017
+will fail under SANITIZE=leak on optimization levels higher than -O0,
+which is annoying when combined with the change in 956d2e4639b (tests:
+add a test mode for SANITIZE=leak, run it in CI, 2021-09-23).
+
+We really do have a memory leak here in either case, as e.g. running
+the pre-image under valgrind(1) will reveal. It's documented
+SANITIZE=leak (and "address", which exhibits the same behavior) might
+interact with compiler optimization in this way in some cases. Since
+this function is called recursively it's going to be especially
+interesting as an optimization target.
+
+Let's work around this issue by freeing the "expanded" memory before
+we call die(), using a combination of the "goto cleanup" pattern
+introduced in a preceding commit, and the newly introduced
+die_message() function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ config.c | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/config.c b/config.c
+index c5873f3a706..c36e85c2077 100644
+--- a/config.c
++++ b/config.c
+@@ -132,6 +132,7 @@ static int handle_path_include(const char *path, struct config_include_data *inc
+ 	int ret = 0;
+ 	struct strbuf buf = STRBUF_INIT;
+ 	char *expanded;
++	int exit_with = 0;
+ 
+ 	if (!path)
+ 		return config_error_nonbool("include.path");
+@@ -161,17 +162,21 @@ static int handle_path_include(const char *path, struct config_include_data *inc
+ 	}
+ 
+ 	if (!access_or_die(path, R_OK, 0)) {
+-		if (++inc->depth > MAX_INCLUDE_DEPTH)
+-			die(_(include_depth_advice), MAX_INCLUDE_DEPTH, path,
+-			    !cf ? "<unknown>" :
+-			    cf->name ? cf->name :
+-			    "the command line");
++		if (++inc->depth > MAX_INCLUDE_DEPTH) {
++			exit_with = die_message(_(include_depth_advice),
++						MAX_INCLUDE_DEPTH, path,
++						!cf ? "<unknown>" : cf->name ?
++						cf->name : "the command line");
++			goto cleanup;
++		}
+ 		ret = git_config_from_file(git_config_include, path, inc);
+ 		inc->depth--;
+ 	}
+ cleanup:
+ 	strbuf_release(&buf);
+ 	free(expanded);
++	if (exit_with)
++		exit(exit_with);
+ 	return ret;
+ }
+ 
+-- 
+2.33.1.1494.g88b39a443e1
+

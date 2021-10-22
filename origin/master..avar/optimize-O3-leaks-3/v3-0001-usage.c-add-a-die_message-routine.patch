@@ -1,0 +1,154 @@
+From fe8763337edda0242a92e09d23179c3629d41a39 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.6-fe8763337ed-20211022T175227Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.6-00000000000-20211022T175227Z-avarab@gmail.com>
+References: <cover-v2-0.3-00000000000-20211021T195133Z-avarab@gmail.com>
+	<cover-v3-0.6-00000000000-20211022T175227Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 18:52:11 +0200
+Subject: [PATCH v3 1/6] usage.c: add a die_message() routine
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We have code in various places that would like to call die(), but
+wants to defer the exit(128) it would invoke, e.g. to print an
+additional message, or adjust the exit code. Add a die_message()
+helper routine to bridge this gap in the API.
+
+Functionally this behaves just like the error() routine, except it'll
+print a "fatal: " prefix, and it will exit with 128 instead of -1,
+this is so that caller can pas the return value to exit(128), instead
+of having to hardcode "128".
+
+A subsequent commit will migrate various callers that benefit from
+this function over to it, for now we're just migrating trivial users
+in usage.c itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-compat-util.h |  3 +++
+ usage.c           | 46 ++++++++++++++++++++++++++++++++++------------
+ 2 files changed, 37 insertions(+), 12 deletions(-)
+
+diff --git a/git-compat-util.h b/git-compat-util.h
+index 141bb86351e..c1bb32460b6 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -471,6 +471,7 @@ NORETURN void usage(const char *err);
+ NORETURN void usagef(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ NORETURN void die(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ NORETURN void die_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
++int die_message(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int error(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int error_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ void warning(const char *err, ...) __attribute__((format (printf, 1, 2)));
+@@ -505,6 +506,8 @@ static inline int const_error(void)
+ typedef void (*report_fn)(const char *, va_list params);
+ 
+ void set_die_routine(NORETURN_PTR report_fn routine);
++void set_die_message_routine(report_fn routine);
++report_fn get_die_message_routine(void);
+ void set_error_routine(report_fn routine);
+ report_fn get_error_routine(void);
+ void set_warn_routine(report_fn routine);
+diff --git a/usage.c b/usage.c
+index c7d233b0de9..3d4b90bce1f 100644
+--- a/usage.c
++++ b/usage.c
+@@ -55,6 +55,12 @@ static NORETURN void usage_builtin(const char *err, va_list params)
+ 	exit(129);
+ }
+ 
++static void die_message_builtin(const char *err, va_list params)
++{
++	trace2_cmd_error_va(err, params);
++	vreportf("fatal: ", err, params);
++}
++
+ /*
+  * We call trace2_cmd_error_va() in the below functions first and
+  * expect it to va_copy 'params' before using it (because an 'ap' can
+@@ -62,10 +68,9 @@ static NORETURN void usage_builtin(const char *err, va_list params)
+  */
+ static NORETURN void die_builtin(const char *err, va_list params)
+ {
+-	trace2_cmd_error_va(err, params);
+-
+-	vreportf("fatal: ", err, params);
++	report_fn die_message_fn = get_die_message_routine();
+ 
++	die_message_fn(err, params);
+ 	exit(128);
+ }
+ 
+@@ -109,6 +114,7 @@ static int die_is_recursing_builtin(void)
+  * (ugh), so keep things static. */
+ static NORETURN_PTR report_fn usage_routine = usage_builtin;
+ static NORETURN_PTR report_fn die_routine = die_builtin;
++static report_fn die_message_routine = die_message_builtin;
+ static report_fn error_routine = error_builtin;
+ static report_fn warn_routine = warn_builtin;
+ static int (*die_is_recursing)(void) = die_is_recursing_builtin;
+@@ -118,6 +124,16 @@ void set_die_routine(NORETURN_PTR report_fn routine)
+ 	die_routine = routine;
+ }
+ 
++void set_die_message_routine(report_fn routine)
++{
++	die_message_routine = routine;
++}
++
++report_fn get_die_message_routine(void)
++{
++	return die_message_routine;
++}
++
+ void set_error_routine(report_fn routine)
+ {
+ 	error_routine = routine;
+@@ -157,14 +173,23 @@ void NORETURN usage(const char *err)
+ 	usagef("%s", err);
+ }
+ 
++#undef die_message
++int die_message(const char *err, ...)
++{
++	va_list params;
++
++	va_start(params, err);
++	die_message_routine(err, params);
++	va_end(params);
++	return 128;
++}
++
+ void NORETURN die(const char *err, ...)
+ {
+ 	va_list params;
+ 
+-	if (die_is_recursing()) {
+-		fputs("fatal: recursion detected in die handler\n", stderr);
+-		exit(128);
+-	}
++	if (die_is_recursing())
++		exit(die_message("recursion detected in die handler"));
+ 
+ 	va_start(params, err);
+ 	die_routine(err, params);
+@@ -200,11 +225,8 @@ void NORETURN die_errno(const char *fmt, ...)
+ 	char buf[1024];
+ 	va_list params;
+ 
+-	if (die_is_recursing()) {
+-		fputs("fatal: recursion detected in die_errno handler\n",
+-			stderr);
+-		exit(128);
+-	}
++	if (die_is_recursing())
++		exit(die_message("recursion detected in die_errno handler"));
+ 
+ 	va_start(params, fmt);
+ 	die_routine(fmt_with_err(buf, sizeof(buf), fmt), params);
+-- 
+2.33.1.1494.g88b39a443e1
+

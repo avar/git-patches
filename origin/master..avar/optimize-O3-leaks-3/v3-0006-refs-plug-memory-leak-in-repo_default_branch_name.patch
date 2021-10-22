@@ -1,0 +1,69 @@
+From d2f639b53cd57560346e5d952463cd6718ab0305 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-6.6-d2f639b53cd-20211022T175227Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.6-00000000000-20211022T175227Z-avarab@gmail.com>
+References: <cover-v2-0.3-00000000000-20211021T195133Z-avarab@gmail.com>
+	<cover-v3-0.6-00000000000-20211022T175227Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 19:20:36 +0200
+Subject: [PATCH v3 6/6] refs: plug memory leak in repo_default_branch_name()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in repo_default_branch_name(), we'll leak memory
+before exit(128) here.
+
+Normally we would not care much about such leaks, we do leak the
+memory, as e.g. valgrind(1) will report. But the more commonly used
+SANITIZE=leak mode will use GCC and Clang's LSAN mode will not
+normally report such leaks.
+
+At least one GCC version does that in this case, and having the tests
+fail under -O3 would be annoying, so let's free() the allocated memory
+here.
+
+This uses a new die_message() function introduced in a preceding
+commit. That new function makes the flow around such code easier to
+manage. In this case we can't free(ret) before the die().
+
+In this case only the "free(full_ref)" appears to be needed, but since
+we're freeing one let's free both, some other compiler or version
+might arrange this code in such a way as to complain about "ret" too
+with SANITIZE=leak, and valgrind(1) will do so in any case.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/refs.c b/refs.c
+index 7f019c2377e..2a816c9561d 100644
+--- a/refs.c
++++ b/refs.c
+@@ -577,6 +577,7 @@ char *repo_default_branch_name(struct repository *r, int quiet)
+ 	const char *config_display_key = "init.defaultBranch";
+ 	char *ret = NULL, *full_ref;
+ 	const char *env = getenv("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME");
++	int exit_with = 0;
+ 
+ 	if (env && *env)
+ 		ret = xstrdup(env);
+@@ -591,8 +592,13 @@ char *repo_default_branch_name(struct repository *r, int quiet)
+ 
+ 	full_ref = xstrfmt("refs/heads/%s", ret);
+ 	if (check_refname_format(full_ref, 0))
+-		die(_("invalid branch name: %s = %s"), config_display_key, ret);
++		exit_with = die_message(_("invalid branch name: %s = %s"),
++					config_display_key, ret);
+ 	free(full_ref);
++	if (exit_with) {
++		free(ret);
++		exit(exit_with);
++	}
+ 
+ 	return ret;
+ }
+-- 
+2.33.1.1494.g88b39a443e1
+
