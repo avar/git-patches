@@ -1,0 +1,108 @@
+From 9190f3c128f7380ef9ad3beaf2e970004c70ce2b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-9190f3c128f-20211022T102700Z-avarab@gmail.com>
+In-Reply-To: <211022.86sfwtl6uj.gmgdl@evledraar.gmail.com>
+References: <211022.86sfwtl6uj.gmgdl@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 12:08:14 +0200
+Subject: [PATCH] leak tests: add an interface to the LSAN_OPTIONS
+ "suppressions"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the SANITIZE=leak testing mode added in 956d2e4639b (tests: add
+a test mode for SANITIZE=leak, run it in CI, 2021-09-23) to optionally
+be able to add a "suppressions" file to the $LSAN_OPTIONS.
+
+This allows for marking tests as passing with
+"TEST_PASSES_SANITIZE_LEAK=true" when they still have failure due more
+general widespread memory leaks, such as from the "git log" family of
+commands. We can now mark the "git -C" tests as passing.
+
+For getting specific tests to pass this is preferable to using
+UNLEAK() in these codepaths, as I'll have fixes for those leaks soon,
+and being able to atomically mark relevant tests as passing with
+"TEST_PASSES_SANITIZE_LEAK=true" helps to explain those changes. See
+[1] for more details.
+
+1. https://lore.kernel.org/git/211022.86sfwtl6uj.gmgdl@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0056-git-C.sh        |  4 ++++
+ t/test-lib-functions.sh | 42 +++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 46 insertions(+)
+
+diff --git a/t/t0056-git-C.sh b/t/t0056-git-C.sh
+index 2630e756dab..490aefa81a1 100755
+--- a/t/t0056-git-C.sh
++++ b/t/t0056-git-C.sh
+@@ -2,7 +2,11 @@
+ 
+ test_description='"-C <path>" option and its effects on other path-related options'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
++todo_leaks <<-\EOF
++^cmd_log_init_finish$
++EOF
+ 
+ test_expect_success '"git -C <path>" runs git from the directory <path>' '
+ 	test_create_repo dir1 &&
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index eef2262a360..d89bf5da7dc 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -243,6 +243,48 @@ debug () {
+ 	done
+ }
+ 
++# Declare known "general" memory leaks, for use with TEST_PASSES_SANITIZE_LEAK=true.
++#
++# Matches lines in a stack trace that leaks. Intended for
++# LSAN_OPTIONS, but the format is intended to be easy to use with
++# other leak checkers, so the "leak:" prefix is omitted (and added for
++# you).
++#
++# Use it immediately after sourcing test-lib.sh (or equivalent), and
++# after a "TEST_PASSES_SANITIZE_LEAK=true" has been set. E.g:
++#
++#    TEST_PASSES_SANITIZE_LEAK=true
++#    . ./test-lib.sh
++#    todo_leaks <<-\EOF
++#    ^cmd_log_init_finish$
++#    EOF
++#
++# The "^" and "$" anchors don't suggest full regex syntax support,
++# that's the only anchoring (or other metacharacter) understood by
++# LSAN_OPTIONS,.
++#
++# See
++# https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer#suppressions
++# for the relevant LSAN_OPTIONS documentation.
++todo_leaks () {
++	if ! test_have_prereq SANITIZE_LEAK
++	then
++		return 0
++	fi
++
++	# Try not to interfere with any test logic
++	suppressions=.lsan-suppressions.txt
++	if test -d .git
++	then
++		suppressions=".git/$suppressions"
++	fi
++	suppressions="$PWD/$suppressions"
++
++	sed 's/^/leak:/' >"$suppressions" &&
++	LSAN_OPTIONS="$LSAN_OPTIONS:suppressions=\"$suppressions\"" &&
++	export LSAN_OPTIONS
++}
++
+ # Usage: test_commit [options] <message> [<file> [<contents> [<tag>]]]
+ #   -C <dir>:
+ #	Run all git commands in directory <dir>
+-- 
+2.33.1.1494.g88b39a443e1
+
