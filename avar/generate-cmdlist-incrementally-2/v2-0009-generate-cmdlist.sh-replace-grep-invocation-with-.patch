@@ -1,0 +1,95 @@
+From 7903dd1f8c2d7f50de68af48eb28816e63e76fc0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-09.10-7903dd1f8c2-20211022T192811Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.10-00000000000-20211022T192811Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20211020T183533Z-avarab@gmail.com>
+	<cover-v2-00.10-00000000000-20211022T192811Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 15:05:48 +0200
+Subject: [PATCH v2 09/10] generate-cmdlist.sh: replace "grep' invocation with
+ a shell version
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replace the "grep" we run to exclude certain programs from the
+generated output with a pure-shell loop that strips out the comments,
+and sees if the "cmd" we're reading is on a list of excluded
+programs. This uses a trick similar to test_have_prereq() in
+test-lib-functions.sh.
+
+On my *nix system this makes things quite a bit slower compared to
+HEAD~, but since the generate-cmdlist.sh is already quite fast, and
+this likely helps systems where command invocations are more
+expensive (i.e. Windows) let's use this anyway.
+
+  'sh generate-cmdlist.sh.old command-list.txt' ran
+    1.56 ± 0.11 times faster than 'sh generate-cmdlist.sh command-list.txt'
+   18.00 ± 0.19 times faster than 'sh generate-cmdlist.sh.master command-list.txt'
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ generate-cmdlist.sh | 27 +++++++++++++++++++++------
+ 1 file changed, 21 insertions(+), 6 deletions(-)
+
+diff --git a/generate-cmdlist.sh b/generate-cmdlist.sh
+index 9b7d6aea629..2b184bbc65f 100755
+--- a/generate-cmdlist.sh
++++ b/generate-cmdlist.sh
+@@ -6,12 +6,27 @@ die () {
+ }
+ 
+ command_list () {
+-	eval "grep -ve '^#' $exclude_programs" <"$1"
++	while read cmd rest
++	do
++		case "$cmd" in
++		"#"*)
++			continue;
++			;;
++		*)
++			case "$exclude_programs" in
++				*":$cmd:"*)
++				;;
++			*)
++				echo "$cmd $rest"
++				;;
++			esac
++		esac
++	done
+ }
+ 
+ category_list () {
+-	command_list "$1" |
+-	cut -c 40- |
++	command_list <"$1" |
++	cut -d' ' -f2- |
+ 	tr ' ' '\012' |
+ 	grep -v '^$' |
+ 	LC_ALL=C sort -u
+@@ -48,7 +63,7 @@ define_category_names () {
+ print_command_list () {
+ 	echo "static struct cmdname_help command_list[] = {"
+ 
+-	command_list "$1" |
++	command_list <"$1" |
+ 	while read cmd rest
+ 	do
+ 		synopsis=
+@@ -69,11 +84,11 @@ print_command_list () {
+ 	echo "};"
+ }
+ 
+-exclude_programs=
++exclude_programs=:
+ while test "--exclude-program" = "$1"
+ do
+ 	shift
+-	exclude_programs="$exclude_programs -e \"^$1 \""
++	exclude_programs="$exclude_programs$1:"
+ 	shift
+ done
+ 
+-- 
+2.33.1.1505.g075a284c562
+

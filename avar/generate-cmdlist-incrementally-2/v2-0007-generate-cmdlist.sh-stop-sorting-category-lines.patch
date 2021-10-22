@@ -1,0 +1,69 @@
+From f2f37c2963b40b6d07138415a46cb992da74baf3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-07.10-f2f37c2963b-20211022T192811Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.10-00000000000-20211022T192811Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20211020T183533Z-avarab@gmail.com>
+	<cover-v2-00.10-00000000000-20211022T192811Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 13:01:41 +0200
+Subject: [PATCH v2 07/10] generate-cmdlist.sh: stop sorting category lines
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In a preceding commit we changed the print_command_list() loop to use
+printf's auto-repeat feature. Let's now get rid of get_category_line()
+entirely by not sorting the categories.
+
+This will change the output of the generated code from e.g.:
+
+    -       { "git-apply", N_("Apply a patch to files and/or to the index"), 0 | CAT_complete | CAT_plumbingmanipulators },
+
+To:
+
+    +       { "git-apply", N_("Apply a patch to files and/or to the index"), 0 | CAT_plumbingmanipulators | CAT_complete },
+
+I.e. the categories are no longer sorted, but as they're OR'd together
+it won't matter for the end result.
+
+This speeds up the generate-cmdlist.sh a bit. Comparing HEAD~ (old)
+and "master" to this code:
+
+  'sh generate-cmdlist.sh command-list.txt' ran
+    1.07 ± 0.33 times faster than 'sh generate-cmdlist.sh.old command-list.txt'
+    1.15 ± 0.36 times faster than 'sh generate-cmdlist.sh.master command-list.txt'
+
+Suggested-by: Jeff King <peff@peff.net>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ generate-cmdlist.sh | 7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/generate-cmdlist.sh b/generate-cmdlist.sh
+index a1ab2b1f077..f50112c50f8 100755
+--- a/generate-cmdlist.sh
++++ b/generate-cmdlist.sh
+@@ -9,11 +9,6 @@ command_list () {
+ 	eval "grep -ve '^#' $exclude_programs" <"$1"
+ }
+ 
+-get_category_line () {
+-	tr ' ' '\012' |
+-	LC_ALL=C sort -u
+-}
+-
+ category_list () {
+ 	command_list "$1" |
+ 	cut -c 40- |
+@@ -67,7 +62,7 @@ print_command_list () {
+ 	while read cmd rest
+ 	do
+ 		printf "	{ \"$cmd\", $(get_synopsis $cmd), 0"
+-		printf " | CAT_%s" $(echo "$rest" | get_category_line)
++		printf " | CAT_%s" $rest
+ 		echo " },"
+ 	done
+ 	echo "};"
+-- 
+2.33.1.1505.g075a284c562
+
