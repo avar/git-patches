@@ -1,0 +1,144 @@
+From 6ea5e611ae0674f71d2a468f3def9127f75546b4 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.6-00000000000-20211022T085156Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20211021T155529Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20211021T155529Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 10:51:56 +0200
+Subject: [PATCH v2 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  grep: prefer "struct grep_opt" over its "void *" equivalent
+  grep: use object_array_clear() in cmd_grep()
+  grep: fix a "path_list" memory leak
+  clone: fix a memory leak of the "git_dir" variable
+  submodule--helper: fix small memory leaks
+  reflog: free() ref given to us by dwim_log()
+
+ builtin/clone.c             |  4 +++-
+ builtin/grep.c              | 14 ++++++++------
+ builtin/reflog.c            |  1 +
+ builtin/submodule--helper.c |  2 ++
+ t/t7811-grep-open.sh        |  3 ++-
+ 5 files changed, 16 insertions(+), 8 deletions(-)
+
+Range-diff against v1:
+1:  2bdd21e4e59 ! 1:  66c838fd800 grep: prefer "struct grep_opt" over its "void *"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep: prefer "struct grep_opt" over its "void *"
+    +    grep: prefer "struct grep_opt" over its "void *" equivalent
+     
+         Stylistically fix up code added in bfac23d9534 (grep: Fix two memory
+         leaks, 2010-01-30). We usually don't use the "arg" at all once we've
+    -    unpacked it into the struct we want, let's not do that here when we're
+    +    casted it to the struct we want, let's not do that here when we're
+         freeing it. Perhaps it was thought that a cast to "void *" would
+         otherwise be needed?
+     
+2:  727fdb27a2a = 2:  033ca3f7b4f grep: use object_array_clear() in cmd_grep()
+6:  526d5649156 ! 3:  8e941e40711 repack: stop leaking a "struct child_process"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    repack: stop leaking a "struct child_process"
+    +    grep: fix a "path_list" memory leak
+    +
+    +    Free the "path_list" used in builtin/grep.c, it was declared as
+    +    STRING_LIST_INIT_NODUP, let's change it to a STRING_LIST_INIT_DUP
+    +    since an early user in cmd_grep() appends a string passed via
+    +    parse-options.c to it, which needs to be duplicated.
+    +
+    +    Let's then convert the remaining callers to use
+    +    string_list_append_nodup() instead, allowing us to free the list.
+    +
+    +    This makes all the tests in t7811-grep-open.sh pass, 6/10 would fail
+    +    before this change. The only remaining failure would have been due to
+    +    a stray "git checkout" (which still leaks memory). In this case we can
+    +    use a "git reset --hard" instead, so let's do that, and move the
+    +    test_when_finished() above the code that would modify the relevant
+    +    file.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## builtin/repack.c ##
+    -@@ builtin/repack.c: static void repack_promisor_objects(const struct pack_objects_args *args,
+    - 	for_each_packed_object(write_oid, &cmd,
+    - 			       FOR_EACH_OBJECT_PROMISOR_ONLY);
+    + ## builtin/grep.c ##
+    +@@ builtin/grep.c: static void append_path(struct grep_opt *opt, const void *data, size_t len)
+      
+    --	if (cmd.in == -1)
+    -+	if (cmd.in == -1) {
+    -+		child_process_clear(&cmd);
+    - 		/* No packed objects; cmd was never started */
+    + 	if (len == 1 && *(const char *)data == '\0')
+      		return;
+    -+	}
+    +-	string_list_append(path_list, xstrndup(data, len));
+    ++	string_list_append_nodup(path_list, xstrndup(data, len));
+    + }
+    + 
+    + static void run_pager(struct grep_opt *opt, const char *prefix)
+    +@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    + 	struct grep_opt opt;
+    + 	struct object_array list = OBJECT_ARRAY_INIT;
+    + 	struct pathspec pathspec;
+    +-	struct string_list path_list = STRING_LIST_INIT_NODUP;
+    ++	struct string_list path_list = STRING_LIST_INIT_DUP;
+    + 	int i;
+    + 	int dummy;
+    + 	int use_index = 1;
+    +@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    + 			strbuf_addf(&buf, "+/%s%s",
+    + 					strcmp("less", pager) ? "" : "*",
+    + 					opt.pattern_list->pattern);
+    +-			string_list_append(&path_list,
+    +-					   strbuf_detach(&buf, NULL));
+    ++			string_list_append_nodup(&path_list,
+    ++						 strbuf_detach(&buf, NULL));
+    + 		}
+    + 	}
+    + 
+    +@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    + 	if (hit && show_in_pager)
+    + 		run_pager(&opt, prefix);
+    + 	clear_pathspec(&pathspec);
+    ++	string_list_clear(&path_list, 0);
+    + 	free_grep_patterns(&opt);
+    + 	object_array_clear(&list);
+    + 	free_repos();
+    +
+    + ## t/t7811-grep-open.sh ##
+    +@@
+    + test_description='git grep --open-files-in-pager
+    + '
+      
+    - 	close(cmd.in);
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+    + . "$TEST_DIRECTORY"/lib-pager.sh
+    + unset PAGER GIT_PAGER
+    +@@ t/t7811-grep-open.sh: test_expect_success 'modified file' '
+    + 	unrelated
+    + 	EOF
+      
+    ++	test_when_finished "git reset --hard" &&
+    + 	echo "enum grep_pat_token" >unrelated &&
+    +-	test_when_finished "git checkout HEAD unrelated" &&
+    + 	GIT_PAGER=./less git grep -F -O "enum grep_pat_token" >out &&
+    + 	test_cmp expect actual &&
+    + 	test_must_be_empty out
+3:  86d928ae2f9 = 4:  0d0e6359cf4 clone: fix a memory leak of the "git_dir" variable
+4:  9c3c0529ad0 = 5:  a529c04a29a submodule--helper: fix small memory leaks
+5:  85b7b7aef37 = 6:  6ea5e611ae0 reflog: free() ref given to us by dwim_log()
+-- 
+2.33.1.1494.g88b39a443e1
+
