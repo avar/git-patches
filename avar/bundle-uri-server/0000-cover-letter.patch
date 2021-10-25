@@ -2,12 +2,77 @@ From 64224ec2cba6e9cf7c37a80df6ca788b3f2375bb Mon Sep 17 00:00:00 2001
 Message-Id: <cover-0.3-00000000000-20211025T211159Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Mon, 25 Oct 2021 23:11:59 +0200
-Subject: [PATCH 0/3] *** SUBJECT HERE ***
+Subject: [PATCH 0/3] bundle-uri: "dumb" static CDN offloading, spec & server implementation
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This implements a new "bundle-uri" protocol v2 extension, which allows
+servers to advertise *.bundle files which clients can pre-seed their
+full "clone"'s or incremental "fetch"'s from.
+
+This is both an alternative to, and complimentary to the existing
+"packfile-uri" mechanism, i.e. servers and/or clients can pick one or
+both, but would generally pick one over the other.
+
+This "bundle-uri" mechanism has the advantage of being dumber, and
+offloads more complexity from the server side to the client
+side.
+
+Unlike with packfile-uri a conforming server doesn't need produce a
+PACK that (hopefully, otherwise there's not much point) excludes OIDs
+that it knows it'll provide via a packfile-uri.
+
+To the server a "bundle-uri" negotiation the same as a "normal" one,
+the client just happens to provide OIDs it found in bundles as "have"
+lines.
+
+In my WIP client patches I even have a (trivial to implement) mode
+where a client can choose to pretend that a server reported that a
+given set of bundle URIs can be used to pre-seed its "clone" or
+"fetch".
+
+A client can thus use use a CDN it controls to optimistically pre-seed
+a clone from a server that knows nothing about "bundle-uri", sort of
+like a "git clone --reference <path> --dissociate", except with a
+<uri> instead of a <path>.
+
+Need re-clone a bunch of large repositories on CI boxes from
+git.example.com, but git.example.com doesn't support "bundle-uri", and
+you've got a slow outbound connection? Just point to a pre-seeding CDN
+you control.
+
+There are disadvantages to this over packfile-uri, JGit has a mature
+implementation of it, and I doubt that e.g. Google will ever want to
+use this, since that feature was tailor-made for their use case.
+
+E.g. a repository that has a *.pack sitting on disk can't re-use and
+stream it out with sendfile() as it could with a "packfile-uri",
+instead it would need to point to some duplicate of that data in
+*.bundle form (or on-the-fly generate a header for the *.pack).
+
+The goal of this feature isn't to win over packfile-uri users, but to
+give users who wouldn't consider it due to its tight coupling to have
+access to CDN offloading.
+
+The error optimistic recovery of "bundle-uri" and looseer coupling
+between server and CDN means that it should be easy to use this for
+use where the CDN is something like say Debian's mirror network.
+
+We're coming up on 2.34.0-rc0, so this certainly won't be in 2.34.0,
+but I'm submitting this now per discussion during '#git-devel' standup
+today.
+
+There was a discussion on the RFC version of the larger series of
+patches to implement this "bundle-uri"[1].
+
+I've updated the protocol-v2.txt changes in 2/3 a lot in response to
+that, in particular I've specified and implemented early client
+disconnection behavior, so bundle-uri SHOULD never cause
+client<->server dialog to hang (at most we'll need to re-connect, if
+we need to fall back from a failed bundle-uri).
+
+1. https://lore.kernel.org/git/RFC-cover-00.13-0000000000-20210805T150534Z-avarab@gmail.com/
 
 Ævar Arnfjörð Bjarmason (3):
   leak tests: mark t5701-git-serve.sh as passing SANITIZE=leak
