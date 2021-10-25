@@ -1,0 +1,57 @@
+From 3dfe31decff45709f7797aa446fde927cddcf0fe Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-6.8-3dfe31decff-20211025T111915Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.8-00000000000-20211025T111915Z-avarab@gmail.com>
+References: <cover-v3-00.10-00000000000-20211013T222329Z-avarab@gmail.com>
+	<cover-v4-0.8-00000000000-20211025T111915Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 23 Jun 2021 13:07:56 +0200
+Subject: [PATCH v4 6/8] pack-bitmap-write.c: don't return without
+ stop_progress()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a bug that's been here since 7cc8f971085 (pack-objects: implement
+bitmap writing, 2013-12-21), we did not call stop_progress() if we
+reached the early exit in this function.
+
+We could call stop_progress() before we return, but better yet is to
+defer calling start_progress() until we need it.
+
+This will matter in a subsequent commit where we BUG(...) out if this
+happens, and matters now e.g. because we don't have a corresponding
+"region_end" for the progress trace2 event.
+
+Suggested-by: SZEDER Gábor <szeder.dev@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ pack-bitmap-write.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/pack-bitmap-write.c b/pack-bitmap-write.c
+index 9c55c1531e1..cab3eaa2acd 100644
+--- a/pack-bitmap-write.c
++++ b/pack-bitmap-write.c
+@@ -575,15 +575,15 @@ void bitmap_writer_select_commits(struct commit **indexed_commits,
+ 
+ 	QSORT(indexed_commits, indexed_commits_nr, date_compare);
+ 
+-	if (writer.show_progress)
+-		writer.progress = start_progress("Selecting bitmap commits", 0);
+-
+ 	if (indexed_commits_nr < 100) {
+ 		for (i = 0; i < indexed_commits_nr; ++i)
+ 			push_bitmapped_commit(indexed_commits[i]);
+ 		return;
+ 	}
+ 
++	if (writer.show_progress)
++		writer.progress = start_progress("Selecting bitmap commits", 0);
++
+ 	for (;;) {
+ 		struct commit *chosen = NULL;
+ 
+-- 
+2.33.1.1510.ge5c82eefb93
+
