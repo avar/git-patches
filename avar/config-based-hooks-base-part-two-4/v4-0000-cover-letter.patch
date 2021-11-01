@@ -1,23 +1,25 @@
-From a2d434bf7acbe45dcf9cdf1876e6a620fd732e61 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v4-00.13-00000000000-20211101T154856Z-avarab@gmail.com>
+From 9ef574fa30ca8939b8e87973bf46cd4927c25485 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-00.17-00000000000-20211101T184938Z-avarab@gmail.com>
 In-Reply-To: <cover-v3-00.13-00000000000-20211019T231647Z-avarab@gmail.com>
 References: <cover-v3-00.13-00000000000-20211019T231647Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Mon, 1 Nov 2021 16:48:56 +0100
-Subject: [PATCH v4 00/13] *** SUBJECT HERE ***
+Date: Mon, 1 Nov 2021 19:49:38 +0100
+Subject: [PATCH v4 00/17] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 *** BLURB HERE ***
 
-Emily Shaffer (12):
+Emily Shaffer (14):
   hook: add 'run' subcommand
   gc: use hook library for pre-auto-gc hook
+  am: convert {pre,post}-applypatch to use hook.h
   rebase: convert pre-rebase to use hook.h
-  am: convert applypatch to use hook.h
-  hooks: convert 'post-checkout' hook to hook library
+  am: convert applypatch-msg to use hook.h
   merge: convert post-merge to use hook.h
+  hooks: convert non-worktree 'post-checkout' hook to hook library
+  hooks: convert worktree 'post-checkout' hook to hook library
   send-email: use 'git hook run' for 'sendemail-validate'
   git-p4: use 'git hook' to run hooks
   commit: convert {pre-commit,prepare-commit-msg} hook to hook.h
@@ -25,7 +27,9 @@ Emily Shaffer (12):
   receive-pack: convert push-to-checkout hook to hook.h
   run-command: remove old run_hook_{le,ve}() hook API
 
-Ævar Arnfjörð Bjarmason (1):
+Ævar Arnfjörð Bjarmason (3):
+  hook API: add a run_hooks() wrapper
+  hook API: add a run_hooks_l() wrapper
   git hook run: add an --ignore-missing flag
 
  .gitignore                 |   1 +
@@ -33,35 +37,35 @@ Emily Shaffer (12):
  Documentation/githooks.txt |   4 ++
  Makefile                   |   1 +
  builtin.h                  |   1 +
- builtin/am.c               |   7 +-
- builtin/checkout.c         |   9 +--
- builtin/clone.c            |   5 +-
+ builtin/am.c               |   6 +-
+ builtin/checkout.c         |   3 +-
+ builtin/clone.c            |   3 +-
  builtin/gc.c               |   3 +-
  builtin/hook.c             |  84 +++++++++++++++++++++++
  builtin/merge.c            |   2 +-
- builtin/rebase.c           |   5 +-
+ builtin/rebase.c           |   3 +-
  builtin/receive-pack.c     |   7 +-
- builtin/worktree.c         |  28 ++++----
+ builtin/worktree.c         |  27 +++-----
  command-list.txt           |   1 +
  commit.c                   |  15 +++--
  git-p4.py                  |  70 ++-----------------
  git-send-email.perl        |  22 +++---
  git.c                      |   1 +
- hook.c                     | 132 ++++++++++++++++++++++++++++++++++++
- hook.h                     |  65 ++++++++++++++++++
- read-cache.c               |   8 ++-
- reset.c                    |   7 +-
+ hook.c                     | 131 ++++++++++++++++++++++++++++++++++++
+ hook.h                     |  57 ++++++++++++++++
+ read-cache.c               |   3 +-
+ reset.c                    |   3 +-
  run-command.c              |  32 ---------
  run-command.h              |  17 -----
  t/t1800-hook.sh            | 134 +++++++++++++++++++++++++++++++++++++
  t/t9001-send-email.sh      |   4 +-
- 27 files changed, 543 insertions(+), 167 deletions(-)
+ 27 files changed, 522 insertions(+), 158 deletions(-)
  create mode 100644 Documentation/git-hook.txt
  create mode 100644 builtin/hook.c
  create mode 100755 t/t1800-hook.sh
 
 Range-diff against v3:
- 1:  02fd699e699 !  1:  fb74a87c7bf hook: add 'run' subcommand
+ 1:  02fd699e699 !  1:  d97d6734961 hook: add 'run' subcommand
     @@ Commit message
          builtin/{commit-graph,multi-pack-index}.c.
      
@@ -103,21 +107,26 @@ Range-diff against v3:
       }
      +
     -+void run_hooks_opt_clear(struct run_hooks_opt *o)
-    ++void run_hooks_opt_clear(struct run_hooks_opt *options)
-     +{
+    -+{
     -+	strvec_clear(&o->env);
     -+	strvec_clear(&o->args);
-    ++	strvec_clear(&options->env);
-    ++	strvec_clear(&options->args);
-     +}
-     +
+    -+}
+    -+
      +static int pick_next_hook(struct child_process *cp,
+     +			  struct strbuf *out,
+     +			  void *pp_cb,
     @@ hook.c: int hook_exists(const char *name)
      +	return 0;
      +}
      +
     -+int run_hooks(const char *hook_name, const char *hook_path,
     -+	      struct run_hooks_opt *options)
+    ++static void run_hooks_opt_clear(struct run_hooks_opt *options)
+    ++{
+    ++	strvec_clear(&options->env);
+    ++	strvec_clear(&options->args);
+    ++}
+    ++
     ++int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options)
      +{
      +	struct hook_cb_data cb_data = {
@@ -169,18 +178,19 @@ Range-diff against v3:
      +
      +#define RUN_HOOKS_OPT_INIT { \
     @@ hook.h: const char *find_hook(const char *name);
+      int hook_exists(const char *hookname);
+      
      +/**
-     + * Clear data from an initialized "struct run_hooks_opt".
-     + */
+    -+ * Clear data from an initialized "struct run_hooks_opt".
+    -+ */
     -+void run_hooks_opt_clear(struct run_hooks_opt *o);
-    ++void run_hooks_opt_clear(struct run_hooks_opt *options);
-     +
-     +/**
+    -+
+    -+/**
     -+ * Takes an already resolved hook found via find_hook() and runs
     -+ * it. Does not call run_hooks_opt_clear() for you.
     ++ * Takes a `hook_name`, resolves it to a path with find_hook(), and
     ++ * runs the hook for you with the options specified in "struct
-    ++ * run_hooks opt". Will call run_hooks_opt_clear() for you.
+    ++ * run_hooks opt". Will free memory associated with the "struct run_hooks_opt".
     ++ *
     ++ * Returns the status code of the run hook, or a negative value on
     ++ * error().
@@ -191,18 +201,19 @@ Range-diff against v3:
       #endif
      
       ## t/t1800-hook.sh (new) ##
- 2:  42cc4d2c3c6 !  2:  0cc113a2725 gc: use hook library for pre-auto-gc hook
+ -:  ----------- >  2:  ca6464f7d5e hook API: add a run_hooks() wrapper
+ 2:  42cc4d2c3c6 !  3:  173860afca1 gc: use hook library for pre-auto-gc hook
     @@ Commit message
-         Move the pre-auto-gc hook away from run-command.h to and over to the
-         new hook.h library.
+         gc: use hook library for pre-auto-gc hook
      
+         Move the pre-auto-gc hook away from run-command.h to and over to the
+    -    new hook.h library.
+    -
     -    To do this introduce a simple run_hooks_oneshot() wrapper, we'll be
     -    using it extensively for these simple cases of wanting to run a single
     -    hook under a given name, and having it free the memory we allocate for
     -    us.
-    +    To do this introduce a simple run_hooks() wrapper, we'll be using it
-    +    extensively for these simple cases of wanting to run a single hook
-    +    under a given name, without providing an "env" or "args" options.
+    +    new hook.h library. This uses the new run_hooks() wrapper.
      
          Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
@@ -215,19 +226,15 @@ Range-diff against v3:
       		return 0;
       	return 1;
       }
-     
-      ## hook.c ##
+    -
+    - ## hook.c ##
     -@@ hook.c: int run_hooks(const char *hook_name, const char *hook_path,
     - 
     - 	return cb_data.rc;
-    +@@ hook.c: int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options)
-    + 	run_hooks_opt_clear(options);
-    + 	return ret;
-      }
-     +
+    - }
+    -+
     -+int run_hooks_oneshot(const char *hook_name, struct run_hooks_opt *options)
-    ++int run_hooks(const char *hook_name)
-     +{
+    -+{
     -+	const char *hook_path;
     -+	struct run_hooks_opt hook_opt_scratch = RUN_HOOKS_OPT_INIT;
     -+	int ret = 0;
@@ -238,45 +245,87 @@ Range-diff against v3:
     -+	hook_path = find_hook(hook_name);
     -+	if (!hook_path)
     -+		goto cleanup;
-    ++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
-     +
+    -+
     -+	ret = run_hooks(hook_name, hook_path, options);
     -+cleanup:
     -+	run_hooks_opt_clear(options);
     -+
     -+	return ret;
-    ++	return run_hooks_opt(hook_name, &opt);
-     +}
-     
-      ## hook.h ##
+    -+}
+    -
+    - ## hook.h ##
     -@@ hook.h: void run_hooks_opt_clear(struct run_hooks_opt *o);
     - /**
     -  * Takes an already resolved hook found via find_hook() and runs
     -  * it. Does not call run_hooks_opt_clear() for you.
     -+ *
     -+ * See run_hooks_oneshot() for the simpler one-shot API.
-    +@@ hook.h: void run_hooks_opt_clear(struct run_hooks_opt *options);
-    +  * error().
-       */
+    -  */
     - int run_hooks(const char *hookname, const char *hook_path,
     - 	      struct run_hooks_opt *options);
-    + int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options);
-     +
-     +/**
+    -+
+    -+/**
     -+ * Calls find_hook() on your "hook_name" and runs the hooks (if any)
     -+ * with run_hooks().
     -+ *
     -+ * If "options" is provided calls run_hooks_opt_clear() on it for
     -+ * you. If "options" is NULL the default options from
     -+ * RUN_HOOKS_OPT_INIT will be used.
-    ++ * A wrapper for run_hooks_opt() which provides a dummy "struct
-    ++ * run_hooks_opt" initialized with "RUN_HOOKS_OPT_INIT".
-     + */
+    -+ */
     -+int run_hooks_oneshot(const char *hook_name, struct run_hooks_opt *options);
     -+
-    ++int run_hooks(const char *hook_name);
-      #endif
- 3:  cbbfd77a4f6 !  3:  03b93add820 rebase: convert pre-rebase to use hook.h
+    - #endif
+ 4:  b26cef24f39 !  4:  80a2171ddaf am: convert applypatch to use hook.h
+    @@ Metadata
+     Author: Emily Shaffer <emilyshaffer@google.com>
+     
+      ## Commit message ##
+    -    am: convert applypatch to use hook.h
+    +    am: convert {pre,post}-applypatch to use hook.h
+     
+    -    Teach pre-applypatch, post-applypatch, and applypatch-msg to use the
+    -    hook.h library instead of the run-command.h library.
+    +    Teach pre-applypatch and post-applypatch to use the hook.h library
+    +    instead of the run-command.h library.
+     
+         Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/am.c ##
+    -@@ builtin/am.c: static void am_destroy(const struct am_state *state)
+    - static int run_applypatch_msg_hook(struct am_state *state)
+    - {
+    - 	int ret;
+    -+	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
+    - 
+    - 	assert(state->msg);
+    --	ret = run_hook_le(NULL, "applypatch-msg", am_path(state, "final-commit"), NULL);
+    -+	strvec_push(&opt.args, am_path(state, "final-commit"));
+    -+	ret = run_hooks_oneshot("applypatch-msg", &opt);
+    - 
+    - 	if (!ret) {
+    - 		FREE_AND_NULL(state->msg);
+     @@ builtin/am.c: static void do_commit(const struct am_state *state)
+      	const char *reflog_msg, *author, *committer = NULL;
+      	struct strbuf sb = STRBUF_INIT;
+      
+     -	if (run_hook_le(NULL, "pre-applypatch", NULL))
+    -+	if (run_hooks_oneshot("pre-applypatch", NULL))
+    ++	if (run_hooks("pre-applypatch"))
+      		exit(1);
+      
+      	if (write_cache_as_tree(&tree, 0, NULL))
+    @@ builtin/am.c: static void do_commit(const struct am_state *state)
+      	}
+      
+     -	run_hook_le(NULL, "post-applypatch", NULL);
+    -+	run_hooks_oneshot("post-applypatch", NULL);
+    ++	run_hooks("post-applypatch");
+      
+      	strbuf_release(&sb);
+      }
+ -:  ----------- >  5:  74f459db287 hook API: add a run_hooks_l() wrapper
+ 3:  cbbfd77a4f6 !  6:  1fd70c0e88a rebase: convert pre-rebase to use hook.h
     @@ Commit message
          Move the pre-rebase hook away from run-command.h to and over to the
          new hook.h library.
@@ -307,99 +356,88 @@ Range-diff against v3:
     -+		strvec_push(&hook_opt.args, argv[0]);
       	if (!ok_to_skip_pre_rebase &&
      -	    run_hook_le(NULL, "pre-rebase", options.upstream_arg,
-     -			argc ? argv[0] : NULL, NULL))
+    --			argc ? argv[0] : NULL, NULL))
     -+	    run_hooks_oneshot("pre-rebase", &hook_opt))
-    ++	    run_hooksl("pre-rebase", options.upstream_arg, argc? argv[0] :
-    ++		       NULL, NULL))
+    ++	    run_hooks_l("pre-rebase", options.upstream_arg,
+    + 			argc ? argv[0] : NULL, NULL))
       		die(_("The pre-rebase hook refused to rebase."));
       
-      	if (options.flags & REBASE_DIFFSTAT) {
-    +
-    + ## hook.c ##
-    +@@ hook.c: int run_hooks(const char *hook_name)
-    + 
-    + 	return run_hooks_opt(hook_name, &opt);
-    + }
-    ++
-    ++int run_hooksl(const char *hook_name, ...)
-    ++{
-    ++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
-    ++	va_list ap;
-    ++	const char *arg;
-    ++
-    ++	va_start(ap, hook_name);
-    ++	while ((arg = va_arg(ap, const char *)))
-    ++		strvec_push(&opt.args, arg);
-    ++	va_end(ap);
-    ++
-    ++	return run_hooks_opt(hook_name, &opt);
-    ++}
-    +
-    + ## hook.h ##
-    +@@ hook.h: int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options);
-    +  * run_hooks_opt" initialized with "RUN_HOOKS_OPT_INIT".
-    +  */
-    + int run_hooks(const char *hook_name);
-    ++
-    ++/**
-    ++ * Like run_hooks(), a wrapper for run_hooks_opt().
-    ++ *
-    ++ * This wrapper will call run_hooks() options.args generated from a
-    ++ * list of strings provided to this function. The arguments should be
-    ++ * a list of `const char *` strings, terminated by a NULL
-    ++ * argument. This is like the old run_hook_le() API.
-    ++ */
-    ++int run_hooksl(const char *hook_name, ...);
-    + #endif
- 4:  b26cef24f39 !  4:  6ebb8786d6f am: convert applypatch to use hook.h
+    - 	if (options.flags & REBASE_DIFFSTAT) {
+ -:  ----------- >  7:  ccba3ddf52e am: convert applypatch-msg to use hook.h
+ 6:  7a9fd8627cd !  8:  2c23e8645ec merge: convert post-merge to use hook.h
     @@ Commit message
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
-      ## builtin/am.c ##
-    -@@ builtin/am.c: static void am_destroy(const struct am_state *state)
-    - static int run_applypatch_msg_hook(struct am_state *state)
+      ## builtin/merge.c ##
+    -@@ builtin/merge.c: static void finish(struct commit *head_commit,
+    - 		   const struct object_id *new_head, const char *msg)
     - {
-    +@@ builtin/am.c: static int run_applypatch_msg_hook(struct am_state *state)
-      	int ret;
+    - 	struct strbuf reflog_message = STRBUF_INIT;
     -+	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
-      
-      	assert(state->msg);
-     -	ret = run_hook_le(NULL, "applypatch-msg", am_path(state, "final-commit"), NULL);
-    -+	strvec_push(&opt.args, am_path(state, "final-commit"));
-    -+	ret = run_hooks_oneshot("applypatch-msg", &opt);
-    ++	ret = run_hooksl("applypatch-msg", am_path(state, "final-commit"),
-    ++			 NULL);
-      
-      	if (!ret) {
-      		FREE_AND_NULL(state->msg);
-    @@ builtin/am.c: static void do_commit(const struct am_state *state)
-      	struct strbuf sb = STRBUF_INIT;
-      
-     -	if (run_hook_le(NULL, "pre-applypatch", NULL))
-    -+	if (run_hooks_oneshot("pre-applypatch", NULL))
-    ++	if (run_hooks("pre-applypatch"))
-      		exit(1);
-      
-      	if (write_cache_as_tree(&tree, 0, NULL))
-    @@ builtin/am.c: static void do_commit(const struct am_state *state)
+    - 	const struct object_id *head = &head_commit->object.oid;
+    - 
+    - 	if (!msg)
+     @@ builtin/merge.c: static void finish(struct commit *head_commit,
       	}
       
-     -	run_hook_le(NULL, "post-applypatch", NULL);
-    -+	run_hooks_oneshot("post-applypatch", NULL);
-    ++	run_hooks("post-applypatch");
+      	/* Run a post-merge hook */
+     -	run_hook_le(NULL, "post-merge", squash ? "1" : "0", NULL);
+    -+	strvec_push(&opt.args, squash ? "1" : "0");
+    -+	run_hooks_oneshot("post-merge", &opt);
+    ++	run_hooks_l("post-merge", squash ? "1" : "0", NULL);
       
-      	strbuf_release(&sb);
-      }
- 5:  2a747a65829 !  5:  cc57abd2d41 hooks: convert 'post-checkout' hook to hook library
-    @@ builtin/checkout.c: struct branch_info {
-     -			   oid_to_hex(old_commit ? &old_commit->object.oid : null_oid()),
-     -			   oid_to_hex(new_commit ? &new_commit->object.oid : null_oid()),
-     -			   changed ? "1" : "0", NULL);
+      	apply_autostash(git_path_merge_autostash(the_repository));
+      	strbuf_release(&reflog_message);
+ -:  ----------- >  9:  cb95c79093b hooks: convert non-worktree 'post-checkout' hook to hook library
+ 5:  2a747a65829 ! 10:  f330600fec8 hooks: convert 'post-checkout' hook to hook library
+    @@ Metadata
+     Author: Emily Shaffer <emilyshaffer@google.com>
+     
+      ## Commit message ##
+    -    hooks: convert 'post-checkout' hook to hook library
+    +    hooks: convert worktree 'post-checkout' hook to hook library
+     
+         Move the running of the 'post-checkout' hook away from run-command.h
+    -    to the new hook.h library. For "worktree" this requires a change to it
+    -    to run the hooks from a given directory.
+    +    to the new hook.h library in builtin/worktree.c. For this special case
+    +    we need a change to the hook API to teach it to run the hook from a
+    +    given directory.
+     
+    -    We could strictly speaking skip the "absolute_path" flag and just
+    -    check if "dir" is specified, but let's split them up for clarity, as
+    -    well as for any future user who'd like to set "dir" but not implicitly
+    -    change the argument to an absolute path.
+    +    We cannot skip the "absolute_path" flag and just check if "dir" is
+    +    specified as we'd then fail to find our hook in the new dir we'd
+    +    chdir() to. We currently don't have a use-case for running a hook not
+    +    in our "base" repository at a given absolute path, so let's have "dir"
+    +    imply absolute_path(find_hook(hook_name)).
+     
+         Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## builtin/checkout.c ##
+    -@@
+    - #include "config.h"
+    - #include "diff.h"
+    - #include "dir.h"
+    -+#include "hook.h"
+    - #include "ll-merge.h"
+    - #include "lockfile.h"
+    - #include "merge-recursive.h"
+    -@@ builtin/checkout.c: struct branch_info {
+    - static int post_checkout_hook(struct commit *old_commit, struct commit *new_commit,
+    - 			      int changed)
+    - {
+    --	return run_hook_le(NULL, "post-checkout",
+    --			   oid_to_hex(old_commit ? &old_commit->object.oid : null_oid()),
+    --			   oid_to_hex(new_commit ? &new_commit->object.oid : null_oid()),
+    --			   changed ? "1" : "0", NULL);
     -+	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
     -+
-    ++	const char *old = oid_to_hex(old_commit ? &old_commit->object.oid : null_oid());
-      	/* "new_commit" can be NULL when checking out from the index before
-      	   a commit exists. */
+    - 	/* "new_commit" can be NULL when checking out from the index before
+    - 	   a commit exists. */
     --
     -+	strvec_pushl(&opt.args,
     -+		     oid_to_hex(old_commit ? &old_commit->object.oid : null_oid()),
@@ -407,17 +445,19 @@ Range-diff against v3:
     -+		     changed ? "1" : "0",
     -+		     NULL);
     -+	return run_hooks_oneshot("post-checkout", &opt);
-    ++	const char *new = oid_to_hex(new_commit ? &new_commit->object.oid : null_oid());
-    ++	const char *changedstr = changed ? "1" : "0";
-    + 
-    ++	return run_hooksl("post-checkout", old, new, changedstr, NULL);
-      }
-      
-      static int update_some(const struct object_id *oid, struct strbuf *base,
-    @@ builtin/clone.c
-      
-      /*
-       * Overall FIXMEs:
+    - }
+    - 
+    - static int update_some(const struct object_id *oid, struct strbuf *base,
+    -
+    - ## builtin/clone.c ##
+    -@@
+    - #include "connected.h"
+    - #include "packfile.h"
+    - #include "list-objects-filter-options.h"
+    -+#include "hook.h"
+    - 
+    - /*
+    -  * Overall FIXMEs:
     -@@ builtin/clone.c: static int checkout(int submodule_progress)
     - 	struct tree *tree;
     - 	struct tree_desc t;
@@ -426,23 +466,27 @@ Range-diff against v3:
     - 
     - 	if (option_no_checkout)
     - 		return 0;
-     @@ builtin/clone.c: static int checkout(int submodule_progress)
-      	if (write_locked_index(&the_index, &lock_file, COMMIT_LOCK))
-      		die(_("unable to write new index file"));
-      
-     -	err |= run_hook_le(NULL, "post-checkout", oid_to_hex(null_oid()),
-     -			   oid_to_hex(&oid), "1", NULL);
+    -@@ builtin/clone.c: static int checkout(int submodule_progress)
+    - 	if (write_locked_index(&the_index, &lock_file, COMMIT_LOCK))
+    - 		die(_("unable to write new index file"));
+    - 
+    --	err |= run_hook_le(NULL, "post-checkout", oid_to_hex(null_oid()),
+    --			   oid_to_hex(&oid), "1", NULL);
     -+	strvec_pushl(&hook_opt.args, oid_to_hex(null_oid()), oid_to_hex(&oid),
     -+		     "1", NULL);
     -+	err |= run_hooks_oneshot("post-checkout", &hook_opt);
-    ++	err |= run_hooksl("post-checkout", oid_to_hex(null_oid()),
-    ++			  oid_to_hex(&oid), "1", NULL);
-      
-      	if (!err && (option_recurse_submodules.nr > 0)) {
-      		struct strvec args = STRVEC_INIT;
+    - 
+    - 	if (!err && (option_recurse_submodules.nr > 0)) {
+    - 		struct strvec args = STRVEC_INIT;
+    -
+      ## builtin/worktree.c ##
+     @@ builtin/worktree.c: static int add_worktree(const char *path, const char *refname,
+      	 * is_junk is cleared, but do return appropriate code when hook fails.
     @@ builtin/worktree.c: static int add_worktree(const char *path, const char *refnam
+     +			     "1",
+     +			     NULL);
      +		opt.dir = path;
-     +		opt.absolute_path = 1;
+    -+		opt.absolute_path = 1;
      +
     -+		ret = run_hooks_oneshot("post-checkout", &opt);
     ++		ret = run_hooks_opt("post-checkout", &opt);
@@ -450,11 +494,13 @@ Range-diff against v3:
       
       	strvec_clear(&child_env);
     @@ hook.c: static int pick_next_hook(struct child_process *cp,
+      
       	strvec_push(&cp->args, hook_path);
       	strvec_pushv(&cp->args, hook_cb->options->args.v);
-     @@ hook.c: static int notify_hook_finished(int result,
+    -@@ hook.c: static int notify_hook_finished(int result,
     - int run_hooks(const char *hook_name, const char *hook_path,
     - 	      struct run_hooks_opt *options)
+    +@@ hook.c: static void run_hooks_opt_clear(struct run_hooks_opt *options)
     + 
     + int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options)
       {
@@ -470,16 +516,14 @@ Range-diff against v3:
     - 	if (!options)
     - 		BUG("a struct run_hooks_opt must be provided to run_hooks");
     +@@ hook.c: int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options)
-    + 		goto cleanup;
     + 	}
       
-    +-	cb_data.hook_path = hook_path;
-     +	if (options->absolute_path) {
+    -+	if (options->absolute_path) {
+    + 	cb_data.hook_path = hook_path;
+    ++	if (options->dir) {
      +		strbuf_add_absolute_path(&abs_path, hook_path);
     -+		hook_path = abs_path.buf;
     ++		cb_data.hook_path = abs_path.buf;
-    ++	} else {
-    ++		cb_data.hook_path = hook_path;
      +	}
     -+	cb_data.hook_path = hook_path;
      +
@@ -511,20 +555,38 @@ Range-diff against v3:
     + 	/* Emit an error if the hook is missing */
     + 	unsigned int error_if_missing:1;
      +
-     +	/*
-     +	 * Resolve and run the "absolute_path(hook)" instead of
-    @@ reset.c
-      int reset_head(struct repository *r, struct object_id *oid, const char *action,
-      	       const char *switch_to_branch, unsigned flags,
-     @@ reset.c: int reset_head(struct repository *r, struct object_id *oid, const char *action,
+    -+	/*
+    -+	 * Resolve and run the "absolute_path(hook)" instead of
+    -+	 * "hook". Used for "git worktree" hooks
+    ++	/**
+    ++	 * An optional initial working directory for the hook,
+    ++	 * translates to "struct child_process"'s "dir" member.
+     +	 */
+    -+	int absolute_path;
+    -+
+    -+	/* Path to initial working directory for subprocess */
+     +	const char *dir;
+      };
+      
+      #define RUN_HOOKS_OPT_INIT { \
+    -
+    - ## reset.c ##
+    -@@
+    - #include "tree-walk.h"
+    - #include "tree.h"
+    - #include "unpack-trees.h"
+    -+#include "hook.h"
+    - 
+    - int reset_head(struct repository *r, struct object_id *oid, const char *action,
+    - 	       const char *switch_to_branch, unsigned flags,
+    -@@ reset.c: int reset_head(struct repository *r, struct object_id *oid, const char *action,
     - 			ret = create_symref("HEAD", switch_to_branch,
-      					    reflog_head);
-      	}
+    - 					    reflog_head);
+    - 	}
     --	if (run_hook)
-    + 	if (run_hook)
-     -		run_hook_le(NULL, "post-checkout",
-     -			    oid_to_hex(orig ? orig : null_oid()),
-     -			    oid_to_hex(oid), "1", NULL);
+    --		run_hook_le(NULL, "post-checkout",
+    --			    oid_to_hex(orig ? orig : null_oid()),
+    --			    oid_to_hex(oid), "1", NULL);
     -+	if (run_hook) {
     -+		struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
     -+		strvec_pushl(&opt.args,
@@ -534,37 +596,10 @@ Range-diff against v3:
     -+			     NULL);
     -+		run_hooks_oneshot("post-checkout", &opt);
     -+	}
-    ++		run_hooksl("post-checkout",
-    ++			   oid_to_hex(orig ? orig : null_oid()),
-    ++			   oid_to_hex(oid), "1", NULL);
-      
-      leave_reset_head:
-      	strbuf_release(&msg);
- 6:  7a9fd8627cd !  6:  d1828108f20 merge: convert post-merge to use hook.h
-    @@ Commit message
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/merge.c ##
-    -@@ builtin/merge.c: static void finish(struct commit *head_commit,
-    - 		   const struct object_id *new_head, const char *msg)
-    - {
-    - 	struct strbuf reflog_message = STRBUF_INIT;
-    -+	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
-    - 	const struct object_id *head = &head_commit->object.oid;
     - 
-    - 	if (!msg)
-     @@ builtin/merge.c: static void finish(struct commit *head_commit,
-      	}
-      
-      	/* Run a post-merge hook */
-     -	run_hook_le(NULL, "post-merge", squash ? "1" : "0", NULL);
-    -+	strvec_push(&opt.args, squash ? "1" : "0");
-    -+	run_hooks_oneshot("post-merge", &opt);
-    ++	run_hooksl("post-merge", squash ? "1" : "0", NULL);
-      
-      	apply_autostash(git_path_merge_autostash(the_repository));
-      	strbuf_release(&reflog_message);
- 7:  840fb530df3 !  7:  d1163209b8c git hook run: add an --ignore-missing flag
+    - leave_reset_head:
+    - 	strbuf_release(&msg);
+ 7:  840fb530df3 ! 11:  a0b6818c766 git hook run: add an --ignore-missing flag
     @@ Commit message
          git hook run: add an --ignore-missing flag
      
@@ -605,9 +640,9 @@ Range-diff against v3:
      
       ## t/t1800-hook.sh ##
      @@ t/t1800-hook.sh: test_expect_success 'git hook run: nonexistent hook' '
- 8:  716ebabd794 =  8:  27d59b3403d send-email: use 'git hook run' for 'sendemail-validate'
- 9:  95782109270 =  9:  33a9c33a352 git-p4: use 'git hook' to run hooks
-10:  706426c8a79 ! 10:  86317e99cd9 commit: convert {pre-commit,prepare-commit-msg} hook to hook.h
+ 8:  716ebabd794 = 12:  efa35971e9f send-email: use 'git hook run' for 'sendemail-validate'
+ 9:  95782109270 = 13:  98e0e3330fb git-p4: use 'git hook' to run hooks
+10:  706426c8a79 ! 14:  79ea5a2a4f5 commit: convert {pre-commit,prepare-commit-msg} hook to hook.h
     @@ commit.c: size_t ignore_non_trailer(const char *buf, size_t len)
      -	strvec_clear(&hook_env);
       
@@ -615,7 +650,7 @@ Range-diff against v3:
     -+	return run_hooks_oneshot(name, &opt);
     ++	return run_hooks_opt(name, &opt);
       }
-11:  39069a9c3ff ! 11:  bcb0de86d14 read-cache: convert post-index-change to use hook.h
+11:  39069a9c3ff ! 15:  81612f94707 read-cache: convert post-index-change to use hook.h
     @@ read-cache.c
       
       /* Mask for the name length in ce_flags in the on-disk index */
@@ -631,24 +666,26 @@ Range-diff against v3:
      @@ read-cache.c: static int do_write_locked_index(struct index_state *istate, struct lock_file *l
       	else
       		ret = close_lock_file_gently(lock);
-    @@ read-cache.c: static int do_write_locked_index(struct index_state *istate, struc
+      
      -	run_hook_le(NULL, "post-index-change",
-     -			istate->updated_workdir ? "1" : "0",
-     -			istate->updated_skipworktree ? "1" : "0", NULL);
+    --			istate->updated_workdir ? "1" : "0",
+    --			istate->updated_skipworktree ? "1" : "0", NULL);
     -+	strvec_pushl(&hook_opt.args,
     -+		     istate->updated_workdir ? "1" : "0",
     -+		     istate->updated_skipworktree ? "1" : "0",
     -+		     NULL);
     -+	run_hooks_oneshot("post-index-change", &hook_opt);
     -+
-    ++	run_hooksl("post-index-change",
-    ++		   istate->updated_workdir ? "1" : "0",
-    ++		   istate->updated_skipworktree ? "1" : "0",
-    ++		   NULL);
+    ++	run_hooks_l("post-index-change",
+    + 			istate->updated_workdir ? "1" : "0",
+    + 			istate->updated_skipworktree ? "1" : "0", NULL);
       	istate->updated_workdir = 0;
-      	istate->updated_skipworktree = 0;
-      
-12:  9818078f1e5 ! 12:  25226c9e76a receive-pack: convert push-to-checkout hook to hook.h
+    - 	istate->updated_skipworktree = 0;
+    - 
+     
+      ## run-command.c ##
+     @@ run-command.c: int async_with_fork(void)
+12:  9818078f1e5 ! 16:  43ecd6697e0 receive-pack: convert push-to-checkout hook to hook.h
     @@ builtin/receive-pack.c: static const char *push_to_checkout(unsigned char *hash,
      -			hash_to_hex(hash), NULL))
      +	strvec_pushv(&opt.env, env->v);
@@ -658,7 +695,7 @@ Range-diff against v3:
       		return "push-to-checkout hook declined";
       	else
       		return NULL;
-13:  1bc080d3611 = 13:  a2d434bf7ac run-command: remove old run_hook_{le,ve}() hook API
+13:  1bc080d3611 = 17:  9ef574fa30c run-command: remove old run_hook_{le,ve}() hook API
 -- 
 2.33.1.1570.g069344fdd45
 
