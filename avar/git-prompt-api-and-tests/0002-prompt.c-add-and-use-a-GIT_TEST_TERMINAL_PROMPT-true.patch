@@ -1,0 +1,238 @@
+From 964e7f4531f82696e28d55588c3c11f5505aff97 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-964e7f4531f-20211102T155046Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20211102T155046Z-avarab@gmail.com>
+References: <20190524062724.GC25694@sigill.intra.peff.net>
+	<cover-0.2-00000000000-20211102T155046Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Nov 2021 14:38:36 +0100
+Subject: [PATCH 2/2] prompt.c: add and use a GIT_TEST_TERMINAL_PROMPT=true
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In 97387c8bdd9 (am: read interactive input from stdin, 2019-05-20) we
+we fixed a behavior change in the conversion of git-am from a
+shellscript to a C program by changing it from using git_prompt() to
+using fgets(..., stdin). This ensured that we could run:
+
+    echo y | git am --interactive [...]
+
+But along with that in the subsequent 6e7baf246a2 (am: drop tty
+requirement for --interactive, 2019-05-20) we had to remove support
+for:
+
+    git am --interactive </dev/null
+
+This change builds on the refactoring of git_prompt() into "normal
+prompt" and "wants password" functions in the preceding commit, and
+moves "git am --interactive" back to using the prompt function.
+
+This allows us to have our cake and eat it too by adding a
+GIT_TERMINAL_PROMPT=true mode to test-lib.sh. Adjusting "git am
+--interactive" for use in our tests (see
+e.g. "t/t4257-am-interactive.sh") was what 97387c8bdd9 and 6e7baf246a2
+were aiming for.
+
+Then more recently in 09535f056b0 (bisect--helper: reimplement
+`bisect_autostart` shell function in C, 2020-09-24) we've had the same
+sort of behavior change happen to "git bisect"'s interactive question
+mode, it now uses git_prompt()'s /dev/tty, not stdin.
+
+It seems to me that using /dev/tty is desirable over using stdin,
+these prompts are meant to be interactive, and our acceptance of stdin
+was an artifact of how these commands were originally implemented in
+shellscript.
+
+So let's move "git am --interactive" back to using
+"git_prompt()" (which is called "git_prompt_echo()" as of the
+preceding commit), and similarly remove the "!isatty(STDIN_FILENO)"
+test added in 09535f056b0, that control flow was converted as-is from
+the shellscript behavior.
+
+Let's also change a similar assertion added to "git am" in
+6e7baf246a2. Now we'll die on:
+
+    # no arguments provided
+    git am --interactive
+
+But not:
+
+    git am --interactive </dev/null
+
+Or:
+
+    git am --interactive <mbox
+
+To do this we'll need to add a GIT_TEST_TERMINAL_PROMPT variable for
+use in test-lib.sh, by doing so this "echo input | git cmd ..."
+behavior of interactive commands is now isolated to our own test
+suite, instead of leaking out into the wild.
+
+Now that we've done that we can exhaustively test the prompt behavior
+of "git bisect", which wasn't previously possible.
+
+There is some discussion downthread of the series 97387c8bdd9 is in
+about whether we should always accept stdin input in these
+commands[1]. I think that's arguably a good idea, and perhaps we'll
+need to change the approach here.
+
+Using a git_prompt_echo() that we know never needs to handle passwords
+should provide us with an easy path towards deciding what to do in
+those cases, we'll be able to consistently pick one behavior or the
+other, instead of having the behavior of specific commands cater to
+test-only needs.
+
+The lack of _() on the new die() message is intentional. This message
+will only be emitted if there's a bug in our own test suite, so it's a
+waste of translator time to translate it.
+
+1. https://lore.kernel.org/git/20190520125016.GA13474@sigill.intra.peff.net/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c                |  8 +++-----
+ builtin/bisect--helper.c    |  3 ---
+ prompt.c                    |  8 +++++++-
+ t/t6030-bisect-porcelain.sh | 41 +++++++++++++++++++++++++++++++++++++
+ t/test-lib.sh               |  4 ++++
+ 5 files changed, 55 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 8677ea2348a..1e90b9ea0cd 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -1693,7 +1693,7 @@ static int do_interactive(struct am_state *state)
+ 	assert(state->msg);
+ 
+ 	for (;;) {
+-		char reply[64];
++		const char *reply;
+ 
+ 		puts(_("Commit Body is:"));
+ 		puts("--------------------------");
+@@ -1705,9 +1705,7 @@ static int do_interactive(struct am_state *state)
+ 		 * in your translation. The program will only accept English
+ 		 * input at this point.
+ 		 */
+-		printf(_("Apply? [y]es/[n]o/[e]dit/[v]iew patch/[a]ccept all: "));
+-		if (!fgets(reply, sizeof(reply), stdin))
+-			die("unable to read from stdin; aborting");
++		reply = git_prompt_echo(_("Apply? [y]es/[n]o/[e]dit/[v]iew patch/[a]ccept all: "));
+ 
+ 		if (*reply == 'y' || *reply == 'Y') {
+ 			return 0;
+@@ -2437,7 +2435,7 @@ int cmd_am(int argc, const char **argv, const char *prefix)
+ 				strvec_push(&paths, mkpath("%s/%s", prefix, argv[i]));
+ 		}
+ 
+-		if (state.interactive && !paths.nr)
++		if (state.interactive && !paths.nr && isatty(0))
+ 			die(_("interactive mode requires patches on the command line"));
+ 
+ 		am_setup(&state, patch_format, paths.v, keep_cr);
+diff --git a/builtin/bisect--helper.c b/builtin/bisect--helper.c
+index 30533a70b53..dd73d76df3e 100644
+--- a/builtin/bisect--helper.c
++++ b/builtin/bisect--helper.c
+@@ -830,9 +830,6 @@ static int bisect_autostart(struct bisect_terms *terms)
+ 	fprintf_ln(stderr, _("You need to start by \"git bisect "
+ 			  "start\"\n"));
+ 
+-	if (!isatty(STDIN_FILENO))
+-		return -1;
+-
+ 	/*
+ 	 * TRANSLATORS: Make sure to include [Y] and [n] in your
+ 	 * translation. The program will only accept English input
+diff --git a/prompt.c b/prompt.c
+index 458d6637506..273bc30bf0e 100644
+--- a/prompt.c
++++ b/prompt.c
+@@ -6,9 +6,15 @@
+ 
+ char *git_prompt(const char *prompt, unsigned int echo)
+ {
++	const char *test_var = "GIT_TEST_TERMINAL_PROMPT";
+ 	char *r = NULL;
+ 
+-	if (git_env_bool("GIT_TERMINAL_PROMPT", 1)) {
++	if (git_env_bool(test_var, 0) && !isatty(0)) {
++		char reply[64];
++		if (!fgets(reply, sizeof(reply), stdin))
++			die("unable to read from stdin in '%s=true' mode", test_var);
++		return xstrdup(reply);
++	} else if (git_env_bool("GIT_TERMINAL_PROMPT", 1)) {
+ 		r = git_terminal_prompt(prompt, echo);
+ 		if (!r)
+ 			die_errno("could not read");
+diff --git a/t/t6030-bisect-porcelain.sh b/t/t6030-bisect-porcelain.sh
+index 1be85d064e7..2afb1b57b45 100755
+--- a/t/t6030-bisect-porcelain.sh
++++ b/t/t6030-bisect-porcelain.sh
+@@ -45,6 +45,47 @@ test_expect_success 'set up basic repo with 1 file (hello) and 4 commits' '
+      HASH4=$(git rev-parse --verify HEAD)
+ '
+ 
++test_expect_success 'bisect "good" without a "start": no prompt' '
++	cat >expect <<-\EOF &&
++	You need to start by "git bisect start"
++
++	fatal: unable to read from stdin in '\''GIT_TEST_TERMINAL_PROMPT=true'\'' mode
++	EOF
++	test_expect_code 128 git bisect good HEAD 2>actual &&
++	test_cmp expect actual &&
++	test_must_fail git bisect bad HEAD~ 2>actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'bisect "good" without a "start": have prompt' '
++	cat >expect <<-\EOF &&
++	You need to start by "git bisect start"
++
++	EOF
++	echo n | test_expect_code 1 git bisect good HEAD 2>actual &&
++	test_cmp expect actual &&
++	echo n | test_must_fail git bisect bad HEAD~ 2>actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'bisect "good" without a "start": answer prompt' '
++	cat >expect <<-\EOF &&
++	You need to start by "git bisect start"
++
++	EOF
++	echo Y | git bisect good HEAD 2>actual &&
++	test_cmp expect actual &&
++
++	# We will only get this far with the "Y" prompt
++	cat >expect <<-\EOF &&
++	Some good revs are not ancestors of the bad rev.
++	git bisect cannot work properly in this case.
++	Maybe you mistook good and bad revs?
++	EOF
++	test_must_fail git bisect bad HEAD~ 2>actual &&
++	test_cmp expect actual
++'
++
+ test_expect_success 'bisect starts with only one bad' '
+ 	git bisect reset &&
+ 	git bisect start &&
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 2679a7596a6..778a08ffe4b 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -476,6 +476,10 @@ export GIT_TEST_MERGE_ALGORITHM
+ GIT_TRACE_BARE=1
+ export GIT_TRACE_BARE
+ 
++# Have git_prompt_noecho() accept stdin
++GIT_TEST_TERMINAL_PROMPT=true
++export GIT_TEST_TERMINAL_PROMPT
++
+ # Use specific version of the index file format
+ if test -n "${GIT_TEST_INDEX_VERSION:+isset}"
+ then
+-- 
+2.33.1.1570.g069344fdd45
+
