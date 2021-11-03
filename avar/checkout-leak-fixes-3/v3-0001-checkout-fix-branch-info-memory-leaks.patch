@@ -1,11 +1,11 @@
 From f11d99cf75ae6e6b3277944633fd9f306e24dce3 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-1.1-f11d99cf75a-20211103T112219Z-avarab@gmail.com>
-In-Reply-To: <patch-1.1-9b17170b794-20211014T000949Z-avarab@gmail.com>
-References: <patch-1.1-9b17170b794-20211014T000949Z-avarab@gmail.com>
+Message-Id: <patch-v3-1.1-f11d99cf75a-20211103T112248Z-avarab@gmail.com>
+In-Reply-To: <patch-v2-1.1-e2a166a9733-20211021T201541Z-avarab@gmail.com>
+References: <patch-v2-1.1-e2a166a9733-20211021T201541Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 14 Oct 2021 00:53:30 +0200
-Subject: [PATCH v2] checkout: fix "branch info" memory leaks
+Subject: [PATCH v3] checkout: fix "branch info" memory leaks
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -44,18 +44,12 @@ be something the current 'linux-leaks' job would run into.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
-Range-diff against v1:
-1:  9b17170b794 ! 1:  f11d99cf75a checkout: fix "branch info" memory leaks
+Range-diff against v2:
+1:  e2a166a9733 ! 1:  f11d99cf75a checkout: fix "branch info" memory leaks
     @@ Commit message
-         area, i.e. the "path_to_free" accounting added by 96ec7b1e708 (Convert
-         resolve_ref+xstrdup to new resolve_refdup function, 2011-12-13).
+         "char *", as is already being done for the "refname" member of the
+         same struct.
      
-    +    There was some discussion about whether "we should retain the "const
-    +    char *" here and cast at free() time, or have it be a "char *". Since
-    +    this is not a public API with any sort of API boundary let's use
-    +    "char *", as is already being done for the "refname" member of the
-    +    same struct.
-    +
     +    The tests to mark as passing were found with:
     +
     +        rm .prove; GIT_SKIP_TESTS=t0027 prove -j8 --state=save t[0-9]*.sh :: --immediate
@@ -73,57 +67,22 @@ Range-diff against v1:
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
       ## builtin/checkout.c ##
-    +@@ builtin/checkout.c: struct checkout_opts {
-    + };
-    + 
-    + struct branch_info {
-    +-	const char *name; /* The short name used */
-    +-	const char *path; /* The full name of a real branch */
-    ++	char *name; /* The short name used */
-    ++	char *path; /* The full name of a real branch */
-    + 	struct commit *commit; /* The named commit */
-    + 	char *refname; /* The full name of the ref being checked out. */
-    + 	struct object_id oid; /* The object ID of the commit being checked out. */
-     @@ builtin/checkout.c: struct branch_info {
-      	char *checkout;
-      };
+    @@ builtin/checkout.c: struct branch_info {
       
      +static void branch_info_release(struct branch_info *info)
      +{
     -+	if (!info)
     -+		return;
-    -+	free((char *)info->name);
-    -+	free((char *)info->path);
-    ++	free(info->name);
-    ++	free(info->path);
+     +	free(info->name);
+     +	free(info->path);
      +	free(info->refname);
-     +	free(info->checkout);
-     +}
-    @@ builtin/checkout.c: static void setup_branch_path(struct branch_info *branch)
-      	strbuf_branchname(&buf, branch->name, INTERPRET_BRANCH_LOCAL);
-     -	if (strcmp(buf.buf, branch->name))
-     +	if (strcmp(buf.buf, branch->name)) {
-    -+		free((char *)branch->name);
-    ++		free(branch->name);
-      		branch->name = xstrdup(buf.buf);
-     +	}
-      	strbuf_splice(&buf, 0, 0, "refs/heads/", 11);
-    @@ builtin/checkout.c: static void update_refs_for_switch(const struct checkout_opt
-      				      opts->quiet,
-      				      opts->track);
-     -		new_branch_info->name = opts->new_branch;
-    -+		free((char *)new_branch_info->name);
-    ++		free(new_branch_info->name);
-     +		free(new_branch_info->refname);
-     +		new_branch_info->name = xstrdup(opts->new_branch);
-      		setup_branch_path(new_branch_info);
     @@ builtin/checkout.c: static int switch_branches(const struct checkout_opts *opts,
      +	old_branch_info.path = resolve_refdup("HEAD", 0, &rev, &flag);
       	if (old_branch_info.path)
       		old_branch_info.commit = lookup_commit_reference_gently(the_repository, &rev, 1);
     --	if (!(flag & REF_ISSYMREF))
     -+	if (!(flag & REF_ISSYMREF)) {
-    -+		free((char *)old_branch_info.path);
+    -+		free(old_branch_info.path);
     - 		old_branch_info.path = NULL;
     -+	}
     + 	if (!(flag & REF_ISSYMREF))
@@ -146,13 +105,16 @@ Range-diff against v1:
       
       	if (opts->new_orphan_branch && opts->orphan_from_empty_tree) {
     @@ builtin/checkout.c: static void setup_new_branch_info_and_source_tree(
-      	setup_branch_path(new_branch_info);
-      
       	if (!check_refname_format(new_branch_info->path, 0) &&
-    + 	    !read_ref(new_branch_info->path, &branch_rev))
-    + 		oidcpy(rev, &branch_rev);
+      	    !read_ref(new_branch_info->path, &branch_rev))
+      		oidcpy(rev, &branch_rev);
+    - 	else {
     +-	else {
-    +-		free((char *)new_branch_info->path);
+     -		free((char *)new_branch_info->path);
+    -+		free(new_branch_info->path);
+    - 		new_branch_info->path = NULL; /* not an existing branch */
+    - 	}
+    - 
     +-		new_branch_info->path = NULL; /* not an existing branch */
     +-	}
     ++	else
