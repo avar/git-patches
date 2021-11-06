@@ -1,0 +1,97 @@
+From 03290125c45004cab7a7043ab6dfedee2d0043c8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.16-03290125c45-20211106T205708Z-avarab@gmail.com>
+In-Reply-To: <cover-00.16-00000000000-20211106T205708Z-avarab@gmail.com>
+References: <cover-00.16-00000000000-20211106T205708Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Oct 2021 18:42:18 +0200
+Subject: [PATCH 06/16] Makefile: don't have Perl over-depend on
+ GIT-BUILD-OPTIONS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the dependency on "GIT-BUILD-OPTIONS" used by
+e.g. "git-send-email" to be on "GIT-PERL-DEFINES instead.
+
+The reason for depending on "GIT-BUILD-OPTIONS" was to trigger a
+re-build if NO_PERL=Y was defined, we can instead add that variable to
+"PERL_DEFINES", and have "GIT-PERL-DEFINES" created and updated if
+"NO_PERL=Y" is defined.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 40 +++++++++++++++++++++-------------------
+ 1 file changed, 21 insertions(+), 19 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 181dc52f152..354136e30d1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2288,11 +2288,21 @@ git.res: git.rc GIT-VERSION-FILE GIT-PREFIX
+ 	    $(shell echo $(GIT_VERSION) 0 0 0 0 | tr '.a-zA-Z-' ' '))) \
+ 	  -DGIT_VERSION="\\\"$(GIT_VERSION)\\\"" -i $< -o $@
+ 
+-# This makes sure we depend on the NO_PERL setting itself.
+-$(SCRIPT_PERL_GEN): GIT-BUILD-OPTIONS
+-
+-ifndef NO_PERL
++# Under NO_PERL=Y we'll still make GIT-PERL-DEFINES. We need to depend
++# on NO_PERL=Y itself for creating "unimplemented.sh" scripts.
+ PERL_DEFINES =
++$(SCRIPT_PERL_GEN): GIT-PERL-DEFINES
++ifdef NO_PERL
++PERL_DEFINES += $(NO_PERL)
++
++$(SCRIPT_PERL_GEN) git-instaweb: % : unimplemented.sh
++	$(QUIET_GEN) \
++	sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
++	    -e 's|@@REASON@@|NO_PERL=$(NO_PERL)|g' \
++	    unimplemented.sh >$@+ && \
++	chmod +x $@+ && \
++	mv $@+ $@
++else
+ PERL_DEFINES += $(gitexecdir_relative_SQ)
+ PERL_DEFINES += $(perllibdir_relative_SQ)
+ PERL_DEFINES += $(localedir_relative_SQ)
+@@ -2326,13 +2336,6 @@ $(SCRIPT_PERL_GEN): % : %.perl GIT-PERL-DEFINES GIT-PERL-HEADER GIT-VERSION-FILE
+ 	chmod +x $@+ && \
+ 	mv $@+ $@
+ 
+-GIT-PERL-DEFINES: FORCE
+-	@FLAGS='$(PERL_DEFINES)'; \
+-	    if test x"$$FLAGS" != x"`cat $@ 2>/dev/null`" ; then \
+-		echo >&2 "    * new perl-specific parameters"; \
+-		echo "$$FLAGS" >$@; \
+-	    fi
+-
+ GIT-PERL-HEADER: $(PERL_HEADER_TEMPLATE) GIT-PERL-DEFINES
+ 	$(QUIET_GEN) \
+ 	INSTLIBDIR='$(perllibdir_SQ)' && \
+@@ -2357,16 +2360,15 @@ git-instaweb: git-instaweb.sh GIT-SCRIPT-DEFINES
+ 	$(QUIET_GEN)$(cmd_munge_script) && \
+ 	chmod +x $@+ && \
+ 	mv $@+ $@
+-else # NO_PERL
+-$(SCRIPT_PERL_GEN) git-instaweb: % : unimplemented.sh
+-	$(QUIET_GEN) \
+-	sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
+-	    -e 's|@@REASON@@|NO_PERL=$(NO_PERL)|g' \
+-	    unimplemented.sh >$@+ && \
+-	chmod +x $@+ && \
+-	mv $@+ $@
+ endif # NO_PERL
+ 
++GIT-PERL-DEFINES: FORCE
++	@FLAGS='$(PERL_DEFINES)'; \
++	    if test x"$$FLAGS" != x"`cat $@ 2>/dev/null`" ; then \
++		echo >&2 "    * new perl-specific parameters"; \
++		echo "$$FLAGS" >$@; \
++	    fi
++
+ # This makes sure we depend on the NO_PYTHON setting itself.
+ $(SCRIPT_PYTHON_GEN): GIT-BUILD-OPTIONS
+ 
+-- 
+2.34.0.rc1.741.gab7bfd97031
+
