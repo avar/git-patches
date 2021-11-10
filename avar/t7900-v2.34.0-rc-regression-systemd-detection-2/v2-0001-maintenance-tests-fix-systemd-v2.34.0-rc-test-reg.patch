@@ -1,0 +1,116 @@
+From 44f0cafa16e84fd74c05de228a44881ac6d881f3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-44f0cafa16e-20211110T035103Z-avarab@gmail.com>
+In-Reply-To: <patch-1.1-90172a8ddcc-20211102T142351Z-avarab@gmail.com>
+References: <patch-1.1-90172a8ddcc-20211102T142351Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Nov 2021 11:38:59 +0100
+Subject: [PATCH v2] maintenance tests: fix systemd v2.34.0-rc* test regression
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix tests added in b681b191f92 (maintenance: add support for systemd
+timers on Linux, 2021-09-04) to run successfully on systems where
+systemd-analyze is installed, but on which there's a discrepancy
+between a FILE argument of "/lib/systemd/system/basic.target" and
+"systemd/user/git-maintenance@.service" succeeding.
+
+There was an attempt to work around previous breakage in these tests
+in 670e5973992 (maintenance: fix test t7900-maintenance.sh,
+2021-09-27), as noted in my [1] that commit is wrong about its
+assumption that we can use "/lib/systemd/system/basic.target" as a
+canary.argument.
+
+To fix this let's adjust this test to test what it really should be
+testing: If we've got systemd-analyze reporting anything useful, we
+should use it to check the syntax of our just-generated
+"systemd/user/git-maintenance@.service" file.
+
+Even on systems where this previously succeeded we weren't effectively
+doing that, because "systemd-analyze" will pass various syntax errors
+by and exit with a status code of 0, e.g. if the "[Unit]" section is
+replaced with a nonsensical "[HlaghUnfUnf]" section.
+
+To do that ignore whatever exit code we get from "systemd-analyze
+verify", and filter its stderr output to extract the sorts of lines it
+emits on note syntax warnings and errors. We need to filter out
+"Failed to load", which would be emitted e.g. on the
+gcc135.fsffrance.org test box[1].
+
+We also need to pipe this output to FD's 5 & 6, to avoid mixing up the
+trace output with our own output under "-x".
+
+1. https://lore.kernel.org/git/211026.8635oo11jk.gmgdl@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff against v1:
+1:  90172a8ddcc ! 1:  44f0cafa16e maintenance tests: fix systemd v2.34.0-rc* test regression
+    @@ Commit message
+         maintenance tests: fix systemd v2.34.0-rc* test regression
+     
+         Fix tests added in b681b191f92 (maintenance: add support for systemd
+    -    timers on Linux, 2021-09-04) to run successfully no systems where
+    +    timers on Linux, 2021-09-04) to run successfully on systems where
+         systemd-analyze is installed, but on which there's a discrepancy
+         between a FILE argument of "/lib/systemd/system/basic.target" and
+         "systemd/user/git-maintenance@.service" succeeding.
+    @@ Commit message
+     
+         To do that ignore whatever exit code we get from "systemd-analyze
+         verify", and filter its stderr output to extract the sorts of lines it
+    -    emits no note syntax warnings and errors. We need to filter out
+    +    emits on note syntax warnings and errors. We need to filter out
+         "Failed to load", which would be emitted e.g. on the
+         gcc135.fsffrance.org test box[1].
+     
+
+ t/t7900-maintenance.sh | 23 ++++++++++++++---------
+ 1 file changed, 14 insertions(+), 9 deletions(-)
+
+diff --git a/t/t7900-maintenance.sh b/t/t7900-maintenance.sh
+index 74aa6384755..5fe2ea03c1d 100755
+--- a/t/t7900-maintenance.sh
++++ b/t/t7900-maintenance.sh
+@@ -20,15 +20,16 @@ test_xmllint () {
+ 	fi
+ }
+ 
+-test_lazy_prereq SYSTEMD_ANALYZE '
+-	systemd-analyze verify /lib/systemd/system/basic.target
+-'
+-
+ test_systemd_analyze_verify () {
+-	if test_have_prereq SYSTEMD_ANALYZE
+-	then
+-		systemd-analyze verify "$@"
+-	fi
++	# Ignoring any errors from systemd-analyze is intentional
++	systemd-analyze verify "$@" >systemd.out 2>systemd.err;
++
++	cat systemd.out >&5 &&
++	sed -n \
++		-e '/^Failed to load/d' \
++		-e '/git-maintenance@i*\.service:/x' \
++		<systemd.err >&6 &&
++	rm systemd.out systemd.err
+ }
+ 
+ test_expect_success 'help text' '
+@@ -697,7 +698,11 @@ test_expect_success 'start and stop Linux/systemd maintenance' '
+ 	# start registers the repo
+ 	git config --get --global --fixed-value maintenance.repo "$(pwd)" &&
+ 
+-	test_systemd_analyze_verify "systemd/user/git-maintenance@.service" &&
++	# If we have a systemd-analyze on the system we can verify the
++	# generated file.
++	test_systemd_analyze_verify "systemd/user/git-maintenance@.service" 5>out 6>err &&
++	test_must_be_empty out &&
++	test_must_be_empty err &&
+ 
+ 	printf -- "--user enable --now git-maintenance@%s.timer\n" hourly daily weekly >expect &&
+ 	test_cmp expect args &&
+-- 
+2.34.0.rc2.791.gdbfcf909579
+
