@@ -1,0 +1,475 @@
+From 362d084cee475e1112a681fcedfb27744750f7fe Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.8-00000000000-20211110T013217Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20211106T210711Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20211106T210711Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 10 Nov 2021 02:32:17 +0100
+Subject: [PATCH v2 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (8):
+  grep.h: remove unused "regex_t regexp" from grep_opt
+  built-ins: trust the "prefix" from run_builtin()
+  log tests: check if grep_config() is called by "log"-like cmds
+  grep docs: de-duplicate configuration sections
+  grep.c: don't pass along NULL callback value
+  grep API: call grep_config() after grep_init()
+  grep: simplify config parsing, change grep.<rx config> interaction
+  grep: make "extendedRegexp=true" the same as "patternType=extended"
+
+ Documentation/config/grep.txt |  11 ++--
+ Documentation/git-grep.txt    |  30 +--------
+ builtin/grep.c                |  27 ++++----
+ builtin/log.c                 |  13 +++-
+ builtin/ls-tree.c             |   9 ++-
+ git.c                         |   4 +-
+ grep.c                        | 118 ++++------------------------------
+ grep.h                        |  34 ++++++----
+ revision.c                    |   4 +-
+ t/t4202-log.sh                |  16 +++++
+ t/t7810-grep.sh               |   4 +-
+ 11 files changed, 96 insertions(+), 174 deletions(-)
+
+Range-diff against v1:
+1:  244715e3497 < -:  ----------- git.c & grep.c: assert that "prefix" is NULL or non-zero string
+2:  3338cc95b81 ! 1:  412b8b65266 grep: remove unused "prefix_length" member
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep: remove unused "prefix_length" member
+    +    grep.h: remove unused "regex_t regexp" from grep_opt
+     
+    -    Remove the "prefix_length" member, which we compute with a strlen() on
+    -    the "prefix" argument to grep_init(), but whose strlen() hasn't been
+    -    used since 493b7a08d80 (grep: accept relative paths outside current
+    -    working directory, 2009-09-05).
+    -
+    -    When this code was added in 0d042fecf2f (git-grep: show pathnames
+    -    relative to the current directory, 2006-08-11) we used the length, but
+    -    since 493b7a08d80 we haven't used it for anything except a boolean
+    -    check that we could have done on the "prefix" member itself.
+    -
+    -    Before a preceding commit we also used to guard the strlen() with
+    -    "prefix && *prefix", but as that commit notes the RHS of that && chain
+    -    was also redundant.
+    +    This "regex_t" in grep_opt has not been used since
+    +    f9b9faf6f8a (builtin-grep: allow more than one patterns., 2006-05-02),
+    +    we still use a "regex_t" for compiling regexes, but that's in the
+    +    "grep_pat" struct".
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## builtin/grep.c ##
+    -@@ builtin/grep.c: static void grep_source_name(struct grep_opt *opt, const char *filename,
+    - 	strbuf_reset(out);
+    - 
+    - 	if (opt->null_following_name) {
+    --		if (opt->relative && opt->prefix_length) {
+    -+		if (opt->relative && opt->prefix) {
+    - 			struct strbuf rel_buf = STRBUF_INIT;
+    - 			const char *rel_name =
+    - 				relative_path(filename + tree_name_len,
+    -@@ builtin/grep.c: static void grep_source_name(struct grep_opt *opt, const char *filename,
+    - 		return;
+    - 	}
+    - 
+    --	if (opt->relative && opt->prefix_length)
+    -+	if (opt->relative && opt->prefix)
+    - 		quote_path(filename + tree_name_len, opt->prefix, out, 0);
+    - 	else
+    - 		quote_c_style(filename + tree_name_len, out, NULL, 0);
+    -
+    - ## grep.c ##
+    -@@ grep.c: void grep_init(struct grep_opt *opt, struct repository *repo, const char *prefix
+    - 
+    - 	opt->repo = repo;
+    - 	opt->prefix = prefix;
+    --	opt->prefix_length = prefix ? strlen(prefix) : 0;
+    - 	opt->pattern_tail = &opt->pattern_list;
+    - 	opt->header_tail = &opt->header_list;
+    - }
+    -
+      ## grep.h ##
+     @@ grep.h: struct grep_opt {
+    - 	struct repository *repo;
+      
+      	const char *prefix;
+    --	int prefix_length;
+    + 	int prefix_length;
+    +-	regex_t regexp;
+      	int linenum;
+      	int columnnum;
+      	int invert;
+3:  78298657d69 ! 2:  f4587da6366 grep.c: move "prefix" out of "struct grep_opt"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep.c: move "prefix" out of "struct grep_opt"
+    +    built-ins: trust the "prefix" from run_builtin()
+     
+    -    The "struct grep_opt" is a mixture of things that would be needed by
+    -    all callers of the grep.c API, and quite a few things that only the
+    -    builtin/grep.c needs.
+    +    Change code in "builtin/grep.c" and "builtin/ls-tree.c" to trust the
+    +    "prefix" passed from "run_builtin()". The "prefix" we get from setup.c
+    +    is either going to be NULL or a string of length >0, never "".
+     
+    -    Since we got rid of "prefix_length" in the previous commit, let's move
+    -    the "prefix" variable over to "builtin/grep.c" where it's used. To do
+    -    this let's create a "struct grep_cmd_opt", which we'll have a pointer
+    -    to in a new "caller_priv" member in "struct grep_opt" (the existing
+    -    "priv" is used by the top-level "grep.c" itself).
+    +    So we can drop the "prefix && *prefix" checks added for
+    +    "builtin/grep.c" in 0d042fecf2f (git-grep: show pathnames relative to
+    +    the current directory, 2006-08-11), and for "builtin/ls-tree.c" in
+    +    a69dd585fca (ls-tree: chomp leading directories when run from a
+    +    subdirectory, 2005-12-23).
+     
+    -    We might eventually need to have grep_opt_dup() learn about this new
+    -    member, but since the prefix can be a "const char *const" (i.e. we
+    -    never change it in any way) let's leave that aside for now, in any
+    -    case "builtin/grep.c" is the only user of grep_opt_dup(), even though
+    -    it lives in the top-level "grep.c".
+    +    As seen in code in revision.c that was added in cd676a51367 (diff
+    +    --relative: output paths as relative to the current subdirectory,
+    +    2008-02-12) we already have existing code that does away with this
+    +    assertion.
+    +
+    +    This makes it easier to reason about a subsequent change to the
+    +    "prefix_length" code in grep.c in a subsequent commit, and since we're
+    +    going to the trouble of doing that let's leave behind an assert() to
+    +    promise this to any future callers.
+    +
+    +    For "builtin/grep.c" it would be painful to pass the "prefix" down the
+    +    callchain of:
+    +
+    +        cmd_grep -> grep_tree -> grep_submodule -> grep_cache -> grep_oid ->
+    +        grep_source_name
+    +
+    +    So for the code that needs it in grep_source_name() let's add a
+    +    "grep_prefix" variable similar to the existing "ls_tree_prefix".
+    +
+    +    While at it let's move the code in cmd_ls_tree() around so that we
+    +    assign to the "ls_tree_prefix" right after declaring the variables,
+    +    and stop assigning to "prefix". We only subsequently used that
+    +    variable later in the function after clobbering it. Let's just use our
+    +    own "grep_prefix" instead.
+    +
+    +    Let's also add an assert() in git.c, so that we'll make this promise
+    +    about the "prefix" to any current and future callers, as well as to
+    +    any readers of the code.
+    +
+    +    Code history:
+    +
+    +     * The strlen() in "grep.c" hasn't been used since 493b7a08d80 (grep:
+    +       accept relative paths outside current working directory, 2009-09-05).
+    +
+    +       When that code was added in 0d042fecf2f (git-grep: show pathnames
+    +       relative to the current directory, 2006-08-11) we used the length.
+    +
+    +       But since 493b7a08d80 we haven't used it for anything except a
+    +       boolean check that we could have done on the "prefix" member
+    +       itself.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/grep.c ##
+    -@@ builtin/grep.c: static int num_threads;
+    - 
+    - static pthread_t *threads;
+    +@@
+    + #include "object-store.h"
+    + #include "packfile.h"
+      
+    -+struct grep_cmd_opt {
+    -+	const char *const prefix;
+    -+};
+    ++static const char *grep_prefix;
+     +
+    - /* We use one producer thread and THREADS consumer
+    -  * threads. The producer adds struct work_items to 'todo' and the
+    -  * consumers pick work items from the same array.
+    -@@ builtin/grep.c: static int grep_cmd_config(const char *var, const char *value, void *cb)
+    - static void grep_source_name(struct grep_opt *opt, const char *filename,
+    - 			     int tree_name_len, struct strbuf *out)
+    - {
+    -+	struct grep_cmd_opt *opt_cmd = opt->caller_priv;
+    + static char const * const grep_usage[] = {
+    + 	N_("git grep [<options>] [-e] <pattern> [<rev>...] [[--] <path>...]"),
+    + 	NULL
+    +@@ builtin/grep.c: static void grep_source_name(struct grep_opt *opt, const char *filename,
+      	strbuf_reset(out);
+      
+      	if (opt->null_following_name) {
+    --		if (opt->relative && opt->prefix) {
+    -+		if (opt->relative && opt_cmd->prefix) {
+    +-		if (opt->relative && opt->prefix_length) {
+    ++		if (opt->relative && grep_prefix) {
+      			struct strbuf rel_buf = STRBUF_INIT;
+      			const char *rel_name =
+      				relative_path(filename + tree_name_len,
+     -					      opt->prefix, &rel_buf);
+    -+					      opt_cmd->prefix, &rel_buf);
+    ++					      grep_prefix, &rel_buf);
+      
+      			if (tree_name_len)
+      				strbuf_add(out, filename, tree_name_len);
+    @@ builtin/grep.c: static void grep_source_name(struct grep_opt *opt, const char *f
+      		return;
+      	}
+      
+    --	if (opt->relative && opt->prefix)
+    +-	if (opt->relative && opt->prefix_length)
+     -		quote_path(filename + tree_name_len, opt->prefix, out, 0);
+    -+	if (opt->relative && opt_cmd->prefix)
+    -+		quote_path(filename + tree_name_len, opt_cmd->prefix, out, 0);
+    ++	if (opt->relative && grep_prefix)
+    ++		quote_path(filename + tree_name_len, grep_prefix, out, 0);
+      	else
+      		quote_c_style(filename + tree_name_len, out, NULL, 0);
+      
+     @@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    - 	int external_grep_allowed__ignored;
+    - 	const char *show_in_pager = NULL, *default_pager = "dummy";
+    - 	struct grep_opt opt;
+    -+	struct grep_cmd_opt opt_cmd = { .prefix = prefix };
+    - 	struct object_array list = OBJECT_ARRAY_INIT;
+    - 	struct pathspec pathspec;
+    - 	struct string_list path_list = STRING_LIST_INIT_DUP;
+    -@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    + 			   PARSE_OPT_NOCOMPLETE),
+    + 		OPT_END()
+      	};
+    ++	grep_prefix = prefix;
+      
+      	git_config(grep_cmd_config, NULL);
+     -	grep_init(&opt, the_repository, prefix);
+     +	grep_init(&opt, the_repository);
+    -+	opt.caller_priv = &opt_cmd;
+      
+      	/*
+      	 * If there is no -- then the paths must exist in the working
+     
+    + ## builtin/ls-tree.c ##
+    +@@ builtin/ls-tree.c: int cmd_ls_tree(int argc, const char **argv, const char *prefix)
+    + 		OPT__ABBREV(&abbrev),
+    + 		OPT_END()
+    + 	};
+    +-
+    +-	git_config(git_default_config, NULL);
+    + 	ls_tree_prefix = prefix;
+    +-	if (prefix && *prefix)
+    ++	if (prefix)
+    + 		chomp_prefix = strlen(prefix);
+    + 
+    ++	git_config(git_default_config, NULL);
+    + 	argc = parse_options(argc, argv, prefix, ls_tree_options,
+    + 			     ls_tree_usage, 0);
+    + 	if (full_tree) {
+    +-		ls_tree_prefix = prefix = NULL;
+    ++		ls_tree_prefix = NULL;
+    + 		chomp_prefix = 0;
+    + 	}
+    + 	/* -d -r should imply -t, but -d by itself should not have to. */
+    +@@ builtin/ls-tree.c: int cmd_ls_tree(int argc, const char **argv, const char *prefix)
+    + 	parse_pathspec(&pathspec, PATHSPEC_ALL_MAGIC &
+    + 				  ~(PATHSPEC_FROMTOP | PATHSPEC_LITERAL),
+    + 		       PATHSPEC_PREFER_CWD,
+    +-		       prefix, argv + 1);
+    ++		       ls_tree_prefix, argv + 1);
+    + 	for (i = 0; i < pathspec.nr; i++)
+    + 		pathspec.items[i].nowildcard_len = pathspec.items[i].len;
+    + 	pathspec.has_wildcard = 0;
+    +
+    + ## git.c ##
+    +@@ git.c: static int run_builtin(struct cmd_struct *p, int argc, const char **argv)
+    + {
+    + 	int status, help;
+    + 	struct stat st;
+    +-	const char *prefix;
+    ++	const char *prefix = NULL;
+    + 
+    +-	prefix = NULL;
+    + 	help = argc == 2 && !strcmp(argv[1], "-h");
+    + 	if (!help) {
+    + 		if (p->option & RUN_SETUP)
+    +@@ git.c: static int run_builtin(struct cmd_struct *p, int argc, const char **argv)
+    + 			int nongit_ok;
+    + 			prefix = setup_git_directory_gently(&nongit_ok);
+    + 		}
+    ++		assert(!prefix || *prefix);
+    + 		precompose_argv_prefix(argc, argv, NULL);
+    + 		if (use_pager == -1 && p->option & (RUN_SETUP | RUN_SETUP_GENTLY) &&
+    + 		    !(p->option & DELAY_PAGER_CONFIG))
+    +
+      ## grep.c ##
+     @@ grep.c: int grep_config(const char *var, const char *value, void *cb)
+       * default values from the template we read the configuration
+    @@ grep.c: int grep_config(const char *var, const char *value, void *cb)
+      
+      	opt->repo = repo;
+     -	opt->prefix = prefix;
+    +-	opt->prefix_length = (prefix && *prefix) ? strlen(prefix) : 0;
+      	opt->pattern_tail = &opt->pattern_list;
+      	opt->header_tail = &opt->header_list;
+      }
+    @@ grep.h: struct grep_opt {
+      	struct repository *repo;
+      
+     -	const char *prefix;
+    +-	int prefix_length;
+      	int linenum;
+      	int columnnum;
+      	int invert;
+    -@@ grep.h: struct grep_opt {
+    - 	int show_hunk_mark;
+    - 	int file_break;
+    - 	int heading;
+    -+	void *caller_priv;
+    - 	void *priv;
+    - 
+    - 	void (*output)(struct grep_opt *opt, const void *data, size_t size);
+     @@ grep.h: struct grep_opt {
+      };
+      
+4:  ba9be0b9283 = 3:  ccb75cc679b log tests: check if grep_config() is called by "log"-like cmds
+-:  ----------- > 4:  d57165582ee grep docs: de-duplicate configuration sections
+-:  ----------- > 5:  2f39c75f5be grep.c: don't pass along NULL callback value
+5:  933ac853bca ! 6:  1fbf0ed7fb5 grep API: call grep_config() after grep_init()
+    @@ Commit message
+         didn't do that, but now that it can't be a concern anymore let's
+         remove those comments.
+     
+    +    This should not not change any configuration variable or other
+    +    behavior. That would have been the case if we didn't move around the
+    +    grep_config() call in "builtin/log.c", but now that we call
+    +    "grep_config" after "git_log_config" and "git_format_config" we'll
+    +    need to pass in the already initialized "struct grep_opt *".
+    +
+         See 6ba9bb76e02 (grep: copy struct in one fell swoop, 2020-11-29) and
+         7687a0541e0 (grep: move the configuration parsing logic to grep.[ch],
+         2012-10-09) for the commits that added the comments.
+     
+    +    The memcpy() pattern here will be optimized away and follows the
+    +    convention of other *_init() functions. See 5726a6b4012 (*.c *_init():
+    +    define in terms of corresponding *_INIT macro, 2021-07-01).
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/grep.c ##
+     @@ builtin/grep.c: static int wait_all(void)
+    + 
+      static int grep_cmd_config(const char *var, const char *value, void *cb)
+      {
+    - 	int st = grep_config(var, value, cb);
+    --	if (git_color_default_config(var, value, cb) < 0)
+    -+	if (git_color_default_config(var, value, NULL) < 0)
+    +-	int st = grep_config(var, value, NULL);
+    ++	int st = grep_config(var, value, cb);
+    + 	if (git_color_default_config(var, value, NULL) < 0)
+      		st = -1;
+      
+    - 	if (!strcmp(var, "grep.threads")) {
+     @@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    - 		OPT_END()
+      	};
+    + 	grep_prefix = prefix;
+      
+     -	git_config(grep_cmd_config, NULL);
+      	grep_init(&opt, the_repository);
+     +	git_config(grep_cmd_config, &opt);
+    - 	opt.caller_priv = &opt_cmd;
+      
+      	/*
+    + 	 * If there is no -- then the paths must exist in the working
+     
+      ## builtin/log.c ##
+     @@ builtin/log.c: static int git_log_config(const char *var, const char *value, void *cb)
+    @@ grep.c: int grep_config(const char *var, const char *value, void *cb)
+     
+      ## grep.h ##
+     @@ grep.h: struct grep_opt {
+    + 	int show_hunk_mark;
+    + 	int file_break;
+    + 	int heading;
+    ++	void *caller_priv;
+    + 	void *priv;
+    + 
+    + 	void (*output)(struct grep_opt *opt, const void *data, size_t size);
+      	void *output_priv;
+      };
+      
+6:  677a8f8520f ! 7:  a407e9bae98 grep: simplify config parsing, change grep.<rx config> interaction
+    @@ Commit message
+         but in a way that's consistent with how we parse other
+         configuration.
+     
+    -    Pedantically speaking we're probably breaking past promises here, but
+    -    I doubt that this will impact anyone in practice. The reduction in
+    -    complexity and resulting consistency with other default config
+    -    behavior is worth it.
+    +    We are breaking past promises here, but I doubt that this will impact
+    +    anyone in practice. The reduction in complexity and resulting
+    +    consistency with other default config behavior is worth it.
+     
+         When "grep.patternType" was introduced in 84befcd0a4a (grep: add a
+         grep.patternType configuration setting, 2012-08-03) we made two
+    @@ Commit message
+             # BRE grep
+             git -c grep.extendedRegexp=true -c grep.patternType=basic grep <pattern>
+     
+    -    But probably not for this to ignore the new "grep.patternType" option
+    -    entirely, say if /etc/gitconfig was still setting
+    +    But probably not for this to ignore the favored "grep.patternType"
+    +    option entirely, say if /etc/gitconfig was still setting
+         "grep.extendedRegexp", but "~/.gitconfig" used the new
+         "grep.patternType" (and wanted to use the "default" value):
+     
+    @@ Documentation/config/grep.txt: grep.patternType::
+      	If set to true, enable `--extended-regexp` option by default. This
+     -	option is ignored when the `grep.patternType` option is set to a value
+     -	other than 'default'.
+    -+	option is ignored when the `grep.patternType` option is set.
+    - 
+    - grep.threads::
+    - 	Number of grep worker threads to use.
+    -
+    - ## Documentation/git-grep.txt ##
+    -@@ Documentation/git-grep.txt: grep.patternType::
+    - 
+    - grep.extendedRegexp::
+    - 	If set to true, enable `--extended-regexp` option by default. This
+    --	option is ignored when the `grep.patternType` option is set to a value
+    --	other than 'default'.
+     +	option is ignored when the `grep.patternType` option is set.
+      
+      grep.threads::
+7:  dadd5dff77a ! 8:  362d084cee4 grep: make "extendedRegexp=true" the same as "patternType=extended"
+    @@ Documentation/config/grep.txt: grep.patternType::
+      grep.extendedRegexp::
+     -	If set to true, enable `--extended-regexp` option by default. This
+     -	option is ignored when the `grep.patternType` option is set.
+    -+	Deprecated synonym for 'grep.patternType=extended`.
+    - 
+    - grep.threads::
+    - 	Number of grep worker threads to use.
+    -
+    - ## Documentation/git-grep.txt ##
+    -@@ Documentation/git-grep.txt: grep.patternType::
+    - 	value 'default' will return to the default matching behavior.
+    - 
+    - grep.extendedRegexp::
+    --	If set to true, enable `--extended-regexp` option by default. This
+    --	option is ignored when the `grep.patternType` option is set.
+     +	Deprecated synonym for 'grep.patternType=extended`.
+      
+      grep.threads::
+-- 
+2.34.0.rc1.741.gab7bfd97031
+
