@@ -4,16 +4,55 @@ In-Reply-To: <20211111030532.75910-1-hanxin.hx@alibaba-inc.com>
 References: <20211111030532.75910-1-hanxin.hx@alibaba-inc.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Thu, 11 Nov 2021 06:18:00 +0100
-Subject: [PATCH 0/2] *** SUBJECT HERE ***
+Subject: [PATCH 0/2] v2.34.0-rc2 regression: free() of uninitialized in ab/fsck-unexpected-type
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+On Thu, Nov 11 2021, Han Xin wrote:
+> [...]
+> Deleting "*contents = NULL;" here will cause a memory free error.
+> When reading a large loose blob ( large than big_file_threshold), it will enter the following block and *content will not be set:
+>
+>       if (*oi->typep == OBJ_BLOB && *size > big_file_threshold) {
+>               if (check_stream_oid(&stream, hdr, *size, path, expected_oid) < 0)
+>                       goto out;
+>       } else {
+>               ...
+>       }
+>
+>
+> This test case can illustrate this problem:
+>
+> test_expect_success 'fsck large loose blob' '
+>       blob=$(echo large | git hash-object -w --stdin) &&
+>       git -c core.bigfilethreshold=4 fsck
+> '
+>
+> git(73697,0x1198f1e00) malloc: *** error for object 0x36: pointer being freed was not allocated
+> git(73697,0x1198f1e00) malloc: *** set a breakpoint in malloc_error_break to debug
+> ./test-lib.sh: line 947: 73697 Abort trap: 6           git -c core.bigfilethreshold=4 fsck
+
+Thanks a lot for the detailed report and test case. It looks like I've
+got the dubious honor of most scary caught-by-rc bug so far.
+
+This series:
 
 Ævar Arnfjörð Bjarmason (2):
   object-file: fix SEGV on free() regression in v2.34.0-rc2
+
+This is the most minimal fix for this issue. So Junio, if you'd like
+to just pick this up for v2.34.0 you can peel just 1/2 off...
+
   object-file: free(*contents) only in read_loose_object() caller
+
+... a fix for a related issue. In ab/fsck-unexpected-type we stopped
+die()-ing in the object-name.c, so per SANITIZE=leak's accounting we
+introduced a memory leak with the same variable we dealt with in 1/2.
+
+But IMO more importantly by changing this code so that only one
+function owns the free()-ing it's much easier to reason about this
+code.
 
  builtin/fsck.c   | 3 ++-
  object-file.c    | 5 ++---
