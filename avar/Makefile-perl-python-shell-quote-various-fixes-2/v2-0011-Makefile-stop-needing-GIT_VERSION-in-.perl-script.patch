@@ -1,0 +1,123 @@
+From bfa15059d603c38c92705f4422f2d43549aa0c7c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-11.18-bfa15059d60-20211112T214150Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.18-00000000000-20211112T214150Z-avarab@gmail.com>
+References: <cover-00.16-00000000000-20211106T205717Z-avarab@gmail.com>
+	<cover-v2-00.18-00000000000-20211112T214150Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 19 Oct 2021 04:09:35 +0200
+Subject: [PATCH v2 11/18] Makefile: stop needing @@GIT_VERSION@@ in *.perl
+ scripts
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the hardcoding of @@GIT_VERSION@@ in generated *.perl scripts
+to instead shell out to "git version". This means that we can stop
+re-building during development every time the HEAD changes.
+
+These codepaths are not "hot", so shelling out to get the version
+shouldn't matter to users, in the one case where it potentially would
+in send-email (the loop for each E-Mail we send) we now cache the
+value, so we'll only retrieve it once.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile            | 2 +-
+ git-cvsserver.perl  | 6 +++---
+ git-send-email.perl | 7 ++-----
+ git-svn.perl        | 2 +-
+ 4 files changed, 7 insertions(+), 10 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index c698c5b058a..8205614c6ec 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2333,7 +2333,7 @@ PERL_HEADER_TEMPLATE = perl/header_templates/runtime_prefix.template.pl
+ perl_localedir_SQ =
+ endif
+ 
+-$(SCRIPT_PERL_GEN): % : %.perl GIT-PERL-DEFINES GIT-PERL-HEADER GIT-VERSION-FILE
++$(SCRIPT_PERL_GEN): % : %.perl GIT-PERL-DEFINES GIT-PERL-HEADER
+ 	$(QUIET_GEN) \
+ 	sed -e '1{' \
+ 	    -e '	s|#!.*perl|#!$(PERL_PATH_SQ)|' \
+diff --git a/git-cvsserver.perl b/git-cvsserver.perl
+index 64319bed43f..76f0e8bbbef 100755
+--- a/git-cvsserver.perl
++++ b/git-cvsserver.perl
+@@ -26,8 +26,6 @@
+ use File::Basename;
+ use Getopt::Long qw(:config require_order no_ignore_case);
+ 
+-my $VERSION = '@@GIT_VERSION@@';
+-
+ my $log = GITCVS::log->new();
+ my $cfg;
+ 
+@@ -126,7 +124,9 @@
+     or die $usage;
+ 
+ if ($state->{version}) {
+-    print "git-cvsserver version $VERSION\n";
++    my $version = qx[git version];
++    $version =~ s/^(git)\b/$1-cvsserver/;
++    print $version;
+     exit;
+ }
+ if ($state->{help}) {
+diff --git a/git-send-email.perl b/git-send-email.perl
+index 5262d88ee32..041cd2fb96d 100755
+--- a/git-send-email.perl
++++ b/git-send-email.perl
+@@ -1468,6 +1468,7 @@ sub file_name_is_absolute {
+ #
+ # If an error occurs sending the email, this just dies.
+ 
++my $gitversion;
+ sub send_message {
+ 	my @recipients = unique_email_list(@to);
+ 	@cc = (grep { my $cc = extract_valid_address_or_die($_);
+@@ -1478,11 +1479,6 @@ sub send_message {
+ 	@recipients = unique_email_list(@recipients,@cc,@initial_bcc);
+ 	@recipients = (map { extract_valid_address_or_die($_) } @recipients);
+ 	my $date = format_2822_time($time++);
+-	my $gitversion = '@@GIT_VERSION@@';
+-	if ($gitversion =~ m/..GIT_VERSION../) {
+-	    $gitversion = Git::version();
+-	}
+-
+ 	my $cc = join(",\n\t", unique_email_list(@cc));
+ 	my $ccline = "";
+ 	if ($cc ne '') {
+@@ -1497,6 +1493,7 @@ sub send_message {
+ Message-Id: $message_id
+ ";
+ 	if ($use_xmailer) {
++		$gitversion ||= Git::version();
+ 		$header .= "X-Mailer: git-send-email $gitversion\n";
+ 	}
+ 	if ($in_reply_to) {
+diff --git a/git-svn.perl b/git-svn.perl
+index be987e316f9..727431412be 100755
+--- a/git-svn.perl
++++ b/git-svn.perl
+@@ -9,7 +9,6 @@
+ 		$_revision $_repository
+ 		$_q $_authors $_authors_prog %users/;
+ $AUTHOR = 'Eric Wong <normalperson@yhbt.net>';
+-$VERSION = '@@GIT_VERSION@@';
+ 
+ use Carp qw/croak/;
+ use File::Basename qw/dirname basename/;
+@@ -47,6 +46,7 @@
+ 	command_close_bidi_pipe
+ 	get_record
+ );
++$VERSION = Git::version();
+ 
+ BEGIN {
+ 	Memoize::memoize 'Git::config';
+-- 
+2.34.0.rc2.795.g926201d1cc8
+
