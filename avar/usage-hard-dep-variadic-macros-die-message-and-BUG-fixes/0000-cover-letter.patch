@@ -2,12 +2,80 @@ From 69630364f1aa01dbe4aaa18fc0b85d1ba04a12d2 Mon Sep 17 00:00:00 2001
 Message-Id: <RFC-cover-00.21-00000000000-20211115T220831Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Mon, 15 Nov 2021 23:08:31 +0100
-Subject: [RFC PATCH 00/21] *** SUBJECT HERE ***
+Subject: [RFC PATCH 00/21] C99: show meaningful <file>:<line> in trace2 via macros
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+Since everyone's getting in on the C99 fun.
+
+Well, $subject and a bit more. This RFC series has bits and pieces
+from thing I've submitted before. I'd proposed to make variadic macros
+a hard dependency before in [1] because I wanted to get to the goal in
+$subject, perhaps the whole thing will be more convincing.
+
+This also includes the die_message() in a recent series of mine[2]
+that I abandoned.
+
+At the end of this series we expose a config variable to have
+usage/die/warning emit line numbers. I.e. going from:
+
+    $ git -c core.usageAddSource=false -c core.x=y config --get --bool core.x
+    fatal: bad boolean config value 'y' for 'core.x'
+
+To:
+
+    $ git -c core.usageAddSource=false -c core.x=y config --get --bool core.x
+    fatal: config.c:1241: bad boolean config value 'y' for 'core.x'
+
+I find that to make tracing down errors in the test suite, and 21/21
+has a GIT_TEST_* mode to turn it on there (which fails a lot now, but
+I'm hoping I'll eventually get passing).
+
+But most importantly we've now got meaningful file/line numbers in
+trace2 error events. I.e. from all of them being some line in usage.c:
+    
+    $ GIT_TRACE2_EVENT=/dev/stdout ~/g/git/git -c core.usageAddSource=false -c core.x=y config --get --bool core.x 2>&1 2>/dev/null|grep error | jq -r .
+    {
+      "event": "error",
+      "sid": "20211115T221343.534151Z-Hc2f5b994-P003f3980",
+      "thread": "main",
+      "time": "2021-11-15T22:13:43.537981Z",
+      "file": "usage.c",
+      "line": 65,
+      "msg": "bad boolean config value 'y' for 'core.x'",
+      "fmt": "bad boolean config value '%s' for '%s'"
+    }
+
+To:
+    
+    $ GIT_TRACE2_EVENT=/dev/stdout ~/g/git/git -c core.usageAddSource=false -c core.x=y config --get --bool core.x 2>&1 2>/dev/null|grep error | jq -r .
+    {
+      "event": "error",
+      "sid": "20211115T221357.083824Z-Hc2f5b994-P003f4a82",
+      "thread": "main",
+      "time": "2021-11-15T22:13:57.087596Z",
+      "file": "config.c",
+      "line": 1241,
+      "msg": "bad boolean config value 'y' for 'core.x'",
+      "fmt": "bad boolean config value '%s' for '%s'"
+    }
+
+I've got some speculation in 19/21 that this may make the "fmt" part
+redundant, i.e. did we only add that because we couldn't group these
+by file/line, but as noted there there's still some use-cases for
+"fmt" even with this series. In any case, this series doesn't touch
+that "fmt" key at all.
+
+This is "RFC" mainly because there's a CI failure in 0061.2 with this,
+I still can't figure out what that's about (or if it's some fluke
+unrelated to this topic), but that has to be investigated.
+
+But I wanted to see if eople found the general idea interesting too.
+
+1. https://lore.kernel.org/git/cover-0.2-00000000000-20210412T105422Z-avarab@gmail.com/
+2. https://lore.kernel.org/git/cover-v3-0.6-00000000000-20211022T175227Z-avarab@gmail.com/
+3. https://github.com/avar/git/runs/4216916706?check_suite_focus=true
 
 Ævar Arnfjörð Bjarmason (21):
   git-compat-util.h: clarify GCC v.s. C99-specific in comment
