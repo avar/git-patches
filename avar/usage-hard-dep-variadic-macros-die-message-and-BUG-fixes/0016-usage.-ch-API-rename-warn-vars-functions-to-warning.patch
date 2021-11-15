@@ -1,0 +1,176 @@
+From 43e8bec1724e5d6fc138094237688a6f3a070e94 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-16.21-43e8bec1724-20211115T220820Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.21-00000000000-20211115T220820Z-avarab@gmail.com>
+References: <RFC-cover-00.21-00000000000-20211115T220820Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 14 Nov 2021 18:02:04 +0100
+Subject: [RFC PATCH 16/21] usage.[ch] API: rename "warn" vars functions to
+ "warning"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There is a warning() routine, not warn(), but parts of the function
+interface confusingly used "warn". Let's rename these for consistency.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ apply.c       |  6 +++---
+ apply.h       |  4 ++--
+ run-command.c |  8 ++++----
+ usage.c       | 16 ++++++++--------
+ usage.h       |  4 ++--
+ 5 files changed, 19 insertions(+), 19 deletions(-)
+
+diff --git a/apply.c b/apply.c
+index 43a0aebf4ee..5c9872f8c10 100644
+--- a/apply.c
++++ b/apply.c
+@@ -160,9 +160,9 @@ int check_apply_state(struct apply_state *state, int force_apply)
+ 
+ 	if (state->apply_verbosity <= verbosity_silent) {
+ 		state->saved_error_routine = get_error_routine();
+-		state->saved_warn_routine = get_warn_routine();
++		state->saved_warning_routine = get_warning_routine();
+ 		set_error_routine(mute_routine);
+-		set_warn_routine(mute_routine);
++		set_warning_routine(mute_routine);
+ 	}
+ 
+ 	return 0;
+@@ -4999,7 +4999,7 @@ int apply_all_patches(struct apply_state *state,
+ 
+ 	if (state->apply_verbosity <= verbosity_silent) {
+ 		set_error_routine(state->saved_error_routine);
+-		set_warn_routine(state->saved_warn_routine);
++		set_warning_routine(state->saved_warning_routine);
+ 	}
+ 
+ 	if (res > -1)
+diff --git a/apply.h b/apply.h
+index 8dca3703d3b..496cd6f0083 100644
+--- a/apply.h
++++ b/apply.h
+@@ -103,11 +103,11 @@ struct apply_state {
+ 
+ 	/*
+ 	 * This is to save reporting routines before using
+-	 * set_error_routine() or set_warn_routine() to install muting
++	 * set_error_routine() or set_warning_routine() to install muting
+ 	 * routines when in verbosity_silent mode.
+ 	 */
+ 	report_fn saved_error_routine;
+-	report_fn saved_warn_routine;
++	report_fn saved_warning_routine;
+ 
+ 	/* These control whitespace errors */
+ 	enum apply_ws_error_action ws_error_action;
+diff --git a/run-command.c b/run-command.c
+index 4792d170be7..48b5fe19a80 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -346,9 +346,9 @@ static void child_error_fn(const char *err, va_list params)
+ 	xwrite(2, msg, sizeof(msg) - 1);
+ }
+ 
+-static void child_warn_fn(const char *err, va_list params)
++static void child_warning_fn(const char *err, va_list params)
+ {
+-	const char msg[] = "warn() should not be called in child\n";
++	const char msg[] = "warning() should not be called in child\n";
+ 	xwrite(2, msg, sizeof(msg) - 1);
+ }
+ 
+@@ -778,12 +778,12 @@ int start_command(struct child_process *cmd)
+ 	if (!cmd->pid) {
+ 		int sig;
+ 		/*
+-		 * Ensure the default die/error/warn routines do not get
++		 * Ensure the default die/error/warning routines do not get
+ 		 * called, they can take stdio locks and malloc.
+ 		 */
+ 		set_die_routine(child_die_fn);
+ 		set_error_routine(child_error_fn);
+-		set_warn_routine(child_warn_fn);
++		set_warning_routine(child_warning_fn);
+ 
+ 		close(notify_pipe[0]);
+ 		set_cloexec(notify_pipe[1]);
+diff --git a/usage.c b/usage.c
+index b411dfb5641..b41f8618f34 100644
+--- a/usage.c
++++ b/usage.c
+@@ -81,7 +81,7 @@ static void error_builtin(const char *err, va_list params)
+ 	vreportf("error: ", err, params);
+ }
+ 
+-static void warn_builtin(const char *warn, va_list params)
++static void warning_builtin(const char *warn, va_list params)
+ {
+ 	trace2_cmd_error_va(warn, params);
+ 
+@@ -116,7 +116,7 @@ static NORETURN_PTR report_fn usage_routine = usage_builtin;
+ static NORETURN_PTR report_fn die_routine = die_builtin;
+ static report_fn die_message_routine = die_message_builtin;
+ static report_fn error_routine = error_builtin;
+-static report_fn warn_routine = warn_builtin;
++static report_fn warning_routine = warning_builtin;
+ static int (*die_is_recursing)(void) = die_is_recursing_builtin;
+ 
+ void set_die_routine(NORETURN_PTR report_fn routine)
+@@ -139,14 +139,14 @@ report_fn get_error_routine(void)
+ 	return error_routine;
+ }
+ 
+-void set_warn_routine(report_fn routine)
++void set_warning_routine(report_fn routine)
+ {
+-	warn_routine = routine;
++	warning_routine = routine;
+ }
+ 
+-report_fn get_warn_routine(void)
++report_fn get_warning_routine(void)
+ {
+-	return warn_routine;
++	return warning_routine;
+ }
+ 
+ void set_die_is_recursing_routine(int (*routine)(void))
+@@ -274,7 +274,7 @@ void warning_errno(const char *warn, ...)
+ 	va_list params;
+ 
+ 	va_start(params, warn);
+-	warn_routine(fmt_with_err(buf, sizeof(buf), warn), params);
++	warning_routine(fmt_with_err(buf, sizeof(buf), warn), params);
+ 	va_end(params);
+ }
+ 
+@@ -283,7 +283,7 @@ void warning(const char *warn, ...)
+ 	va_list params;
+ 
+ 	va_start(params, warn);
+-	warn_routine(warn, params);
++	warning_routine(warn, params);
+ 	va_end(params);
+ }
+ 
+diff --git a/usage.h b/usage.h
+index a2567a609fc..df02fe9bcaf 100644
+--- a/usage.h
++++ b/usage.h
+@@ -140,8 +140,8 @@ void set_die_routine(NORETURN_PTR report_fn routine);
+ report_fn get_die_message_routine(void);
+ void set_error_routine(report_fn routine);
+ report_fn get_error_routine(void);
+-void set_warn_routine(report_fn routine);
+-report_fn get_warn_routine(void);
++void set_warning_routine(report_fn routine);
++report_fn get_warning_routine(void);
+ void set_die_is_recursing_routine(int (*routine)(void));
+ 
+ /*
+-- 
+2.34.0.rc2.809.g11e21d44b24
+
