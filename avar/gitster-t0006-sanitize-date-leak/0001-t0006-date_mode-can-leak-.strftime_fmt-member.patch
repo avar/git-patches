@@ -1,0 +1,63 @@
+From 15f5bd3e4f44cd4817f4a73d04abfabac4148b53 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-15f5bd3e4f4-20211116T183025Z-avarab@gmail.com>
+In-Reply-To: <211104.86mtmki5ol.gmgdl@evledraar.gmail.com>
+References: <211104.86mtmki5ol.gmgdl@evledraar.gmail.com>
+From: Junio C Hamano <gitster@pobox.com>
+Date: Wed, 3 Nov 2021 15:44:17 -0700
+Subject: [PATCH] t0006: date_mode can leak .strftime_fmt member
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As there is no date_mode_release() API function, and given the
+set of current callers it probably is not worth adding one, let's
+release the .strftime_fmt member that is obtained from strdup()
+before the caller of show_date() is done with it.
+
+This allows us to mark t0006 as passing under the leak sanitizer.
+
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-date.c | 4 +++-
+ t/t0006-date.sh      | 2 ++
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/t/helper/test-date.c b/t/helper/test-date.c
+index 099eff4f0fc..27a36a5c5fe 100644
+--- a/t/helper/test-date.c
++++ b/t/helper/test-date.c
+@@ -34,7 +34,7 @@ static void show_human_dates(const char **argv)
+ 
+ static void show_dates(const char **argv, const char *format)
+ {
+-	struct date_mode mode;
++	struct date_mode mode = { 0 };
+ 
+ 	parse_date_format(format, &mode);
+ 	for (; *argv; argv++) {
+@@ -53,6 +53,8 @@ static void show_dates(const char **argv, const char *format)
+ 
+ 		printf("%s -> %s\n", *argv, show_date(t, tz, &mode));
+ 	}
++
++	free((void *)mode.strftime_fmt);
+ }
+ 
+ static void parse_dates(const char **argv)
+diff --git a/t/t0006-date.sh b/t/t0006-date.sh
+index 6b757d71692..5d01f57b270 100755
+--- a/t/t0006-date.sh
++++ b/t/t0006-date.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='test date parsing and printing'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ # arbitrary reference time: 2009-08-30 19:20:00
+-- 
+2.34.0.795.g1e9501ab396
+
