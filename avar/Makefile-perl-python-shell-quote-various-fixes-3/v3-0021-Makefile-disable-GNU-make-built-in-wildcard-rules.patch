@@ -1,0 +1,67 @@
+From cb3ae5ce00b4571434487b335d7b4542315f91c6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-21.23-cb3ae5ce00b-20211116T114103Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.23-00000000000-20211116T114103Z-avarab@gmail.com>
+References: <cover-v2-00.18-00000000000-20211112T214150Z-avarab@gmail.com>
+	<cover-v3-00.23-00000000000-20211116T114103Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 7 Nov 2021 01:54:02 +0100
+Subject: [PATCH v3 21/23] Makefile: disable GNU make built-in wildcard rules
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Override built-in rules of GNU make that use a wildcard target. This
+speeds things up significantly as we don't need to stat() so many
+files just in case we'd be able to retrieve their contents from RCS or
+SCCS. See [1] for an old mailing list discussion about how to disable
+these.
+
+This gives us a noticeable speedup on a no-op run:
+
+    $ git hyperfine -L rev HEAD~1,HEAD~0 -s 'make -j8 all NO_TCLTK=Y' 'make NO_TCLTK=Y' --warmup 10 -M 10
+    Benchmark 1: make NO_TCLTK=Y' in 'HEAD~1
+      Time (mean ± σ):     182.2 ms ±   4.1 ms    [User: 146.8 ms, System: 49.5 ms]
+      Range (min … max):   179.6 ms … 193.4 ms    10 runs
+
+    Benchmark 2: make NO_TCLTK=Y' in 'HEAD~0
+      Time (mean ± σ):     167.9 ms ±   1.3 ms    [User: 127.8 ms, System: 55.6 ms]
+      Range (min … max):   166.1 ms … 170.4 ms    10 runs
+
+    Summary
+      'make NO_TCLTK=Y' in 'HEAD~0' ran
+        1.09 ± 0.03 times faster than 'make NO_TCLTK=Y' in 'HEAD~1'
+
+Running the same except with 'strace -c -S calls make' as the
+benchmark command shows (under --show-output) that we went from ~7716
+syscalls to ~7519, mostly a reduction in [l]stat().
+
+1. https://lists.gnu.org/archive/html/help-make/2002-11/msg00063.html
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ shared.mak | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/shared.mak b/shared.mak
+index 4ee0bb7a13d..4862df1607a 100644
+--- a/shared.mak
++++ b/shared.mak
+@@ -1,3 +1,14 @@
++### Remove GNU make implicit rules
++
++## This speeds things up since we don't need to look for and stat() a
++## "foo.c,v" every time a rule referring to "foo.c" is in play. See
++## "make -p -f/dev/null | grep ^%::'".
++%:: %,v
++%:: RCS/%,v
++%:: RCS/%
++%:: s.%
++%:: SCCS/s.%
++
+ ### Flags affecting all rules
+ 
+ # A GNU make extension since gmake 3.72 (released in late 1994) to
+-- 
+2.34.0.795.g1e9501ab396
+

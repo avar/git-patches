@@ -1,0 +1,132 @@
+From 567ad5c3ebc0911382507608e195a3709cc29f04 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-20.23-567ad5c3ebc-20211116T114103Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.23-00000000000-20211116T114103Z-avarab@gmail.com>
+References: <cover-v2-00.18-00000000000-20211112T214150Z-avarab@gmail.com>
+	<cover-v3-00.23-00000000000-20211116T114103Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 7 Nov 2021 01:03:16 +0100
+Subject: [PATCH v3 20/23] Makefile: use $(file) I/O instead of "FORCE" when
+ possible
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Provide an alternate implementation of the recently added
+"TRACK_template" which uses GNU make 4.2 features. If the 'file'
+function is available we don't need to shell out at all to check if
+our tracked files change.
+
+We need to use the intermediate TRACK_template calling a
+TRACK_template_eval within the generated rule so that we don't eagerly
+fleshen these when "make" reads the file.
+
+This doesn't make the runtime faster on my system, but helps to cut
+down on the noise of things we shell out for
+unconditionally. I.e. running "make" with "SHELL_PATH='sh -x'" (twice,
+so we pick up the setting) shows than a no-op run went from emitting:
+
+    $ SHELL_PATH='sh -x' make -j8 >/dev/null 2>&1; SHELL_PATH='sh -x' make 2>&1 |wc -l
+    124
+
+To:
+
+    $ SHELL_PATH='sh -x' make -j8 >/dev/null 2>&1; SHELL_PATH='sh -x' make 2>&1 |wc -l
+    95
+
+That 124 to 95 number is a rough approximation of how many times we
+shell out. "strace -f -c" similarly shows that we went from 8798 to
+8466 syscalls. So this brings us further along in the goal of making
+"make" do as little as possible when it's got nothing to re-build (see
+[2]).
+
+1. https://lore.kernel.org/git/874kdn1j6i.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ shared.mak | 58 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 58 insertions(+)
+
+diff --git a/shared.mak b/shared.mak
+index 363138a5577..4ee0bb7a13d 100644
+--- a/shared.mak
++++ b/shared.mak
+@@ -8,6 +8,22 @@
+ #    info make --index-search=.DELETE_ON_ERROR
+ .DELETE_ON_ERROR:
+ 
++### GNU Make version detection
++# We don't care about "release" versions like the "90" in "3.99.90"
++MAKE_VERSION_MAJOR = $(word 1,$(subst ., ,$(MAKE_VERSION)))
++MAKE_VERSION_MINOR = $(word 2,$(subst ., ,$(MAKE_VERSION)))
++
++# The oldest supported version of GNU make is 3-something. So "not v3"
++# is a future-proof way to ask "is it modern?"
++ifneq ($(MAKE_VERSION_MAJOR),3)
++# $(file >[...]) and $(file >>[...]) is in 4.0...
++MAKE_HAVE_FILE_WRITE = Need version 4.0 or later (released in late 2013)
++# .. but we need 4.2 for $(file <[...])
++ifneq ($(filter-out 0 1,$(MAKE_VERSION_MINOR)),)
++MAKE_HAVE_FILE_READ = Need version 4.2 or later (released in mid-2016)
++endif
++endif
++
+ ### Quoting helpers
+ 
+ ## Quote a ' inside a '': FOO='$(call shq,$(BAR))'
+@@ -99,6 +115,10 @@ endef
+ 
+ ## Template for making a GIT-SOMETHING, which changes if a
+ ## TRACK_SOMETHING variable changes.
++##
++## This is the slower version used on GNU make <4.2.
++ifndef MAKE_HAVE_FILE_READ
++
+ define TRACK_template
+ .PHONY: FORCE
+ $(1): FORCE
+@@ -111,3 +131,41 @@ $(1): FORCE
+ 		echo "$$$$FLAGS" >$(1); \
+ 	fi
+ endef
++
++endif # !MAKE_HAVE_FILE_READ
++
++## A TRACK_template template compatible with the one above. Uses
++## features of GNU make >=4.2 to avoid shelling out for this "hot"
++## "FORCE" logic.
++##
++## Since version >=4.2 can do both "I" and "O" in I/O with using
++## $(file <)/$(file >) we read the GIT-SOMETHING file into a variable
++## with the former, and if it's different from our expected value
++## write it out with the latter.
++ifdef MAKE_HAVE_FILE_READ
++
++define TRACK_template_eval
++$(1)_WRITE =
++$(1)_EXISTS = $(wildcard $(1))
++ifeq ($$($(1)_EXISTS),)
++$(1)_WRITE = new
++else
++$(1)_CONTENT = $(file <$(1))
++ifeq ($$($(1)_CONTENT),$($(2)))
++$(1)_WRITE = same
++else
++$(1)_WRITE = changed
++endif
++endif
++ifneq ($$($(1)_WRITE),same)
++$$(info $$(wspfx) $(1) parameters ($$($(1)_WRITE)))
++$$(file >$(1),$($(2)))
++endif
++endef # TRACK_template_eval
++
++define TRACK_template
++$(1):
++	$$(eval $$(call TRACK_template_eval,$(1),$(2)))
++endef
++
++endif # MAKE_HAVE_FILE_READ
+-- 
+2.34.0.795.g1e9501ab396
+
