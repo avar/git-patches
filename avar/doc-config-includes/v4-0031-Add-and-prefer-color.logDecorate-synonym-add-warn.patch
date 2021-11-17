@@ -1,0 +1,101 @@
+From 3aa1b6b3a82f13a93c292d38822fc78cbebb63c4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-31.34-3aa1b6b3a82-20211117T101025Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.34-00000000000-20211117T101025Z-avarab@gmail.com>
+References: <cover-v3-00.23-00000000000-20211116T114334Z-avarab@gmail.com>
+	<cover-v4-00.34-00000000000-20211117T101025Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 25 Mar 2021 16:29:07 +0100
+Subject: [PATCH v4 31/34] Add and prefer color.logDecorate synonym, add
+ warning?
+
+---
+ Documentation/config/color/log.txt |  4 ++++
+ Documentation/git-log.txt          |  3 ++-
+ builtin/help.c                     |  2 +-
+ builtin/log.c                      |  3 ++-
+ t/t4207-log-decoration-colors.sh   | 12 +++++++++---
+ 5 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/Documentation/config/color/log.txt b/Documentation/config/color/log.txt
+index f8c77fc36b0..056a027804c 100644
+--- a/Documentation/config/color/log.txt
++++ b/Documentation/config/color/log.txt
+@@ -1,5 +1,9 @@
+ color.decorate.<slot>::
++color.logDecorate.<slot>::
+ 	Use customized color for 'git log --decorate' output.  `<slot>` is one
+ 	of `branch`, `remoteBranch`, `tag`, `stash` or `HEAD` for local
+ 	branches, remote-tracking branches, tags, stash and HEAD, respectively
+ 	and `grafted` for grafted commits.
+++
++The `color.logDecorate` name is preferred to the historical
++`color.decorate.
+diff --git a/Documentation/git-log.txt b/Documentation/git-log.txt
+index 47ae3bfc3ed..1e2c9be83bc 100644
+--- a/Documentation/git-log.txt
++++ b/Documentation/git-log.txt
+@@ -44,7 +44,8 @@ OPTIONS
+ 	otherwise, `auto`.
+ +
+ This output may be colored. See `color.ui` in linkgit:git-config[1]
+-and `color.decorate` there and in the "CONFIGURATION" section below.
++and `color.logDecorate` (also known as `color.decorate`) there and in
++the "CONFIGURATION" section below.
+ 
+ --decorate-refs=<pattern>::
+ --decorate-refs-exclude=<pattern>::
+diff --git a/builtin/help.c b/builtin/help.c
+index 75cd2fb407f..b1336cf0621 100644
+--- a/builtin/help.c
++++ b/builtin/help.c
+@@ -94,7 +94,7 @@ static void list_config_help(enum show_config_type type)
+ 	struct slot_expansion slot_expansions[] = {
+ 		{ "advice", "*", list_config_advices },
+ 		{ "color.branch", "<slot>", list_config_color_branch_slots },
+-		{ "color.decorate", "<slot>", list_config_color_decorate_slots },
++		{ "color.logDecorate", "<slot>", list_config_color_decorate_slots },
+ 		{ "color.diff", "<slot>", list_config_color_diff_slots },
+ 		{ "color.grep", "<slot>", list_config_color_grep_slots },
+ 		{ "color.interactive", "<slot>", list_config_color_interactive_slots },
+diff --git a/builtin/log.c b/builtin/log.c
+index f75d87e8d7f..0fdd5633bc4 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -494,7 +494,8 @@ static int git_log_config(const char *var, const char *value, void *cb)
+ 		default_follow = git_config_bool(var, value);
+ 		return 0;
+ 	}
+-	if (skip_prefix(var, "color.decorate.", &slot_name))
++	if (skip_prefix(var, "color.logDecorate.", &slot_name) ||
++	    skip_prefix(var, "color.decorate.", &slot_name))
+ 		return parse_decorate_color_config(var, slot_name, value);
+ 	if (!strcmp(var, "log.mailmap")) {
+ 		use_mailmap_config = git_config_bool(var, value);
+diff --git a/t/t4207-log-decoration-colors.sh b/t/t4207-log-decoration-colors.sh
+index b8709424981..f125ce4fa7a 100755
+--- a/t/t4207-log-decoration-colors.sh
++++ b/t/t4207-log-decoration-colors.sh
+@@ -56,10 +56,16 @@ EOF
+ # We want log to show all, but the second parent to refs/stash is irrelevant
+ # to this test since it does not contain any decoration, hence --first-parent
+ test_expect_success 'Commit Decorations Colored Correctly' '
+-	git log --first-parent --abbrev=10 --all --decorate --oneline --color=always |
+-	sed "s/[0-9a-f]\{10,10\}/COMMIT_ID/" |
+-	test_decode_color >out &&
++	git log --first-parent --abbrev=10 --all --decorate --oneline --color=always >out.raw &&
++	sed "s/[0-9a-f]\{10,10\}/COMMIT_ID/" <out.raw >out.color &&
++	test_decode_color <out.color >out &&
+ 	test_cmp expected out
+ '
+ 
++test_expect_success 'color.logDecorate.* is preferred to color.decorate.*' '
++	git config --rename-section color.decorate color.logDecorate &&
++	git log --first-parent --abbrev=10 --all --decorate --oneline --color=always >out.raw2 &&
++	test_cmp out.raw out.raw2
++'
++
+ test_done
+-- 
+2.34.0.796.g126c2ced91c
+
