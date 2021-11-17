@@ -1,0 +1,183 @@
+From 67e3c7f4ba7f610e79245142f4ef3c5f7b6dfa47 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-2.2-67e3c7f4ba7-20211117T112332Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.2-00000000000-20211117T112332Z-avarab@gmail.com>
+References: <20211117005701.371808-1-emilyshaffer@google.com>
+	<RFC-cover-0.2-00000000000-20211117T112332Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 17 Nov 2021 12:15:14 +0100
+Subject: [RFC PATCH 2/2] submodule: add test mode for checking absence of
+ "superProjectGitDir"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a GIT_TEST_SUBMODULE_CACHE_SUPERPROJECT_DIR=false test mode to
+assert what happens if "submodule.superProjectGitDir" is absent or
+missing, this checks if the "fallback" codepath in
+get_superproject_working_tree() is equivalent to the config lookup.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/run-build-and-tests.sh          |  1 +
+ git-submodule.sh                   |  2 +-
+ submodule.c                        |  7 +++++++
+ t/t7406-submodule-update.sh        |  9 ++++-----
+ t/t7412-submodule-absorbgitdirs.sh | 19 ++++++-------------
+ 5 files changed, 19 insertions(+), 19 deletions(-)
+
+diff --git a/ci/run-build-and-tests.sh b/ci/run-build-and-tests.sh
+index cc62616d806..5132a210057 100755
+--- a/ci/run-build-and-tests.sh
++++ b/ci/run-build-and-tests.sh
+@@ -33,6 +33,7 @@ linux-gcc)
+ 	export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=master
+ 	export GIT_TEST_WRITE_REV_INDEX=1
+ 	export GIT_TEST_CHECKOUT_WORKERS=2
++	export GIT_TEST_SUBMODULE_CACHE_SUPERPROJECT_DIR=false
+ 	make test
+ 	;;
+ linux-clang)
+diff --git a/git-submodule.sh b/git-submodule.sh
+index 7c247bee7f6..2b423ee05bc 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -453,7 +453,7 @@ cmd_update()
+ 		# changed, unless it's a fresh clone. Write to worktree if
+ 		# applicable, and point to superproject's worktree gitdir if
+ 		# applicable.
+-		if test -z "$just_cloned"
++		if test -z "$just_cloned" && test "$GIT_TEST_SUBMODULE_CACHE_SUPERPROJECT_DIR" != "false"
+ 		then
+ 			sm_gitdir="$(git -C "$sm_path" rev-parse --absolute-git-dir)"
+ 			relative_gitdir="$(git rev-parse --path-format=relative \
+diff --git a/submodule.c b/submodule.c
+index ad95cdda07d..f0411a320a8 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -2143,6 +2143,9 @@ static void relocate_single_git_dir_into_superproject(const char *path)
+ 	if (!git_configset_get_bool(&sub_cs, "extensions.worktreeConfig", &tmp))
+ 		strbuf_addstr(&config_path, ".worktree");
+ 
++	if (!git_env_bool("GIT_TEST_SUBMODULE_CACHE_SUPERPROJECT_DIR", 1))
++		goto fallback;
++
+ 	git_config_set_in_file(config_path.buf, "submodule.superprojectGitdir",
+ 			       relative_path(absolute_path(get_git_dir()),
+ 					     real_new_git_dir, &sb));
+@@ -2150,6 +2153,8 @@ static void relocate_single_git_dir_into_superproject(const char *path)
+ 	git_configset_clear(&sub_cs);
+ 	strbuf_release(&config_path);
+ 	strbuf_release(&sb);
++
++fallback:
+ 	free(old_git_dir);
+ 	free(real_old_git_dir);
+ 	free(real_new_git_dir);
+@@ -2332,6 +2337,8 @@ int get_superproject_working_tree(struct strbuf *buf)
+ 	const char *wt_prefix = "worktree ";
+ 	int rc = 0;
+ 
++	if (!git_env_bool("GIT_TEST_SUBMODULE_CACHE_SUPERPROJECT_DIR", 1))
++		goto fallback;
+ 
+ 	/* Do we know we have a superproject? */
+ 	if (git_config_get_string("submodule.superprojectgitdir", &super_gitdir))
+diff --git a/t/t7406-submodule-update.sh b/t/t7406-submodule-update.sh
+index 01e1acaf300..f362f8d0ef0 100755
+--- a/t/t7406-submodule-update.sh
++++ b/t/t7406-submodule-update.sh
+@@ -13,6 +13,7 @@ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
+ . ./test-lib.sh
++. "$TEST_DIRECTORY"/lib-submodule-superproject.sh
+ 
+ 
+ compare_head()
+@@ -1068,8 +1069,7 @@ test_expect_success 'submodule update adds superproject gitdir to older repos' '
+ 	 test-tool path-utils relative_path \
+ 		"$(git rev-parse --absolute-git-dir)" \
+ 		"$(git -C submodule rev-parse --absolute-git-dir)" >expect &&
+-	 git -C submodule config submodule.superprojectGitdir >actual &&
+-	 test_cmp expect actual
++	 test_cmp_submodule_superprojectgitdir submodule
+ 	)
+ '
+ 
+@@ -1081,10 +1081,9 @@ test_expect_success 'submodule update uses config.worktree if applicable' '
+ 	 test-tool path-utils relative_path \
+ 		"$(git rev-parse --absolute-git-dir)" \
+ 		"$(git -C submodule rev-parse --absolute-git-dir)" >expect &&
+-	 git -C submodule config submodule.superprojectGitdir >actual &&
+-	 test_cmp expect actual &&
++	 test_cmp_submodule_superprojectgitdir submodule &&
+ 
+-	 test_file_not_empty "$(git -C submodule rev-parse --absolute-git-dir)/config.worktree"
++	 test_file_not_empty_superprojectgitdir submodule config.worktree
+ 	)
+ '
+ 
+diff --git a/t/t7412-submodule-absorbgitdirs.sh b/t/t7412-submodule-absorbgitdirs.sh
+index 5753f902687..b6d421d0ff9 100755
+--- a/t/t7412-submodule-absorbgitdirs.sh
++++ b/t/t7412-submodule-absorbgitdirs.sh
+@@ -7,6 +7,7 @@ directory into the superproject.
+ '
+ 
+ . ./test-lib.sh
++. "$TEST_DIRECTORY"/lib-submodule-superproject.sh
+ 
+ test_expect_success 'setup a real submodule' '
+ 	git init sub1 &&
+@@ -38,9 +39,7 @@ test_expect_success 'absorb the git dir' '
+ 
+ 	test-tool path-utils relative_path "$superproject_gitdir" \
+ 		"$submodule_gitdir" >expect &&
+-	git -C sub1 config submodule.superprojectGitDir >actual &&
+-
+-	test_cmp expect actual
++	test_cmp_submodule_superprojectgitdir sub1
+ '
+ 
+ test_expect_success 'absorbing does not fail for deinitialized submodules' '
+@@ -78,9 +77,7 @@ test_expect_success 'absorb the git dir in a nested submodule' '
+ 
+ 	test-tool path-utils relative_path "$sub1_gitdir" "$sub1_nested_gitdir" \
+ 		>expect &&
+-	git -C sub1/nested config submodule.superprojectGitDir >actual &&
+-
+-	test_cmp expect actual
++	test_cmp_submodule_superprojectgitdir sub1
+ '
+ 
+ test_expect_success 're-setup nested submodule' '
+@@ -170,9 +167,7 @@ test_expect_success 'absorbgitdirs works when called from a superproject worktre
+ 
+ 	test-tool path-utils relative_path "$superproject_gitdir" \
+ 		"$submodule_gitdir" >expect &&
+-	git -C sub4 config submodule.superprojectGitDir >actual &&
+-
+-	test_cmp expect actual
++	test_cmp_submodule_superprojectgitdir sub4
+ 	)
+ '
+ 
+@@ -199,12 +194,10 @@ test_expect_success 'absorbgitdirs works with a submodule with worktree config'
+ 
+ 	test-tool path-utils relative_path "$superproject_gitdir" \
+ 		"$submodule_gitdir" >expect &&
+-	git -C sub5 config submodule.superprojectGitDir >actual &&
+-
+-	test_cmp expect actual &&
++	test_cmp_submodule_superprojectgitdir sub5 &&
+ 
+ 	# make sure the config went into the submodule config.worktree
+-	test_file_not_empty "$submodule_gitdir/config.worktree"
++	test_file_not_empty_superprojectgitdir "." config.worktree
+ 	)
+ '
+ 
+-- 
+2.34.0.796.g2c87ed6146a
+
