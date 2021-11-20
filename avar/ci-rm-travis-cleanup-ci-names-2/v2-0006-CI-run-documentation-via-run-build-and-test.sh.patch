@@ -1,0 +1,198 @@
+From 7c423c8283d49d5452f743c98a1089e44f61798c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-6.6-7c423c8283d-20211120T030848Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20211120T030848Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20211119T135343Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20211120T030848Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 19 Nov 2021 11:07:30 +0100
+Subject: [PATCH v2 6/6] CI: run "documentation" via run-build-and-test.sh
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Now that we've taught the build and test script to accept arbitrary
+"make" targets it becomes easy to split up the "asciidoc" and
+"asciidoctor" jobs, and to have the "ci/run-build-and-tests.sh" do the
+"make" test of building the documentation. I.e. we'll run both of:
+
+    make check-builtins check-docs
+    make check-builtins check-docs USE_ASCIIDOCTOR=Y
+
+As noted in 505ad91304e (travis-ci: check AsciiDoc/AsciiDoctor stderr
+output, 2017-04-26) we need to keep checking the stderr that's emitted
+by these, so let's add that special-case to
+"ci/run-build-and-tests.sh".
+
+The other doc-specific tests added in b98712b9aa9 (travis-ci: build
+documentation, 2016-05-04) and 159e6010c2d (travis-ci: build
+documentation with AsciiDoc and Asciidoctor, 2017-04-11) should live
+in "ci/test-documentation.sh".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml | 14 +++++++++++---
+ ci/install-dependencies.sh |  2 +-
+ ci/lib.sh                  |  2 +-
+ ci/run-build-and-tests.sh  | 29 ++++++++++++++++++++++------
+ ci/test-documentation.sh   | 39 ++++++++++++++++----------------------
+ 5 files changed, 52 insertions(+), 34 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 63fff2744ad..c6aed3d2758 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -337,13 +337,21 @@ jobs:
+       run: ci/install-dependencies.sh
+     - run: make sparse
+   documentation:
+-    name: documentation
++    name: ${{matrix.vector.jobname}}
+     needs: ci-config
+     if: needs.ci-config.outputs.enabled == 'yes'
++    strategy:
++      fail-fast: false
++      matrix:
++        vector:
++          - jobname: doc-asciidoc
++          - jobname: doc-asciidoctor
++            makeflags: USE_ASCIIDOCTOR=Y
+     env:
+-      jobname: Documentation
++      jobname: ${{matrix.vector.jobname}}
++      MAKE_TARGETS: check-builtins check-docs doc ${{matrix.vector.makeflags}}
+     runs-on: ubuntu-latest
+     steps:
+     - uses: actions/checkout@v2
+     - run: ci/install-dependencies.sh
+-    - run: ci/test-documentation.sh
++    - run: ci/run-build-and-tests.sh
+diff --git a/ci/install-dependencies.sh b/ci/install-dependencies.sh
+index ca1eaa49c14..4a30713645a 100755
+--- a/ci/install-dependencies.sh
++++ b/ci/install-dependencies.sh
+@@ -65,7 +65,7 @@ sparse)
+ 	sudo apt-get -q -y install libssl-dev libcurl4-openssl-dev \
+ 		libexpat-dev gettext zlib1g-dev
+ 	;;
+-Documentation)
++doc-*)
+ 	sudo apt-get -q update
+ 	sudo apt-get -q -y install asciidoc xmlto docbook-xsl-ns make
+ 
+diff --git a/ci/lib.sh b/ci/lib.sh
+index cbc2f8f1caa..3afa95333ed 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -83,7 +83,7 @@ check_unignored_build_artifacts ()
+ export TERM=${TERM:-dumb}
+ 
+ # Clear MAKEFLAGS that may come from the outside world.
+-export MAKEFLAGS=
++export MAKEFLAGS="${MAKEFLAGS:+$MAKEFLAGS }$EXTRA_MAKEFLAGS"
+ 
+ # Set 'exit on error' for all CI scripts to let the caller know that
+ # something went wrong.
+diff --git a/ci/run-build-and-tests.sh b/ci/run-build-and-tests.sh
+index 16840b2065d..a5f782db1f7 100755
+--- a/ci/run-build-and-tests.sh
++++ b/ci/run-build-and-tests.sh
+@@ -5,12 +5,10 @@
+ 
+ . ${0%/*}/lib.sh
+ 
+-case "$CI_OS_NAME" in
+-windows*) cmd //c mklink //j t\\.prove "$(cygpath -aw "$cache_dir/.prove")";;
+-*) ln -s "$cache_dir/.prove" t/.prove;;
+-esac
+-
+-export MAKE_TARGETS="all test"
++if test -z "$MAKE_TARGETS"
++then
++	export MAKE_TARGETS="all test"
++fi
+ 
+ case "$jobname" in
+ linux-gcc)
+@@ -46,6 +44,25 @@ linux-gcc-4.8)
+ 	;;
+ esac
+ 
++case "$MAKE_TARGETS" in
++*test*)
++	case "$CI_OS_NAME" in
++	windows*) cmd //c mklink //j t\\.prove "$(cygpath -aw "$cache_dir/.prove")";;
++	*) ln -s "$cache_dir/.prove" t/.prove;;
++	esac
++	;;
++esac
++
++case "$jobname" in
++doc-*)
++	# This "make" command requireds bash-specific redirection
++	${0%/*}/test-documentation.sh
++	;;
++*)
++	make $MAKE_TARGETS
++	;;
++esac
++
+ make $MAKE_TARGETS
+ 
+ check_unignored_build_artifacts
+diff --git a/ci/test-documentation.sh b/ci/test-documentation.sh
+index de41888430a..898c33e74ba 100755
+--- a/ci/test-documentation.sh
++++ b/ci/test-documentation.sh
+@@ -14,32 +14,25 @@ filter_log () {
+ 	    "$1"
+ }
+ 
+-make check-builtins
+-make check-docs
+-
+-# Build docs with AsciiDoc
+-make doc > >(tee stdout.log) 2> >(tee stderr.raw >&2)
+-cat stderr.raw
+-filter_log stderr.raw >stderr.log
+-test ! -s stderr.log
+-test -s Documentation/git.html
+-test -s Documentation/git.xml
+-test -s Documentation/git.1
+-grep '<meta name="generator" content="AsciiDoc ' Documentation/git.html
+-
+-rm -f stdout.log stderr.log stderr.raw
+-check_unignored_build_artifacts
+-
+-# Build docs with AsciiDoctor
+-make clean
+-make USE_ASCIIDOCTOR=1 doc > >(tee stdout.log) 2> >(tee stderr.raw >&2)
++make $MAKE_TARGETS > >(tee stdout.log) 2> >(tee stderr.raw >&2)
+ cat stderr.raw
+ filter_log stderr.raw >stderr.log
+ test ! -s stderr.log
+-test -s Documentation/git.html
+-grep '<meta name="generator" content="Asciidoctor ' Documentation/git.html
+ 
+ rm -f stdout.log stderr.log stderr.raw
+-check_unignored_build_artifacts
+ 
+-save_good_tree
++case $jobname in
++doc-asciidoc)
++	test -s Documentation/git.html
++	test -s Documentation/git.xml
++	test -s Documentation/git.1
++	grep '<meta name="generator" content="AsciiDoc ' Documentation/git.html
++	;;
++doc-asciidoctor)
++	test -s Documentation/git.html
++	grep '<meta name="generator" content="Asciidoctor ' Documentation/git.html
++	;;
++*)
++	exit 1
++	;;
++esac
+-- 
+2.34.0.823.gcc3243ae16c
+
