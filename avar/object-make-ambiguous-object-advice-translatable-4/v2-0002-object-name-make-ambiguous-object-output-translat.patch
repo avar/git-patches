@@ -1,0 +1,121 @@
+From 00d84faeb1dbb9f7b92497d4f17ed204a5e06df9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.3-00d84faeb1d-20211122T175022Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.3-00000000000-20211122T175022Z-avarab@gmail.com>
+References: <cover-v3-0.3-00000000000-20211008T193041Z-avarab@gmail.com>
+	<cover-v2-0.3-00000000000-20211122T175022Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 6 Aug 2021 18:06:21 +0200
+Subject: [PATCH v2 2/3] object-name: make ambiguous object output translatable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the output of show_ambiguous_object() added in [1] and last
+tweaked in [2] and the preceding commit to be more friendly to
+translators.
+
+By being able to customize the "<SP><SP>%s\n" format we're even ready
+for RTL languages, who'd presumably like to change that to
+"%s<SP><SP>\n".
+
+1. 1ffa26c461 (get_short_sha1: list ambiguous objects on error,
+   2016-09-26)
+2. 5cc044e0257 (get_short_oid: sort ambiguous objects by type,
+   then SHA-1, 2018-05-10)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-name.c | 58 ++++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 53 insertions(+), 5 deletions(-)
+
+diff --git a/object-name.c b/object-name.c
+index 59e934262e7..7a5355b4cf7 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -356,6 +356,7 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 	const struct disambiguate_state *ds = data;
+ 	struct strbuf desc = STRBUF_INIT;
+ 	int type;
++	const char *hash;
+ 
+ 	if (ds->fn && !ds->fn(ds->repo, oid, ds->cb_data))
+ 		return 0;
+@@ -363,22 +364,69 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 	type = oid_object_info(ds->repo, oid, NULL);
+ 	assert(type == OBJ_TREE || type == OBJ_COMMIT ||
+ 	       type == OBJ_BLOB || type == OBJ_TAG);
++	hash = repo_find_unique_abbrev(ds->repo, oid, DEFAULT_ABBREV);
++
+ 	if (type == OBJ_COMMIT) {
++		struct strbuf ad = STRBUF_INIT;
++		struct strbuf s = STRBUF_INIT;
+ 		struct commit *commit = lookup_commit(ds->repo, oid);
++
+ 		if (commit) {
+ 			struct pretty_print_context pp = {0};
+ 			pp.date_mode.type = DATE_SHORT;
+-			format_commit_message(commit, " %ad - %s", &desc, &pp);
++			format_commit_message(commit, "%ad", &ad, &pp);
++			format_commit_message(commit, "%s", &s, &pp);
+ 		}
++
++		/*
++		 * TRANSLATORS: This is a line of ambiguous commit
++		 * object output. E.g.:
++		 *
++		 *    "deadbeef commit 2021-01-01 - Some Commit Message"
++		 */
++		strbuf_addf(&desc, _("%s commit %s - %s"), hash, ad.buf, s.buf);
++
++		strbuf_release(&ad);
++		strbuf_release(&s);
+ 	} else if (type == OBJ_TAG) {
+ 		struct tag *tag = lookup_tag(ds->repo, oid);
++		const char *tag_tag = "";
++
+ 		if (!parse_tag(tag) && tag->tag)
+-			strbuf_addf(&desc, " %s", tag->tag);
++			tag_tag = tag->tag;
++
++		/*
++		 * TRANSLATORS: This is a line of
++		 * ambiguous tag object output. E.g.:
++		 *
++		 *    "deadbeef tag Some Tag Message"
++		 *
++		 * The second argument is the "tag" string from
++		 * object.c, it should (hopefully) already be
++		 * translated.
++		 */
++		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
++	} else if (type == OBJ_TREE) {
++		/*
++		 * TRANSLATORS: This is a line of ambiguous <type>
++		 * object output. E.g. "deadbeef tree".
++		 */
++		strbuf_addf(&desc, _("%s tree"), hash);
++	} else if (type == OBJ_BLOB) {
++		/*
++		 * TRANSLATORS: This is a line of ambiguous <type>
++		 * object output. E.g. "deadbeef blob".
++		 */
++		strbuf_addf(&desc, _("%s blob"), hash);
++	} else {
++		BUG("unreachable");
+ 	}
+ 
+-	advise("  %s %s%s",
+-	       repo_find_unique_abbrev(ds->repo, oid, DEFAULT_ABBREV),
+-	       type_name(type), desc.buf);
++	/*
++	 * TRANSLATORS: This is line item of ambiguous object output,
++	 * translated above.
++	 */
++	advise(_("  %s"), desc.buf);
+ 
+ 	strbuf_release(&desc);
+ 	return 0;
+-- 
+2.34.0.822.gc64b680fd55
+

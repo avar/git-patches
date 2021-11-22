@@ -1,0 +1,68 @@
+From 9d24bab635dcef71170a92c098acf2a52b605a44 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.3-9d24bab635d-20211122T175022Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.3-00000000000-20211122T175022Z-avarab@gmail.com>
+References: <cover-v3-0.3-00000000000-20211008T193041Z-avarab@gmail.com>
+	<cover-v2-0.3-00000000000-20211122T175022Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Oct 2021 16:57:00 +0200
+Subject: [PATCH v2 3/3] object-name: show date for ambiguous tag objects
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the ambiguous tag object output nicer in the case of tag objects
+such as ebf3c04b262 (Git 2.32, 2021-06-06) by including the date in
+the "tagger" header. I.e.:
+
+    $ git rev-parse b7e68
+    error: short object ID b7e68 is ambiguous
+    hint: The candidates are:
+    hint:   b7e68c41d92 tag 2021-06-06 - v2.32.0
+    hint:   b7e68ae18e0 commit 2019-12-23 - bisect: use the standard 'if (!var)' way to check for 0
+    hint:   b7e68f6b413 tree
+    hint:   b7e68490b97 blob
+    b7e68
+    [...]
+
+Before this we'd emit a "tag" line of:
+
+    hint:   b7e68c41d92 tag v2.32.0
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-name.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/object-name.c b/object-name.c
+index 7a5355b4cf7..29859d3eebe 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -391,9 +391,12 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 	} else if (type == OBJ_TAG) {
+ 		struct tag *tag = lookup_tag(ds->repo, oid);
+ 		const char *tag_tag = "";
++		timestamp_t tag_date = 0;
+ 
+-		if (!parse_tag(tag) && tag->tag)
++		if (!parse_tag(tag) && tag->tag) {
+ 			tag_tag = tag->tag;
++			tag_date = tag->date;
++		}
+ 
+ 		/*
+ 		 * TRANSLATORS: This is a line of
+@@ -405,7 +408,9 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 		 * object.c, it should (hopefully) already be
+ 		 * translated.
+ 		 */
+-		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
++		strbuf_addf(&desc, _("%s tag %s - %s"), hash,
++			    show_date(tag_date, 0, DATE_MODE(SHORT)),
++			    tag_tag);
+ 	} else if (type == OBJ_TREE) {
+ 		/*
+ 		 * TRANSLATORS: This is a line of ambiguous <type>
+-- 
+2.34.0.822.gc64b680fd55
+
