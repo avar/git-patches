@@ -1,0 +1,276 @@
+From 61751f55ff2be6c287fef1abe5eb8f1733cdd48f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.5-61751f55ff2-20211122T153605Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20211122T153605Z-avarab@gmail.com>
+References: <YZseJ4jOVIK3+bUD@coredump.intra.peff.net>
+	<cover-0.5-00000000000-20211122T153605Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Sep 2021 05:01:41 +0200
+Subject: [PATCH 4/5] run-command API users: use strvec_pushl(), not argv
+ construction
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Migrate those run-command API users that assign directly to the "argv"
+member to use a strvec_pushl() of a list instead, this gets rid of the
+intermediate "const char *args[]" these callers were using.
+
+This is in preparation for getting rid of the "argv" member from the
+run-command API itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ archive-tar.c     |  5 +----
+ builtin/add.c     |  6 +-----
+ builtin/fsck.c    | 12 ++++--------
+ builtin/help.c    |  3 +--
+ builtin/merge.c   |  3 +--
+ builtin/replace.c |  3 +--
+ daemon.c          | 15 +++------------
+ diff.c            |  7 +------
+ prompt.c          |  7 +------
+ upload-pack.c     |  5 +----
+ 10 files changed, 15 insertions(+), 51 deletions(-)
+
+diff --git a/archive-tar.c b/archive-tar.c
+index 4154d9a0953..3c74db17468 100644
+--- a/archive-tar.c
++++ b/archive-tar.c
+@@ -430,7 +430,6 @@ static int write_tar_filter_archive(const struct archiver *ar,
+ {
+ 	struct strbuf cmd = STRBUF_INIT;
+ 	struct child_process filter = CHILD_PROCESS_INIT;
+-	const char *argv[2];
+ 	int r;
+ 
+ 	if (!ar->data)
+@@ -440,9 +439,7 @@ static int write_tar_filter_archive(const struct archiver *ar,
+ 	if (args->compression_level >= 0)
+ 		strbuf_addf(&cmd, " -%d", args->compression_level);
+ 
+-	argv[0] = cmd.buf;
+-	argv[1] = NULL;
+-	filter.argv = argv;
++	strvec_push(&filter.args, cmd.buf);
+ 	filter.use_shell = 1;
+ 	filter.in = -1;
+ 
+diff --git a/builtin/add.c b/builtin/add.c
+index ef6b619c45e..6357c0c3f9a 100644
+--- a/builtin/add.c
++++ b/builtin/add.c
+@@ -302,15 +302,11 @@ int interactive_add(const char **argv, const char *prefix, int patch)
+ static int edit_patch(int argc, const char **argv, const char *prefix)
+ {
+ 	char *file = git_pathdup("ADD_EDIT.patch");
+-	const char *apply_argv[] = { "apply", "--recount", "--cached",
+-		NULL, NULL };
+ 	struct child_process child = CHILD_PROCESS_INIT;
+ 	struct rev_info rev;
+ 	int out;
+ 	struct stat st;
+ 
+-	apply_argv[3] = file;
+-
+ 	git_config(git_diff_basic_config, NULL); /* no "diff" UI options */
+ 
+ 	if (read_cache() < 0)
+@@ -338,7 +334,7 @@ static int edit_patch(int argc, const char **argv, const char *prefix)
+ 		die(_("Empty patch. Aborted."));
+ 
+ 	child.git_cmd = 1;
+-	child.argv = apply_argv;
++	strvec_pushl(&child.args, "apply", "--recount", "--cached", file, NULL);
+ 	if (run_command(&child))
+ 		die(_("Could not apply '%s'"), file);
+ 
+diff --git a/builtin/fsck.c b/builtin/fsck.c
+index 27b9e78094d..9e54892311d 100644
+--- a/builtin/fsck.c
++++ b/builtin/fsck.c
+@@ -944,15 +944,13 @@ int cmd_fsck(int argc, const char **argv, const char *prefix)
+ 
+ 	if (the_repository->settings.core_commit_graph) {
+ 		struct child_process commit_graph_verify = CHILD_PROCESS_INIT;
+-		const char *verify_argv[] = { "commit-graph", "verify", NULL, NULL, NULL };
+ 
+ 		prepare_alt_odb(the_repository);
+ 		for (odb = the_repository->objects->odb; odb; odb = odb->next) {
+ 			child_process_init(&commit_graph_verify);
+-			commit_graph_verify.argv = verify_argv;
+ 			commit_graph_verify.git_cmd = 1;
+-			verify_argv[2] = "--object-dir";
+-			verify_argv[3] = odb->path;
++			strvec_pushl(&commit_graph_verify.args, "commit-graph",
++				     "verify", "--object-dir", odb->path, NULL);
+ 			if (run_command(&commit_graph_verify))
+ 				errors_found |= ERROR_COMMIT_GRAPH;
+ 		}
+@@ -960,15 +958,13 @@ int cmd_fsck(int argc, const char **argv, const char *prefix)
+ 
+ 	if (the_repository->settings.core_multi_pack_index) {
+ 		struct child_process midx_verify = CHILD_PROCESS_INIT;
+-		const char *midx_argv[] = { "multi-pack-index", "verify", NULL, NULL, NULL };
+ 
+ 		prepare_alt_odb(the_repository);
+ 		for (odb = the_repository->objects->odb; odb; odb = odb->next) {
+ 			child_process_init(&midx_verify);
+-			midx_verify.argv = midx_argv;
+ 			midx_verify.git_cmd = 1;
+-			midx_argv[2] = "--object-dir";
+-			midx_argv[3] = odb->path;
++			strvec_pushl(&midx_verify.args, "multi-pack-index",
++				     "verify", "--object-dir", odb->path, NULL);
+ 			if (run_command(&midx_verify))
+ 				errors_found |= ERROR_MULTI_PACK_INDEX;
+ 		}
+diff --git a/builtin/help.c b/builtin/help.c
+index 75cd2fb407f..d387131dd83 100644
+--- a/builtin/help.c
++++ b/builtin/help.c
+@@ -212,11 +212,10 @@ static int check_emacsclient_version(void)
+ {
+ 	struct strbuf buffer = STRBUF_INIT;
+ 	struct child_process ec_process = CHILD_PROCESS_INIT;
+-	const char *argv_ec[] = { "emacsclient", "--version", NULL };
+ 	int version;
+ 
+ 	/* emacsclient prints its version number on stderr */
+-	ec_process.argv = argv_ec;
++	strvec_pushl(&ec_process.args, "emacsclient", "--version", NULL);
+ 	ec_process.err = -1;
+ 	ec_process.stdout_to_stderr = 1;
+ 	if (start_command(&ec_process))
+diff --git a/builtin/merge.c b/builtin/merge.c
+index ea3112e0c0b..5f0476b0b76 100644
+--- a/builtin/merge.c
++++ b/builtin/merge.c
+@@ -310,10 +310,9 @@ static int save_state(struct object_id *stash)
+ 	int len;
+ 	struct child_process cp = CHILD_PROCESS_INIT;
+ 	struct strbuf buffer = STRBUF_INIT;
+-	const char *argv[] = {"stash", "create", NULL};
+ 	int rc = -1;
+ 
+-	cp.argv = argv;
++	strvec_pushl(&cp.args, "stash", "create", NULL);
+ 	cp.out = -1;
+ 	cp.git_cmd = 1;
+ 
+diff --git a/builtin/replace.c b/builtin/replace.c
+index 946938d011e..6ff1734d587 100644
+--- a/builtin/replace.c
++++ b/builtin/replace.c
+@@ -258,11 +258,10 @@ static int import_object(struct object_id *oid, enum object_type type,
+ 		return error_errno(_("unable to open %s for reading"), filename);
+ 
+ 	if (!raw && type == OBJ_TREE) {
+-		const char *argv[] = { "mktree", NULL };
+ 		struct child_process cmd = CHILD_PROCESS_INIT;
+ 		struct strbuf result = STRBUF_INIT;
+ 
+-		cmd.argv = argv;
++		strvec_push(&cmd.args, "mktree");
+ 		cmd.git_cmd = 1;
+ 		cmd.in = fd;
+ 		cmd.out = -1;
+diff --git a/daemon.c b/daemon.c
+index 8df21f2130c..cc278077d2f 100644
+--- a/daemon.c
++++ b/daemon.c
+@@ -326,22 +326,13 @@ static int run_access_hook(struct daemon_service *service, const char *dir,
+ {
+ 	struct child_process child = CHILD_PROCESS_INIT;
+ 	struct strbuf buf = STRBUF_INIT;
+-	const char *argv[8];
+-	const char **arg = argv;
+ 	char *eol;
+ 	int seen_errors = 0;
+ 
+-	*arg++ = access_hook;
+-	*arg++ = service->name;
+-	*arg++ = path;
+-	*arg++ = hi->hostname.buf;
+-	*arg++ = get_canon_hostname(hi);
+-	*arg++ = get_ip_address(hi);
+-	*arg++ = hi->tcp_port.buf;
+-	*arg = NULL;
+-
+ 	child.use_shell = 1;
+-	child.argv = argv;
++	strvec_pushl(&child.args, access_hook, service->name, path,
++		     hi->hostname.buf, get_canon_hostname(hi),
++		     get_ip_address(hi), hi->tcp_port.buf, NULL);
+ 	child.no_stdin = 1;
+ 	child.no_stderr = 1;
+ 	child.out = -1;
+diff --git a/diff.c b/diff.c
+index 861282db1c3..70711090b29 100644
+--- a/diff.c
++++ b/diff.c
+@@ -6921,19 +6921,14 @@ static char *run_textconv(struct repository *r,
+ 			  size_t *outsize)
+ {
+ 	struct diff_tempfile *temp;
+-	const char *argv[3];
+-	const char **arg = argv;
+ 	struct child_process child = CHILD_PROCESS_INIT;
+ 	struct strbuf buf = STRBUF_INIT;
+ 	int err = 0;
+ 
+ 	temp = prepare_temp_file(r, spec->path, spec);
+-	*arg++ = pgm;
+-	*arg++ = temp->name;
+-	*arg = NULL;
+ 
+ 	child.use_shell = 1;
+-	child.argv = argv;
++	strvec_pushl(&child.args, pgm, temp->name, NULL);
+ 	child.out = -1;
+ 	if (start_command(&child)) {
+ 		remove_tempfile();
+diff --git a/prompt.c b/prompt.c
+index 5ded21a017f..aff9d7b65b2 100644
+--- a/prompt.c
++++ b/prompt.c
+@@ -8,15 +8,10 @@
+ static char *do_askpass(const char *cmd, const char *prompt)
+ {
+ 	struct child_process pass = CHILD_PROCESS_INIT;
+-	const char *args[3];
+ 	static struct strbuf buffer = STRBUF_INIT;
+ 	int err = 0;
+ 
+-	args[0] = cmd;
+-	args[1]	= prompt;
+-	args[2] = NULL;
+-
+-	pass.argv = args;
++	strvec_pushl(&pass.args, cmd, prompt, NULL);
+ 	pass.out = -1;
+ 
+ 	if (start_command(&pass))
+diff --git a/upload-pack.c b/upload-pack.c
+index c78d55bc674..9b5db32623f 100644
+--- a/upload-pack.c
++++ b/upload-pack.c
+@@ -596,14 +596,11 @@ static int do_reachable_revlist(struct child_process *cmd,
+ 				struct object_array *reachable,
+ 				enum allow_uor allow_uor)
+ {
+-	static const char *argv[] = {
+-		"rev-list", "--stdin", NULL,
+-	};
+ 	struct object *o;
+ 	FILE *cmd_in = NULL;
+ 	int i;
+ 
+-	cmd->argv = argv;
++	strvec_pushl(&cmd->args, "rev-list", "--stdin", NULL);
+ 	cmd->git_cmd = 1;
+ 	cmd->no_stderr = 1;
+ 	cmd->in = -1;
+-- 
+2.34.0.822.gb876f875f1b
+

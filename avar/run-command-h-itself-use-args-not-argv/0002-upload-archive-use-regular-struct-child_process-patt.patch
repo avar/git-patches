@@ -1,0 +1,56 @@
+From a411098699d80a8abd15330b3533f0a1faa359df Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.5-a411098699d-20211122T153605Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20211122T153605Z-avarab@gmail.com>
+References: <YZseJ4jOVIK3+bUD@coredump.intra.peff.net>
+	<cover-0.5-00000000000-20211122T153605Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Sep 2021 05:16:46 +0200
+Subject: [PATCH 2/5] upload-archive: use regular "struct child_process"
+ pattern
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This pattern added [1] in seems to have been intentional, but since
+[2] and [3] we've wanted do initialization of what's now the "struct
+strvec" "args" and "env_array" members. Let's not trample on that
+initialization here.
+
+1. 1bc01efed17 (upload-archive: use start_command instead of fork,
+   2011-11-19)
+2. c460c0ecdca (run-command: store an optional argv_array, 2014-05-15)
+3. 9a583dc39e (run-command: add env_array, an optional argv_array for
+   env, 2014-10-19)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/upload-archive.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/upload-archive.c b/builtin/upload-archive.c
+index 24654b4c9bf..b4b9b3a6262 100644
+--- a/builtin/upload-archive.c
++++ b/builtin/upload-archive.c
+@@ -77,7 +77,7 @@ static ssize_t process_input(int child_fd, int band)
+ 
+ int cmd_upload_archive(int argc, const char **argv, const char *prefix)
+ {
+-	struct child_process writer = { argv };
++	struct child_process writer = CHILD_PROCESS_INIT;
+ 
+ 	if (argc == 2 && !strcmp(argv[1], "-h"))
+ 		usage(upload_archive_usage);
+@@ -92,6 +92,9 @@ int cmd_upload_archive(int argc, const char **argv, const char *prefix)
+ 	argv[0] = "upload-archive--writer";
+ 	writer.out = writer.err = -1;
+ 	writer.git_cmd = 1;
++	strvec_push(&writer.args, "upload-archive--writer");
++	if (argc > 1)
++		strvec_pushv(&writer.args, &argv[1]);
+ 	if (start_command(&writer)) {
+ 		int err = errno;
+ 		packet_write_fmt(1, "NACK unable to spawn subprocess\n");
+-- 
+2.34.0.822.gb876f875f1b
+
