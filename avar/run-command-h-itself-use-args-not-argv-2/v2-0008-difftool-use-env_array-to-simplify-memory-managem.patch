@@ -1,0 +1,75 @@
+From b8387a4a76d4478566514d541bc2c377266766e0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-8.9-b8387a4a76d-20211123T115551Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20211123T115551Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20211122T153605Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20211123T115551Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 22 Nov 2021 13:02:41 +0100
+Subject: [PATCH v2 8/9] difftool: use "env_array" to simplify memory
+ management
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend code added in 03831ef7b50 (difftool: implement the functionality
+in the builtin, 2017-01-19) to use the "env_array" in the
+run_command.[ch] API. Now we no longer need to manage our own
+"index_env" buffer.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/difftool.c | 14 ++++----------
+ 1 file changed, 4 insertions(+), 10 deletions(-)
+
+diff --git a/builtin/difftool.c b/builtin/difftool.c
+index 4931c108451..4ee40fe3a06 100644
+--- a/builtin/difftool.c
++++ b/builtin/difftool.c
+@@ -202,15 +202,10 @@ static void changed_files(struct hashmap *result, const char *index_path,
+ {
+ 	struct child_process update_index = CHILD_PROCESS_INIT;
+ 	struct child_process diff_files = CHILD_PROCESS_INIT;
+-	struct strbuf index_env = STRBUF_INIT, buf = STRBUF_INIT;
+-	const char *git_dir = absolute_path(get_git_dir()), *env[] = {
+-		NULL, NULL
+-	};
++	struct strbuf buf = STRBUF_INIT;
++	const char *git_dir = absolute_path(get_git_dir());
+ 	FILE *fp;
+ 
+-	strbuf_addf(&index_env, "GIT_INDEX_FILE=%s", index_path);
+-	env[0] = index_env.buf;
+-
+ 	strvec_pushl(&update_index.args,
+ 		     "--git-dir", git_dir, "--work-tree", workdir,
+ 		     "update-index", "--really-refresh", "-q",
+@@ -222,7 +217,7 @@ static void changed_files(struct hashmap *result, const char *index_path,
+ 	update_index.use_shell = 0;
+ 	update_index.clean_on_exit = 1;
+ 	update_index.dir = workdir;
+-	update_index.env = env;
++	strvec_pushf(&update_index.env_array, "GIT_INDEX_FILE=%s", index_path);
+ 	/* Ignore any errors of update-index */
+ 	run_command(&update_index);
+ 
+@@ -235,7 +230,7 @@ static void changed_files(struct hashmap *result, const char *index_path,
+ 	diff_files.clean_on_exit = 1;
+ 	diff_files.out = -1;
+ 	diff_files.dir = workdir;
+-	diff_files.env = env;
++	strvec_pushf(&diff_files.env_array, "GIT_INDEX_FILE=%s", index_path);
+ 	if (start_command(&diff_files))
+ 		die("could not obtain raw diff");
+ 	fp = xfdopen(diff_files.out, "r");
+@@ -248,7 +243,6 @@ static void changed_files(struct hashmap *result, const char *index_path,
+ 	fclose(fp);
+ 	if (finish_command(&diff_files))
+ 		die("diff-files did not exit properly");
+-	strbuf_release(&index_env);
+ 	strbuf_release(&buf);
+ }
+ 
+-- 
+2.34.0.831.gd33babec0d1
+
