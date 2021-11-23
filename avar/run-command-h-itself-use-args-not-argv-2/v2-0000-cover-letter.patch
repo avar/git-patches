@@ -4,12 +4,64 @@ In-Reply-To: <cover-0.5-00000000000-20211122T153605Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20211122T153605Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Tue, 23 Nov 2021 12:55:51 +0100
-Subject: [PATCH v2 0/9] *** SUBJECT HERE ***
+Subject: [PATCH v2 0/9] run-command API: get rid of "argv" and "env"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+That the run-command API exposed two subtly different ways of doing
+the same thing wouldn't only lead to the sort of bug reported in [1],
+but also made memory management around it rather painful. As noted by
+Jeff King in[2]:
+
+    I'd like to eventually get rid of the argv interface entirely
+    because it has memory-ownership semantics that are easy to get
+    wrong.
+
+As noted in v1[1] there's probably never going to be a perfect time to
+do this as a change to this widely used API will probably impact
+things in-flight.
+
+Now seems to be a particularly good time though, merging this to
+"seen" only conflicts with my ab/config-based-hooks-2 in
+builtin/worktree.c. The resolution is trivial (just use the new hook
+API added in that topic).
+
+This re-rolled v2 also had a semantic conflict with that topic's use
+of the "env" member, which is solved with a just-submitted update of
+mine[2].
+
+Changes since v2:
+
+ * I ejected the test for the segfault this topic solves, I understood
+   that Junio wanted to fast-track a more limited fix based on Enzo
+   Matsumiya's [3]. In any case the two won't semantically conflict as
+   far as the test goes, this larger change also fixes the segfault.
+
+ * I'm now removing the "env" member in addition to "argv". The two
+   patches at the end are new. Doing so was a much smaller change than
+   "argv".
+
+ * I changed all the minimal refactorings to get rid of "env" to
+   larger changes to get rid of any function-local "argv" arrays with
+   a hardcoded size.
+
+ * As a result, the mid-series is now structured in such a way as to
+   group changes where we can trivially prove that we're not
+   introducing a logic error (since the "argv" variable went away),
+   and those cases where we still keep the "argv" (usually from an
+   existing "struct strvec").
+
+ * The whole Windows-specific complexity in v1 is gone. I didn't
+   really need to change the behavior of that code, now it's just a
+   simple search-replacement of s/cmd->argv/cmd->args.v/. It means we
+   clobber the "env_array" member as we were doing with the "env"
+   before, but since that's nothing new it doesn't require careful
+   review of change semantics.
+
+1. https://lore.kernel.org/git/cover-0.5-00000000000-20211122T153605Z-avarab@gmail.com/
+2. https://lore.kernel.org/git/cover-v5-00.17-00000000000-20211123T114206Z-avarab@gmail.com/
+3. https://lore.kernel.org/git/20211120194048.12125-1-ematsumiya@suse.de/
 
 Ævar Arnfjörð Bjarmason (9):
   worktree: remove redundant NULL-ing of "cp.argv
