@@ -1,0 +1,130 @@
+From b7599be95a7ea46140ae645c2dc284db920279e1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-10.17-b7599be95a7-20211123T114206Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.17-00000000000-20211123T114206Z-avarab@gmail.com>
+References: <cover-v4-00.17-00000000000-20211101T184938Z-avarab@gmail.com>
+	<cover-v5-00.17-00000000000-20211123T114206Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:44 -0700
+Subject: [PATCH v5 10/17] hooks: convert worktree 'post-checkout' hook to hook
+ library
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the running of the 'post-checkout' hook away from run-command.h
+to the new hook.h library in builtin/worktree.c. For this special case
+we need a change to the hook API to teach it to run the hook from a
+given directory.
+
+We cannot skip the "absolute_path" flag and just check if "dir" is
+specified as we'd then fail to find our hook in the new dir we'd
+chdir() to. We currently don't have a use-case for running a hook not
+in our "base" repository at a given absolute path, so let's have "dir"
+imply absolute_path(find_hook(hook_name)).
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/worktree.c | 27 +++++++++++----------------
+ hook.c             |  8 ++++++++
+ hook.h             |  6 ++++++
+ 3 files changed, 25 insertions(+), 16 deletions(-)
+
+diff --git a/builtin/worktree.c b/builtin/worktree.c
+index d22ece93e1a..4d9df5ecc4c 100644
+--- a/builtin/worktree.c
++++ b/builtin/worktree.c
+@@ -382,22 +382,17 @@ static int add_worktree(const char *path, const char *refname,
+ 	 * is_junk is cleared, but do return appropriate code when hook fails.
+ 	 */
+ 	if (!ret && opts->checkout) {
+-		const char *hook = find_hook("post-checkout");
+-		if (hook) {
+-			const char *env[] = { "GIT_DIR", "GIT_WORK_TREE", NULL };
+-			cp.git_cmd = 0;
+-			cp.no_stdin = 1;
+-			cp.stdout_to_stderr = 1;
+-			cp.dir = path;
+-			cp.env = env;
+-			cp.argv = NULL;
+-			cp.trace2_hook_name = "post-checkout";
+-			strvec_pushl(&cp.args, absolute_path(hook),
+-				     oid_to_hex(null_oid()),
+-				     oid_to_hex(&commit->object.oid),
+-				     "1", NULL);
+-			ret = run_command(&cp);
+-		}
++		struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
++
++		strvec_pushl(&opt.env, "GIT_DIR", "GIT_WORK_TREE", NULL);
++		strvec_pushl(&opt.args,
++			     oid_to_hex(null_oid()),
++			     oid_to_hex(&commit->object.oid),
++			     "1",
++			     NULL);
++		opt.dir = path;
++
++		ret = run_hooks_opt("post-checkout", &opt);
+ 	}
+ 
+ 	strvec_clear(&child_env);
+diff --git a/hook.c b/hook.c
+index 1ad123422b2..69a215b2c3c 100644
+--- a/hook.c
++++ b/hook.c
+@@ -57,6 +57,7 @@ static int pick_next_hook(struct child_process *cp,
+ 	strvec_pushv(&cp->env_array, hook_cb->options->env.v);
+ 	cp->stdout_to_stderr = 1;
+ 	cp->trace2_hook_name = hook_cb->hook_name;
++	cp->dir = hook_cb->options->dir;
+ 
+ 	strvec_push(&cp->args, hook_path);
+ 	strvec_pushv(&cp->args, hook_cb->options->args.v);
+@@ -109,6 +110,7 @@ static void run_hooks_opt_clear(struct run_hooks_opt *options)
+ 
+ int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options)
+ {
++	struct strbuf abs_path = STRBUF_INIT;
+ 	struct hook_cb_data cb_data = {
+ 		.rc = 0,
+ 		.hook_name = hook_name,
+@@ -130,6 +132,11 @@ int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options)
+ 	}
+ 
+ 	cb_data.hook_path = hook_path;
++	if (options->dir) {
++		strbuf_add_absolute_path(&abs_path, hook_path);
++		cb_data.hook_path = abs_path.buf;
++	}
++
+ 	run_processes_parallel_tr2(jobs,
+ 				   pick_next_hook,
+ 				   notify_start_failure,
+@@ -139,6 +146,7 @@ int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options)
+ 				   hook_name);
+ 	ret = cb_data.rc;
+ cleanup:
++	strbuf_release(&abs_path);
+ 	run_hooks_opt_clear(options);
+ 	return ret;
+ }
+diff --git a/hook.h b/hook.h
+index 54528395953..18d90aedf14 100644
+--- a/hook.h
++++ b/hook.h
+@@ -12,6 +12,12 @@ struct run_hooks_opt
+ 
+ 	/* Emit an error if the hook is missing */
+ 	unsigned int error_if_missing:1;
++
++	/**
++	 * An optional initial working directory for the hook,
++	 * translates to "struct child_process"'s "dir" member.
++	 */
++	const char *dir;
+ };
+ 
+ #define RUN_HOOKS_OPT_INIT { \
+-- 
+2.34.0.831.gd33babec0d1
+

@@ -1,0 +1,77 @@
+From 6fd47c4c499110b8859458640ddceea6ecab1709 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-15.17-6fd47c4c499-20211123T114206Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.17-00000000000-20211123T114206Z-avarab@gmail.com>
+References: <cover-v4-00.17-00000000000-20211101T184938Z-avarab@gmail.com>
+	<cover-v5-00.17-00000000000-20211123T114206Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:41 -0700
+Subject: [PATCH v5 15/17] read-cache: convert post-index-change to use hook.h
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the post-index-change hook away from run-command.h to and over to
+the new hook.h library.
+
+This removes the last direct user of "run_hook_ve()" outside of
+run-command.c ("run_hook_le()" still uses it). So we can make the
+function static now. A subsequent commit will remove this code
+entirely when "run_hook_le()" itself goes away.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ read-cache.c  | 3 ++-
+ run-command.c | 2 +-
+ run-command.h | 1 -
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/read-cache.c b/read-cache.c
+index f3986596623..4352661549f 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -28,6 +28,7 @@
+ #include "sparse-index.h"
+ #include "csum-file.h"
+ #include "promisor-remote.h"
++#include "hook.h"
+ 
+ /* Mask for the name length in ce_flags in the on-disk index */
+ 
+@@ -3129,7 +3130,7 @@ static int do_write_locked_index(struct index_state *istate, struct lock_file *l
+ 	else
+ 		ret = close_lock_file_gently(lock);
+ 
+-	run_hook_le(NULL, "post-index-change",
++	run_hooks_l("post-index-change",
+ 			istate->updated_workdir ? "1" : "0",
+ 			istate->updated_skipworktree ? "1" : "0", NULL);
+ 	istate->updated_workdir = 0;
+diff --git a/run-command.c b/run-command.c
+index f40df01c772..d7d64701ede 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1323,7 +1323,7 @@ int async_with_fork(void)
+ #endif
+ }
+ 
+-int run_hook_ve(const char *const *env, const char *name, va_list args)
++static int run_hook_ve(const char *const *env, const char *name, va_list args)
+ {
+ 	struct child_process hook = CHILD_PROCESS_INIT;
+ 	const char *p;
+diff --git a/run-command.h b/run-command.h
+index 49878262584..3fa7454cf8a 100644
+--- a/run-command.h
++++ b/run-command.h
+@@ -239,7 +239,6 @@ int run_command(struct child_process *);
+  */
+ LAST_ARG_MUST_BE_NULL
+ int run_hook_le(const char *const *env, const char *name, ...);
+-int run_hook_ve(const char *const *env, const char *name, va_list args);
+ 
+ /*
+  * Trigger an auto-gc
+-- 
+2.34.0.831.gd33babec0d1
+

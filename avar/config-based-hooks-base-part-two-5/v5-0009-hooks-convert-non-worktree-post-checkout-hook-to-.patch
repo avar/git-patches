@@ -1,0 +1,92 @@
+From 359ba416e84b495353bdeced335e977456cb3d4b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-09.17-359ba416e84-20211123T114206Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.17-00000000000-20211123T114206Z-avarab@gmail.com>
+References: <cover-v4-00.17-00000000000-20211101T184938Z-avarab@gmail.com>
+	<cover-v5-00.17-00000000000-20211123T114206Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:44 -0700
+Subject: [PATCH v5 09/17] hooks: convert non-worktree 'post-checkout' hook to
+ hook library
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the running of the 'post-checkout' hook away from run-command.h
+to the new hook.h library, except in the case of
+builtin/worktree.c. That special-case will be handled in a subsequent
+commit.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/checkout.c | 3 ++-
+ builtin/clone.c    | 3 ++-
+ reset.c            | 3 ++-
+ 3 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index cbf73b8c9f6..4af17d17217 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -9,6 +9,7 @@
+ #include "config.h"
+ #include "diff.h"
+ #include "dir.h"
++#include "hook.h"
+ #include "ll-merge.h"
+ #include "lockfile.h"
+ #include "merge-recursive.h"
+@@ -106,7 +107,7 @@ struct branch_info {
+ static int post_checkout_hook(struct commit *old_commit, struct commit *new_commit,
+ 			      int changed)
+ {
+-	return run_hook_le(NULL, "post-checkout",
++	return run_hooks_l("post-checkout",
+ 			   oid_to_hex(old_commit ? &old_commit->object.oid : null_oid()),
+ 			   oid_to_hex(new_commit ? &new_commit->object.oid : null_oid()),
+ 			   changed ? "1" : "0", NULL);
+diff --git a/builtin/clone.c b/builtin/clone.c
+index fb377b27657..ee27b9f8114 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -32,6 +32,7 @@
+ #include "connected.h"
+ #include "packfile.h"
+ #include "list-objects-filter-options.h"
++#include "hook.h"
+ 
+ /*
+  * Overall FIXMEs:
+@@ -705,7 +706,7 @@ static int checkout(int submodule_progress)
+ 	if (write_locked_index(&the_index, &lock_file, COMMIT_LOCK))
+ 		die(_("unable to write new index file"));
+ 
+-	err |= run_hook_le(NULL, "post-checkout", oid_to_hex(null_oid()),
++	err |= run_hooks_l("post-checkout", oid_to_hex(null_oid()),
+ 			   oid_to_hex(&oid), "1", NULL);
+ 
+ 	if (!err && (option_recurse_submodules.nr > 0)) {
+diff --git a/reset.c b/reset.c
+index f214df3d96c..0881e636915 100644
+--- a/reset.c
++++ b/reset.c
+@@ -7,6 +7,7 @@
+ #include "tree-walk.h"
+ #include "tree.h"
+ #include "unpack-trees.h"
++#include "hook.h"
+ 
+ int reset_head(struct repository *r, struct object_id *oid, const char *action,
+ 	       const char *switch_to_branch, unsigned flags,
+@@ -127,7 +128,7 @@ int reset_head(struct repository *r, struct object_id *oid, const char *action,
+ 					    reflog_head);
+ 	}
+ 	if (run_hook)
+-		run_hook_le(NULL, "post-checkout",
++		run_hooks_l("post-checkout",
+ 			    oid_to_hex(orig ? orig : null_oid()),
+ 			    oid_to_hex(oid), "1", NULL);
+ 
+-- 
+2.34.0.831.gd33babec0d1
+
