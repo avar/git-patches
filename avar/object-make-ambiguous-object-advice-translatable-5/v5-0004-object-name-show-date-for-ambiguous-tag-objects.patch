@@ -1,0 +1,73 @@
+From a6bba7cbb2413517a6bc2c9c35398c3201c7045a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-4.6-a6bba7cbb24-20211125T214542Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.6-00000000000-20211125T214542Z-avarab@gmail.com>
+References: <cover-v4-0.3-00000000000-20211122T175219Z-avarab@gmail.com>
+	<cover-v5-0.6-00000000000-20211125T214542Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Oct 2021 16:57:00 +0200
+Subject: [PATCH v5 4/6] object-name: show date for ambiguous tag objects
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the ambiguous tag object output nicer in the case of tag objects
+such as ebf3c04b262 (Git 2.32, 2021-06-06) by including the date in
+the "tagger" header. I.e.:
+
+    $ git rev-parse b7e68
+    error: short object ID b7e68 is ambiguous
+    hint: The candidates are:
+    hint:   b7e68c41d92 tag 2021-06-06 - v2.32.0
+    hint:   b7e68ae18e0 commit 2019-12-23 - bisect: use the standard 'if (!var)' way to check for 0
+    hint:   b7e68f6b413 tree
+    hint:   b7e68490b97 blob
+    b7e68
+    [...]
+
+Before this we'd emit a "tag" line of:
+
+    hint:   b7e68c41d92 tag v2.32.0
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-name.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/object-name.c b/object-name.c
+index 1dcbba7fa76..707480ed191 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -402,21 +402,26 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 	} else if (type == OBJ_TAG) {
+ 		struct tag *tag = lookup_tag(ds->repo, oid);
+ 		const char *tag_tag = "";
++		timestamp_t tag_date = 0;
+ 
+-		if (!parse_tag(tag) && tag->tag)
++		if (!parse_tag(tag) && tag->tag) {
+ 			tag_tag = tag->tag;
++			tag_date = tag->date;
++		}
+ 
+ 		/*
+ 		 * TRANSLATORS: This is a line of
+ 		 * ambiguous tag object output. E.g.:
+ 		 *
+-		 *    "deadbeef tag Some Tag Message"
++		 *    "deadbeef tag 2021-01-01 - Some Tag Message"
+ 		 *
+ 		 * The second argument is the "tag" string from
+ 		 * object.c, it should (hopefully) already be
+ 		 * translated.
+ 		 */
+-		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
++		strbuf_addf(&desc, _("%s tag %s - %s"), hash,
++			    show_date(tag_date, 0, DATE_MODE(SHORT)),
++			    tag_tag);
+ 	} else if (type == OBJ_TREE) {
+ 		/*
+ 		 * TRANSLATORS: This is a line of ambiguous <type>
+-- 
+2.34.1.838.g779e9098efb
+

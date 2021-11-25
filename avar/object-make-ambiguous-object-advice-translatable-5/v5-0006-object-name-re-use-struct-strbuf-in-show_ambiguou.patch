@@ -1,0 +1,124 @@
+From 9d884cc87e8040580b0827a429d2cd9f850eac31 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-6.6-9d884cc87e8-20211125T214542Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.6-00000000000-20211125T214542Z-avarab@gmail.com>
+References: <cover-v4-0.3-00000000000-20211122T175219Z-avarab@gmail.com>
+	<cover-v5-0.6-00000000000-20211125T214542Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 25 Nov 2021 21:49:54 +0100
+Subject: [PATCH v5 6/6] object-name: re-use "struct strbuf" in
+ show_ambiguous_object()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reduce the allocations done by show_ambiguous_object() by moving the
+"desc" strbuf into the "struct ambiguous_output" introduced in the
+preceding commit.
+
+This doesn't matter for optimization purposes, but since we're
+accumulating a "struct strbuf advice" anyway let's follow that pattern
+and add a "struct strbuf sb", we can then strbuf_reset() it rather
+than calling strbuf_release() for each call to
+show_ambiguous_object().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-name.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/object-name.c b/object-name.c
+index fd8b9244b5e..f96552e7af7 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -354,6 +354,7 @@ static int init_object_disambiguation(struct repository *r,
+ struct ambiguous_output {
+ 	const struct disambiguate_state *ds;
+ 	struct strbuf advice;
++	struct strbuf sb;
+ };
+ 
+ static int show_ambiguous_object(const struct object_id *oid, void *data)
+@@ -361,7 +362,7 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 	struct ambiguous_output *state = data;
+ 	const struct disambiguate_state *ds = state->ds;
+ 	struct strbuf *advice = &state->advice;
+-	struct strbuf desc = STRBUF_INIT;
++	struct strbuf *sb = &state->sb;
+ 	int type;
+ 	const char *hash;
+ 
+@@ -377,7 +378,7 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 		 * output shown when we cannot look up or parse the
+ 		 * object in question. E.g. "deadbeef [bad object]".
+ 		 */
+-		strbuf_addf(&desc, _("%s [bad object]"), hash);
++		strbuf_addf(sb, _("%s [bad object]"), hash);
+ 		goto out;
+ 	}
+ 
+@@ -402,7 +403,7 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 		 *
+ 		 *    "deadbeef commit 2021-01-01 - Some Commit Message"
+ 		 */
+-		strbuf_addf(&desc, _("%s commit %s - %s"), hash, ad.buf, s.buf);
++		strbuf_addf(sb, _("%s commit %s - %s"), hash, ad.buf, s.buf);
+ 
+ 		strbuf_release(&ad);
+ 		strbuf_release(&s);
+@@ -426,7 +427,7 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 		 * object.c, it should (hopefully) already be
+ 		 * translated.
+ 		 */
+-		strbuf_addf(&desc, _("%s tag %s - %s"), hash,
++		strbuf_addf(sb, _("%s tag %s - %s"), hash,
+ 			    show_date(tag_date, 0, DATE_MODE(SHORT)),
+ 			    tag_tag);
+ 	} else if (type == OBJ_TREE) {
+@@ -434,13 +435,13 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 		 * TRANSLATORS: This is a line of ambiguous <type>
+ 		 * object output. E.g. "deadbeef tree".
+ 		 */
+-		strbuf_addf(&desc, _("%s tree"), hash);
++		strbuf_addf(sb, _("%s tree"), hash);
+ 	} else if (type == OBJ_BLOB) {
+ 		/*
+ 		 * TRANSLATORS: This is a line of ambiguous <type>
+ 		 * object output. E.g. "deadbeef blob".
+ 		 */
+-		strbuf_addf(&desc, _("%s blob"), hash);
++		strbuf_addf(sb, _("%s blob"), hash);
+ 	}
+ 
+ 
+@@ -449,9 +450,9 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 	 * TRANSLATORS: This is line item of ambiguous object output
+ 	 * from describe_ambiguous_object() above.
+ 	 */
+-	strbuf_addf(advice, _("  %s\n"), desc.buf);
++	strbuf_addf(advice, _("  %s\n"), sb->buf);
+ 
+-	strbuf_release(&desc);
++	strbuf_reset(sb);
+ 	return 0;
+ }
+ 
+@@ -550,6 +551,7 @@ static enum get_oid_result get_short_oid(struct repository *r,
+ 		struct oid_array collect = OID_ARRAY_INIT;
+ 		struct ambiguous_output out = {
+ 			.ds = &ds,
++			.sb = STRBUF_INIT,
+ 			.advice = STRBUF_INIT,
+ 		};
+ 
+@@ -579,6 +581,7 @@ static enum get_oid_result get_short_oid(struct repository *r,
+ 
+ 		oid_array_clear(&collect);
+ 		strbuf_release(&out.advice);
++		strbuf_release(&out.sb);
+ 	}
+ 
+ 	return status;
+-- 
+2.34.1.838.g779e9098efb
+
