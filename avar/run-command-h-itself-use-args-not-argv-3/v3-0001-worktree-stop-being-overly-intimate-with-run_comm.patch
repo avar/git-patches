@@ -1,0 +1,72 @@
+From 1c3f9de33adff45a387823f2431bee619adafc80 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.9-1c3f9de33ad-20211125T224833Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.9-00000000000-20211125T224833Z-avarab@gmail.com>
+References: <cover-v2-0.9-00000000000-20211123T115551Z-avarab@gmail.com>
+	<cover-v3-0.9-00000000000-20211125T224833Z-avarab@gmail.com>
+From: Eric Sunshine <sunshine@sunshineco.com>
+Date: Wed, 24 Nov 2021 00:44:50 -0500
+Subject: [PATCH v3 1/9] worktree: stop being overly intimate with
+ run_command() internals
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+add_worktree() reuses a `child_process` for three run_command()
+invocations, but to do so, it has overly-intimate knowledge of
+run-command.c internals. In particular, it knows that it must reset
+child_process::argv to NULL for each subsequent invocation[*] in order
+for start_command() to latch the newly-populated child_process::args for
+each invocation, even though this behavior is not a part of the
+documented API. Beyond having overly-intimate knowledge of run-command.c
+internals, the reuse of one `child_process` for three run_command()
+invocations smells like an unnecessary micro-optimization. Therefore,
+stop sharing one `child_process` and instead use a new one for each
+run_command() call.
+
+[*] If child_process::argv is not reset to NULL, then subsequent
+run_command() invocations will instead incorrectly access a dangling
+pointer to freed memory which had been allocated by child_process::args
+on the previous run. This is due to the following code in
+start_command():
+
+    if (!cmd->argv)
+        cmd->argv = cmd->args.v;
+
+Signed-off-by: Eric Sunshine <sunshine@sunshineco.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/worktree.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/worktree.c b/builtin/worktree.c
+index d22ece93e1a..9edd3e2829b 100644
+--- a/builtin/worktree.c
++++ b/builtin/worktree.c
+@@ -355,8 +355,8 @@ static int add_worktree(const char *path, const char *refname,
+ 		goto done;
+ 
+ 	if (opts->checkout) {
+-		cp.argv = NULL;
+-		strvec_clear(&cp.args);
++		struct child_process cp = CHILD_PROCESS_INIT;
++		cp.git_cmd = 1;
+ 		strvec_pushl(&cp.args, "reset", "--hard", "--no-recurse-submodules", NULL);
+ 		if (opts->quiet)
+ 			strvec_push(&cp.args, "--quiet");
+@@ -385,12 +385,11 @@ static int add_worktree(const char *path, const char *refname,
+ 		const char *hook = find_hook("post-checkout");
+ 		if (hook) {
+ 			const char *env[] = { "GIT_DIR", "GIT_WORK_TREE", NULL };
+-			cp.git_cmd = 0;
++			struct child_process cp = CHILD_PROCESS_INIT;
+ 			cp.no_stdin = 1;
+ 			cp.stdout_to_stderr = 1;
+ 			cp.dir = path;
+ 			cp.env = env;
+-			cp.argv = NULL;
+ 			cp.trace2_hook_name = "post-checkout";
+ 			strvec_pushl(&cp.args, absolute_path(hook),
+ 				     oid_to_hex(null_oid()),
+-- 
+2.34.1.838.g779e9098efb
+

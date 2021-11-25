@@ -1,0 +1,264 @@
+From 7bdf963ed048d83e19fc69115a27115e4556c4d0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-6.9-7bdf963ed04-20211125T224833Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.9-00000000000-20211125T224833Z-avarab@gmail.com>
+References: <cover-v2-0.9-00000000000-20211123T115551Z-avarab@gmail.com>
+	<cover-v3-0.9-00000000000-20211125T224833Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 23 Nov 2021 01:24:24 +0100
+Subject: [PATCH v3 6/9] run-command API users: use strvec_push(), not argv
+ construction
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change a pattern of hardcoding an "argv" array size, populating it and
+assigning to the "argv" member of "struct child_process" to instead
+use "strvec_push()" to add data to the "args" member.
+
+As noted in the preceding commit this moves us further towards being
+able to remove the "argv" member in a subsequent commit
+
+These callers could have used strvec_pushl(), but moving to
+strvec_push() makes the diff easier to read, and keeps the arguments
+aligned as before.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ archive-tar.c          |  9 +++------
+ builtin/receive-pack.c | 31 ++++++++++++-------------------
+ daemon.c               | 18 +++++++-----------
+ diff.c                 |  8 ++------
+ prompt.c               |  7 ++-----
+ transport.c            | 11 +++++------
+ 6 files changed, 31 insertions(+), 53 deletions(-)
+
+diff --git a/archive-tar.c b/archive-tar.c
+index 05d2455870d..3c74db17468 100644
+--- a/archive-tar.c
++++ b/archive-tar.c
+@@ -430,7 +430,6 @@ static int write_tar_filter_archive(const struct archiver *ar,
+ {
+ 	struct strbuf cmd = STRBUF_INIT;
+ 	struct child_process filter = CHILD_PROCESS_INIT;
+-	const char *argv[2];
+ 	int r;
+ 
+ 	if (!ar->data)
+@@ -440,14 +439,12 @@ static int write_tar_filter_archive(const struct archiver *ar,
+ 	if (args->compression_level >= 0)
+ 		strbuf_addf(&cmd, " -%d", args->compression_level);
+ 
+-	argv[0] = cmd.buf;
+-	argv[1] = NULL;
+-	filter.argv = argv;
++	strvec_push(&filter.args, cmd.buf);
+ 	filter.use_shell = 1;
+ 	filter.in = -1;
+ 
+ 	if (start_command(&filter) < 0)
+-		die_errno(_("unable to start '%s' filter"), argv[0]);
++		die_errno(_("unable to start '%s' filter"), cmd.buf);
+ 	close(1);
+ 	if (dup2(filter.in, 1) < 0)
+ 		die_errno(_("unable to redirect descriptor"));
+@@ -457,7 +454,7 @@ static int write_tar_filter_archive(const struct archiver *ar,
+ 
+ 	close(1);
+ 	if (finish_command(&filter) != 0)
+-		die(_("'%s' filter reported error"), argv[0]);
++		die(_("'%s' filter reported error"), cmd.buf);
+ 
+ 	strbuf_release(&cmd);
+ 	return r;
+diff --git a/builtin/receive-pack.c b/builtin/receive-pack.c
+index 6149d507965..48c99c8ee45 100644
+--- a/builtin/receive-pack.c
++++ b/builtin/receive-pack.c
+@@ -812,16 +812,13 @@ static int run_and_feed_hook(const char *hook_name, feed_fn feed,
+ {
+ 	struct child_process proc = CHILD_PROCESS_INIT;
+ 	struct async muxer;
+-	const char *argv[2];
+ 	int code;
++	const char *hook_path = find_hook(hook_name);
+ 
+-	argv[0] = find_hook(hook_name);
+-	if (!argv[0])
++	if (!hook_path)
+ 		return 0;
+ 
+-	argv[1] = NULL;
+-
+-	proc.argv = argv;
++	strvec_push(&proc.args, hook_path);
+ 	proc.in = -1;
+ 	proc.stdout_to_stderr = 1;
+ 	proc.trace2_hook_name = hook_name;
+@@ -943,23 +940,21 @@ static int run_receive_hook(struct command *commands,
+ 
+ static int run_update_hook(struct command *cmd)
+ {
+-	const char *argv[5];
+ 	struct child_process proc = CHILD_PROCESS_INIT;
+ 	int code;
++	const char *hook_path = find_hook("update");
+ 
+-	argv[0] = find_hook("update");
+-	if (!argv[0])
++	if (!hook_path)
+ 		return 0;
+ 
+-	argv[1] = cmd->ref_name;
+-	argv[2] = oid_to_hex(&cmd->old_oid);
+-	argv[3] = oid_to_hex(&cmd->new_oid);
+-	argv[4] = NULL;
++	strvec_push(&proc.args, hook_path);
++	strvec_push(&proc.args, cmd->ref_name);
++	strvec_push(&proc.args, oid_to_hex(&cmd->old_oid));
++	strvec_push(&proc.args, oid_to_hex(&cmd->new_oid));
+ 
+ 	proc.no_stdin = 1;
+ 	proc.stdout_to_stderr = 1;
+ 	proc.err = use_sideband ? -1 : 0;
+-	proc.argv = argv;
+ 	proc.trace2_hook_name = "update";
+ 
+ 	code = start_command(&proc);
+@@ -1117,22 +1112,20 @@ static int run_proc_receive_hook(struct command *commands,
+ 	struct child_process proc = CHILD_PROCESS_INIT;
+ 	struct async muxer;
+ 	struct command *cmd;
+-	const char *argv[2];
+ 	struct packet_reader reader;
+ 	struct strbuf cap = STRBUF_INIT;
+ 	struct strbuf errmsg = STRBUF_INIT;
+ 	int hook_use_push_options = 0;
+ 	int version = 0;
+ 	int code;
++	const char *hook_path = find_hook("proc-receive");
+ 
+-	argv[0] = find_hook("proc-receive");
+-	if (!argv[0]) {
++	if (!hook_path) {
+ 		rp_error("cannot find hook 'proc-receive'");
+ 		return -1;
+ 	}
+-	argv[1] = NULL;
+ 
+-	proc.argv = argv;
++	strvec_push(&proc.args, hook_path);
+ 	proc.in = -1;
+ 	proc.out = -1;
+ 	proc.trace2_hook_name = "proc-receive";
+diff --git a/daemon.c b/daemon.c
+index 8df21f2130c..4a000ee4afa 100644
+--- a/daemon.c
++++ b/daemon.c
+@@ -326,22 +326,18 @@ static int run_access_hook(struct daemon_service *service, const char *dir,
+ {
+ 	struct child_process child = CHILD_PROCESS_INIT;
+ 	struct strbuf buf = STRBUF_INIT;
+-	const char *argv[8];
+-	const char **arg = argv;
+ 	char *eol;
+ 	int seen_errors = 0;
+ 
+-	*arg++ = access_hook;
+-	*arg++ = service->name;
+-	*arg++ = path;
+-	*arg++ = hi->hostname.buf;
+-	*arg++ = get_canon_hostname(hi);
+-	*arg++ = get_ip_address(hi);
+-	*arg++ = hi->tcp_port.buf;
+-	*arg = NULL;
++	strvec_push(&child.args, access_hook);
++	strvec_push(&child.args, service->name);
++	strvec_push(&child.args, path);
++	strvec_push(&child.args, hi->hostname.buf);
++	strvec_push(&child.args, get_canon_hostname(hi));
++	strvec_push(&child.args, get_ip_address(hi));
++	strvec_push(&child.args, hi->tcp_port.buf);
+ 
+ 	child.use_shell = 1;
+-	child.argv = argv;
+ 	child.no_stdin = 1;
+ 	child.no_stderr = 1;
+ 	child.out = -1;
+diff --git a/diff.c b/diff.c
+index 861282db1c3..41076857428 100644
+--- a/diff.c
++++ b/diff.c
+@@ -6921,19 +6921,15 @@ static char *run_textconv(struct repository *r,
+ 			  size_t *outsize)
+ {
+ 	struct diff_tempfile *temp;
+-	const char *argv[3];
+-	const char **arg = argv;
+ 	struct child_process child = CHILD_PROCESS_INIT;
+ 	struct strbuf buf = STRBUF_INIT;
+ 	int err = 0;
+ 
+ 	temp = prepare_temp_file(r, spec->path, spec);
+-	*arg++ = pgm;
+-	*arg++ = temp->name;
+-	*arg = NULL;
++	strvec_push(&child.args, pgm);
++	strvec_push(&child.args, temp->name);
+ 
+ 	child.use_shell = 1;
+-	child.argv = argv;
+ 	child.out = -1;
+ 	if (start_command(&child)) {
+ 		remove_tempfile();
+diff --git a/prompt.c b/prompt.c
+index 5ded21a017f..50df17279d1 100644
+--- a/prompt.c
++++ b/prompt.c
+@@ -8,15 +8,12 @@
+ static char *do_askpass(const char *cmd, const char *prompt)
+ {
+ 	struct child_process pass = CHILD_PROCESS_INIT;
+-	const char *args[3];
+ 	static struct strbuf buffer = STRBUF_INIT;
+ 	int err = 0;
+ 
+-	args[0] = cmd;
+-	args[1]	= prompt;
+-	args[2] = NULL;
++	strvec_push(&pass.args, cmd);
++	strvec_push(&pass.args, prompt);
+ 
+-	pass.argv = args;
+ 	pass.out = -1;
+ 
+ 	if (start_command(&pass))
+diff --git a/transport.c b/transport.c
+index e4f1decae20..92ab9a3fa6b 100644
+--- a/transport.c
++++ b/transport.c
+@@ -1204,16 +1204,15 @@ static int run_pre_push_hook(struct transport *transport,
+ 	struct ref *r;
+ 	struct child_process proc = CHILD_PROCESS_INIT;
+ 	struct strbuf buf;
+-	const char *argv[4];
++	const char *hook_path = find_hook("pre-push");
+ 
+-	if (!(argv[0] = find_hook("pre-push")))
++	if (!hook_path)
+ 		return 0;
+ 
+-	argv[1] = transport->remote->name;
+-	argv[2] = transport->url;
+-	argv[3] = NULL;
++	strvec_push(&proc.args, hook_path);
++	strvec_push(&proc.args, transport->remote->name);
++	strvec_push(&proc.args, transport->url);
+ 
+-	proc.argv = argv;
+ 	proc.in = -1;
+ 	proc.trace2_hook_name = "pre-push";
+ 
+-- 
+2.34.1.838.g779e9098efb
+
