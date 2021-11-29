@@ -1,0 +1,215 @@
+From 45a24f97c88d287092fcc358f4c8c1b2acba534c Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-00.10-00000000000-20211129T195357Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.10-00000000000-20211112T221506Z-avarab@gmail.com>
+References: <cover-v2-00.10-00000000000-20211112T221506Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 29 Nov 2021 20:53:57 +0100
+Subject: [PATCH v3 00/10] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (10):
+  cat-file tests: test bad usage
+  cat-file tests: test messaging on bad objects/paths
+  parse-options API: add a usage_msg_optf()
+  cat-file docs: fix SYNOPSIS and "-h" output
+  cat-file: move "usage" variable to cmd_cat_file()
+  cat-file: make --batch-all-objects a CMDMODE
+  cat-file: fix remaining usage bugs
+  cat-file: correct and improve usage information
+  object-name.c: don't have GET_OID_ONLY_TO_DIE imply *_QUIETLY
+  cat-file: use GET_OID_ONLY_TO_DIE in --(textconv|filters)
+
+ Documentation/git-cat-file.txt |  10 +-
+ builtin/cat-file.c             | 181 ++++++++++++++++++++-------------
+ builtin/stash.c                |   4 +-
+ cache.h                        |   1 +
+ object-name.c                  |  11 +-
+ parse-options.c                |  13 +++
+ parse-options.h                |  10 ++
+ t/t1006-cat-file.sh            |  92 +++++++++++++++++
+ t/t8007-cat-file-textconv.sh   |  42 ++++++++
+ 9 files changed, 283 insertions(+), 81 deletions(-)
+
+Range-diff against v2:
+ 1:  3a0d2923cfa !  1:  d77771e3ea0 cat-file tests: test bad usage
+    @@ t/t1006-cat-file.sh: test_description='git cat-file'
+     +}
+     +
+     +for switches in \
+    -+    '-e -p' \
+    -+    '-p -t' \
+    -+    '-t -s' \
+    -+    '-s --textconv' \
+    -+    '--textconv --filters'
+    ++	'-e -p' \
+    ++	'-p -t' \
+    ++	'-t -s' \
+    ++	'-s --textconv' \
+    ++	'--textconv --filters'
+     +do
+     +	test_expect_success "usage: cmdmode $switches" '
+     +		test_cmdmode_usage git cat-file $switches
+ 2:  fc8d5e60682 !  2:  ab21a69864f cat-file tests: test messaging on bad objects/paths
+    @@ t/t8007-cat-file-textconv.sh: test_expect_success 'setup ' '
+      	GIT_AUTHOR_NAME=Number2 git commit -a -m Second --date="2010-01-01 20:00:00"
+      '
+      
+    -+test_expect_success 'usage' '
+    ++test_expect_success 'usage: <bad rev>' '
+     +	cat >expect <<-\EOF &&
+     +	fatal: Not a valid object name HEAD2
+     +	EOF
+     +	test_must_fail git cat-file --textconv HEAD2 2>actual &&
+    -+	test_cmp expect actual &&
+    ++	test_cmp expect actual
+    ++'
+     +
+    ++test_expect_success 'usage: <bad rev>:<bad path>' '
+     +	cat >expect <<-\EOF &&
+     +	fatal: Not a valid object name HEAD2:two.bin
+     +	EOF
+     +	test_must_fail git cat-file --textconv HEAD2:two.bin 2>actual &&
+    -+	test_cmp expect actual &&
+    ++	test_cmp expect actual
+    ++'
+     +
+    ++test_expect_success 'usage: <rev>:<bad path>' '
+    ++	cat >expect <<-\EOF &&
+    ++	fatal: Not a valid object name HEAD:two.bin
+    ++	EOF
+    ++	test_must_fail git cat-file --textconv HEAD:two.bin 2>actual &&
+    ++	test_cmp expect actual
+    ++'
+    ++
+    ++
+    ++test_expect_success 'usage: <rev> with no <path>' '
+     +	cat >expect <<-\EOF &&
+     +	fatal: git cat-file --textconv HEAD: <object> must be <sha1:path>
+     +	EOF
+     +	test_must_fail git cat-file --textconv HEAD 2>actual &&
+    -+	test_cmp expect actual &&
+    ++	test_cmp expect actual
+    ++'
+    ++
+     +
+    ++test_expect_success 'usage: <bad rev>:<good (in HEAD) path>' '
+     +	cat >expect <<-\EOF &&
+    -+	fatal: Not a valid object name HEAD:two.bin
+    ++	fatal: Not a valid object name HEAD2:one.bin
+     +	EOF
+    -+	test_must_fail git cat-file --textconv HEAD:two.bin 2>actual &&
+    ++	test_must_fail git cat-file --textconv HEAD2:one.bin 2>actual &&
+     +	test_cmp expect actual
+     +'
+     +
+ 3:  0e2e5ab9d2d =  3:  69ef1ae48c3 parse-options API: add a usage_msg_optf()
+ 4:  b9c935b95b7 =  4:  597bb97b90a cat-file docs: fix SYNOPSIS and "-h" output
+ 5:  664c5db634e =  5:  a9ea4c52222 cat-file: move "usage" variable to cmd_cat_file()
+ 6:  d945fc94774 !  6:  fcb8331f091 cat-file: make --batch-all-objects a CMDMODE
+    @@ builtin/cat-file.c: int cmd_cat_file(int argc, const char **argv, const char *pr
+     
+      ## t/t1006-cat-file.sh ##
+     @@ t/t1006-cat-file.sh: for switches in \
+    -     '-p -t' \
+    -     '-t -s' \
+    -     '-s --textconv' \
+    --    '--textconv --filters'
+    -+    '--textconv --filters' \
+    -+    '--batch-all-objects -e'
+    + 	'-p -t' \
+    + 	'-t -s' \
+    + 	'-s --textconv' \
+    +-	'--textconv --filters'
+    ++	'--textconv --filters' \
+    ++	'--batch-all-objects -e'
+      do
+      	test_expect_success "usage: cmdmode $switches" '
+      		test_cmdmode_usage git cat-file $switches
+ 7:  22f55e1fb6b =  7:  ad79e2afc89 cat-file: fix remaining usage bugs
+ 8:  0842df64695 =  8:  a378dd30dd0 cat-file: correct and improve usage information
+ 9:  6642b57c6fe =  9:  145c00db08c object-name.c: don't have GET_OID_ONLY_TO_DIE imply *_QUIETLY
+10:  177f16ba856 ! 10:  45a24f97c88 cat-file: improve --(textconv|filters) disambiguation
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    cat-file: improve --(textconv|filters) disambiguation
+    +    cat-file: use GET_OID_ONLY_TO_DIE in --(textconv|filters)
+     
+    -    Improve the errors emitted when an invalid <object> and/or <path> is
+    -    provided with either the --path option, or as an argument. We now use
+    -    the same logic in get_oid_with_context_1() that "git show" et al use.
+    +    Change the cat_one_file() logic that calls get_oid_with_context()
+    +    under --textconv and --filters to use the GET_OID_ONLY_TO_DIE flag,
+    +    thus improving the error messaging emitted when e.g. <path> is missing
+    +    but <rev> is not.
+     
+    -    To replace the "cat-file" use-case we need to introduce a new
+    +    To service the "cat-file" use-case we need to introduce a new
+         "GET_OID_REQUIRE_PATH" flag, otherwise it would exit early as soon as
+         a valid "HEAD" was resolved, but in the "cat-file" case being changed
+         we always need a valid revision and path.
+     
+    +    This arguably makes the "<bad rev>:<bad path>" and "<bad
+    +    rev>:<good (in HEAD) path>" use cases worse, as we won't quote the
+    +    <path> component at the user anymore, but let's just use the existing
+    +    logic "git log" et al use for now. We can improve the messaging for
+    +    those cases as a follow-up for all callers.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/cat-file.c ##
+    @@ object-name.c: static enum get_oid_result get_oid_with_context_1(struct reposito
+      	 * :path -> object name of absolute path in index
+     
+      ## t/t8007-cat-file-textconv.sh ##
+    -@@ t/t8007-cat-file-textconv.sh: test_expect_success 'usage' '
+    - 	test_cmp expect actual &&
+    +@@ t/t8007-cat-file-textconv.sh: test_expect_success 'usage: <bad rev>' '
+      
+    + test_expect_success 'usage: <bad rev>:<bad path>' '
+      	cat >expect <<-\EOF &&
+     -	fatal: Not a valid object name HEAD2:two.bin
+     +	fatal: invalid object name '\''HEAD2'\''.
+      	EOF
+      	test_must_fail git cat-file --textconv HEAD2:two.bin 2>actual &&
+    - 	test_cmp expect actual &&
+    + 	test_cmp expect actual
+    +@@ t/t8007-cat-file-textconv.sh: test_expect_success 'usage: <bad rev>:<bad path>' '
+    + 
+    + test_expect_success 'usage: <rev>:<bad path>' '
+    + 	cat >expect <<-\EOF &&
+    +-	fatal: Not a valid object name HEAD:two.bin
+    ++	fatal: path '\''two.bin'\'' does not exist in '\''HEAD'\''
+    + 	EOF
+    + 	test_must_fail git cat-file --textconv HEAD:two.bin 2>actual &&
+    + 	test_cmp expect actual
+    +@@ t/t8007-cat-file-textconv.sh: test_expect_success 'usage: <rev>:<bad path>' '
+      
+    + test_expect_success 'usage: <rev> with no <path>' '
+      	cat >expect <<-\EOF &&
+     -	fatal: git cat-file --textconv HEAD: <object> must be <sha1:path>
+     +	fatal: <object>:<path> required, only <object> '\''HEAD'\'' given
+      	EOF
+      	test_must_fail git cat-file --textconv HEAD 2>actual &&
+    - 	test_cmp expect actual &&
+    + 	test_cmp expect actual
+    +@@ t/t8007-cat-file-textconv.sh: test_expect_success 'usage: <rev> with no <path>' '
+      
+    + test_expect_success 'usage: <bad rev>:<good (in HEAD) path>' '
+      	cat >expect <<-\EOF &&
+    --	fatal: Not a valid object name HEAD:two.bin
+    -+	fatal: path '\''two.bin'\'' does not exist in '\''HEAD'\''
+    +-	fatal: Not a valid object name HEAD2:one.bin
+    ++	fatal: invalid object name '\''HEAD2'\''.
+      	EOF
+    - 	test_must_fail git cat-file --textconv HEAD:two.bin 2>actual &&
+    + 	test_must_fail git cat-file --textconv HEAD2:one.bin 2>actual &&
+      	test_cmp expect actual
+-- 
+2.34.1.841.gf15fb7e6f34
+
