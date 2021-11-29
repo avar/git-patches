@@ -1,0 +1,303 @@
+From 9f735bd0d49e8cf47c9fbef3b777728f792b7bf2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-9f735bd0d49-20211129T200950Z-avarab@gmail.com>
+In-Reply-To: <pull.1085.git.1638193666.gitgitgadget@gmail.com>
+References: <pull.1085.git.1638193666.gitgitgadget@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 24 Nov 2021 14:23:54 +0100
+Subject: [PATCH] test-lib.sh: have all tests pass under "-x", remove
+ BASH_XTRACEFD
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "t1510-repo-setup.sh" test to use a new
+"test_must_be_empty_trace" wrapper, instead of turning on
+"test_untraceable=UnfortunatelyYes".
+
+The only reason the test was incompatible with "-x" was because of
+these "test_must_be_empty" checks, which we can instead instead skip
+if we're running under "set -x".
+
+Skipping the tests is preferable to not having the "-x" output at all,
+as it's much easier to debug the test. The result loss of test
+coverage is minimal. If someone is adjusting a "test_must_be_empty"
+test a failure might go away under "-x", but the new "say" we emit
+here should highlight that appropriately.
+
+Since the only user of "test_untraceable" is gone, we can remove that,
+not only isn't it used now, but I think the rationale for using it in
+the future no longer applies.
+
+We'll be better off by using a simple wrapper like the new
+"test_must_be_empty_trace". See 58275069288 (t1510-repo-setup: mark as
+untraceable with '-x', 2018-02-24) and 5fc98e79fc0 (t: add means to
+disable '-x' tracing for individual test scripts, 2018-02-24) for the
+addition of "test_untraceable".
+
+Once that's been removed we can dig deeper and see that we only have
+"BASH_XTRACEFD" due to an earlier attempt to work around the same
+issue. See d88785e424a (test-lib: set BASH_XTRACEFD automatically,
+2016-05-11) and the 90c8a1db9d6 (test-lib: silence "-x" cleanup under
+bash, 2017-12-08) follow-up.
+
+I.e. we had redirection in "test_eval_" to get more relevant trace
+output under bash, which in turn was only needed because
+BASH_XTRACEFD=1 was set, which in turn was trying to work around test
+failures under "set -x".
+
+It's better if our test suite works the same way on all shells, rather
+than getting a passing run under "bash", only to have it fail with
+"-x" under say "dash". As the deleted code shows this is much simpler
+to implement across our supported POSIX shells.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/README              |  3 --
+ t/t1510-repo-setup.sh | 34 +++++++++++++---------
+ t/test-lib.sh         | 66 +++++--------------------------------------
+ 3 files changed, 27 insertions(+), 76 deletions(-)
+
+diff --git a/t/README b/t/README
+index 29f72354bf1..3d30bbff34a 100644
+--- a/t/README
++++ b/t/README
+@@ -86,9 +86,6 @@ appropriately before running "make". Short options can be bundled, i.e.
+ -x::
+ 	Turn on shell tracing (i.e., `set -x`) during the tests
+ 	themselves. Implies `--verbose`.
+-	Ignored in test scripts that set the variable 'test_untraceable'
+-	to a non-empty value, unless it's run with a Bash version
+-	supporting BASH_XTRACEFD, i.e. v4.1 or later.
+ 
+ -d::
+ --debug::
+diff --git a/t/t1510-repo-setup.sh b/t/t1510-repo-setup.sh
+index 591505a39c0..7eb65a52c08 100755
+--- a/t/t1510-repo-setup.sh
++++ b/t/t1510-repo-setup.sh
+@@ -40,8 +40,14 @@ A few rules for repo setup:
+     prefix is NULL.
+ "
+ 
+-# This test heavily relies on the standard error of nested function calls.
+-test_untraceable=UnfortunatelyYes
++test_must_be_empty_trace () {
++	if want_trace
++	then
++		say "$TEST_NAME does not check test_must_be_empty on \"$@\" under -x"
++		return 0
++	fi
++	test_must_be_empty "$@"
++}
+ 
+ TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+@@ -235,14 +241,14 @@ test_expect_success '#0: nonbare repo, no explicit configuration' '
+ 	try_repo 0 unset unset unset "" unset \
+ 		.git "$here/0" "$here/0" "(null)" \
+ 		.git "$here/0" "$here/0" sub/ 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#1: GIT_WORK_TREE without explicit GIT_DIR is accepted' '
+ 	try_repo 1 "$here" unset unset "" unset \
+ 		"$here/1/.git" "$here" "$here" 1/ \
+ 		"$here/1/.git" "$here" "$here" 1/sub/ 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#2: worktree defaults to cwd with explicit GIT_DIR' '
+@@ -269,7 +275,7 @@ test_expect_success '#4: core.worktree without GIT_DIR set is accepted' '
+ 	try_case 4 unset unset \
+ 		.git "$here/4/sub" "$here/4" "(null)" \
+ 		"$here/4/.git" "$here/4/sub" "$here/4/sub" "(null)" 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#5: core.worktree + GIT_WORK_TREE is accepted' '
+@@ -280,7 +286,7 @@ test_expect_success '#5: core.worktree + GIT_WORK_TREE is accepted' '
+ 	try_repo 5a .. unset "$here/5a" "" unset \
+ 		"$here/5a/.git" "$here" "$here" 5a/ \
+ 		"$here/5a/.git" "$here/5a" "$here/5a" sub/ &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#6: setting GIT_DIR brings core.worktree to life' '
+@@ -377,7 +383,7 @@ test_expect_success '#9: GIT_WORK_TREE accepted with gitfile' '
+ 	try_repo 9 wt unset unset gitfile unset \
+ 		"$here/9.git" "$here/9/wt" "$here/9" "(null)" \
+ 		"$here/9.git" "$here/9/sub/wt" "$here/9/sub" "(null)" 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#10: GIT_DIR can point to gitfile' '
+@@ -403,7 +409,7 @@ test_expect_success '#12: core.worktree with gitfile is accepted' '
+ 	try_repo 12 unset unset "$here/12" gitfile unset \
+ 		"$here/12.git" "$here/12" "$here/12" "(null)" \
+ 		"$here/12.git" "$here/12" "$here/12" sub/ 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#13: core.worktree+GIT_WORK_TREE accepted (with gitfile)' '
+@@ -411,7 +417,7 @@ test_expect_success '#13: core.worktree+GIT_WORK_TREE accepted (with gitfile)' '
+ 	try_repo 13 non-existent-too unset non-existent gitfile unset \
+ 		"$here/13.git" "$here/13/non-existent-too" "$here/13" "(null)" \
+ 		"$here/13.git" "$here/13/sub/non-existent-too" "$here/13/sub" "(null)" 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ # case #14.
+@@ -566,7 +572,7 @@ test_expect_success '#17: GIT_WORK_TREE without explicit GIT_DIR is accepted (ba
+ 	try_repo 17c "$here/17c" unset unset "" true \
+ 		.git "$here/17c" "$here/17c" "(null)" \
+ 		"$here/17c/.git" "$here/17c" "$here/17c" sub/ 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#18: bare .git named by GIT_DIR has no worktree' '
+@@ -595,7 +601,7 @@ test_expect_success '#20a: core.worktree without GIT_DIR accepted (inside .git)'
+ 		"$here/20a/.git" "$here/20a" "$here/20a" .git/wt/ &&
+ 	try_case 20a/.git/wt/sub unset unset \
+ 		"$here/20a/.git" "$here/20a" "$here/20a" .git/wt/sub/ &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#20b/c: core.worktree and core.bare conflict' '
+@@ -627,7 +633,7 @@ test_expect_success '#21: setup, core.worktree warns before overriding core.bare
+ 		export GIT_WORK_TREE &&
+ 		git status >/dev/null
+ 	) 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ 
+ '
+ run_wt_tests 21
+@@ -743,7 +749,7 @@ test_expect_success '#25: GIT_WORK_TREE accepted if GIT_DIR unset (bare gitfile
+ 	try_repo 25 "$here/25" unset unset gitfile true \
+ 		"$here/25.git" "$here/25" "$here/25" "(null)"  \
+ 		"$here/25.git" "$here/25" "$here/25" "sub/" 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ 
+ test_expect_success '#26: bare repo has no worktree (GIT_DIR -> gitfile case)' '
+@@ -781,7 +787,7 @@ test_expect_success '#29: setup' '
+ 		export GIT_WORK_TREE &&
+ 		git status
+ 	) 2>message &&
+-	test_must_be_empty message
++	test_must_be_empty_trace message
+ '
+ run_wt_tests 29 gitfile
+ 
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 2679a7596a6..38a0fc558c9 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -381,29 +381,6 @@ then
+ 	exit
+ fi
+ 
+-if test -n "$trace" && test -n "$test_untraceable"
+-then
+-	# '-x' tracing requested, but this test script can't be reliably
+-	# traced, unless it is run with a Bash version supporting
+-	# BASH_XTRACEFD (introduced in Bash v4.1).
+-	#
+-	# Perform this version check _after_ the test script was
+-	# potentially re-executed with $TEST_SHELL_PATH for '--tee' or
+-	# '--verbose-log', so the right shell is checked and the
+-	# warning is issued only once.
+-	if test -n "$BASH_VERSION" && eval '
+-	     test ${BASH_VERSINFO[0]} -gt 4 || {
+-	       test ${BASH_VERSINFO[0]} -eq 4 &&
+-	       test ${BASH_VERSINFO[1]} -ge 1
+-	     }
+-	   '
+-	then
+-		: Executed by a Bash version supporting BASH_XTRACEFD.  Good.
+-	else
+-		echo >&2 "warning: ignoring -x; '$0' is untraceable without BASH_XTRACEFD"
+-		trace=
+-	fi
+-fi
+ if test -n "$trace" && test -z "$verbose_log"
+ then
+ 	verbose=t
+@@ -650,19 +627,6 @@ else
+ 	exec 4>/dev/null 3>/dev/null
+ fi
+ 
+-# Send any "-x" output directly to stderr to avoid polluting tests
+-# which capture stderr. We can do this unconditionally since it
+-# has no effect if tracing isn't turned on.
+-#
+-# Note that this sets up the trace fd as soon as we assign the variable, so it
+-# must come after the creation of descriptor 4 above. Likewise, we must never
+-# unset this, as it has the side effect of closing descriptor 4, which we
+-# use to show verbose tests to the user.
+-#
+-# Note also that we don't need or want to export it. The tracing is local to
+-# this shell, and we would not want to influence any shells we exec.
+-BASH_XTRACEFD=4
+-
+ test_failure=0
+ test_count=0
+ test_fixed=0
+@@ -949,36 +913,20 @@ test_eval_ () {
+ 	# the shell from printing the "set +x" to turn it off (nor the saving
+ 	# of $? before that). But we can make sure that the output goes to
+ 	# /dev/null.
+-	#
+-	# There are a few subtleties here:
+-	#
+-	#   - we have to redirect descriptor 4 in addition to 2, to cover
+-	#     BASH_XTRACEFD
+-	#
+-	#   - the actual eval has to come before the redirection block (since
+-	#     it needs to see descriptor 4 to set up its stderr)
+-	#
+-	#   - likewise, any error message we print must be outside the block to
+-	#     access descriptor 4
+-	#
+-	#   - checking $? has to come immediately after the eval, but it must
+-	#     be _inside_ the block to avoid polluting the "set -x" output
+-	#
+-
+-	test_eval_inner_ "$@" </dev/null >&3 2>&4
+ 	{
++		test_eval_inner_ "$@" </dev/null >&3 2>&4
+ 		test_eval_ret_=$?
+ 		if want_trace
+ 		then
+ 			test 1 = $trace_level_ && set +x
+ 			trace_level_=$(($trace_level_-1))
+-		fi
+-	} 2>/dev/null 4>&2
+ 
+-	if test "$test_eval_ret_" != 0 && want_trace
+-	then
+-		say_color error >&4 "error: last command exited with \$?=$test_eval_ret_"
+-	fi
++			if test "$test_eval_ret_" != 0
++			then
++				say_color error >&4 "error: last command exited with \$?=$test_eval_ret_"
++			fi
++		fi
++	} 2>/dev/null
+ 	return $test_eval_ret_
+ }
+ 
+-- 
+2.34.1.841.ge54f711571c
+
