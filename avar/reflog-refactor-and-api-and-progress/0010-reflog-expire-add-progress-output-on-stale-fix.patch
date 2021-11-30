@@ -1,0 +1,112 @@
+From f54dee1f1ccf88d88b9a5364a17b8c81328d13c5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.12-f54dee1f1cc-20211130T213319Z-avarab@gmail.com>
+In-Reply-To: <cover-00.12-00000000000-20211130T213319Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20211130T213319Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 5 Oct 2021 15:56:19 +0200
+Subject: [PATCH 10/12] reflog expire: add progress output on --stale-fix
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add progress output when the "git reflog expire --stale-fix" option is
+used. This output was previously only emitted under --verbose, but we
+shouldn't treat it the same way as the actually verbose "--verbose"
+output emitted in should_expire_reflog_ent().
+
+Note that this code isn't going to be affected by the sort of bug we
+had to fix in 6b89a34c89f (gc: fix regression in 7b0f229222 impacting
+--quiet, 2018-09-19). I.e. "git gc" won't call it with the
+"--stale-fix" flag, that option is purely used as a one-off.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-reflog.txt |  8 ++++++++
+ builtin/reflog.c             | 18 +++++++++++++-----
+ 2 files changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/git-reflog.txt b/Documentation/git-reflog.txt
+index ff487ff77d3..1735bbea9fb 100644
+--- a/Documentation/git-reflog.txt
++++ b/Documentation/git-reflog.txt
+@@ -69,6 +69,14 @@ Options for `show`
+ Options for `expire`
+ ~~~~~~~~~~~~~~~~~~~~
+ 
++--progress::
++--no-progress::
++	Progress status is reported on the standard error stream by
++	default when it is attached to a terminal. The `--progress
++	flag enables progress reporting even if not attached to a
++	terminal. Supplying `--no-progress` will suppress all progress
++	output.
++
+ --all::
+ 	Process the reflogs of all references.
+ 
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index a77c0d96dce..cf0ef68d82d 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -11,6 +11,7 @@
+ #include "revision.h"
+ #include "reachable.h"
+ #include "worktree.h"
++#include "progress.h"
+ 
+ /* NEEDSWORK: switch to using parse_options */
+ static const char reflog_expire_usage[] =
+@@ -551,6 +552,7 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ 	int explicit_expiry = 0;
+ 	unsigned int flags = 0;
+ 	int verbose = 0;
++	int show_progress = -1;
+ 
+ 	default_reflog_expire_unreachable = now - 30 * 24 * 3600;
+ 	default_reflog_expire = now - 90 * 24 * 3600;
+@@ -579,6 +581,10 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ 		}
+ 		else if (!strcmp(arg, "--stale-fix"))
+ 			cmd.stalefix = 1;
++		else if (!strcmp(arg, "--progress"))
++			show_progress = 1;
++		else if (!strcmp(arg, "--no-progress"))
++			show_progress = 0;
+ 		else if (!strcmp(arg, "--rewrite"))
+ 			flags |= EXPIRE_REFLOGS_REWRITE;
+ 		else if (!strcmp(arg, "--updateref"))
+@@ -598,6 +604,8 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ 		else
+ 			break;
+ 	}
++	if (show_progress == -1)
++		show_progress = isatty(2);
+ 
+ 	/*
+ 	 * We can trust the commits and objects reachable from refs
+@@ -606,16 +614,16 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ 	 */
+ 	if (cmd.stalefix) {
+ 		struct rev_info revs;
++		struct progress *progress = NULL;
+ 
++		if (show_progress)
++			progress = start_delayed_progress(_("Marking reachable objects"), 0);
+ 		repo_init_revisions(the_repository, &revs, prefix);
+ 		revs.do_not_die_on_missing_tree = 1;
+ 		revs.ignore_missing = 1;
+ 		revs.ignore_missing_links = 1;
+-		if (verbose)
+-			printf(_("Marking reachable objects..."));
+-		mark_reachable_objects(&revs, 0, 0, NULL);
+-		if (verbose)
+-			putchar('\n');
++		mark_reachable_objects(&revs, 0, 0, progress);
++		stop_progress(&progress);
+ 	}
+ 
+ 	if (do_all) {
+-- 
+2.34.1.877.g7d5b0a3b8a6
+
