@@ -1,0 +1,231 @@
+From 867d18d14bdecee0dbe06a5593d01c37a9e38aad Mon Sep 17 00:00:00 2001
+Message-Id: <cover.1638388647.git.avarab@gmail.com>
+In-Reply-To: <patch-1.1-9f735bd0d49-20211129T200950Z-avarab@gmail.com>
+References: <patch-1.1-9f735bd0d49-20211129T200950Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 1 Dec 2021 20:57:27 +0100
+Subject: [PATCH v2 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  t1510: remove need for "test_untraceable", retain coverage
+  test-lib.sh: remove the now-unused "test_untraceable" facility
+
+ t/README              |  3 --
+ t/t1510-repo-setup.sh | 83 +++++++++++++++++++++----------------------
+ t/test-lib.sh         | 66 ++++------------------------------
+ 3 files changed, 47 insertions(+), 105 deletions(-)
+
+Range-diff against v1:
+-:  ----------- > 1:  91402624777 t1510: remove need for "test_untraceable", retain coverage
+1:  9f735bd0d49 ! 2:  867d18d14bd test-lib.sh: have all tests pass under "-x", remove BASH_XTRACEFD
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib.sh: have all tests pass under "-x", remove BASH_XTRACEFD
+    +    test-lib.sh: remove the now-unused "test_untraceable" facility
+     
+    -    Change the "t1510-repo-setup.sh" test to use a new
+    -    "test_must_be_empty_trace" wrapper, instead of turning on
+    -    "test_untraceable=UnfortunatelyYes".
+    +    In the preceding commit the use of "test_untraceable=UnfortunatelyYes"
+    +    was removed from "t1510-repo-setup.sh" in favor of more narrow
+    +    redirections of the output of specific commands (and not entire
+    +    sub-shells or functions).
+     
+    -    The only reason the test was incompatible with "-x" was because of
+    -    these "test_must_be_empty" checks, which we can instead instead skip
+    -    if we're running under "set -x".
+    +    This is in line with the fixes in the series that introduced the
+    +    "test_untraceable" facility. See 571e472dc43 (Merge branch
+    +    'sg/test-x', 2018-03-14) for the series as a whole, and
+    +    e.g. 91538d0cde9 (t5570-git-daemon: don't check the stderr of a
+    +    subshell, 2018-02-24) for a commit that's in line with the changes in
+    +    the preceding commit.
+     
+    -    Skipping the tests is preferable to not having the "-x" output at all,
+    -    as it's much easier to debug the test. The result loss of test
+    -    coverage is minimal. If someone is adjusting a "test_must_be_empty"
+    -    test a failure might go away under "-x", but the new "say" we emit
+    -    here should highlight that appropriately.
+    +    We've thus solved the TODO item noted when "test_untraceable" was
+    +    added to "t1510-repo-setup.sh" in 58275069288 (t1510-repo-setup: mark
+    +    as untraceable with '-x', 2018-02-24).
+     
+    -    Since the only user of "test_untraceable" is gone, we can remove that,
+    -    not only isn't it used now, but I think the rationale for using it in
+    -    the future no longer applies.
+    +    So let's remove the feature entirely. Not only is it currently unused,
+    +    but it actively encourages an anti-pattern in our tests. We should be
+    +    testing the output of specific commands, not entire subshells or
+    +    functions.
+     
+    -    We'll be better off by using a simple wrapper like the new
+    -    "test_must_be_empty_trace". See 58275069288 (t1510-repo-setup: mark as
+    -    untraceable with '-x', 2018-02-24) and 5fc98e79fc0 (t: add means to
+    -    disable '-x' tracing for individual test scripts, 2018-02-24) for the
+    -    addition of "test_untraceable".
+    -
+    -    Once that's been removed we can dig deeper and see that we only have
+    -    "BASH_XTRACEFD" due to an earlier attempt to work around the same
+    -    issue. See d88785e424a (test-lib: set BASH_XTRACEFD automatically,
+    -    2016-05-11) and the 90c8a1db9d6 (test-lib: silence "-x" cleanup under
+    -    bash, 2017-12-08) follow-up.
+    -
+    -    I.e. we had redirection in "test_eval_" to get more relevant trace
+    -    output under bash, which in turn was only needed because
+    -    BASH_XTRACEFD=1 was set, which in turn was trying to work around test
+    -    failures under "set -x".
+    -
+    -    It's better if our test suite works the same way on all shells, rather
+    -    than getting a passing run under "bash", only to have it fail with
+    -    "-x" under say "dash". As the deleted code shows this is much simpler
+    -    to implement across our supported POSIX shells.
+    +    That the "-x" output had to be disabled as a result is only one
+    +    symptom, but even under bash those tests will be harder to debug as
+    +    the subsequent check of the redirected file will be far removed from
+    +    the command that emitted the output.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ t/README: appropriately before running "make". Short options can be bundled, i.e
+      -d::
+      --debug::
+     
+    - ## t/t1510-repo-setup.sh ##
+    -@@ t/t1510-repo-setup.sh: A few rules for repo setup:
+    -     prefix is NULL.
+    - "
+    - 
+    --# This test heavily relies on the standard error of nested function calls.
+    --test_untraceable=UnfortunatelyYes
+    -+test_must_be_empty_trace () {
+    -+	if want_trace
+    -+	then
+    -+		say "$TEST_NAME does not check test_must_be_empty on \"$@\" under -x"
+    -+		return 0
+    -+	fi
+    -+	test_must_be_empty "$@"
+    -+}
+    - 
+    - TEST_PASSES_SANITIZE_LEAK=true
+    - . ./test-lib.sh
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#0: nonbare repo, no explicit configuration' '
+    - 	try_repo 0 unset unset unset "" unset \
+    - 		.git "$here/0" "$here/0" "(null)" \
+    - 		.git "$here/0" "$here/0" sub/ 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#1: GIT_WORK_TREE without explicit GIT_DIR is accepted' '
+    - 	try_repo 1 "$here" unset unset "" unset \
+    - 		"$here/1/.git" "$here" "$here" 1/ \
+    - 		"$here/1/.git" "$here" "$here" 1/sub/ 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#2: worktree defaults to cwd with explicit GIT_DIR' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#4: core.worktree without GIT_DIR set is accepted' '
+    - 	try_case 4 unset unset \
+    - 		.git "$here/4/sub" "$here/4" "(null)" \
+    - 		"$here/4/.git" "$here/4/sub" "$here/4/sub" "(null)" 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#5: core.worktree + GIT_WORK_TREE is accepted' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#5: core.worktree + GIT_WORK_TREE is accepted' '
+    - 	try_repo 5a .. unset "$here/5a" "" unset \
+    - 		"$here/5a/.git" "$here" "$here" 5a/ \
+    - 		"$here/5a/.git" "$here/5a" "$here/5a" sub/ &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#6: setting GIT_DIR brings core.worktree to life' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#9: GIT_WORK_TREE accepted with gitfile' '
+    - 	try_repo 9 wt unset unset gitfile unset \
+    - 		"$here/9.git" "$here/9/wt" "$here/9" "(null)" \
+    - 		"$here/9.git" "$here/9/sub/wt" "$here/9/sub" "(null)" 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#10: GIT_DIR can point to gitfile' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#12: core.worktree with gitfile is accepted' '
+    - 	try_repo 12 unset unset "$here/12" gitfile unset \
+    - 		"$here/12.git" "$here/12" "$here/12" "(null)" \
+    - 		"$here/12.git" "$here/12" "$here/12" sub/ 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#13: core.worktree+GIT_WORK_TREE accepted (with gitfile)' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#13: core.worktree+GIT_WORK_TREE accepted (with gitfile)' '
+    - 	try_repo 13 non-existent-too unset non-existent gitfile unset \
+    - 		"$here/13.git" "$here/13/non-existent-too" "$here/13" "(null)" \
+    - 		"$here/13.git" "$here/13/sub/non-existent-too" "$here/13/sub" "(null)" 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - # case #14.
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#17: GIT_WORK_TREE without explicit GIT_DIR is accepted (ba
+    - 	try_repo 17c "$here/17c" unset unset "" true \
+    - 		.git "$here/17c" "$here/17c" "(null)" \
+    - 		"$here/17c/.git" "$here/17c" "$here/17c" sub/ 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#18: bare .git named by GIT_DIR has no worktree' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#20a: core.worktree without GIT_DIR accepted (inside .git)'
+    - 		"$here/20a/.git" "$here/20a" "$here/20a" .git/wt/ &&
+    - 	try_case 20a/.git/wt/sub unset unset \
+    - 		"$here/20a/.git" "$here/20a" "$here/20a" .git/wt/sub/ &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#20b/c: core.worktree and core.bare conflict' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#21: setup, core.worktree warns before overriding core.bare
+    - 		export GIT_WORK_TREE &&
+    - 		git status >/dev/null
+    - 	) 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - 
+    - '
+    - run_wt_tests 21
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#25: GIT_WORK_TREE accepted if GIT_DIR unset (bare gitfile
+    - 	try_repo 25 "$here/25" unset unset gitfile true \
+    - 		"$here/25.git" "$here/25" "$here/25" "(null)"  \
+    - 		"$here/25.git" "$here/25" "$here/25" "sub/" 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - 
+    - test_expect_success '#26: bare repo has no worktree (GIT_DIR -> gitfile case)' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#29: setup' '
+    - 		export GIT_WORK_TREE &&
+    - 		git status
+    - 	) 2>message &&
+    --	test_must_be_empty message
+    -+	test_must_be_empty_trace message
+    - '
+    - run_wt_tests 29 gitfile
+    - 
+    -
+      ## t/test-lib.sh ##
+     @@ t/test-lib.sh: then
+      	exit
+-- 
+2.34.GIT-dev
+
