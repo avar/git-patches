@@ -1,0 +1,94 @@
+From 5a9ab85fa568b24af1412e61385a403d9a4fa5d9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.4-5a9ab85fa56-20211206T165221Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20211206T165221Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20211206T165221Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 18:52:11 +0200
+Subject: [PATCH 1/4] usage.c: add a die_message() routine
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We have code in various places that would like to call die(), but
+wants to defer the exit(128) it would invoke, e.g. to print an
+additional message, or adjust the exit code. Add a die_message()
+helper routine to bridge this gap in the API.
+
+Functionally this behaves just like the error() routine, except it'll
+print a "fatal: " prefix, and it will return with 128 instead of -1,
+this is so that caller can pass the return value to "exit()", instead
+of having to hardcode "exit(128)".
+
+A subsequent commit will migrate various callers that benefit from
+this function over to it. For now we're just adding the routine and
+making die_builtin() in usage.c itself use it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-compat-util.h |  1 +
+ usage.c           | 22 ++++++++++++++++++----
+ 2 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/git-compat-util.h b/git-compat-util.h
+index c6bd2a84e55..a83fbdf6398 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -479,6 +479,7 @@ NORETURN void usage(const char *err);
+ NORETURN void usagef(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ NORETURN void die(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ NORETURN void die_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
++int die_message(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int error(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int error_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ void warning(const char *err, ...) __attribute__((format (printf, 1, 2)));
+diff --git a/usage.c b/usage.c
+index c7d233b0de9..74b43c5db6f 100644
+--- a/usage.c
++++ b/usage.c
+@@ -55,6 +55,12 @@ static NORETURN void usage_builtin(const char *err, va_list params)
+ 	exit(129);
+ }
+ 
++static void die_message_builtin(const char *err, va_list params)
++{
++	trace2_cmd_error_va(err, params);
++	vreportf("fatal: ", err, params);
++}
++
+ /*
+  * We call trace2_cmd_error_va() in the below functions first and
+  * expect it to va_copy 'params' before using it (because an 'ap' can
+@@ -62,10 +68,7 @@ static NORETURN void usage_builtin(const char *err, va_list params)
+  */
+ static NORETURN void die_builtin(const char *err, va_list params)
+ {
+-	trace2_cmd_error_va(err, params);
+-
+-	vreportf("fatal: ", err, params);
+-
++	die_message_builtin(err, params);
+ 	exit(128);
+ }
+ 
+@@ -211,6 +214,17 @@ void NORETURN die_errno(const char *fmt, ...)
+ 	va_end(params);
+ }
+ 
++#undef die_message
++int die_message(const char *err, ...)
++{
++	va_list params;
++
++	va_start(params, err);
++	die_message_builtin(err, params);
++	va_end(params);
++	return 128;
++}
++
+ #undef error_errno
+ int error_errno(const char *fmt, ...)
+ {
+-- 
+2.34.1.898.g5a552c2e5f0
+

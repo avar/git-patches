@@ -1,0 +1,98 @@
+From e0e6427cbd3372897248cbf843739337a18cc69b Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.4-00000000000-20211206T165221Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 6 Dec 2021 17:52:21 +0100
+Subject: [PATCH 0/4] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (4):
+  usage.c: add a die_message() routine
+  usage.c API users: use die_message() where appropriate
+  usage.c + gc: add and use a die_message_errno()
+  config API: don't use vreportf(), make it static in usage.c
+
+ builtin/fast-import.c | 19 +++++++++++--------
+ builtin/gc.c          | 21 ++++++++++++---------
+ builtin/notes.c       | 15 +++++++++------
+ config.c              | 22 +++++++++-------------
+ config.h              | 10 ++++++----
+ git-compat-util.h     |  4 +++-
+ http-backend.c        |  3 ++-
+ imap-send.c           |  3 ++-
+ parse-options.c       |  2 +-
+ run-command.c         | 16 +++++-----------
+ usage.c               | 42 ++++++++++++++++++++++++++++++++++++++----
+ 11 files changed, 98 insertions(+), 59 deletions(-)
+
+Range-diff:
+1:  ae05d2398fb ! 1:  5a9ab85fa56 usage.c: add a die_message() routine
+    @@ Commit message
+         helper routine to bridge this gap in the API.
+     
+         Functionally this behaves just like the error() routine, except it'll
+    -    print a "fatal: " prefix, and it will exit with 128 instead of -1,
+    -    this is so that caller can pas the return value to exit(128), instead
+    -    of having to hardcode "128".
+    +    print a "fatal: " prefix, and it will return with 128 instead of -1,
+    +    this is so that caller can pass the return value to "exit()", instead
+    +    of having to hardcode "exit(128)".
+     
+         A subsequent commit will migrate various callers that benefit from
+    -    this function over to it, for now we're just adding the routine and
+    +    this function over to it. For now we're just adding the routine and
+         making die_builtin() in usage.c itself use it.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+2:  b4ff6ddf986 = 2:  36c050c90c2 usage.c API users: use die_message() where appropriate
+3:  f93d95ab288 ! 3:  8747afecdcd usage.c + gc: add and use a die_message_errno()
+    @@ Commit message
+         errors to use a "fatal: " prefix instead. This adds a sibling function
+         to the die_errno() added in a preceding commit.
+     
+    -    Since it returns 128 instead of -1 we'll need to adjust
+    -    report_last_gc_error(). Let's adjust it while we're at it to not
+    -    conflate the "should skip" and "exit with this non-zero code"
+    -    conditions, as the caller is no longer hardcoding "128", but relying
+    -    on die_errno() to return a nen-zero exit() status.
+    +    Since it returns 128 instead of -1 (like die_message()) we'll need to
+    +    adjust report_last_gc_error().
+    +
+    +    Let's adjust it while we're at it to not conflate the "should skip"
+    +    and "exit with this non-zero code" conditions, as the caller is no
+    +    longer hardcoding "128", but relying on die_errno() to return a
+    +    nen-zero exit() status.
+    +
+    +    Since we're touching this code let's also use "return ret" in place of
+    +    an "exit(ret)". This is kinder to any cleanup our our "cmd_main()" in
+    +    "git.c" might want to do.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ builtin/gc.c: int cmd_gc(int argc, const char **argv, const char *prefix)
+      				/* Last gc --auto failed. Skip this one. */
+      				return 0;
+     +			if (ret)
+    -+				/* an error occurred, already reported */
+    -+				exit(ret);
+    ++				/* an I/O error occurred, already reported */
+    ++				return ret;
+      
+      			if (lock_repo_for_gc(force, &pid))
+      				return 0;
+    @@ usage.c: int die_message(const char *err, ...)
+     +	va_start(params, fmt);
+     +	die_message_routine(fmt_with_err(buf, sizeof(buf), fmt), params);
+     +	va_end(params);
+    -+	return -1;
+    ++	return 128;
+     +}
+     +
+      #undef error_errno
+4:  40fe7cf81a8 = 4:  e0e6427cbd3 config API: don't use vreportf(), make it static in usage.c
+-- 
+2.34.1.898.g5a552c2e5f0
+
