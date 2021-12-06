@@ -1,0 +1,139 @@
+From 8747afecdcd6a4243fbf47c1c55f65ca2cc95d9b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.4-8747afecdcd-20211206T165030Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20211206T165030Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20211206T165030Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 19:10:30 +0200
+Subject: [PATCH 3/4] usage.c + gc: add and use a die_message_errno()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code the "error: " output when we exit with 128 due to gc.log
+errors to use a "fatal: " prefix instead. This adds a sibling function
+to the die_errno() added in a preceding commit.
+
+Since it returns 128 instead of -1 (like die_message()) we'll need to
+adjust report_last_gc_error().
+
+Let's adjust it while we're at it to not conflate the "should skip"
+and "exit with this non-zero code" conditions, as the caller is no
+longer hardcoding "128", but relying on die_errno() to return a
+nen-zero exit() status.
+
+Since we're touching this code let's also use "return ret" in place of
+an "exit(ret)". This is kinder to any cleanup our our "cmd_main()" in
+"git.c" might want to do.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c      | 21 ++++++++++++---------
+ git-compat-util.h |  1 +
+ usage.c           | 12 ++++++++++++
+ 3 files changed, 25 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index bcef6a4c8da..7b451dfeefc 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -472,19 +472,20 @@ static const char *lock_repo_for_gc(int force, pid_t* ret_pid)
+  * gc should not proceed due to an error in the last run. Prints a
+  * message and returns -1 if an error occurred while reading gc.log
+  */
+-static int report_last_gc_error(void)
++static int report_last_gc_error(int *skip)
+ {
+ 	struct strbuf sb = STRBUF_INIT;
+ 	int ret = 0;
+ 	ssize_t len;
+ 	struct stat st;
+ 	char *gc_log_path = git_pathdup("gc.log");
++	*skip = 0;
+ 
+ 	if (stat(gc_log_path, &st)) {
+ 		if (errno == ENOENT)
+ 			goto done;
+ 
+-		ret = error_errno(_("cannot stat '%s'"), gc_log_path);
++		ret = die_message_errno(_("cannot stat '%s'"), gc_log_path);
+ 		goto done;
+ 	}
+ 
+@@ -493,7 +494,7 @@ static int report_last_gc_error(void)
+ 
+ 	len = strbuf_read_file(&sb, gc_log_path, 0);
+ 	if (len < 0)
+-		ret = error_errno(_("cannot read '%s'"), gc_log_path);
++		ret = die_message_errno(_("cannot read '%s'"), gc_log_path);
+ 	else if (len > 0) {
+ 		/*
+ 		 * A previous gc failed.  Report the error, and don't
+@@ -507,7 +508,7 @@ static int report_last_gc_error(void)
+ 			       "until the file is removed.\n\n"
+ 			       "%s"),
+ 			    gc_log_path, sb.buf);
+-		ret = 1;
++		*skip = 1;
+ 	}
+ 	strbuf_release(&sb);
+ done:
+@@ -610,13 +611,15 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 			fprintf(stderr, _("See \"git help gc\" for manual housekeeping.\n"));
+ 		}
+ 		if (detach_auto) {
+-			int ret = report_last_gc_error();
+-			if (ret < 0)
+-				/* an I/O error occurred, already reported */
+-				exit(128);
+-			if (ret == 1)
++			int skip;
++			int ret = report_last_gc_error(&skip);
++
++			if (skip)
+ 				/* Last gc --auto failed. Skip this one. */
+ 				return 0;
++			if (ret)
++				/* an I/O error occurred, already reported */
++				return ret;
+ 
+ 			if (lock_repo_for_gc(force, &pid))
+ 				return 0;
+diff --git a/git-compat-util.h b/git-compat-util.h
+index d5e495529c8..c6c6f7d6b51 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -480,6 +480,7 @@ NORETURN void usagef(const char *err, ...) __attribute__((format (printf, 1, 2))
+ NORETURN void die(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ NORETURN void die_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int die_message(const char *err, ...) __attribute__((format (printf, 1, 2)));
++int die_message_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int error(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int error_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ void warning(const char *err, ...) __attribute__((format (printf, 1, 2)));
+diff --git a/usage.c b/usage.c
+index 76399ba8409..3d09e8eea48 100644
+--- a/usage.c
++++ b/usage.c
+@@ -233,6 +233,18 @@ int die_message(const char *err, ...)
+ 	return 128;
+ }
+ 
++#undef die_message_errno
++int die_message_errno(const char *fmt, ...)
++{
++	char buf[1024];
++	va_list params;
++
++	va_start(params, fmt);
++	die_message_routine(fmt_with_err(buf, sizeof(buf), fmt), params);
++	va_end(params);
++	return 128;
++}
++
+ #undef error_errno
+ int error_errno(const char *fmt, ...)
+ {
+-- 
+2.34.1.898.g5a552c2e5f0
+
