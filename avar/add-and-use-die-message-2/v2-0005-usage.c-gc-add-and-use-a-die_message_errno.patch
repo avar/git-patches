@@ -1,0 +1,122 @@
+From 2b4a391065473f9fd88ec049556477158c611365 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.6-2b4a3910654-20211207T182052Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20211207T182052Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20211206T165221Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20211207T182052Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 Dec 2021 13:01:26 +0100
+Subject: [PATCH v2 5/6] usage.c + gc: add and use a die_message_errno()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "error: " output when we exit with 128 due to gc.log errors
+to use a "fatal: " prefix instead. To do this add a
+die_message_errno() a sibling function to the die_errno() added in a
+preceding commit.
+
+Before this we'd expect report_last_gc_error() to return -1 from
+error_errno() in this case. It already treated a status of 0 and 1
+specially. Let's just document that anything that's not 0 or 1 should
+be returned.
+
+We could also retain the "ret < 0" behavior here without hardcoding
+128 by returning -128, and having the caller do a "return -ret", but I
+think this makes more sense, and preserves the path from
+die_message*()'s return value to the "return" without hardcoding
+"128".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c      | 13 +++++++------
+ git-compat-util.h |  1 +
+ usage.c           | 12 ++++++++++++
+ 3 files changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 900ccfb8d48..8e60ef1eaba 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -470,7 +470,8 @@ static const char *lock_repo_for_gc(int force, pid_t* ret_pid)
+ /*
+  * Returns 0 if there was no previous error and gc can proceed, 1 if
+  * gc should not proceed due to an error in the last run. Prints a
+- * message and returns -1 if an error occurred while reading gc.log
++ * message and returns with a non-[01] status code if an error occurred
++ * while reading gc.log
+  */
+ static int report_last_gc_error(void)
+ {
+@@ -484,7 +485,7 @@ static int report_last_gc_error(void)
+ 		if (errno == ENOENT)
+ 			goto done;
+ 
+-		ret = error_errno(_("cannot stat '%s'"), gc_log_path);
++		ret = die_message_errno(_("cannot stat '%s'"), gc_log_path);
+ 		goto done;
+ 	}
+ 
+@@ -493,7 +494,7 @@ static int report_last_gc_error(void)
+ 
+ 	len = strbuf_read_file(&sb, gc_log_path, 0);
+ 	if (len < 0)
+-		ret = error_errno(_("cannot read '%s'"), gc_log_path);
++		ret = die_message_errno(_("cannot read '%s'"), gc_log_path);
+ 	else if (len > 0) {
+ 		/*
+ 		 * A previous gc failed.  Report the error, and don't
+@@ -612,12 +613,12 @@ int cmd_gc(int argc, const char **argv, const char *prefix)
+ 		if (detach_auto) {
+ 			int ret = report_last_gc_error();
+ 
+-			if (ret < 0)
+-				/* an I/O error occurred, already reported */
+-				return 128;
+ 			if (ret == 1)
+ 				/* Last gc --auto failed. Skip this one. */
+ 				return 0;
++			else if (ret)
++				/* an I/O error occurred, already reported */
++				return ret;
+ 
+ 			if (lock_repo_for_gc(force, &pid))
+ 				return 0;
+diff --git a/git-compat-util.h b/git-compat-util.h
+index d5e495529c8..c6c6f7d6b51 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -480,6 +480,7 @@ NORETURN void usagef(const char *err, ...) __attribute__((format (printf, 1, 2))
+ NORETURN void die(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ NORETURN void die_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int die_message(const char *err, ...) __attribute__((format (printf, 1, 2)));
++int die_message_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int error(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ int error_errno(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ void warning(const char *err, ...) __attribute__((format (printf, 1, 2)));
+diff --git a/usage.c b/usage.c
+index 76399ba8409..3d09e8eea48 100644
+--- a/usage.c
++++ b/usage.c
+@@ -233,6 +233,18 @@ int die_message(const char *err, ...)
+ 	return 128;
+ }
+ 
++#undef die_message_errno
++int die_message_errno(const char *fmt, ...)
++{
++	char buf[1024];
++	va_list params;
++
++	va_start(params, fmt);
++	die_message_routine(fmt_with_err(buf, sizeof(buf), fmt), params);
++	va_end(params);
++	return 128;
++}
++
+ #undef error_errno
+ int error_errno(const char *fmt, ...)
+ {
+-- 
+2.34.1.898.g5a552c2e5f0
+

@@ -1,0 +1,74 @@
+From 421324067310270e19fe3f1b22ea91ec225c5efd Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-6.6-42132406731-20211207T182052Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20211207T182052Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20211206T165221Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20211207T182052Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 10 Nov 2021 03:32:11 +0100
+Subject: [PATCH v2 6/6] config API: use get_error_routine(), not vreportf()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the git_die_config() function added in 5a80e97c827 (config: add
+`git_die_config()` to the config-set API, 2014-08-07) to use the
+public callbacks in the usage.[ch] API instead of the the underlying
+vreportf() function.
+
+In preceding commits the rest of the vreportf() users outside of
+usage.c was migrated to die_message(), so we can now make it "static".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ config.c          | 3 ++-
+ git-compat-util.h | 1 -
+ usage.c           | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/config.c b/config.c
+index c5873f3a706..e96b8fdb62d 100644
+--- a/config.c
++++ b/config.c
+@@ -2555,11 +2555,12 @@ void git_die_config(const char *key, const char *err, ...)
+ {
+ 	const struct string_list *values;
+ 	struct key_value_info *kv_info;
++	report_fn error_fn = get_error_routine();
+ 
+ 	if (err) {
+ 		va_list params;
+ 		va_start(params, err);
+-		vreportf("error: ", err, params);
++		error_fn(err, params);
+ 		va_end(params);
+ 	}
+ 	values = git_config_get_value_multi(key);
+diff --git a/git-compat-util.h b/git-compat-util.h
+index c6c6f7d6b51..bdb3977b9ec 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -474,7 +474,6 @@ static inline int git_has_dir_sep(const char *path)
+ struct strbuf;
+ 
+ /* General helper functions */
+-void vreportf(const char *prefix, const char *err, va_list params);
+ NORETURN void usage(const char *err);
+ NORETURN void usagef(const char *err, ...) __attribute__((format (printf, 1, 2)));
+ NORETURN void die(const char *err, ...) __attribute__((format (printf, 1, 2)));
+diff --git a/usage.c b/usage.c
+index 3d09e8eea48..9943dd8742e 100644
+--- a/usage.c
++++ b/usage.c
+@@ -6,7 +6,7 @@
+ #include "git-compat-util.h"
+ #include "cache.h"
+ 
+-void vreportf(const char *prefix, const char *err, va_list params)
++static void vreportf(const char *prefix, const char *err, va_list params)
+ {
+ 	char msg[4096];
+ 	char *p, *pend = msg + sizeof(msg);
+-- 
+2.34.1.898.g5a552c2e5f0
+

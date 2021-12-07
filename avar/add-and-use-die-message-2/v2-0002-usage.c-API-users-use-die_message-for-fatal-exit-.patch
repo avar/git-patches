@@ -1,0 +1,133 @@
+From f5a98901498735b2f0b29c3808071c8f48db4ae2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.6-f5a98901498-20211207T182052Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20211207T182052Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20211206T165221Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20211207T182052Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Oct 2021 19:08:24 +0200
+Subject: [PATCH v2 2/6] usage.c API users: use die_message() for "fatal :" +
+ exit 128
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code that printed its own "fatal: " message and exited with a
+status code of 128 to use the die_message() function added in a
+preceding commit.
+
+This change also demonstrates why the return value of
+die_message_routine() needed to be that of "report_fn". We have
+callers such as the run-command.c::child_err_spew() which would like
+to replace its error routine with the return value of
+"get_die_message_routine()".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/fast-import.c | 12 +++++++-----
+ http-backend.c        |  3 ++-
+ parse-options.c       |  2 +-
+ run-command.c         | 16 +++++-----------
+ 4 files changed, 15 insertions(+), 18 deletions(-)
+
+diff --git a/builtin/fast-import.c b/builtin/fast-import.c
+index 20406f67754..2b2e28bad79 100644
+--- a/builtin/fast-import.c
++++ b/builtin/fast-import.c
+@@ -401,16 +401,18 @@ static void dump_marks(void);
+ 
+ static NORETURN void die_nicely(const char *err, va_list params)
+ {
++	va_list cp;
+ 	static int zombie;
+-	char message[2 * PATH_MAX];
++	report_fn die_message_fn = get_die_message_routine();
+ 
+-	vsnprintf(message, sizeof(message), err, params);
+-	fputs("fatal: ", stderr);
+-	fputs(message, stderr);
+-	fputc('\n', stderr);
++	va_copy(cp, params);
++	die_message_fn(err, params);
+ 
+ 	if (!zombie) {
++		char message[2 * PATH_MAX];
++
+ 		zombie = 1;
++		vsnprintf(message, sizeof(message), err, cp);
+ 		write_crash_report(message);
+ 		end_packfile();
+ 		unkeep_all_packs();
+diff --git a/http-backend.c b/http-backend.c
+index 3d6e2ff17f8..982cb62c7cb 100644
+--- a/http-backend.c
++++ b/http-backend.c
+@@ -659,8 +659,9 @@ static NORETURN void die_webcgi(const char *err, va_list params)
+ {
+ 	if (dead <= 1) {
+ 		struct strbuf hdr = STRBUF_INIT;
++		report_fn die_message_fn = get_die_message_routine();
+ 
+-		vreportf("fatal: ", err, params);
++		die_message_fn(err, params);
+ 
+ 		http_status(&hdr, 500, "Internal Server Error");
+ 		hdr_nocache(&hdr);
+diff --git a/parse-options.c b/parse-options.c
+index fc5b43ff0b2..8bc0a21f1d7 100644
+--- a/parse-options.c
++++ b/parse-options.c
+@@ -1075,6 +1075,6 @@ void NORETURN usage_msg_opt(const char *msg,
+ 		   const char * const *usagestr,
+ 		   const struct option *options)
+ {
+-	fprintf(stderr, "fatal: %s\n\n", msg);
++	die_message("%s\n", msg); /* The extra \n is intentional */
+ 	usage_with_options(usagestr, options);
+ }
+diff --git a/run-command.c b/run-command.c
+index f40df01c772..a790fe9799d 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -340,15 +340,6 @@ static void child_close_pair(int fd[2])
+ 	child_close(fd[1]);
+ }
+ 
+-/*
+- * parent will make it look like the child spewed a fatal error and died
+- * this is needed to prevent changes to t0061.
+- */
+-static void fake_fatal(const char *err, va_list params)
+-{
+-	vreportf("fatal: ", err, params);
+-}
+-
+ static void child_error_fn(const char *err, va_list params)
+ {
+ 	const char msg[] = "error() should not be called in child\n";
+@@ -372,9 +363,10 @@ static void NORETURN child_die_fn(const char *err, va_list params)
+ static void child_err_spew(struct child_process *cmd, struct child_err *cerr)
+ {
+ 	static void (*old_errfn)(const char *err, va_list params);
++	report_fn die_message_routine = get_die_message_routine();
+ 
+ 	old_errfn = get_error_routine();
+-	set_error_routine(fake_fatal);
++	set_error_routine(die_message_routine);
+ 	errno = cerr->syserr;
+ 
+ 	switch (cerr->err) {
+@@ -1082,7 +1074,9 @@ static void *run_thread(void *data)
+ 
+ static NORETURN void die_async(const char *err, va_list params)
+ {
+-	vreportf("fatal: ", err, params);
++	report_fn die_message_fn = get_die_message_routine();
++
++	die_message_fn(err, params);
+ 
+ 	if (in_async()) {
+ 		struct async *async = pthread_getspecific(async_key);
+-- 
+2.34.1.898.g5a552c2e5f0
+
