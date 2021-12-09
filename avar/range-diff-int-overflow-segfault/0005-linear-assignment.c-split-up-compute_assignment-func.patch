@@ -1,0 +1,205 @@
+From 0e1e2d107cd8c5e7f08bc24b4f7b3923662033f0 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-05.10-0e1e2d107cd-20211209T190606Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.10-00000000000-20211209T190606Z-avarab@gmail.com>
+References: <RFC-cover-00.10-00000000000-20211209T190606Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 2 Dec 2021 19:29:57 +0100
+Subject: [RFC PATCH 05/10] linear-assignment.c: split up compute_assignment()
+ function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Split up the the long compute_assignment() function to make it easier
+to reason about, particularly when it comes to what variables are used
+later, and which aren't.
+
+The grouping of "int" v.s. "int *" in function signatures is there to
+make subsequent diffs smaller, if we're ever going to have a "nr"
+member with a "size_t", but allocate e.g. "int *", and in anticipation
+of the type names becoming longer than "int", which would require
+re-wrapping.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ linear-assignment.c | 103 +++++++++++++++++++++++++++++++++-----------
+ linear-assignment.h |   3 +-
+ 2 files changed, 79 insertions(+), 27 deletions(-)
+
+diff --git a/linear-assignment.c b/linear-assignment.c
+index 0c0786a63b6..7f85745e541 100644
+--- a/linear-assignment.c
++++ b/linear-assignment.c
+@@ -8,21 +8,12 @@
+ 
+ #define COST(column, row) cost[(column) + column_count * (row)]
+ 
+-/*
+- * The parameter `cost` is the cost matrix: the cost to assign column j to row
+- * i is `cost[j + column_count * i].
+- */
+-void compute_assignment(int column_count, int row_count, int *cost,
+-			int *column2row, int *row2column)
++static void columns_reduction(int column_count, int row_count,
++			      int *cost,
++			      int *column2row, int *row2column,
++			      int *v)
+ {
+-	int *v, *d;
+-	int *free_row, free_count = 0, saved_free_count, *pred, *col;
+-	int i, j, phase;
+-
+-	assert(column_count > 1);
+-	memset(column2row, -1, sizeof(int) * column_count);
+-	memset(row2column, -1, sizeof(int) * row_count);
+-	ALLOC_ARRAY(v, column_count);
++	int i, j;
+ 
+ 	/* column reduction */
+ 	for (j = column_count - 1; j >= 0; j--) {
+@@ -42,13 +33,21 @@ void compute_assignment(int column_count, int row_count, int *cost,
+ 			column2row[j] = -1;
+ 		}
+ 	}
++}
++
++static void reduction_transfer(int column_count, int row_count,
++			       int *cost,
++			       int *free_row, int *free_count,
++			       int *column2row, int *row2column,
++			       int *v)
++{
++	int i, j;
+ 
+ 	/* reduction transfer */
+-	ALLOC_ARRAY(free_row, row_count);
+ 	for (i = 0; i < row_count; i++) {
+ 		int j1 = row2column[i];
+ 		if (j1 == -1)
+-			free_row[free_count++] = i;
++			free_row[(*free_count)++] = i;
+ 		else if (j1 < -1)
+ 			row2column[i] = -2 - j1;
+ 		else {
+@@ -59,21 +58,25 @@ void compute_assignment(int column_count, int row_count, int *cost,
+ 			v[j1] -= min;
+ 		}
+ 	}
++}
+ 
+-	if (free_count ==
+-	    (column_count < row_count ? row_count - column_count : 0)) {
+-		free(v);
+-		free(free_row);
+-		return;
+-	}
++static void augmenting_row_reduction(int column_count,
++				     int *cost,
++				     int *column2row, int *row2column,
++				     int *free_row, int *free_count, int *saved_free_count,
++				     int *v)
++{
++	int phase;
+ 
+ 	/* augmenting row reduction */
+ 	for (phase = 0; phase < 2; phase++) {
++		int i;
+ 		int k = 0;
+ 
+-		saved_free_count = free_count;
+-		free_count = 0;
+-		while (k < saved_free_count) {
++		*saved_free_count = *free_count;
++		*free_count = 0;
++		while (k < *saved_free_count) {
++			int j;
+ 			int u1, u2;
+ 			int j1 = 0, j2, i0;
+ 
+@@ -112,12 +115,24 @@ void compute_assignment(int column_count, int row_count, int *cost,
+ 				if (u1 < u2)
+ 					free_row[--k] = i0;
+ 				else
+-					free_row[free_count++] = i0;
++					free_row[(*free_count)++] = i0;
+ 			}
+ 			row2column[i] = j1;
+ 			column2row[j1] = i;
+ 		}
+ 	}
++}
++
++static void augmentation(int column_count,
++			 int *cost,
++			 int *column2row, int *row2column,
++			 int *free_row, int free_count,
++			 int *v)
++{
++	int i, j;
++	int *d;
++	int *pred, *col;
++	int saved_free_count;
+ 
+ 	/* augmentation */
+ 	saved_free_count = free_count;
+@@ -197,6 +212,42 @@ void compute_assignment(int column_count, int row_count, int *cost,
+ 	free(col);
+ 	free(pred);
+ 	free(d);
++}
++
++/*
++ * The parameter `cost` is the cost matrix: the cost to assign column j to row
++ * i is `cost[j + column_count * i].
++ */
++void compute_assignment(int column_count, int row_count,
++			int *cost,
++			int *column2row, int *row2column)
++{
++	int *v;
++	int *free_row, free_count = 0, saved_free_count;
++
++	assert(column_count > 1);
++	memset(column2row, -1, sizeof(int) * column_count);
++	memset(row2column, -1, sizeof(int) * row_count);
++	ALLOC_ARRAY(v, column_count);
++
++	columns_reduction(column_count, row_count, cost, column2row,
++			  row2column, v);
++
++	ALLOC_ARRAY(free_row, row_count);
++	reduction_transfer(column_count, row_count, cost, free_row,
++			   &free_count, column2row, row2column, v);
++	if (free_count ==
++	    (column_count < row_count ? row_count - column_count : 0))
++		goto cleanup;
++
++	augmenting_row_reduction(column_count, cost, column2row,
++				 row2column, free_row, &free_count,
++				 &saved_free_count,v);
++
++	augmentation(column_count, cost, column2row, row2column,
++		     free_row, free_count, v);
++
++cleanup:
+ 	free(v);
+ 	free(free_row);
+ }
+diff --git a/linear-assignment.h b/linear-assignment.h
+index 1dfea766290..ef9946bdbfc 100644
+--- a/linear-assignment.h
++++ b/linear-assignment.h
+@@ -13,7 +13,8 @@
+  * assignments (-1 for unassigned, which can happen only if column_count !=
+  * row_count).
+  */
+-void compute_assignment(int column_count, int row_count, int *cost,
++void compute_assignment(int column_count, int row_count,
++			int *cost,
+ 			int *column2row, int *row2column);
+ 
+ /* The maximal cost in the cost matrix (to prevent integer overflows). */
+-- 
+2.34.1.930.g0f9292b224d
+

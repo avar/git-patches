@@ -1,0 +1,61 @@
+From 794d494bedd2bb5c3ccccec105b1b3c478f7fe08 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-08.10-794d494bedd-20211209T190606Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.10-00000000000-20211209T190606Z-avarab@gmail.com>
+References: <RFC-cover-00.10-00000000000-20211209T190606Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 3 Dec 2021 17:37:07 +0100
+Subject: [RFC PATCH 08/10] linear-assignment.c: detect signed add/mul on GCC
+ and Clang
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the cost_index() inline function added in the preceding commit
+with signed overflow detection that'll work on GCC[1] and
+Clang[2]. See 320d0b493a2 (add helpers for detecting size_t overflow,
+2016-02-19) for the existing git-compat-util.h helpers to detect
+signed overflow.
+
+This fixes a segfault on that happens when "range-diff" is given a
+very large range to work with, such as the difference between
+git.git's "master" the git-for-windows fork:
+
+    $ git -P range-diff --creation-factor=50 origin/master...git-for-windows/main
+    fatal: integer overflow in cost[47395 + ((47396 * 45309) = -2147454537)] addition
+
+There are known bugs with using these functions in some versions of
+GCC, as we'll see in a subsequent commit we're better off detecting
+those with the "intprops.h" library, but for now let's add a simpler
+implementation that relies on the bare minimum of compiler checking.
+
+1. https://gcc.gnu.org/onlinedocs/gcc/Integer-Overflow-Builtins.html#Integer-Overflow-Builtins
+2. https://clang.llvm.org/docs/LanguageExtensions.html#checked-arithmetic-builtins
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ linear-assignment.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/linear-assignment.c b/linear-assignment.c
+index e9cec16132a..b6597b622c8 100644
+--- a/linear-assignment.c
++++ b/linear-assignment.c
+@@ -10,7 +10,14 @@ static inline int cost_index(int *cost, int a, int b, int c)
+ {
+ 	int r;
+ 
++#if defined(__GNUC__) || defined(__clang__)
++	if (__builtin_mul_overflow(a, c, &r))
++		die(_("integer overflow in cost[%d + %d * %c] multiplication"), b, a, c);
++	if (__builtin_add_overflow(b, r, &r))
++		die(_("integer overflow in cost[%d + ((%d * %d) = %d)] addition"), b, a, c, r);
++#else
+ 	r = b + a * c;
++#endif
+ 
+ 	return r;
+ }
+-- 
+2.34.1.930.g0f9292b224d
+

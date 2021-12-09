@@ -1,0 +1,89 @@
+From 183418f12235e06bfc240e95b58c8c5f24e0558a Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-03.10-183418f1223-20211209T190606Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.10-00000000000-20211209T190606Z-avarab@gmail.com>
+References: <RFC-cover-00.10-00000000000-20211209T190606Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 2 Dec 2021 14:33:20 +0100
+Subject: [RFC PATCH 03/10] range-diff.c: use "size_t" to refer to "struct
+ string_list"'s "nr"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In a preceding commit the "nr" member of "struct string_list" was
+changed to be "size_t" instead of an "unsigned int". Let's follow suit
+here and do the same for our corresponding index variables.
+
+We can also use the st_mult() helper again prepare the argument to
+ALLOC_ARRAY(), but this time correctly as the "n" is unsigned. The
+same goes for a new addition of "st_add()" for "a->nr + b->nr".
+
+There was a segfault in range-diff.c and linear-assignment.c due to an
+"int" overflow. This doesn't solve that problem, but on my system
+moves it around a bit. Before this we'd segfault in the
+"get_correspondences()" function in range-diff.c, specifically on this
+line in the first loop in that function:
+
+    cost[i + n * j] = 0
+
+Now we'll instead make it all the way into compute_assignment() called
+by that same function, and segfault on line 37 of linear-assignment.c in:
+
+    if (COST(j, i1) > COST(j, i))
+
+Which is defined as:
+
+    #define COST(column, row) cost[(column) + column_count * (row)]
+
+And will overflow thusly, with a segfault as we try to use that as a
+negative index into "cost":
+
+    (GDB) p j + column_count * i
+    $10 = -2147454537
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ range-diff.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/range-diff.c b/range-diff.c
+index 170e8623313..41003033752 100644
+--- a/range-diff.c
++++ b/range-diff.c
+@@ -237,7 +237,7 @@ static int patch_util_cmp(const void *dummy, const struct patch_util *a,
+ static void find_exact_matches(struct string_list *a, struct string_list *b)
+ {
+ 	struct hashmap map = HASHMAP_INIT((hashmap_cmp_fn)patch_util_cmp, NULL);
+-	int i;
++	size_t i;
+ 
+ 	/* First, add the patches of a to a hash map */
+ 	for (i = 0; i < a->nr; i++) {
+@@ -308,11 +308,11 @@ static int diffsize(const char *a, const char *b)
+ static void get_correspondences(struct string_list *a, struct string_list *b,
+ 				int creation_factor)
+ {
+-	int n = a->nr + b->nr;
++	size_t n = st_add(a->nr, b->nr);
+ 	int *cost, c, *a2b, *b2a;
+-	int i, j;
++	size_t i, j;
+ 
+-	ALLOC_ARRAY(cost, n * n);
++	ALLOC_ARRAY(cost, st_mult(n, n));
+ 	ALLOC_ARRAY(a2b, n);
+ 	ALLOC_ARRAY(b2a, n);
+ 
+@@ -473,7 +473,7 @@ static void output(struct string_list *a, struct string_list *b,
+ {
+ 	struct strbuf buf = STRBUF_INIT, dashes = STRBUF_INIT;
+ 	int patch_no_width = decimal_width(1 + (a->nr > b->nr ? a->nr : b->nr));
+-	int i = 0, j = 0;
++	size_t i = 0, j = 0;
+ 	struct diff_options opts;
+ 	struct strbuf indent = STRBUF_INIT;
+ 
+-- 
+2.34.1.930.g0f9292b224d
+
