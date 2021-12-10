@@ -1,0 +1,95 @@
+From a7fc794e20dde010a6198b0325c3d58f7afe54e5 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.2-00000000000-20211210T100512Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.2-00000000000-20211201T200801Z-avarab@gmail.com>
+References: <cover-v2-0.2-00000000000-20211201T200801Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 10 Dec 2021 11:05:12 +0100
+Subject: [PATCH v3 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  t1510: remove need for "test_untraceable", retain coverage
+  test-lib.sh: remove the now-unused "test_untraceable" facility
+
+ t/README              |  3 --
+ t/t1510-repo-setup.sh | 85 +++++++++++++++++++++----------------------
+ t/test-lib.sh         | 66 ++++-----------------------------
+ 3 files changed, 49 insertions(+), 105 deletions(-)
+
+Range-diff against v2:
+1:  91402624777 ! 1:  7876202c5b0 t1510: remove need for "test_untraceable", retain coverage
+    @@ Commit message
+         use of "test_when_finished"), but the pattern enforces better test
+         hygiene.
+     
+    +    The functions it calls might change directories, so we pass an
+    +    absolute "$stderr_log_path" around. We also need to change a "$(pwd)"
+    +    to "$PWD" in test_repo(), on e.g. "dash" that interpolation will be
+    +    traced and part of the "2>>" redirection.
+    +
+    +    1. https://lore.kernel.org/git/YbMiK1wHzBfYvK2a@coredump.intra.peff.net/
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## t/t1510-repo-setup.sh ##
+    @@ t/t1510-repo-setup.sh: test_repo () {
+      		fi &&
+      		rm -f trace &&
+     -		GIT_TRACE_SETUP="$(pwd)/trace" git symbolic-ref HEAD >/dev/null &&
+    -+		GIT_TRACE_SETUP="$(pwd)/trace" git symbolic-ref HEAD >/dev/null 2>>stderr &&
+    ++		GIT_TRACE_SETUP="$PWD/trace" git symbolic-ref HEAD >/dev/null 2>>"$stderr_log_path" &&
+      		grep '^setup: ' trace >result &&
+      		test_cmp expected result
+      	)
+    @@ t/t1510-repo-setup.sh: maybe_config () {
+      	if test "$value" != unset
+      	then
+     -		git config --file="$file" "$var" "$value"
+    -+		git config --file="$file" "$var" "$value" 2>>stderr
+    ++		git config --file="$file" "$var" "$value" 2>>"$stderr_log_path"
+      	fi
+      }
+      
+    @@ t/t1510-repo-setup.sh: setup_repo () {
+      	sane_unset GIT_DIR GIT_WORK_TREE &&
+      
+     -	git -c init.defaultBranch=initial init "$name" &&
+    -+	git -c init.defaultBranch=initial init "$name" 2>>stderr &&
+    ++	git -c init.defaultBranch=initial init "$name" 2>>"$stderr_log_path" &&
+      	maybe_config "$name/.git/config" core.worktree "$worktreecfg" &&
+      	maybe_config "$name/.git/config" core.bare "$barecfg" &&
+      	mkdir -p "$name/sub/sub" &&
+    @@ t/t1510-repo-setup.sh: run_wt_tests () {
+      #	(git dir) (work tree) (cwd) (prefix)	<-- from subdir
+      try_repo () {
+      	name=$1 worktreeenv=$2 gitdirenv=$3 &&
+    -+	test_when_finished "rm stderr" &&
+    ++	stderr_log_path="$PWD/stderr" &&
+    ++
+    ++	test_when_finished "rm \"$stderr_log_path\"" &&
+      	setup_repo "$name" "$4" "$5" "$6" &&
+      	shift 6 &&
+      	try_case "$name" "$worktreeenv" "$gitdirenv" \
+      		"$1" "$2" "$3" "$4" &&
+    -+	test_must_be_empty stderr &&
+    ++	test_must_be_empty "$stderr_log_path" &&
+      	shift 4 &&
+      	case "$gitdirenv" in
+      	/* | ?:/* | unset) ;;
+    @@ t/t1510-repo-setup.sh: try_repo () {
+      	try_case "$name/sub" "$worktreeenv" "$gitdirenv" \
+     -		"$1" "$2" "$3" "$4"
+     +		"$1" "$2" "$3" "$4" &&
+    -+	test_must_be_empty stderr
+    ++	test_must_be_empty "$stderr_log_path"
+      }
+      
+      # Bit 0 = GIT_WORK_TREE
+2:  867d18d14bd = 2:  a7fc794e20d test-lib.sh: remove the now-unused "test_untraceable" facility
+-- 
+2.34.1.932.g36842105b61
+
