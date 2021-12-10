@@ -1,0 +1,146 @@
+From 9194965635ad41d4d438218eb4048954109f6656 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-5.5-9194965635a-20211210T122901Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-0.5-00000000000-20211210T122901Z-avarab@gmail.com>
+References: <RFC-cover-00.10-00000000000-20211209T191653Z-avarab@gmail.com>
+	<RFC-cover-v2-0.5-00000000000-20211210T122901Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Dec 2021 12:20:15 +0100
+Subject: [RFC PATCH v2 5/5] range-diff: fix integer overflow & segfault on
+ cost[i + n * j]
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+in preceding commits the "column_count" and the "int*"'s we malloc()
+were changed to track their length with a size_t, so we're able to
+track as many "cost" items as malloc() will give us.
+
+But we'd still segfault on relatively large range comparisons,
+e.g. this would segfault:
+
+    git -P range-diff --creation-factor=50 origin/master...git-for-windows/main
+
+The reason for that is that we'd still use integer types to compute an
+array index into the "cost" array, which would overflow. The result of
+a signed overflow in C is undefined, but on my system it'll result in
+a negative number, and a prompt segfault as we'll try to access a
+negative array index.
+
+Luckily we used the COST() macro in linear-assignment.c already for
+all of these lookups, and in a preceding commit we renamed "n" in
+"range-diff.c"'s get_correspondences() to "column_count" in
+preparation for using it here.
+
+So let's use it for the three occurrences of "cost" indexing in
+range-diff.c, and have the COST() macro itself do overflow checking
+with st_mult() and st_add(). Due to the cast to "size_t" from "int"
+we'll avoid the segfault, and will end up correctly pointing to the
+relevant "int *".
+
+It's not important that we use the new cost_offset() inline function
+here, we could also use the st_*() macros inline. By using it we'll
+get a more meaningful backtrace in a debugger to the relevant
+addition/multiplication line if we end up calling die() here.
+
+It's still possible for us to overflow even with this change, that's
+because the iteration variables (such as "i" and "j" in this diff
+context are all "int"), even if we changed those to "size_t" or
+"intmax_t" (not trivial, as we depend on them being negative in some
+places) the underlying "struct string_list"'s "nr" member is an
+"unsigned int", which would eventually overflow.
+
+However the danger of that overflow isn't as great, as we were
+overflowing on "i + column_count * j" before this change, it'll
+require a much bigger range for us to have an integer overflow on the
+number of commits we're processing.
+
+We're unlikely to encounter a 2-4 billion commit history on 32 bit
+platforms. Even if we did one of the types in the underlying object
+machinery would probably overflow before we overflowed here. So let's
+punt that for now. If we're ever going to solve that issue [1] to
+change the "struct string_list"'s "nr" member to a "size_t" might be a
+good start.
+
+1. https://lore.kernel.org/git/RFC-patch-01.10-7c929096381-20211209T191653Z-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ linear-assignment.c |  2 --
+ linear-assignment.h | 17 +++++++++++++++++
+ range-diff.c        |  6 +++---
+ 3 files changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/linear-assignment.c b/linear-assignment.c
+index 1f8329701a0..88d15c2ad32 100644
+--- a/linear-assignment.c
++++ b/linear-assignment.c
+@@ -6,8 +6,6 @@
+ #include "cache.h"
+ #include "linear-assignment.h"
+ 
+-#define COST(column, row) cost[(column) + column_count * (row)]
+-
+ static void columns_reduction(size_t column_count, size_t row_count,
+ 			      int *cost,
+ 			      int *column2row, int *row2column,
+diff --git a/linear-assignment.h b/linear-assignment.h
+index 9ff055baac1..5f8bcedc2c5 100644
+--- a/linear-assignment.h
++++ b/linear-assignment.h
+@@ -17,6 +17,23 @@ void compute_assignment(size_t column_count, size_t row_count,
+ 			int *cost,
+ 			int *column2row, int *row2column);
+ 
++/**
++ * Get an overflow-proof offset into the "cost" array.
++ */
++static inline size_t cost_offset(const size_t column,
++				 const size_t column_count, const size_t row)
++{
++	const size_t a = st_mult(column_count, row);
++	const size_t b = st_add(column, a);
++
++	return b;
++}
++
++/**
++ * Convenience macro for doing the cost[] lookup using cost_offset().
++ */
++#define COST(column, row) cost[cost_offset((column), (column_count), (row))]
++
+ /* The maximal cost in the cost matrix (to prevent integer overflows). */
+ #define COST_MAX (1<<16)
+ 
+diff --git a/range-diff.c b/range-diff.c
+index b2e7db2c954..b4f015213af 100644
+--- a/range-diff.c
++++ b/range-diff.c
+@@ -328,13 +328,13 @@ static void get_correspondences(struct string_list *a, struct string_list *b,
+ 				c = diffsize(a_util->diff, b_util->diff);
+ 			else
+ 				c = COST_MAX;
+-			cost[i + column_count * j] = c;
++			COST(i, j) = c;
+ 		}
+ 
+ 		c = a_util->matching < 0 ?
+ 			a_util->diffsize * creation_factor / 100 : COST_MAX;
+ 		for (j = b->nr; j < column_count; j++)
+-			cost[i + column_count * j] = c;
++			COST(i, j) = c;
+ 	}
+ 
+ 	for (j = 0; j < b->nr; j++) {
+@@ -343,7 +343,7 @@ static void get_correspondences(struct string_list *a, struct string_list *b,
+ 		c = util->matching < 0 ?
+ 			util->diffsize * creation_factor / 100 : COST_MAX;
+ 		for (i = a->nr; i < column_count; i++)
+-			cost[i + column_count * j] = c;
++			COST(i, j) = c;
+ 	}
+ 
+ 	if (column_count > 1)
+-- 
+2.34.1.932.g36842105b61
+
