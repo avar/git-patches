@@ -1,0 +1,110 @@
+From 161fcad1578f17cafee91ec4484a5149e192bc41 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.3-161fcad1578-20211212T195108Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.3-00000000000-20211212T195108Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20211209T045735Z-avarab@gmail.com>
+	<cover-v2-0.3-00000000000-20211212T195108Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 Dec 2021 03:30:44 +0100
+Subject: [PATCH v2 1/3] refs API: use "failure_errno", not "errno"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a logic error in refs_resolve_ref_unsafe() introduced in a recent
+series of mine to abstract the refs API away from errno. See
+96f6623ada0 (Merge branch 'ab/refs-errno-cleanup', 2021-11-29)for that
+series.
+
+In that series introduction of "failure_errno" to
+refs_resolve_ref_unsafe came in ef18119dec8 (refs API: add a version
+of refs_resolve_ref_unsafe() with "errno", 2021-10-16). There we'd set
+"errno = 0" immediately before refs_read_raw_ref(), and then set
+"failure_errno" to "errno" if errno was non-zero afterwards.
+
+Then in the next commit 8b72fea7e91 (refs API: make
+refs_read_raw_ref() not set errno, 2021-10-16) we started expecting
+"refs_read_raw_ref()" to set "failure_errno". It would do that if
+refs_read_raw_ref() failed, but it wouldn't be the same errno.
+
+So we might set the "errno" here to any arbitrary bad value, and end
+up e.g. returning NULL when we meant to return the refname from
+refs_resolve_ref_unsafe(), or the other way around. Instrumenting this
+code will reveal cases where refs_read_raw_ref() will fail, and
+"errno" and "failure_errno" will be set to different values.
+
+In practice I haven't found a case where this scary bug changed
+anything in practice. The reason for that is that we'll not care about
+the actual value of "errno" here per-se, but only whether:
+
+ 1. We have an errno
+ 2. If it's one of ENOENT, EISDIR or ENOTDIR. See the adjacent code
+    added in a1c1d8170db (refs_resolve_ref_unsafe: handle d/f
+    conflicts for writes, 2017-10-06)
+
+I.e. if we clobber "failure_errno" with "errno", but it happened to be
+one of those three, and we'll clobber it with another one of the three
+we were OK.
+
+Perhaps there are cases where the difference ended up mattering, but I
+haven't found them. Instrumenting the test suite to fail if "errno"
+and "failure_errno" are different shows a lot of failures, checking if
+they're different *and* one is but not the other is outside that list
+of three "errno" values yields no failures.
+
+But let's fix the obvious bug. We should just stop paying attention to
+"errno" in refs_resolve_ref_unsafe(). In addition let's change the
+partial resetting of "errno" in files_read_raw_ref() to happen just
+before the "return", to ensure that any such bug will be more easily
+spotted in the future.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c               | 2 --
+ refs/files-backend.c | 3 +--
+ 2 files changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index 4338875d86b..6cc845c7ac2 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1721,8 +1721,6 @@ const char *refs_resolve_ref_unsafe(struct ref_store *refs,
+ 		if (refs_read_raw_ref(refs, refname, oid, &sb_refname,
+ 				      &read_flags, failure_errno)) {
+ 			*flags |= read_flags;
+-			if (errno)
+-				*failure_errno = errno;
+ 
+ 			/* In reading mode, refs must eventually resolve */
+ 			if (resolve_flags & RESOLVE_REF_READING)
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 237a2afb5d7..fd34d344c30 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -387,7 +387,6 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ 	if (lstat(path, &st) < 0) {
+ 		int ignore_errno;
+ 		myerr = errno;
+-		errno = 0;
+ 		if (myerr != ENOENT)
+ 			goto out;
+ 		if (refs_read_raw_ref(refs->packed_ref_store, refname, oid,
+@@ -404,7 +403,6 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ 		strbuf_reset(&sb_contents);
+ 		if (strbuf_readlink(&sb_contents, path, st.st_size) < 0) {
+ 			myerr = errno;
+-			errno = 0;
+ 			if (myerr == ENOENT || myerr == EINVAL)
+ 				/* inconsistent with lstat; retry */
+ 				goto stat_ref;
+@@ -474,6 +472,7 @@ static int files_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ 
+ 	strbuf_release(&sb_path);
+ 	strbuf_release(&sb_contents);
++	errno = 0;
+ 	return ret;
+ }
+ 
+-- 
+2.34.1.929.ge922d848c7a
+
