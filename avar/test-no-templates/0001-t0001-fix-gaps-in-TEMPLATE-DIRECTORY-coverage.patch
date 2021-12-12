@@ -1,0 +1,135 @@
+From 5526d3dc838516eaf1cf3d004f8345dddd9de594 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.13-5526d3dc838-20211212T200026Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20211212T200026Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20211212T200026Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 6 Dec 2021 14:45:31 +0100
+Subject: [PATCH 01/13] t0001: fix gaps in "TEMPLATE DIRECTORY" coverage
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests to assert that the priority order described in the "TEMPLATE
+DIRECTORY" section in the "init" documentation is correct.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0001-init.sh | 85 +++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 82 insertions(+), 3 deletions(-)
+
+diff --git a/t/t0001-init.sh b/t/t0001-init.sh
+index 7603ad2f82b..e0b965cdc8f 100755
+--- a/t/t0001-init.sh
++++ b/t/t0001-init.sh
+@@ -173,6 +173,55 @@ test_expect_success 'reinit' '
+ 	test_must_be_empty again/err2
+ '
+ 
++setup_template_priority() {
++	test_when_finished "rm -rf template" &&
++	mkdir template &&
++	touch template/file &&
++
++	test_when_finished "rm -rf template2" &&
++	mkdir template2 &&
++	touch template2/file2 &&
++
++	# Created by the caller
++	test_when_finished "rm -rf repo"
++}
++
++test_expect_success 'usage priority: --template only' '
++	setup_template_priority &&
++	git init --template=template repo &&
++	test_path_is_file repo/.git/file
++'
++
++test_expect_success 'usage priority: --template takes precedence over GIT_TEMPLATE_DIR' '
++	setup_template_priority &&
++	GIT_TEMPLATE_DIR="$PWD/template2" git init --template=template repo &&
++	test_path_is_file repo/.git/file
++'
++
++test_expect_success 'usage priority: --template takes precedence over init.templateDir' '
++	setup_template_priority &&
++	git -c init.templateDir="$PWD/template2" init --template=template repo &&
++	test_path_is_file repo/.git/file
++'
++
++test_expect_success 'usage priority: --no-template takes precedence over init.templateDir' '
++	setup_template_priority &&
++	git -c init.templateDir="$PWD/template" init --no-template repo &&
++	test_path_is_missing repo/.git/file
++'
++
++test_expect_success 'usage priority: --no-template takes precedence over GIT_TEMPLATE_DIR' '
++	setup_template_priority &&
++	GIT_TEMPLATE_DIR="$PWD/template" git init --no-template repo &&
++	test_path_is_missing repo/.git/file
++'
++
++test_expect_success 'usage priority: GIT_NO_TEMPLATE_DIR=true takes precedence over GIT_TEMPLATE_DIR' '
++	setup_template_priority &&
++	GIT_TEMPLATE_DIR="$PWD/template" GIT_NO_TEMPLATE_DIR=true git init repo &&
++	test_path_is_missing repo/.git/file
++'
++
+ test_expect_success 'init with --template' '
+ 	mkdir template-source &&
+ 	echo content >template-source/file &&
+@@ -187,11 +236,15 @@ test_expect_success 'init with --template (blank)' '
+ 	test_path_is_missing template-blank/.git/info/exclude
+ '
+ 
++no_templatedir_env () {
++	sane_unset GIT_TEMPLATE_DIR &&
++	NO_SET_GIT_TEMPLATE_DIR=t &&
++	export NO_SET_GIT_TEMPLATE_DIR
++}
++
+ init_no_templatedir_env () {
+ 	(
+-		sane_unset GIT_TEMPLATE_DIR &&
+-		NO_SET_GIT_TEMPLATE_DIR=t &&
+-		export NO_SET_GIT_TEMPLATE_DIR &&
++		no_templatedir_env &&
+ 		git init "$1"
+ 	)
+ }
+@@ -214,6 +267,32 @@ test_expect_success 'init with init.templatedir using ~ expansion' '
+ 	test_cmp templatedir-source/file templatedir-expansion/.git/file
+ '
+ 
++test_expect_success 'init with init.templateDir=does-not-exist' '
++	test_when_finished "rm -rf repo" &&
++	(
++		no_templatedir_env &&
++
++		cat >expect <<-\EOF &&
++		warning: templates not found in does-not-exist
++		EOF
++		git -c init.templateDir=does-not-exist init repo 2>actual &&
++		test_cmp expect actual
++	)
++'
++
++test_expect_success 'init with init.templateDir=[bool]' '
++	test_when_finished "rm -rf repo" &&
++	(
++		no_templatedir_env &&
++
++		cat >expect <<-\EOF &&
++		warning: templates not found in false
++		EOF
++		git -c init.templateDir=false init repo 2>actual &&
++		test_cmp expect actual
++	)
++'
++
+ test_expect_success 'init --bare/--shared overrides system/global config' '
+ 	test_config_global core.bare false &&
+ 	test_config_global core.sharedRepository 0640 &&
+-- 
+2.34.1.929.ge922d848c7a
+

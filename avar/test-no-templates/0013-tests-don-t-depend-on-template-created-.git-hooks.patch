@@ -1,0 +1,174 @@
+From d021a5981a1e308267c7ad1f1eb75b8d88c253d1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-13.13-d021a5981a1-20211212T200026Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20211212T200026Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20211212T200026Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 Dec 2021 02:26:30 +0100
+Subject: [PATCH 13/13] tests: don't depend on template-created .git/hooks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "write_hook" wrapper to implicitly "mkdir -p
+.git/hooks" (or equivalent), and stop having copy_templates() make the
+"hooks" directory. One test in "t5516-fetch-push.sh" won't need to
+move our hooks out of the way anymore.
+
+As with a preceding change to drop the dependency on the
+template-created "branches" we can now stop depending on the template
+having created the "hooks" directory for us.
+
+Since this was the last special-case handled by the
+"lazy_mkdir_strbuf_or_die_setlen()" function added earlier in this
+series we can remove that special-case and the
+"GIT_TEST_BARE_TEMPLATE" handling.
+
+The choice to not use "mkdir -p" in "write_hook" is deliberate. We're
+being a bit stricter in not potentially creating N leading
+directories, but also not failing on the second "write_hook"
+invocation in a repository as a simple "mkdir" without "-p" would.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/init-db.c           | 39 +------------------------------------
+ t/t5516-fetch-push.sh       |  4 +---
+ t/t7450-bad-git-dotfiles.sh |  1 +
+ t/test-lib-functions.sh     |  4 ++++
+ t/test-lib.sh               |  3 +--
+ 5 files changed, 8 insertions(+), 43 deletions(-)
+
+diff --git a/builtin/init-db.c b/builtin/init-db.c
+index 3700a6b854e..0301b8f613e 100644
+--- a/builtin/init-db.c
++++ b/builtin/init-db.c
+@@ -93,36 +93,10 @@ static void copy_templates_1(struct strbuf *path, struct strbuf *template_path,
+ 	}
+ }
+ 
+-static void lazy_mkdir_strbuf_or_die_setlen(struct strbuf *path, size_t oldlen,
+-					    const char *dir)
+-{
+-	strbuf_addstr(path, dir);
+-	if (mkdir(path->buf, 0777) < 0) {
+-		int saved_errno = errno;
+-		struct stat st;
+-
+-		/*
+-		 * Unfortunately there's no EEXIST_{DIR,FILE}, and
+-		 * we'd like to pass these only if the path is already
+-		 * what we want it to be, not if it's a normal.
+-		 */
+-		if (lstat(path->buf, &st))
+-			die_errno(_("cannot stat '%s'"), path->buf);
+-		else if (S_ISDIR(st.st_mode))
+-			goto cleanup;
+-
+-		errno = saved_errno;
+-		die_errno(_("cannot mkdir '%s'"), path->buf);
+-	}
+-cleanup:
+-	strbuf_setlen(path, oldlen);
+-}
+-
+ static void copy_templates(int no_template, const char *template_dir,
+ 			   const char *init_template_dir)
+ {
+ 	struct strbuf path = STRBUF_INIT;
+-	size_t len;
+ 	struct strbuf template_path = STRBUF_INIT;
+ 	size_t template_len;
+ 	struct repository_format template_format = REPOSITORY_FORMAT_INIT;
+@@ -134,7 +108,7 @@ static void copy_templates(int no_template, const char *template_dir,
+ 		return;
+ 	if (!template_dir && !init_template_dir &&
+ 	    git_env_bool(GIT_NO_TEMPLATE_DIR_ENVIRONMENT, 0))
+-		goto no_template;
++		return;
+ 	if (!template_dir)
+ 		template_dir = getenv(TEMPLATE_DIR_ENVIRONMENT);
+ 	if (!template_dir)
+@@ -184,17 +158,6 @@ static void copy_templates(int no_template, const char *template_dir,
+ 	strbuf_release(&template_path);
+ 	clear_repository_format(&template_format);
+ 	return;
+-no_template:
+-	if (!git_env_bool("GIT_TEST_BARE_TEMPLATE", 0))
+-		return;
+-
+-	strbuf_addstr(&path, get_git_common_dir());
+-	strbuf_complete(&path, '/');
+-	len = path.len;
+-
+-	lazy_mkdir_strbuf_or_die_setlen(&path, len, "hooks");
+-
+-	strbuf_release(&path);
+ }
+ 
+ /*
+diff --git a/t/t5516-fetch-push.sh b/t/t5516-fetch-push.sh
+index fd355ae48c6..20677c84117 100755
+--- a/t/t5516-fetch-push.sh
++++ b/t/t5516-fetch-push.sh
+@@ -28,8 +28,7 @@ mk_empty () {
+ 	(
+ 		cd "$repo_name" &&
+ 		git init &&
+-		git config receive.denyCurrentBranch warn &&
+-		mv .git/hooks .git/hooks-disabled
++		git config receive.denyCurrentBranch warn
+ 	)
+ }
+ 
+@@ -61,7 +60,6 @@ mk_test_with_hooks() {
+ 	mk_test "$@" &&
+ 	(
+ 		cd "$repo_name" &&
+-		mkdir .git/hooks &&
+ 
+ 		write_hook pre-receive <<-'EOF' &&
+ 		cat - >>pre-receive.actual
+diff --git a/t/t7450-bad-git-dotfiles.sh b/t/t7450-bad-git-dotfiles.sh
+index 41706c1c9ff..425440d40b7 100755
+--- a/t/t7450-bad-git-dotfiles.sh
++++ b/t/t7450-bad-git-dotfiles.sh
+@@ -54,6 +54,7 @@ test_expect_success 'add evil submodule' '
+ 
+ 	mkdir modules &&
+ 	cp -r .git/modules/evil modules &&
++	mkdir modules/evil/hooks &&
+ 	write_script modules/evil/hooks/post-checkout <<-\EOF &&
+ 	echo >&2 "RUNNING POST CHECKOUT"
+ 	EOF
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 3786d39ccab..75fa312f3e9 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -573,6 +573,10 @@ write_hook () {
+ 	done &&
+ 	git_dir=$(git -C "$indir" rev-parse --absolute-git-dir) &&
+ 	hook_dir="$git_dir/hooks" &&
++	if ! test -d "$hook_dir"
++	then
++		mkdir "$hook_dir"
++	fi &&
+ 	hook_file="$hook_dir/$1"
+ 	write_script "$hook_file"
+ }
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index bd09d691da3..3abd51464e6 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1356,8 +1356,7 @@ else # normal case, use ../bin-wrappers only unless $with_dashes:
+ 	fi
+ fi
+ GIT_NO_TEMPLATE_DIR=true
+-GIT_TEST_BARE_TEMPLATE=true
+-export GIT_NO_TEMPLATE_DIR GIT_TEST_BARE_TEMPLATE
++export GIT_NO_TEMPLATE_DIR
+ GIT_CONFIG_NOSYSTEM=1
+ GIT_ATTR_NOSYSTEM=1
+ GIT_CEILING_DIRECTORIES="$TRASH_DIRECTORY/.."
+-- 
+2.34.1.929.ge922d848c7a
+
