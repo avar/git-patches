@@ -25,6 +25,37 @@ Summary
   'make -C t check-chainlint' in 'HEAD~0' ran
     8.92 ± 0.16 times faster than 'make -C t check-chainlint' in 'HEAD~1'
 ---
+On Mon, Dec 13 2021, Eric Sunshine wrote:
+
+> Rather than running `chainlint` and `diff` once per self-test -- which
+> may become expensive as more tests are added -- instead run `chainlint`
+> a single time over all tests bodies collectively and compare the result
+> to the collective "expected" output.
+
+I think that "optimizing" things like this is an anti-pattern. I.e. we
+have N chainlint test files, and N potential outputs from that (ok or
+not, and with/without error). If one of the chainlint tests changes
+we'd like to re-run it, if not we can re-use an earlier run.
+
+This is something make's dependency logic is perfectly suited for, and
+will be faster than any optimization of turning a for-loop into a
+"sed" command we run every time, since we'll only need to "stat" a few
+things to see that there's nothing to do.
+
+I've had the below as part of my local build for a while. It
+conflicts/would be improved by my in-flight ab/make-dependency, which
+you also ran into conflicts with.
+
+This also has the advantage that you'll see what specific test failed
+from the Makefile output. Aside from the ".build" rule needing to be
+fixed up to use the "mkdir" trick in ab/make-dependency it should also
+use $(QUIET_GEN) or whatever.
+
+I'm not quite happy with the below, the wildcard/patsubst is a bit
+messy, and it doesn't properly work around "make test" and how it runs
+"clean" after its run, but you'll find that "make chainlint" will
+properly cache things with this.
+
  t/.gitignore |  1 +
  t/Makefile   | 29 +++++++++++++++--------------
  2 files changed, 16 insertions(+), 14 deletions(-)
