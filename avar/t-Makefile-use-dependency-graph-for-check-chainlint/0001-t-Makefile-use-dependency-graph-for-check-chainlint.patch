@@ -1,0 +1,104 @@
+From bb3f1577829dd989336a3fdaecdf7736e0a6b43d Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-1.1-bb3f1577829-20211213T095456Z-avarab@gmail.com>
+In-Reply-To: <20211213063059.19424-6-sunshine@sunshineco.com>
+References: <20211213063059.19424-6-sunshine@sunshineco.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 29 Nov 2021 14:58:15 +0100
+Subject: [RFC PATCH] t/Makefile: use dependency graph for "check-chainlint"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This gets rid of this fixed cost when running "make T=<name>":
+
+$ git hyperfine -L rev HEAD~1,HEAD~0 -s 'make -C t check-chainlint' 'make -C t check-chainlint'
+Benchmark 1: make -C t check-chainlint' in 'HEAD~1
+  Time (mean ± σ):     111.3 ms ±   0.5 ms    [User: 116.9 ms, System: 26.2 ms]
+  Range (min … max):   110.5 ms … 112.5 ms    26 runs
+
+Benchmark 2: make -C t check-chainlint' in 'HEAD~0
+  Time (mean ± σ):      12.5 ms ±   0.2 ms    [User: 11.5 ms, System: 1.0 ms]
+  Range (min … max):    12.1 ms …  13.2 ms    223 runs
+
+Summary
+  'make -C t check-chainlint' in 'HEAD~0' ran
+    8.92 ± 0.16 times faster than 'make -C t check-chainlint' in 'HEAD~1'
+---
+ t/.gitignore |  1 +
+ t/Makefile   | 29 +++++++++++++++--------------
+ 2 files changed, 16 insertions(+), 14 deletions(-)
+
+diff --git a/t/.gitignore b/t/.gitignore
+index 91cf5772fe5..f142d6d42fd 100644
+--- a/t/.gitignore
++++ b/t/.gitignore
+@@ -1,3 +1,4 @@
++/.build/
+ /trash directory*
+ /test-results
+ /.prove
+diff --git a/t/Makefile b/t/Makefile
+index 882d26eee30..9bac0e683c9 100644
+--- a/t/Makefile
++++ b/t/Makefile
+@@ -18,10 +18,8 @@ TEST_LINT ?= test-lint
+ 
+ ifdef TEST_OUTPUT_DIRECTORY
+ TEST_RESULTS_DIRECTORY = $(TEST_OUTPUT_DIRECTORY)/test-results
+-CHAINLINTTMP = $(TEST_OUTPUT_DIRECTORY)/chainlinttmp
+ else
+ TEST_RESULTS_DIRECTORY = test-results
+-CHAINLINTTMP = chainlinttmp
+ endif
+ 
+ # Shell quote;
+@@ -29,13 +27,12 @@ SHELL_PATH_SQ = $(subst ','\'',$(SHELL_PATH))
+ TEST_SHELL_PATH_SQ = $(subst ','\'',$(TEST_SHELL_PATH))
+ PERL_PATH_SQ = $(subst ','\'',$(PERL_PATH))
+ TEST_RESULTS_DIRECTORY_SQ = $(subst ','\'',$(TEST_RESULTS_DIRECTORY))
+-CHAINLINTTMP_SQ = $(subst ','\'',$(CHAINLINTTMP))
+ 
+ T = $(sort $(wildcard t[0-9][0-9][0-9][0-9]-*.sh))
+ TGITWEB = $(sort $(wildcard t95[0-9][0-9]-*.sh))
+ THELPERS = $(sort $(filter-out $(T),$(wildcard *.sh)))
+ TPERF = $(sort $(wildcard perf/p[0-9][0-9][0-9][0-9]-*.sh))
+-CHAINLINTTESTS = $(sort $(patsubst chainlint/%.test,%,$(wildcard chainlint/*.test)))
++CHAINLINTTESTS = $(wildcard chainlint/*.test)
+ CHAINLINT = sed -f chainlint.sed
+ 
+ all: $(DEFAULT_TEST_TARGET)
+@@ -67,16 +64,20 @@ clean: clean-except-prove-cache
+ 	$(RM) .prove
+ 
+ clean-chainlint:
+-	$(RM) -r '$(CHAINLINTTMP_SQ)'
+-
+-check-chainlint:
+-	@mkdir -p '$(CHAINLINTTMP_SQ)' && \
+-	err=0 && \
+-	for i in $(CHAINLINTTESTS); do \
+-		$(CHAINLINT) <chainlint/$$i.test | \
+-		sed -e '/^# LINT: /d' >'$(CHAINLINTTMP_SQ)'/$$i.actual && \
+-		diff -u chainlint/$$i.expect '$(CHAINLINTTMP_SQ)'/$$i.actual || err=1; \
+-	done && exit $$err
++	$(RM) -r .build/chainlint
++
++BUILT_CHAINLINTTESTS = $(patsubst %,.build/%.actual,$(CHAINLINTTESTS))
++
++.build/chainlint:
++	mkdir -p $@
++
++$(BUILT_CHAINLINTTESTS): | .build/chainlint
++$(BUILT_CHAINLINTTESTS): .build/%.actual: %
++	$(CHAINLINT) <$< | \
++	sed -e '/^# LINT: /d' >$@ && \
++	diff -u $(basename $<).expect $@
++
++check-chainlint: $(BUILT_CHAINLINTTESTS)
+ 
+ test-lint: test-lint-duplicates test-lint-executable test-lint-shell-syntax \
+ 	test-lint-filenames
+-- 
+2.34.1.1025.g9a0c3a30920
+
