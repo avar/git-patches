@@ -1,0 +1,165 @@
+From 87df2c5fa8a69febdc2a008c56c1ae0d70669db2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.1-87df2c5fa8a-20211216T125049Z-avarab@gmail.com>
+In-Reply-To: <patch-v2-1.1-d1b9790904c-20210921T134436Z-avarab@gmail.com>
+References: <patch-v2-1.1-d1b9790904c-20210921T134436Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Sep 2021 11:49:43 +0200
+Subject: [PATCH v3] stash: print the correct usage on "git stash [push]
+ --invalid-option"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the usage message emitted by "git stash --invalid-option" to
+emit usage information for "git stash" in general, and not just for
+the "push" command. I.e. before:
+
+    $ git stash --blah
+    error: unknown option `blah'
+    usage: git stash [push [-p|--patch] [-k|--[no-]keep-index] [-q|--quiet]
+                     [-u|--include-untracked] [-a|--all] [-m|--message <message>]
+                     [--] [<pathspec>...]]
+    [...]
+
+After:
+
+    $ git stash --blah
+    error: unknown option `blah'
+    usage: git stash list [<options>]
+       or: git stash show [<options>] [<stash>]
+       or: git stash drop [-q|--quiet] [<stash>]
+       or: git stash ( pop | apply ) [--index] [-q|--quiet] [<stash>]
+       or: git stash branch <branchname> [<stash>]
+       or: git stash clear
+       or: git stash [push [-p|--patch] [-S|--staged] [-k|--[no-]keep-index] [-q|--quiet]
+                     [-u|--include-untracked] [-a|--all] [-m|--message <message>]
+                     [--pathspec-from-file=<file> [--pathspec-file-nul]]
+                     [--] [<pathspec>...]]
+       or: git stash save [-p|--patch] [-S|--staged] [-k|--[no-]keep-index] [-q|--quiet]
+                     [-u|--include-untracked] [-a|--all] [<message>]
+    [...]
+
+We'll only emit the former on the likes of "git stash push --blah"
+now.
+
+That we emitted the usage for just "push" in the case of the
+subcommand not being explicitly specified was an unintentional
+side-effect of how it was implemented. When it was converted to C in
+d553f538b8a (stash: convert push to builtin, 2019-02-25) the pattern
+of having per-subcommand usage information was rightly continued. The
+"git-stash.sh" shellscript did not have that, and always printed the
+equivalent of "git_stash_usage".
+
+But in doing so the case of push being implicit and explicit was
+conflated. A variable was added to track this in 8c3713cede7 (stash:
+eliminate crude option parsing, 2020-02-17), but it did not update the
+usage output accordingly.
+
+This still leaves e.g. "git stash push -h" emitting the
+"git_stash_usage" output, instead of "git_stash_push_usage". That
+should be fixed, but is a much deeper misbehavior in parse_options()
+not being aware of subcommands at all. I.e. in how
+PARSE_OPT_KEEP_UNKNOWN and PARSE_OPT_NO_INTERNAL_HELP combine in
+commands such as "git stash".
+
+Perhaps PARSE_OPT_KEEP_UNKNOWN should imply
+PARSE_OPT_NO_INTERNAL_HELP, or better yet parse_options() should be
+extended to fully handle these subcommand cases that we handle
+manually in "git stash", "git commit-graph", "git multi-pack-index"
+etc. All of those musings would be a much bigger change than this
+isolated fix though, so let's leave that for some other time.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff against v2:
+1:  d1b9790904c ! 1:  87df2c5fa8a stash: print the correct usage on "git stash [push] --invalid-option"
+    @@ Commit message
+             $ git stash --blah
+             error: unknown option `blah'
+             usage: git stash [push [-p|--patch] [-k|--[no-]keep-index] [-q|--quiet]
+    -                  [-u|--include-untracked] [-a|--all] [-m|--message <message>]
+    -                  [--] [<pathspec>...]]
+    +                         [-u|--include-untracked] [-a|--all] [-m|--message <message>]
+    +                         [--] [<pathspec>...]]
+             [...]
+     
+         After:
+    @@ Commit message
+                or: git stash ( pop | apply ) [--index] [-q|--quiet] [<stash>]
+                or: git stash branch <branchname> [<stash>]
+                or: git stash clear
+    -           or: git stash [push [-p|--patch] [-k|--[no-]keep-index] [-q|--quiet]
+    -                  [-u|--include-untracked] [-a|--all] [-m|--message <message>]
+    -                  [--pathspec-from-file=<file> [--pathspec-file-nul]]
+    -                  [--] [<pathspec>...]]
+    -           or: git stash save [-p|--patch] [-k|--[no-]keep-index] [-q|--quiet]
+    -                  [-u|--include-untracked] [-a|--all] [<message>]
+    +           or: git stash [push [-p|--patch] [-S|--staged] [-k|--[no-]keep-index] [-q|--quiet]
+    +                         [-u|--include-untracked] [-a|--all] [-m|--message <message>]
+    +                         [--pathspec-from-file=<file> [--pathspec-file-nul]]
+    +                         [--] [<pathspec>...]]
+    +           or: git stash save [-p|--patch] [-S|--staged] [-k|--[no-]keep-index] [-q|--quiet]
+    +                         [-u|--include-untracked] [-a|--all] [<message>]
+             [...]
+     
+         We'll only emit the former on the likes of "git stash push --blah"
+    @@ Commit message
+         side-effect of how it was implemented. When it was converted to C in
+         d553f538b8a (stash: convert push to builtin, 2019-02-25) the pattern
+         of having per-subcommand usage information was rightly continued. The
+    -    Git-stash.sh shellscript did not have that, and always printed the
+    +    "git-stash.sh" shellscript did not have that, and always printed the
+         equivalent of "git_stash_usage".
+     
+         But in doing so the case of push being implicit and explicit was
+
+ builtin/stash.c  |  1 +
+ t/t3903-stash.sh | 19 +++++++++++++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/builtin/stash.c b/builtin/stash.c
+index 18c812bbe03..5462840a073 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -1681,6 +1681,7 @@ static int push_stash(int argc, const char **argv, const char *prefix,
+ 	if (argc) {
+ 		force_assume = !strcmp(argv[0], "-p");
+ 		argc = parse_options(argc, argv, prefix, options,
++				     push_assumed ? git_stash_usage :
+ 				     git_stash_push_usage,
+ 				     PARSE_OPT_KEEP_DASHDASH);
+ 	}
+diff --git a/t/t3903-stash.sh b/t/t3903-stash.sh
+index 2c66cfbc3b7..b17c52d8807 100755
+--- a/t/t3903-stash.sh
++++ b/t/t3903-stash.sh
+@@ -10,6 +10,25 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
+ . ./test-lib.sh
+ 
++test_expect_success 'usage on cmd and subcommand invalid option' '
++	test_expect_code 129 git stash --invalid-option 2>usage &&
++	grep "or: git stash" usage &&
++
++	test_expect_code 129 git stash push --invalid-option 2>usage &&
++	! grep "or: git stash" usage
++'
++
++test_expect_success 'usage on main command -h emits a summary of subcommands' '
++	test_expect_code 129 git stash -h >usage &&
++	grep -F "usage: git stash list" usage &&
++	grep -F "or: git stash show" usage
++'
++
++test_expect_failure 'usage for subcommands should emit subcommand usage' '
++	test_expect_code 129 git stash push -h >usage &&
++	grep -F "usage: git stash [push" usage
++'
++
+ diff_cmp () {
+ 	for i in "$1" "$2"
+ 	do
+-- 
+2.34.1.1020.gc80c40b6642
+
