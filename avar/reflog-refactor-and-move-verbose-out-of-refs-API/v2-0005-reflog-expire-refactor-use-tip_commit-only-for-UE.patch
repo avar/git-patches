@@ -1,0 +1,66 @@
+From 39263cd00ae910c3df915b575e060f0c28aa05d4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.9-39263cd00ae-20211216T134028Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20211216T134028Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20211130T213319Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20211216T134028Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Jul 2021 13:45:35 +0200
+Subject: [PATCH v2 5/9] reflog expire: refactor & use "tip_commit" only for
+ UE_NORMAL
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add an intermediate variable for "tip_commit" in
+reflog_expiry_prepare(), and only add it to the struct if we're
+handling the UE_NORMAL case.
+
+The code behaves the same way as before, but this makes the control
+flow clearer, and the shorter name allows us to fold a 4-line i/else
+int a one-line terany instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reflog.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index f8a24f1aa26..ec0c6051135 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -354,16 +354,14 @@ static void reflog_expiry_prepare(const char *refname,
+ {
+ 	struct expire_reflog_policy_cb *cb = cb_data;
+ 	struct commit_list *elem;
++	struct commit *commit = NULL;
+ 
+ 	if (!cb->cmd.expire_unreachable || is_head(refname)) {
+ 		cb->unreachable_expire_kind = UE_HEAD;
+ 	} else {
+-		cb->tip_commit = lookup_commit_reference_gently(the_repository,
+-								oid, 1);
+-		if (!cb->tip_commit)
+-			cb->unreachable_expire_kind = UE_ALWAYS;
+-		else
+-			cb->unreachable_expire_kind = UE_NORMAL;
++		commit = lookup_commit_reference_gently(the_repository,
++							oid, 1);
++		cb->unreachable_expire_kind = commit ? UE_NORMAL : UE_ALWAYS;
+ 	}
+ 
+ 	if (cb->cmd.expire_unreachable <= cb->cmd.expire_total)
+@@ -378,7 +376,9 @@ static void reflog_expiry_prepare(const char *refname,
+ 			commit_list_insert(elem->item, &cb->mark_list);
+ 		break;
+ 	case UE_NORMAL:
+-		commit_list_insert(cb->tip_commit, &cb->mark_list);
++		commit_list_insert(commit, &cb->mark_list);
++		/* For reflog_expiry_cleanup() below */
++		cb->tip_commit = commit;
+ 	}
+ 	cb->mark_limit = cb->cmd.expire_total;
+ 	mark_reachable(cb);
+-- 
+2.34.1.1020.gc80c40b6642
+

@@ -1,0 +1,59 @@
+From 2fb33ef2546b85b4508f0ba31e78d40aab93fc8b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-7.9-2fb33ef2546-20211216T134028Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20211216T134028Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20211130T213319Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20211216T134028Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 3 Oct 2021 01:09:05 +0200
+Subject: [PATCH v2 7/9] reflog: reduce scope of "struct rev_info"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "cmd.stalefix" handling added in 1389d9ddaa6 (reflog expire
+--fix-stale, 2007-01-06) to use a locally scoped "struct
+rev_info". This code relies on mark_reachable_objects() twiddling
+flags in the walked objects.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reflog.c | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index 29dcd91abca..48e4f5887b0 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -28,7 +28,6 @@ static timestamp_t default_reflog_expire;
+ static timestamp_t default_reflog_expire_unreachable;
+ 
+ struct cmd_reflog_expire_cb {
+-	struct rev_info revs;
+ 	int stalefix;
+ 	timestamp_t expire_total;
+ 	timestamp_t expire_unreachable;
+@@ -594,13 +593,15 @@ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ 	 * from reflog if the repository was pruned with older git.
+ 	 */
+ 	if (cmd.stalefix) {
+-		repo_init_revisions(the_repository, &cmd.revs, prefix);
+-		cmd.revs.do_not_die_on_missing_tree = 1;
+-		cmd.revs.ignore_missing = 1;
+-		cmd.revs.ignore_missing_links = 1;
++		struct rev_info revs;
++
++		repo_init_revisions(the_repository, &revs, prefix);
++		revs.do_not_die_on_missing_tree = 1;
++		revs.ignore_missing = 1;
++		revs.ignore_missing_links = 1;
+ 		if (flags & EXPIRE_REFLOGS_VERBOSE)
+ 			printf(_("Marking reachable objects..."));
+-		mark_reachable_objects(&cmd.revs, 0, 0, NULL);
++		mark_reachable_objects(&revs, 0, 0, NULL);
+ 		if (flags & EXPIRE_REFLOGS_VERBOSE)
+ 			putchar('\n');
+ 	}
+-- 
+2.34.1.1020.gc80c40b6642
+

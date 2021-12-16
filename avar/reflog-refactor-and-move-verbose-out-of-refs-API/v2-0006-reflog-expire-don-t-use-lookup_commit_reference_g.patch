@@ -1,0 +1,51 @@
+From c71aab5845ee614a216ac5c53f91fbdaa6a80b19 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-6.9-c71aab5845e-20211216T134028Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20211216T134028Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20211130T213319Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20211216T134028Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 16 Jul 2021 12:47:02 +0200
+Subject: [PATCH v2 6/9] reflog expire: don't use
+ lookup_commit_reference_gently()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the initial implementation of "git reflog" in 4264dc15e19 (git
+reflog expire, 2006-12-19) we had this
+lookup_commit_reference_gently().
+
+I don't think we've ever found tags that we need to recursively
+dereference in reflogs, so this should at least be changed to a
+"lookup commit" as I'm doing here, although I can't think of a way
+where it mattered in practice.
+
+I also think we'd probably like to just die here if we have a NULL
+object, but as this code needs to handle potentially broken
+repositories let's just show an "error" but continue, the non-quiet
+lookup_commit() will do for us. None of our tests cover the case where
+"commit" is NULL after this lookup.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reflog.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index ec0c6051135..29dcd91abca 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -359,8 +359,7 @@ static void reflog_expiry_prepare(const char *refname,
+ 	if (!cb->cmd.expire_unreachable || is_head(refname)) {
+ 		cb->unreachable_expire_kind = UE_HEAD;
+ 	} else {
+-		commit = lookup_commit_reference_gently(the_repository,
+-							oid, 1);
++		commit = lookup_commit(the_repository, oid);
+ 		cb->unreachable_expire_kind = commit ? UE_NORMAL : UE_ALWAYS;
+ 	}
+ 
+-- 
+2.34.1.1020.gc80c40b6642
+
