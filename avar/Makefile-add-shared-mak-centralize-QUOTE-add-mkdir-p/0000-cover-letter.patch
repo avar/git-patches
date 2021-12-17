@@ -2,13 +2,59 @@ From aca560ca410c0f86a27fb206e2672466dbe2c37b Mon Sep 17 00:00:00 2001
 Message-Id: <cover-0.8-00000000000-20211217T012902Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Fri, 17 Dec 2021 02:29:02 +0100
-Subject: [PATCH 0/8] *** SUBJECT HERE ***
+Subject: [PATCH 0/8] Makefile: optimize noop runs, add shared.mak
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This topic is split-up from v4 of ab/make-dependency[1], and is the
+last topic I've split up from that which I'll submit before the
+outstanding ones land.
 
+This speeds up noop runs of "make" by a lot. After a "make" running a
+"make -j1" with this is ~1.5 faster than on "master"[2], and around 3x
+as fast with "make -j1 NO_TCLTK=Y" (the TCL part takes a lot of time,
+but that's another matter).
+
+As shown in 8/8 the only meaningful change to existing Makefile rules
+makes things simpler, while making them much faster. In 3/8 a rather
+trivial change to use ":=" instead of "=" for a "$(shell)" assignment
+likewise speeds things up.
+
+The "shared.mak" introduced while getting to 8/8 will then be used by
+follow-on topics to make introducing shared behavior (particularly via
+$(call), which we can now rely on) easier.
+
+The range-diff to [1] shows changes from that topic. Most of them are
+from pulling this topic out of those larger changes. I also re-ran all
+the benchmarks & updated those in the commit messages.
+
+1. https://lore.kernel.org/git/cover-v4-00.23-00000000000-20211117T101807Z-avarab@gmail.com/
+2. $ git -c hyperfine.hook.setup= hyperfine -L rev origin/master,HEAD~0 -s 'make' 'make -j1' --warmup 1
+   Benchmark 1: make -j1' in 'origin/master
+     Time (mean ± σ):     563.1 ms ±  14.5 ms    [User: 453.3 ms, System: 117.6 ms]
+     Range (min … max):   542.7 ms … 595.0 ms    10 runs
+    
+   Benchmark 2: make -j1' in 'HEAD~0
+     Time (mean ± σ):     362.5 ms ±   4.5 ms    [User: 299.7 ms, System: 73.9 ms]
+     Range (min … max):   356.9 ms … 369.4 ms    10 runs
+    
+   Summary
+     'make -j1' in 'HEAD~0' ran
+       1.55 ± 0.04 times faster than 'make -j1' in 'origin/master'
+3. git -c hyperfine.hook.setup= hyperfine -L rev origin/master,HEAD~0 -s 'make' 'make -j1 NO_TCLTK=Y' --warmup 1
+   Benchmark 1: make -j1 NO_TCLTK=Y' in 'origin/master
+     Time (mean ± σ):     291.1 ms ±  24.1 ms    [User: 225.6 ms, System: 68.9 ms]
+     Range (min … max):   275.0 ms … 353.9 ms    10 runs
+    
+   Benchmark 2: make -j1 NO_TCLTK=Y' in 'HEAD~0
+     Time (mean ± σ):      95.8 ms ±   0.7 ms    [User: 81.9 ms, System: 18.1 ms]
+     Range (min … max):    94.8 ms …  98.4 ms    31 runs
+    
+   Summary
+     'make -j1 NO_TCLTK=Y' in 'HEAD~0' ran
+       3.04 ± 0.25 times faster than 'make -j1 NO_TCLTK=Y' in 'origin/master'
+   
 Ævar Arnfjörð Bjarmason (8):
   Makefiles: add "shared.mak", move ".DELETE_ON_ERROR" to it
   Makefile: disable GNU make built-in wildcard rules
