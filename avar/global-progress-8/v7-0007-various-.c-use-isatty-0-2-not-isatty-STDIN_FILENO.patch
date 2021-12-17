@@ -1,0 +1,76 @@
+From 0670d1aa5f23a4613e89097ac8a763236b050bee Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-7.7-0670d1aa5f2-20211217T041945Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-0.7-00000000000-20211217T041945Z-avarab@gmail.com>
+References: <cover-v7-0.7-00000000000-20211217T041945Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Oct 2021 16:44:15 +0200
+Subject: [PATCH v7 7/7] various *.c: use isatty(0|2), not
+ isatty(STDIN_FILENO|STDERR_FILENO)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We have over 50 uses of "isatty(1)" and "isatty(2)" in the codebase,
+and around 10 "isatty(0)", but these used the
+{STDIN_FILENO,STD{OUT,ERR}_FILENO} macros in "stdlib.h" to refer to
+them.
+
+Let's change these for consistency, and because another commit that
+would like to be based on top of this one[1] has a recipe to change
+all of these for ad-hoc testing, not needing to match these with that
+ad-hoc regex will make things easier to explain. Only one of these is
+related to the "struct progress" code which it discusses, but let's
+change all of these while we're at it.
+
+1. https://lore.kernel.org/git/patch-v6-8.8-bff919994b5-20211102T122507Z-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bisect--helper.c | 2 +-
+ builtin/bundle.c         | 2 +-
+ compat/mingw.c           | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/bisect--helper.c b/builtin/bisect--helper.c
+index 28a2e6a5750..21360a4e70b 100644
+--- a/builtin/bisect--helper.c
++++ b/builtin/bisect--helper.c
+@@ -830,7 +830,7 @@ static int bisect_autostart(struct bisect_terms *terms)
+ 	fprintf_ln(stderr, _("You need to start by \"git bisect "
+ 			  "start\"\n"));
+ 
+-	if (!isatty(STDIN_FILENO))
++	if (!isatty(0))
+ 		return -1;
+ 
+ 	/*
+diff --git a/builtin/bundle.c b/builtin/bundle.c
+index 5a85d7cd0fe..df69c651753 100644
+--- a/builtin/bundle.c
++++ b/builtin/bundle.c
+@@ -56,7 +56,7 @@ static int parse_options_cmd_bundle(int argc,
+ 
+ static int cmd_bundle_create(int argc, const char **argv, const char *prefix) {
+ 	int all_progress_implied = 0;
+-	int progress = isatty(STDERR_FILENO);
++	int progress = isatty(2);
+ 	struct strvec pack_opts;
+ 	int version = -1;
+ 	int ret;
+diff --git a/compat/mingw.c b/compat/mingw.c
+index e14f2d5f77c..7c55d0f0414 100644
+--- a/compat/mingw.c
++++ b/compat/mingw.c
+@@ -2376,7 +2376,7 @@ int mingw_raise(int sig)
+ 	switch (sig) {
+ 	case SIGALRM:
+ 		if (timer_fn == SIG_DFL) {
+-			if (isatty(STDERR_FILENO))
++			if (isatty(2))
+ 				fputs("Alarm clock\n", stderr);
+ 			exit(128 + SIGALRM);
+ 		} else if (timer_fn != SIG_IGN)
+-- 
+2.34.1.1119.g7a3fc8778ee
+
