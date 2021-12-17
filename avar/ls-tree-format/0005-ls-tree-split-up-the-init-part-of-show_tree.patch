@@ -1,0 +1,75 @@
+From 8c9d8a8221dc4d71015961e2c2642d2b60511f5e Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-5.7-8c9d8a8221d-20211217T131635Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.7-00000000000-20211217T131635Z-avarab@gmail.com>
+References: <cover.1639721750.git.dyroneteng@gmail.com>
+	<RFC-cover-0.7-00000000000-20211217T131635Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 17 Dec 2021 11:56:11 +0100
+Subject: [RFC PATCH 5/7] ls-tree: split up the "init" part of show_tree()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Split up the "init" part of the show_tree() function where we decide
+what the "type" is, and whether we'll return early. This makes things
+a bit less readable for now, but we'll soon re-use this in a sibling
+function, and avoiding the duplication will be worth it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-tree.c | 30 +++++++++++++++++++-----------
+ 1 file changed, 19 insertions(+), 11 deletions(-)
+
+diff --git a/builtin/ls-tree.c b/builtin/ls-tree.c
+index eecc7482d54..df8312408da 100644
+--- a/builtin/ls-tree.c
++++ b/builtin/ls-tree.c
+@@ -61,25 +61,33 @@ static int show_recursive(const char *base, size_t baselen, const char *pathname
+ 	return 0;
+ }
+ 
+-static int show_tree(const struct object_id *oid, struct strbuf *base,
+-		const char *pathname, unsigned mode, void *context)
++static int show_tree_init(enum object_type *type, struct strbuf *base,
++			  const char *pathname, unsigned mode, int *retval)
+ {
+-	int retval = 0;
+-	size_t baselen;
+-	enum object_type type = OBJ_BLOB;
+-
+ 	if (S_ISGITLINK(mode)) {
+-		type = OBJ_COMMIT;
++		*type = OBJ_COMMIT;
+ 	} else if (S_ISDIR(mode)) {
+ 		if (show_recursive(base->buf, base->len, pathname)) {
+-			retval = READ_TREE_RECURSIVE;
++			*retval = READ_TREE_RECURSIVE;
+ 			if (!(ls_options & LS_SHOW_TREES))
+-				return retval;
++				return 1;
+ 		}
+-		type = OBJ_TREE;
++		*type = OBJ_TREE;
+ 	}
+ 	else if (ls_options & LS_TREE_ONLY)
+-		return 0;
++		return 1;
++	return 0;
++}
++
++static int show_tree(const struct object_id *oid, struct strbuf *base,
++		const char *pathname, unsigned mode, void *context)
++{
++	int retval = 0;
++	size_t baselen;
++	enum object_type type = OBJ_BLOB;
++
++	if (show_tree_init(&type, base, pathname, mode, &retval))
++		return retval;
+ 
+ 	if (!(ls_options & LS_NAME_ONLY)) {
+ 		if (ls_options & LS_SHOW_SIZE) {
+-- 
+2.34.1.1119.g7a3fc8778ee
+
