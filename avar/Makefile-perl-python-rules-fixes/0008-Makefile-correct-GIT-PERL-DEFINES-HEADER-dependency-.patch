@@ -1,0 +1,144 @@
+From 8aa35537b087f8e29f16552b771223b40fcb3015 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-08.11-8aa35537b08-20211217T002023Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20211217T002023Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20211217T002023Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Oct 2021 15:47:25 +0200
+Subject: [PATCH 08/11] Makefile: correct "GIT-PERL-{DEFINES,HEADER}"
+ dependency graph
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix several small issues with the dependency graph of the generated
+"GIT-PERL-DEFINES" and "GIT-PERL-HEADER" files:
+
+1. Don't have "GIT-PERL-HEADER" depend on the "Makefile". That was a
+   lazy way to over-declare the dependencies added in
+   f6a0ad4be71 (Makefile: generate Perl header from template file,
+   2018-04-10). Let's correct our dependency graph instead.
+
+2. Don't have $(SCRIPT_PERL_GEN) (such as "git-send-email") depend on
+   GIT-BUILD-OPTIONS. Let's instead use GIT-PERL-DEFINES.
+
+   The reason for depending on "GIT-BUILD-OPTIONS" was to trigger a
+   re-build if NO_PERL=Y was defined. We can instead add that variable
+   to "PERL_DEFINES", and have "GIT-PERL-DEFINES" created and updated
+   if "NO_PERL=Y" is defined.
+
+3. Due to #2 we'll need to have GIT-PERL-DEFINES be generated even
+   under NO_PERL, since that variable will be used by the
+   "unimplemented.sh" script.
+
+4. Don't depend on $(gitexecdir), $(perllibdir) and $(localedir),
+   instead depend on the $(*_relative_SQ) versions of those.
+
+   The latter is what we'll actually use, while it's unlikely to
+   matter in practice (we'd just skip re-building these under
+   RUNTIME_PREFIX if the relative path was the same) it makes the code
+   easier to read.
+
+   That's because this brings us to a 1=1 mapping of these variables
+   and what's subsequently used in the "GIT-PERL-DEFINES",
+   "GIT-PERL-HEADER" and "perl/build/lib/%.pm" rules below.
+
+5. We don't need the substitution of " " for ":" added in
+   07d90eadb50 (Makefile: add Perl runtime prefix support,
+   2018-04-10), let's drop it. This doesn't matter for the correctness
+   of these files, because unlike GIT-BUILD-OPTIONS nothing is
+   consuming them except the Makefile itself.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 42 +++++++++++++++++++++++++-----------------
+ 1 file changed, 25 insertions(+), 17 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index d488a723b79..356c98dff45 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2298,10 +2298,14 @@ git.res: git.rc GIT-VERSION-FILE GIT-PREFIX
+ 	    $(shell echo $(GIT_VERSION) 0 0 0 0 | tr '.a-zA-Z-' ' '))) \
+ 	  -DGIT_VERSION="\\\"$(GIT_VERSION)\\\"" -i $< -o $@
+ 
+-# This makes sure we depend on the NO_PERL setting itself.
+-$(SCRIPT_PERL_GEN): GIT-BUILD-OPTIONS
++# Under NO_PERL=Y we'll still make GIT-PERL-DEFINES. We need to depend
++# on NO_PERL=Y itself for creating "unimplemented.sh" scripts.
++PERL_DEFINES =
++$(SCRIPT_PERL_GEN): GIT-PERL-DEFINES
+ 
+ ifdef NO_PERL
++PERL_DEFINES += $(NO_PERL)
++
+ $(SCRIPT_PERL_GEN) git-instaweb: % : unimplemented.sh
+ 	$(QUIET_GEN) \
+ 	sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
+@@ -2310,22 +2314,26 @@ $(SCRIPT_PERL_GEN) git-instaweb: % : unimplemented.sh
+ 	chmod +x $@+ && \
+ 	mv $@+ $@
+ else # NO_PERL
+-# Used for substitution in Perl modules. Disabled when using RUNTIME_PREFIX
+-# since the locale directory is injected.
++# The localedir is only used in Perl modules if !NO_GETTEXT
++ifndef NO_GETTEXT
+ perl_localedir_SQ = $(localedir_SQ)
++endif
+ 
+ PERL_HEADER_TEMPLATE = perl/header_templates/fixed_prefix.template.pl
+-PERL_DEFINES =
++
+ PERL_DEFINES += $(PERL_PATH_SQ)
+ PERL_DEFINES += $(PERLLIB_EXTRA_SQ)
+ PERL_DEFINES += $(perllibdir_SQ)
+ PERL_DEFINES += $(RUNTIME_PREFIX)
+ PERL_DEFINES += $(NO_PERL_CPAN_FALLBACKS)
+ PERL_DEFINES += $(NO_GETTEXT)
+-PERL_DEFINES += $(gitexecdir)
+-PERL_DEFINES += $(perllibdir)
+-PERL_DEFINES += $(localedir)
+-PERL_DEFINES := $(subst $(space),:,$(PERL_DEFINES))
++ifdef RUNTIME_PREFIX
++PERL_DEFINES += $(gitexecdir_relative_SQ)
++PERL_DEFINES += $(perllibdir_relative_SQ)
++PERL_DEFINES += $(localedir_relative_SQ)
++else
++PERL_DEFINES += $(perllocaledir_SQ)
++endif
+ 
+ ifdef RUNTIME_PREFIX
+ PERL_HEADER_TEMPLATE = perl/header_templates/runtime_prefix.template.pl
+@@ -2347,14 +2355,7 @@ $(SCRIPT_PERL_GEN): % : %.perl GIT-PERL-DEFINES GIT-PERL-HEADER GIT-VERSION-FILE
+ 	chmod +x $@+ && \
+ 	mv $@+ $@
+ 
+-GIT-PERL-DEFINES: FORCE
+-	@FLAGS='$(PERL_DEFINES)'; \
+-	    if test x"$$FLAGS" != x"`cat $@ 2>/dev/null`" ; then \
+-		echo >&2 "    * new perl-specific parameters"; \
+-		echo "$$FLAGS" >$@; \
+-	    fi
+-
+-GIT-PERL-HEADER: $(PERL_HEADER_TEMPLATE) GIT-PERL-DEFINES Makefile
++GIT-PERL-HEADER: $(PERL_HEADER_TEMPLATE) GIT-PERL-DEFINES
+ 	$(QUIET_GEN) \
+ 	INSTLIBDIR='$(perllibdir_SQ)' && \
+ 	INSTLIBDIR_EXTRA='$(PERLLIB_EXTRA_SQ)' && \
+@@ -2380,6 +2381,13 @@ git-instaweb: git-instaweb.sh GIT-SCRIPT-DEFINES
+ 	mv $@+ $@
+ endif # NO_PERL
+ 
++GIT-PERL-DEFINES: FORCE
++	@FLAGS='$(PERL_DEFINES)'; \
++	    if test x"$$FLAGS" != x"`cat $@ 2>/dev/null`" ; then \
++		echo >&2 "    * new perl-specific parameters"; \
++		echo "$$FLAGS" >$@; \
++	    fi
++
+ # This makes sure we depend on the NO_PYTHON setting itself.
+ $(SCRIPT_PYTHON_GEN): GIT-BUILD-OPTIONS
+ 
+-- 
+2.34.1.1119.g7a3fc8778ee
+

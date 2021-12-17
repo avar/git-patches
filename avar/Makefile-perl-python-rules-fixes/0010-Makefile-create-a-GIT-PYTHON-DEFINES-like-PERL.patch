@@ -1,0 +1,135 @@
+From fe79797f45ea21bf716b97d504abf5eec7cbaca3 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.11-fe79797f45e-20211217T002023Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20211217T002023Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20211217T002023Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Oct 2021 18:56:19 +0200
+Subject: [PATCH 10/11] Makefile: create a GIT-PYTHON-DEFINES, like "PERL"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Create a new "GIT-PYTHON-DEFINES" file, and untangle the dependency
+issues of the Python by copying over the patterns established for
+building the adjacent Perl code in preceding commits.
+
+As with Perl, there's no real reason to depend on GIT-BUILD-OPTIONS or
+GIT-CFLAGS when building the Python code, nor did we need
+GIT-PREFIX. Let's instead add those variables we care about to a
+"GIT-PYTHON-DEFINES" and depend on that.
+
+This changes code originally added in ca3bcabf118 (auto-detect changed
+prefix and/or changed build flags, 2006-06-15), and adjusted in
+96a4647fca5 (Makefile: detect when PYTHON_PATH changes, 2012-12-18).
+
+The relevant code for the "Perl" targets was then added in
+07981dce81e (Makefile: rebuild perl scripts when perl paths change,
+2013-11-18), and has been adjusted in preceding commits.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .gitignore |  2 +-
+ Makefile   | 49 +++++++++++++++++++++++++------------------------
+ 2 files changed, 26 insertions(+), 25 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index 054249b20a8..845e5d0c355 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -8,7 +8,7 @@
+ /GIT-PREFIX
+ /GIT-PERL-DEFINES
+ /GIT-PERL-HEADER
+-/GIT-PYTHON-VARS
++/GIT-PYTHON-DEFINES
+ /GIT-SCRIPT-DEFINES
+ /GIT-USER-AGENT
+ /GIT-VERSION-FILE
+diff --git a/Makefile b/Makefile
+index 3be3dc9621d..f2cee13ea5d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2388,18 +2388,15 @@ GIT-PERL-DEFINES: FORCE
+ 		echo "$$FLAGS" >$@; \
+ 	    fi
+ 
+-# This makes sure we depend on the NO_PYTHON setting itself.
+-$(SCRIPT_PYTHON_GEN): GIT-BUILD-OPTIONS
++# As with NO_PERL=Y we'll still make GIT-PYTHON-DEFINES if "NO_PYTHON"
++# is defined, for creating the "unimplemented.sh" scripts.
++PYTHON_DEFINES =
++$(SCRIPT_PYTHON_GEN): GIT-PYTHON-DEFINES
++
++ifdef NO_PYTHON
++PYTHON_DEFINES += $(SHELL_PATH_SQ)
++PYTHON_DEFINES += $(NO_PYTHON)
+ 
+-ifndef NO_PYTHON
+-$(SCRIPT_PYTHON_GEN): GIT-CFLAGS GIT-PREFIX GIT-PYTHON-VARS
+-$(SCRIPT_PYTHON_GEN): % : %.py
+-	$(QUIET_GEN) \
+-	sed -e '1s|#!.*python|#!$(PYTHON_PATH_SQ)|' \
+-	    $< >$@+ && \
+-	chmod +x $@+ && \
+-	mv $@+ $@
+-else # NO_PYTHON
+ $(SCRIPT_PYTHON_GEN): % : unimplemented.sh
+ 	$(QUIET_GEN) \
+ 	sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
+@@ -2407,8 +2404,24 @@ $(SCRIPT_PYTHON_GEN): % : unimplemented.sh
+ 	    unimplemented.sh >$@+ && \
+ 	chmod +x $@+ && \
+ 	mv $@+ $@
++else # NO_PYTHON
++PYTHON_DEFINES += $(PYTHON_PATH_SQ)
++
++$(SCRIPT_PYTHON_GEN): % : %.py GIT-PYTHON-DEFINES
++	$(QUIET_GEN) \
++	sed -e '1s|#!.*python|#!$(PYTHON_PATH_SQ)|' \
++	    $< >$@+ && \
++	chmod +x $@+ && \
++	mv $@+ $@
+ endif # NO_PYTHON
+ 
++GIT-PYTHON-DEFINES: FORCE
++	@FLAGS='$(PYTHON_DEFINES)'; \
++	    if test x"$$FLAGS" != x"`cat $@ 2>/dev/null`" ; then \
++		echo >&2 "    * new python-specific parameters"; \
++		echo "$$FLAGS" >$@; \
++	    fi
++
+ CONFIGURE_RECIPE = sed -e 's/@@GIT_VERSION@@/$(GIT_VERSION)/g' \
+ 			configure.ac >configure.ac+ && \
+ 		   autoconf -o configure configure.ac+ && \
+@@ -2895,18 +2908,6 @@ else
+ endif
+ 	@if cmp $@+ $@ >/dev/null 2>&1; then $(RM) $@+; else mv $@+ $@; fi
+ 
+-### Detect Python interpreter path changes
+-ifndef NO_PYTHON
+-TRACK_PYTHON = $(subst ','\'',-DPYTHON_PATH='$(PYTHON_PATH_SQ)')
+-
+-GIT-PYTHON-VARS: FORCE
+-	@VARS='$(TRACK_PYTHON)'; \
+-	    if test x"$$VARS" != x"`cat $@ 2>/dev/null`" ; then \
+-		echo >&2 "    * new Python interpreter location"; \
+-		echo "$$VARS" >$@; \
+-            fi
+-endif
+-
+ test_bindir_programs := $(patsubst %,bin-wrappers/%,$(BINDIR_PROGRAMS_NEED_X) $(BINDIR_PROGRAMS_NO_X) $(TEST_PROGRAMS_NEED_X))
+ 
+ all:: $(TEST_PROGRAMS) $(test_bindir_programs)
+@@ -3303,7 +3304,7 @@ ifndef NO_TCLTK
+ endif
+ 	$(RM) GIT-VERSION-FILE GIT-CFLAGS GIT-LDFLAGS GIT-BUILD-OPTIONS
+ 	$(RM) GIT-USER-AGENT GIT-PREFIX
+-	$(RM) GIT-SCRIPT-DEFINES GIT-PERL-DEFINES GIT-PERL-HEADER GIT-PYTHON-VARS
++	$(RM) GIT-SCRIPT-DEFINES GIT-PERL-DEFINES GIT-PERL-HEADER GIT-PYTHON-DEFINES
+ ifdef MSVC
+ 	$(RM) $(patsubst %.o,%.o.pdb,$(OBJECTS))
+ 	$(RM) $(patsubst %.exe,%.pdb,$(OTHER_PROGRAMS))
+-- 
+2.34.1.1119.g7a3fc8778ee
+
