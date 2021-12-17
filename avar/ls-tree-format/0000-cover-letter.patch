@@ -4,12 +4,92 @@ In-Reply-To: <cover.1639721750.git.dyroneteng@gmail.com>
 References: <cover.1639721750.git.dyroneteng@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Fri, 17 Dec 2021 14:16:35 +0100
-Subject: [RFC PATCH 0/7] *** SUBJECT HERE ***
+Subject: [RFC PATCH 0/7] ls-tree --format
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+On Fri, Dec 17 2021, Teng Long wrote:
+
+> Many thanks to Junio and Ævar for your help and patient explanation.
+> I noticed Ævar suggest the solution with using `--format`, but in
+> this patch, the current approach continues. If this part of code needs
+> to be improved or we want to support "--format" in "ls-tree" in the
+> future, I'm more than glad to continue to contribute.
+
+FWIW here's the changes I had locally & cleaned up now that did the
+alternate --format approach.
+
+I think you'll probably want to steal some of this, e.g. you're
+patching the dead comment I removed in 1/6, 2-4/6 can be skipped, but
+I thought they were nice.
+
+Back when I last looked at this series, your --object-name patch was
+much shorter, but now it's about the same size as the generic --format
+support. So maybe it's worth considering implementing the more generic
+path.
+
+One reason I didn't submit this before is that I couldn't get past the
+performance regression this would inttroduce, i.e. if moved entirely
+to strbuf_expand(). Here though I'm keeping the old code, so it's no
+slower than "master", unlike your patch. But I haven't dug into why
+yours is slower:
+    
+    $ git hyperfine -L rev origin/master,tl/object-name,avar/ls-tree-format -s 'make CFLAGS=-O3' './git -C /run/user/1001/linux ls-tree -r HEAD' --warmup 10 -r 10
+    Benchmark 1: ./git -C /run/user/1001/linux ls-tree -r HEAD' in 'origin/master
+      Time (mean ± σ):      67.8 ms ±   0.3 ms    [User: 48.8 ms, System: 18.9 ms]
+      Range (min … max):    67.4 ms …  68.4 ms    10 runs
+    
+    Benchmark 2: ./git -C /run/user/1001/linux ls-tree -r HEAD' in 'tl/object-name
+      Time (mean ± σ):      72.8 ms ±   0.4 ms    [User: 50.6 ms, System: 22.1 ms]
+      Range (min … max):    72.0 ms …  73.2 ms    10 runs
+    
+    Benchmark 3: ./git -C /run/user/1001/linux ls-tree -r HEAD' in 'avar/ls-tree-format
+      Time (mean ± σ):      67.6 ms ±   0.4 ms    [User: 50.5 ms, System: 17.0 ms]
+      Range (min … max):    67.1 ms …  68.4 ms    10 runs
+    
+    Summary
+      './git -C /run/user/1001/linux ls-tree -r HEAD' in 'avar/ls-tree-format' ran
+        1.00 ± 0.01 times faster than './git -C /run/user/1001/linux ls-tree -r HEAD' in 'origin/master'
+        1.08 ± 0.01 times faster than './git -C /run/user/1001/linux ls-tree -r HEAD' in 'tl/object-name'
+
+I then tacket a 6/6 at the end here to implement your --object-name in
+terms of --format (but didn't update the comimt message etc.). That's
+slower as expected:
+    
+    $ git hyperfine -L rev tl/object-name,avar/ls-tree-format -s 'make CFLAGS=-O3' './git -C /run/user/1001/linux ls-tree --object-only -r HEAD' --warmup 10 -r 10
+    Benchmark 1: ./git -C /run/user/1001/linux ls-tree --object-only -r HEAD' in 'tl/object-name
+      Time (mean ± σ):      58.7 ms ±   0.4 ms    [User: 43.0 ms, System: 15.6 ms]
+      Range (min … max):    58.4 ms …  59.6 ms    10 runs
+     
+    Benchmark 2: ./git -C /run/user/1001/linux ls-tree --object-only -r HEAD' in 'avar/ls-tree-format
+      Time (mean ± σ):      65.6 ms ±   0.2 ms    [User: 42.4 ms, System: 23.0 ms]
+      Range (min … max):    65.1 ms …  65.9 ms    10 runs
+     
+    Summary
+      './git -C /run/user/1001/linux ls-tree --object-only -r HEAD' in 'tl/object-name' ran
+        1.12 ± 0.01 times faster than './git -C /run/user/1001/linux ls-tree --object-only -r HEAD' in 'avar/ls-tree-format'
+
+But it's not too bad, so maybe it's fine & worth making it more
+generic?
+
+Anyway. Just food for thought and and FYI in case you're
+interested. Junio noted already that he'd like the --object-name
+approach first, so if you still want to pursue your current
+implementation I don't mind.
+
+I do think you should be making performance testing a part of your
+testing & cover letter writing though. A 8-10% slowdown isn't nothing,
+especially for exactly the sort of plumbing command that'll likely to
+be used to e.g. slurp up all paths in a very large repo.
+
+These patches really aren't "ready". There's no docs, and as I noted
+in some earlier thread the tests for ls-tree are really
+lacking. E.g. I seem to have a rather obvious bug in how -t and the
+--format interact here, but no test catches it.
+
+Well, that one's me not having added a test, but I'm fairly sure there
+might also be hidden bugs here due to lack of testing.
 
 Teng Long (1):
   ls-tree.c: support `--object-only` option for "git-ls-tree"
