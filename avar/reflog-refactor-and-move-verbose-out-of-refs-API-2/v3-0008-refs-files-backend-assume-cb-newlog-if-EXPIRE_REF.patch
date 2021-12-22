@@ -1,0 +1,48 @@
+From 6748298a782f1e78666118f5b6bfe57832b234af Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-8.9-6748298a782-20211222T030611Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.9-00000000000-20211222T030611Z-avarab@gmail.com>
+References: <cover-v2-0.9-00000000000-20211216T134028Z-avarab@gmail.com>
+	<cover-v3-0.9-00000000000-20211222T030611Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 5 Oct 2021 16:19:22 +0200
+Subject: [PATCH v3 8/9] refs files-backend: assume cb->newlog if
+ !EXPIRE_REFLOGS_DRY_RUN
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+It's not possible for "cb->newlog" to be NULL if
+!EXPIRE_REFLOGS_DRY_RUN, since files_reflog_expire() would have
+error()'d and taken the "goto failure" branch if it couldn't open the
+file. By not using the "newlog" field private to "file-backend.c"'s
+"struct expire_reflog_cb", we can move this verbosity logging to
+"builtin/reflog.c" in a subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/files-backend.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 90b671025a7..5f8586a36e3 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -3105,12 +3105,12 @@ static int expire_reflog_ent(struct object_id *ooid, struct object_id *noid,
+ 
+ 	if ((*cb->should_prune_fn)(ooid, noid, email, timestamp, tz,
+ 				   message, policy_cb)) {
+-		if (!cb->newlog)
++		if (cb->flags & EXPIRE_REFLOGS_DRY_RUN)
+ 			printf("would prune %s", message);
+ 		else if (cb->flags & EXPIRE_REFLOGS_VERBOSE)
+ 			printf("prune %s", message);
+ 	} else {
+-		if (cb->newlog) {
++		if (!(cb->flags & EXPIRE_REFLOGS_DRY_RUN)) {
+ 			fprintf(cb->newlog, "%s %s %s %"PRItime" %+05d\t%s",
+ 				oid_to_hex(ooid), oid_to_hex(noid),
+ 				email, timestamp, tz, message);
+-- 
+2.34.1.1146.gb52885e7c44
+
