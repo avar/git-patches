@@ -1,0 +1,138 @@
+From ed6fd1c0bd166d27975d6e60a906bcb33bde5455 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.8-ed6fd1c0bd1-20211224T173558Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.8-00000000000-20211224T173558Z-avarab@gmail.com>
+References: <cover-v2-0.8-00000000000-20211224T173558Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 11 Nov 2021 03:15:00 +0100
+Subject: [PATCH v2 3/8] Makefile: define $(LIB_H) in terms of
+ $(FIND_SOURCE_FILES)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Combine the definitions of $(FIND_SOURCE_FILES) and $(LIB_H) to speed
+up the Makefile, as these are the two main expensive $(shell) commands
+that we execute unconditionally.
+
+When see what was in $(FOUND_SOURCE_FILES) that wasn't in $(LIB_H) via
+the ad-hoc test of:
+
+    $(error $(filter-out $(LIB_H),$(filter %.h,$(ALL_SOURCE_FILES))))
+    $(error $(filter-out $(ALL_SOURCE_FILES),$(filter %.h,$(LIB_H))))
+
+We'll get, respectively:
+
+    Makefile:850: *** t/helper/test-tool.h.  Stop.
+    Makefile:850: *** .  Stop.
+
+I.e. we only had a discrepancy when it came to
+t/helper/test-tool.h. In terms of correctness this was broken before,
+but now works:
+
+    $ make t/helper/test-tool.hco
+        HDR t/helper/test-tool.h
+
+This speeds things up a lot:
+
+    $ git -c hyperfine.hook.setup= hyperfine -L rev HEAD~1,HEAD~0 -s 'make NO_TCLTK=Y' 'make -j1 NO_TCLTK=Y' --warmup 10 -M 10
+    Benchmark 1: make -j1 NO_TCLTK=Y' in 'HEAD~1
+      Time (mean ± σ):     159.9 ms ±   6.8 ms    [User: 137.2 ms, System: 28.0 ms]
+      Range (min … max):   154.6 ms … 175.9 ms    10 runs
+
+    Benchmark 2: make -j1 NO_TCLTK=Y' in 'HEAD~0
+      Time (mean ± σ):     100.0 ms ±   1.3 ms    [User: 84.2 ms, System: 20.2 ms]
+      Range (min … max):    98.8 ms … 102.8 ms    10 runs
+
+    Summary
+      'make -j1 NO_TCLTK=Y' in 'HEAD~0' ran
+        1.60 ± 0.07 times faster than 'make -j1 NO_TCLTK=Y' in 'HEAD~1'
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 54 ++++++++++++++++++++++++++----------------------------
+ 1 file changed, 26 insertions(+), 28 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 7dddea3caf3..d3ce0d22199 100644
+--- a/Makefile
++++ b/Makefile
+@@ -826,12 +826,33 @@ GENERATED_H += hook-list.h
+ .PHONY: generated-hdrs
+ generated-hdrs: $(GENERATED_H)
+ 
+-LIB_H := $(sort $(patsubst ./%,%,$(shell git ls-files '*.h' ':!t/' ':!Documentation/' 2>/dev/null || \
++## Exhaustive lists of our source files, either dynamically generated,
++## or hardcoded.
++SOURCES_CMD = ( \
++	git ls-files \
++		'*.[hcS]' \
++		'*.sh' \
++		':!*[tp][0-9][0-9][0-9][0-9]*' \
++		':!contrib' \
++		2>/dev/null || \
+ 	$(FIND) . \
+-	-name .git -prune -o \
+-	-name t -prune -o \
+-	-name Documentation -prune -o \
+-	-name '*.h' -print)))
++		\( -name .git -type d -prune \) \
++		-o \( -name '[tp][0-9][0-9][0-9][0-9]*' -prune \) \
++		-o \( -name contrib -type d -prune \) \
++		-o \( -name build -type d -prune \) \
++		-o \( -name 'trash*' -type d -prune \) \
++		-o \( -name '*.[hcS]' -type f -print \) \
++		-o \( -name '*.sh' -type f -print \) \
++		| sed -e 's|^\./||' \
++	)
++FOUND_SOURCE_FILES := $(shell $(SOURCES_CMD))
++
++FOUND_C_SOURCES = $(filter %.c,$(FOUND_SOURCE_FILES))
++FOUND_H_SOURCES = $(filter %.h,$(FOUND_SOURCE_FILES))
++
++COCCI_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES),$(FOUND_C_SOURCES))
++
++LIB_H = $(FOUND_H_SOURCES)
+ 
+ LIB_OBJS += abspath.o
+ LIB_OBJS += add-interactive.o
+@@ -2758,26 +2779,6 @@ perl/build/man/man3/Git.3pm: perl/Git.pm
+ 	$(QUIET_GEN)mkdir -p $(dir $@) && \
+ 	pod2man $< $@
+ 
+-FIND_SOURCE_FILES = ( \
+-	git ls-files \
+-		'*.[hcS]' \
+-		'*.sh' \
+-		':!*[tp][0-9][0-9][0-9][0-9]*' \
+-		':!contrib' \
+-		2>/dev/null || \
+-	$(FIND) . \
+-		\( -name .git -type d -prune \) \
+-		-o \( -name '[tp][0-9][0-9][0-9][0-9]*' -prune \) \
+-		-o \( -name contrib -type d -prune \) \
+-		-o \( -name build -type d -prune \) \
+-		-o \( -name 'trash*' -type d -prune \) \
+-		-o \( -name '*.[hcS]' -type f -print \) \
+-		-o \( -name '*.sh' -type f -print \) \
+-		| sed -e 's|^\./||' \
+-	)
+-
+-FOUND_SOURCE_FILES = $(shell $(FIND_SOURCE_FILES))
+-
+ $(ETAGS_TARGET): $(FOUND_SOURCE_FILES)
+ 	$(QUIET_GEN)$(RM) $@+ && \
+ 	echo $(FOUND_SOURCE_FILES) | xargs etags -a -o $@+ && \
+@@ -2987,9 +2988,6 @@ check: $(GENERATED_H)
+ 		exit 1; \
+ 	fi
+ 
+-FOUND_C_SOURCES = $(filter %.c,$(FOUND_SOURCE_FILES))
+-COCCI_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES),$(FOUND_C_SOURCES))
+-
+ %.cocci.patch: %.cocci $(COCCI_SOURCES)
+ 	$(QUIET_SPATCH) \
+ 	if test $(SPATCH_BATCH_SIZE) = 0; then \
+-- 
+2.34.1.1215.g6e154b84c77
+
