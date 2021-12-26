@@ -1,0 +1,67 @@
+From 0edcdb50afd3b8405689c790b648dfce580d4429 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-2.7-0edcdb50afd-20211226T223035Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-0.7-00000000000-20211226T223035Z-avarab@gmail.com>
+References: <cover-v5-0.7-00000000000-20211222T025214Z-avarab@gmail.com>
+	<cover-v6-0.7-00000000000-20211226T223035Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Nov 2021 12:42:45 +0100
+Subject: [PATCH v6 2/7] log tests: check if grep_config() is called by
+ "log"-like cmds
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the tests added in my 9df46763ef1 (log: add exhaustive tests
+for pattern style options & config, 2017-05-20) to check not only
+whether "git log" handles "grep.patternType", but also "git show"
+etc.
+
+It's sufficient to check whether we match a "fixed" or a "basic" regex
+here to see if these codepaths correctly invoked grep_config(). We
+don't need to check the details of their regular expression matching
+as the "log" test does.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4202-log.sh | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/t/t4202-log.sh b/t/t4202-log.sh
+index 2ced7e9d817..2490f2cd5ed 100755
+--- a/t/t4202-log.sh
++++ b/t/t4202-log.sh
+@@ -449,6 +449,30 @@ test_expect_success !FAIL_PREREQS 'log with various grep.patternType configurati
+ 	)
+ '
+ 
++for cmd in show whatchanged reflog format-patch
++do
++	case "$cmd" in
++	format-patch) myarg="HEAD~.." ;;
++	*) myarg= ;;
++	esac
++
++	test_expect_success "$cmd: understands grep.patternType, like 'log'" '
++		git init "pattern-type-$cmd" &&
++		(
++			cd "pattern-type-$cmd" &&
++			test_commit 1 file A &&
++			test_commit "(1|2)" file B 2 &&
++
++			git -c grep.patternType=fixed $cmd --grep="..." $myarg >actual &&
++			test_must_be_empty actual &&
++
++			git -c grep.patternType=basic $cmd --grep="..." $myarg >actual &&
++			test_file_not_empty actual
++		)
++	'
++done
++test_done
++
+ test_expect_success 'log --author' '
+ 	cat >expect <<-\EOF &&
+ 	Author: <BOLD;RED>A U<RESET> Thor <author@example.com>
+-- 
+2.34.1.1239.g84ae229c870
+

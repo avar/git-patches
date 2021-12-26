@@ -1,0 +1,87 @@
+From 1b724d5e2e971763816a12da9019795815181ccb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-3.7-1b724d5e2e9-20211226T223035Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-0.7-00000000000-20211226T223035Z-avarab@gmail.com>
+References: <cover-v5-0.7-00000000000-20211222T025214Z-avarab@gmail.com>
+	<cover-v6-0.7-00000000000-20211226T223035Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Nov 2021 12:53:01 +0100
+Subject: [PATCH v6 3/7] grep tests: add missing "grep.patternType" config
+ tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the grep tests to assert that setting
+"grep.patternType=extended" followed by "grep.patternType=default"
+will behave as if "--basic-regexp" was provided, and not as
+"--extended-regexp". In a subsequent commit we'll need to treat
+"grep.patternType=default" as a special-case, but let's make sure we
+ignore it if it's being set to "default" following an earlier
+non-"default" "grep.patternType" setting.
+
+Let's also test what happens when we have a sequence of "extended"
+followed by "default" and "fixed". In that case the "fixed" should
+prevail, as well as tests to check that a "grep.extendedRegexp=true"
+followed by a "grep.extendedRegexp=false" behaves as though
+"grep.extendedRegexp" wasn't provided.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ t/t7810-grep.sh | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index 6b6423a07c3..664f884e12a 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -451,6 +451,45 @@ do
+ 		test_cmp expected actual
+ 	'
+ 
++	test_expect_success "grep $L with grep.extendedRegexp is last-one-wins" '
++		echo "${HC}ab:a+bc" >expected &&
++		git \
++			-c grep.extendedRegexp=true \
++			-c grep.patternType=basic \
++			-c grep.extendedRegexp=false \
++			grep "a+b*c" $H ab >actual &&
++		test_cmp expected actual
++	'
++
++	test_expect_success "grep $L with grep.extendedRegexp is last-one-wins & defers to grep.patternType" '
++		echo "${HC}ab:abc" >expected &&
++		git \
++			-c grep.extendedRegexp=true \
++			-c grep.patternType=extended \
++			-c grep.extendedRegexp=false \
++			grep "a+b*c" $H ab >actual &&
++		test_cmp expected actual
++	'
++
++	test_expect_success "grep $L with grep.patternType=extended and grep.patternType=default" '
++		echo "${HC}ab:a+bc" >expected &&
++		git \
++			-c grep.patternType=extended \
++			-c grep.patternType=default \
++			grep "a+b*c" $H ab >actual &&
++		test_cmp expected actual
++	'
++
++	test_expect_success "grep $L with grep.patternType=[extended -> default -> fixed]" '
++		echo "${HC}ab:a+b*c" >expected &&
++		git \
++			-c grep.patternType=extended \
++			-c grep.patternType=default \
++			-c grep.patternType=fixed \
++			grep "a+b*c" $H ab >actual &&
++		test_cmp expected actual
++	'
++
+ 	test_expect_success "grep $L with grep.patternType=extended and grep.extendedRegexp=false" '
+ 		echo "${HC}ab:abc" >expected &&
+ 		git \
+-- 
+2.34.1.1239.g84ae229c870
+

@@ -1,0 +1,134 @@
+From 88dfd40bf9ef3cb61e7a1ad0ee25f44e4b33ee0d Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v6-0.7-00000000000-20211226T223035Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.7-00000000000-20211222T025214Z-avarab@gmail.com>
+References: <cover-v5-0.7-00000000000-20211222T025214Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Sun, 26 Dec 2021 23:30:35 +0100
+Subject: [PATCH v6 0/7] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (7):
+  grep.h: remove unused "regex_t regexp" from grep_opt
+  log tests: check if grep_config() is called by "log"-like cmds
+  grep tests: add missing "grep.patternType" config tests
+  built-ins: trust the "prefix" from run_builtin()
+  grep.c: don't pass along NULL callback value
+  grep API: call grep_config() after grep_init()
+  grep: simplify config parsing and option parsing
+
+ builtin/grep.c    |  27 +++++-----
+ builtin/log.c     |  13 ++++-
+ builtin/ls-tree.c |   2 +-
+ git.c             |   1 +
+ grep.c            | 126 +++++++++-------------------------------------
+ grep.h            |  33 ++++++++----
+ revision.c        |   4 +-
+ t/t4202-log.sh    |  24 +++++++++
+ t/t7810-grep.sh   |  39 ++++++++++++++
+ 9 files changed, 138 insertions(+), 131 deletions(-)
+
+Range-diff against v5:
+1:  b6a3e0e2e08 = 1:  b62e6b6162a grep.h: remove unused "regex_t regexp" from grep_opt
+2:  c0d77b2683f = 2:  0edcdb50afd log tests: check if grep_config() is called by "log"-like cmds
+3:  f02f246aa23 ! 3:  1b724d5e2e9 grep tests: add missing "grep.patternType" config test
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep tests: add missing "grep.patternType" config test
+    +    grep tests: add missing "grep.patternType" config tests
+     
+         Extend the grep tests to assert that setting
+         "grep.patternType=extended" followed by "grep.patternType=default"
+    @@ Commit message
+     
+         Let's also test what happens when we have a sequence of "extended"
+         followed by "default" and "fixed". In that case the "fixed" should
+    -    prevail.
+    +    prevail, as well as tests to check that a "grep.extendedRegexp=true"
+    +    followed by a "grep.extendedRegexp=false" behaves as though
+    +    "grep.extendedRegexp" wasn't provided.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+     
+      ## t/t7810-grep.sh ##
+     @@ t/t7810-grep.sh: do
+      		test_cmp expected actual
+      	'
+      
+    ++	test_expect_success "grep $L with grep.extendedRegexp is last-one-wins" '
+    ++		echo "${HC}ab:a+bc" >expected &&
+    ++		git \
+    ++			-c grep.extendedRegexp=true \
+    ++			-c grep.patternType=basic \
+    ++			-c grep.extendedRegexp=false \
+    ++			grep "a+b*c" $H ab >actual &&
+    ++		test_cmp expected actual
+    ++	'
+    ++
+    ++	test_expect_success "grep $L with grep.extendedRegexp is last-one-wins & defers to grep.patternType" '
+    ++		echo "${HC}ab:abc" >expected &&
+    ++		git \
+    ++			-c grep.extendedRegexp=true \
+    ++			-c grep.patternType=extended \
+    ++			-c grep.extendedRegexp=false \
+    ++			grep "a+b*c" $H ab >actual &&
+    ++		test_cmp expected actual
+    ++	'
+    ++
+     +	test_expect_success "grep $L with grep.patternType=extended and grep.patternType=default" '
+     +		echo "${HC}ab:a+bc" >expected &&
+     +		git \
+4:  a542a352eab = 4:  f4876552771 built-ins: trust the "prefix" from run_builtin()
+5:  a33b00a247e = 5:  069b0339146 grep.c: don't pass along NULL callback value
+6:  92b1c3958fa = 6:  e38eca56959 grep API: call grep_config() after grep_init()
+7:  63de643ebc2 ! 7:  88dfd40bf9e grep: simplify config parsing and option parsing
+    @@ Commit message
+          1. You can set "grep.patternType", and "[setting it to] 'default'
+             will return to the default matching behavior".
+     
+    +        In that context "the default" meant whatever the configuration
+    +        system specified before that change, i.e. via grep.extendedRegexp.
+    +
+          2. We'd support the existing "grep.extendedRegexp" option, but ignore
+             it when the new "grep.patternType" option is set. We said we'd
+             only ignore the older "grep.extendedRegexp" option "when the
+    @@ Commit message
+         grep_init(), which means that much of the complexity here can go
+         away.
+     
+    -    Now as before when we only understand a "grep.extendedRegexp" setting
+    -    of "true", and if "grep.patterntype=default" is set we'll interpret it
+    -    as "grep.patterntype=basic", except if we previously saw a
+    -    "grep.extendedRegexp", then it's interpreted as
+    -    "grep.patterntype=extended".
+    +    As before "grep.extendedRegexp" is a last-one-wins variable. We need
+    +    to maintain state inside parse_pattern_type_arg() to ignore it if a
+    +    non-"default" grep.patternType was seen, but otherwise flip between
+    +    BRE and ERE for "grep.extendedRegexp=[false|true]".
+     
+         See my 07a3d411739 (grep: remove regflags from the public grep_opt
+         API, 2017-06-29) for addition of the two comments being removed here,
+    @@ grep.c: int grep_config(const char *var, const char *value, void *cb)
+      		return -1;
+      
+      	if (!strcmp(var, "grep.extendedregexp")) {
+    -+		if (opt->extended_regexp_option)
+    ++		if (opt->extended_regexp_option == -1)
+     +			return 0;
+      		opt->extended_regexp_option = git_config_bool(var, value);
+     +		if (opt->extended_regexp_option)
+     +			opt->pattern_type_option = GREP_PATTERN_TYPE_ERE;
+    ++		else
+    ++			opt->pattern_type_option = GREP_PATTERN_TYPE_BRE;
+     +		return 0;
+     +	}
+     +
+-- 
+2.34.1.1239.g84ae229c870
+
