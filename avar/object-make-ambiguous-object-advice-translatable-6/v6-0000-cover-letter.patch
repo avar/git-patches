@@ -1,0 +1,128 @@
+From 6a31cfcfc29198abd16463e02b31c7283723fa39 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v6-0.6-00000000000-20211228T143223Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.6-00000000000-20211125T215529Z-avarab@gmail.com>
+References: <cover-v5-0.6-00000000000-20211125T215529Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 28 Dec 2021 15:32:23 +0100
+Subject: [PATCH v6 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  object-name tests: add tests for ambiguous object blind spots
+  object-name: explicitly handle OBJ_BAD in show_ambiguous_object()
+  object-name: make ambiguous object output translatable
+  object-name: show date for ambiguous tag objects
+  object-name: iterate ambiguous objects before showing header
+  object-name: re-use "struct strbuf" in show_ambiguous_object()
+
+ object-name.c                       | 112 +++++++++++++++++++++++++---
+ t/t1512-rev-parse-disambiguation.sh |  84 +++++++++++++++++++++
+ 2 files changed, 184 insertions(+), 12 deletions(-)
+
+Range-diff against v5:
+1:  767165d096d ! 1:  27f267ad555 object-name tests: add tests for ambiguous object blind spots
+    @@ Commit message
+         prefix are the same for both SHA-1 and SHA-256. This uses strings that
+         I mined, and have the same prefix when hashed with both.
+     
+    +    We "test_cmp" the full output to guard against any future regressions,
+    +    and because a subsequent commit will tweak it. Showing a diff of how
+    +    the output changes is helpful to explain those subsequent commits.
+    +
+         1. https://lore.kernel.org/git/YZwbphPpfGk78w2f@coredump.intra.peff.net/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    @@ t/t1512-rev-parse-disambiguation.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+     +		echo 1bbfctrkc | git hash-object -w --stdin
+     +	) &&
+     +
+    ++	test_must_fail git -C blob.prefix rev-parse dead &&
+     +	cat >expect <<-\EOF &&
+     +	error: short object ID beef... is ambiguous
+     +	hint: The candidates are:
+2:  ee86912f1c1 ! 2:  c78243dc701 object-name: explicitly handle OBJ_BAD in show_ambiguous_object()
+    @@ Commit message
+         added in the preceding commit.
+     
+         So saying "unknown type" here was always misleading, we really meant
+    -    to say that we had a failure parsing the object at all, if the problem
+    -    is only that it's type is unknown we won't reach this code.
+    +    to say that we had a failure parsing the object at all, i.e. that we
+    +    had repository corruption. If the problem is only that it's type is
+    +    unknown we won't reach this code.
+     
+         So let's emit a generic "[bad object]" instead. As our tests added in
+         the preceding commit show, we'll have emitted various "error" output
+3:  b79964483e8 ! 3:  daebc95542c object-name: make ambiguous object output translatable
+    @@ Commit message
+            then SHA-1, 2018-05-10)
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    Signed-off-by: Josh Steadmon <steadmon@google.com>
+     
+      ## object-name.c ##
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+     -	strbuf_addstr(&desc, type_name(type));
+      
+      	if (type == OBJ_COMMIT) {
+    -+		struct strbuf ad = STRBUF_INIT;
+    -+		struct strbuf s = STRBUF_INIT;
+    ++		struct strbuf date = STRBUF_INIT;
+    ++		struct strbuf msg = STRBUF_INIT;
+      		struct commit *commit = lookup_commit(ds->repo, oid);
+     +
+      		if (commit) {
+      			struct pretty_print_context pp = {0};
+      			pp.date_mode.type = DATE_SHORT;
+     -			format_commit_message(commit, " %ad - %s", &desc, &pp);
+    -+			format_commit_message(commit, "%ad", &ad, &pp);
+    -+			format_commit_message(commit, "%s", &s, &pp);
+    ++			format_commit_message(commit, "%ad", &date, &pp);
+    ++			format_commit_message(commit, "%s", &msg, &pp);
+      		}
+     +
+     +		/*
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+     +		 *
+     +		 *    "deadbeef commit 2021-01-01 - Some Commit Message"
+     +		 */
+    -+		strbuf_addf(&desc, _("%s commit %s - %s"), hash, ad.buf, s.buf);
+    ++		strbuf_addf(&desc, _("%s commit %s - %s"),
+    ++			    hash, date.buf, msg.buf);
+     +
+    -+		strbuf_release(&ad);
+    -+		strbuf_release(&s);
+    ++		strbuf_release(&date);
+    ++		strbuf_release(&msg);
+      	} else if (type == OBJ_TAG) {
+      		struct tag *tag = lookup_tag(ds->repo, oid);
+     +		const char *tag_tag = "";
+4:  36b6b440c37 = 4:  b5aa6e266f6 object-name: show date for ambiguous tag objects
+5:  8880c283559 = 5:  644b076b2a6 object-name: iterate ambiguous objects before showing header
+6:  78bb0995f08 ! 6:  6a31cfcfc29 object-name: re-use "struct strbuf" in show_ambiguous_object()
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+      		 *
+      		 *    "deadbeef commit 2021-01-01 - Some Commit Message"
+      		 */
+    --		strbuf_addf(&desc, _("%s commit %s - %s"), hash, ad.buf, s.buf);
+    -+		strbuf_addf(sb, _("%s commit %s - %s"), hash, ad.buf, s.buf);
+    +-		strbuf_addf(&desc, _("%s commit %s - %s"),
+    +-			    hash, date.buf, msg.buf);
+    ++		strbuf_addf(sb, _("%s commit %s - %s"), hash, date.buf,
+    ++			    msg.buf);
+      
+    - 		strbuf_release(&ad);
+    - 		strbuf_release(&s);
+    + 		strbuf_release(&date);
+    + 		strbuf_release(&msg);
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+      		 * object.c, it should (hopefully) already be
+      		 * translated.
+-- 
+2.34.1.1257.g2af47340c7b
+
