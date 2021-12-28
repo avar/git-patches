@@ -1,0 +1,55 @@
+From 0bd08e1b01891f9ff24ed1091d9c755a6d80f2a4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-6.7-0bd08e1b018-20211228T150410Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.7-00000000000-20211228T150410Z-avarab@gmail.com>
+References: <cover-v3-0.2-00000000000-20211210T100512Z-avarab@gmail.com>
+	<cover-v4-0.7-00000000000-20211228T150410Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 23 Jun 2021 13:07:56 +0200
+Subject: [PATCH v4 6/7] pack-bitmap-write.c: don't return without
+ stop_progress()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a bug that's been here since 7cc8f971085 (pack-objects: implement
+bitmap writing, 2013-12-21), we did not call stop_progress() if we
+reached the early exit in this function.
+
+We could call stop_progress() before we return, but better yet is to
+defer calling start_progress() until we need it. For now this only
+matters in practice because we'd previously omit the "region_leave"
+for the progress trace2 event.
+
+Suggested-by: SZEDER Gábor <szeder.dev@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ pack-bitmap-write.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/pack-bitmap-write.c b/pack-bitmap-write.c
+index 9c55c1531e1..cab3eaa2acd 100644
+--- a/pack-bitmap-write.c
++++ b/pack-bitmap-write.c
+@@ -575,15 +575,15 @@ void bitmap_writer_select_commits(struct commit **indexed_commits,
+ 
+ 	QSORT(indexed_commits, indexed_commits_nr, date_compare);
+ 
+-	if (writer.show_progress)
+-		writer.progress = start_progress("Selecting bitmap commits", 0);
+-
+ 	if (indexed_commits_nr < 100) {
+ 		for (i = 0; i < indexed_commits_nr; ++i)
+ 			push_bitmapped_commit(indexed_commits[i]);
+ 		return;
+ 	}
+ 
++	if (writer.show_progress)
++		writer.progress = start_progress("Selecting bitmap commits", 0);
++
+ 	for (;;) {
+ 		struct commit *chosen = NULL;
+ 
+-- 
+2.34.1.1257.g2af47340c7b
+

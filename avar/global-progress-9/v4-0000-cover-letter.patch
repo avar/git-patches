@@ -1,0 +1,543 @@
+From 060483fb5ce0e6e812fbbfa3137eff6d26695b52 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-0.7-00000000000-20211228T150410Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.2-00000000000-20211210T100512Z-avarab@gmail.com>
+References: <cover-v3-0.2-00000000000-20211210T100512Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 28 Dec 2021 16:04:10 +0100
+Subject: [PATCH v4 0/7] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (7):
+  leak tests: fix a memory leak in "test-progress" helper
+  progress.c test helper: add missing braces
+  progress.c tests: make start/stop commands on stdin
+  progress.c tests: test some invalid usage
+  progress.c: add temporary variable from progress struct
+  pack-bitmap-write.c: don't return without stop_progress()
+  *.c: use isatty(0|2), not isatty(STDIN_FILENO|STDERR_FILENO)
+
+ builtin/bisect--helper.c    |  2 +-
+ builtin/bundle.c            |  2 +-
+ compat/mingw.c              |  2 +-
+ pack-bitmap-write.c         |  6 +--
+ progress.c                  | 14 +++---
+ t/helper/test-progress.c    | 52 +++++++++++++++-----
+ t/t0500-progress-display.sh | 94 ++++++++++++++++++++++++++++---------
+ 7 files changed, 126 insertions(+), 46 deletions(-)
+
+Range-diff against v3:
+-:  ----------- > 1:  aa08dab654d leak tests: fix a memory leak in "test-progress" helper
+-:  ----------- > 2:  3ecdab074b6 progress.c test helper: add missing braces
+-:  ----------- > 3:  271f6d7ec3b progress.c tests: make start/stop commands on stdin
+1:  7876202c5b0 ! 4:  7c1b8b287c5 t1510: remove need for "test_untraceable", retain coverage
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    t1510: remove need for "test_untraceable", retain coverage
+    +    progress.c tests: test some invalid usage
+     
+    -    Amend the tests checking whether stderr is empty added in
+    -    4868b2ea17b (Subject: setup: officially support --work-tree without
+    -    --git-dir, 2011-01-19) work portably on all POSIX shells, instead
+    -    suppressing the trace output with "test_untraceable" on shells that
+    -    aren't bash.
+    +    Test what happens when we "stop" without a "start", omit the "stop"
+    +    after a "start", or try to start two concurrent progress bars. This
+    +    extends the trace2 tests added in 98a13647408 (trace2: log progress
+    +    time and throughput, 2020-05-12).
+     
+    -    The tests that used the "try_repo" helper wanted to check whether git
+    -    commands invoked therein would emit anything on stderr. To do this
+    -    they invoked the function and redirected the stderr to a "message"
+    -    file.
+    +    These tests are not merely testing the helper, but invalid API usage
+    +    that can happen if the progress.c API is misused.
+     
+    -    In 58275069288 (t1510-repo-setup: mark as untraceable with '-x',
+    -    2018-02-24) these were made to use "test_untraceable" introduced in
+    -    5fc98e79fc0 (t: add means to disable '-x' tracing for individual test
+    -    scripts, 2018-02-24).
+    +    The "without stop" test will leak under SANITIZE=leak, since this
+    +    buggy use of the API will leak memory. But let's not skip it entirely,
+    +    or use the "!SANITIZE_LEAK" prerequisite check as we'd do with tests
+    +    that we're skipping due to leaks we haven't fixed yet. Instead
+    +    annotate the specific command that should skip leak checking with
+    +    custom $LSAN_OPTIONS[1].
+     
+    -    It is better to have the "try_repo" function itself start with a
+    -    "test_when_finished 'rm stderr'", and then redirect the stderr output
+    -    from git commands it invokes via its helpers to a "stderr" file.
+    -
+    -    This means that if we have a failure it'll be closer to the source of
+    -    the problem, and most importantly isn't incompatible with "-x" on
+    -    shells that aren't "bash".
+    -
+    -    We also need to split those tests that had two "try_repo" invocations
+    -    into different tests, which'll further help to narrow down any
+    -    potential failures. This wasn't strictly necessary (an artifact of the
+    -    use of "test_when_finished"), but the pattern enforces better test
+    -    hygiene.
+    -
+    -    The functions it calls might change directories, so we pass an
+    -    absolute "$stderr_log_path" around. We also need to change a "$(pwd)"
+    -    to "$PWD" in test_repo(), on e.g. "dash" that interpolation will be
+    -    traced and part of the "2>>" redirection.
+    -
+    -    1. https://lore.kernel.org/git/YbMiK1wHzBfYvK2a@coredump.intra.peff.net/
+    +    1. https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/t1510-repo-setup.sh ##
+    -@@ t/t1510-repo-setup.sh: A few rules for repo setup:
+    -     prefix is NULL.
+    - "
+    - 
+    --# This test heavily relies on the standard error of nested function calls.
+    --test_untraceable=UnfortunatelyYes
+    --
+    - TEST_PASSES_SANITIZE_LEAK=true
+    - . ./test-lib.sh
+    - 
+    -@@ t/t1510-repo-setup.sh: test_repo () {
+    - 			export GIT_WORK_TREE
+    - 		fi &&
+    - 		rm -f trace &&
+    --		GIT_TRACE_SETUP="$(pwd)/trace" git symbolic-ref HEAD >/dev/null &&
+    -+		GIT_TRACE_SETUP="$PWD/trace" git symbolic-ref HEAD >/dev/null 2>>"$stderr_log_path" &&
+    - 		grep '^setup: ' trace >result &&
+    - 		test_cmp expected result
+    - 	)
+    -@@ t/t1510-repo-setup.sh: maybe_config () {
+    - 	file=$1 var=$2 value=$3 &&
+    - 	if test "$value" != unset
+    - 	then
+    --		git config --file="$file" "$var" "$value"
+    -+		git config --file="$file" "$var" "$value" 2>>"$stderr_log_path"
+    - 	fi
+    - }
+    - 
+    -@@ t/t1510-repo-setup.sh: setup_repo () {
+    - 	name=$1 worktreecfg=$2 gitfile=$3 barecfg=$4 &&
+    - 	sane_unset GIT_DIR GIT_WORK_TREE &&
+    - 
+    --	git -c init.defaultBranch=initial init "$name" &&
+    -+	git -c init.defaultBranch=initial init "$name" 2>>"$stderr_log_path" &&
+    - 	maybe_config "$name/.git/config" core.worktree "$worktreecfg" &&
+    - 	maybe_config "$name/.git/config" core.bare "$barecfg" &&
+    - 	mkdir -p "$name/sub/sub" &&
+    -@@ t/t1510-repo-setup.sh: run_wt_tests () {
+    - #	(git dir) (work tree) (cwd) (prefix)	<-- from subdir
+    - try_repo () {
+    - 	name=$1 worktreeenv=$2 gitdirenv=$3 &&
+    -+	stderr_log_path="$PWD/stderr" &&
+    -+
+    -+	test_when_finished "rm \"$stderr_log_path\"" &&
+    - 	setup_repo "$name" "$4" "$5" "$6" &&
+    - 	shift 6 &&
+    - 	try_case "$name" "$worktreeenv" "$gitdirenv" \
+    - 		"$1" "$2" "$3" "$4" &&
+    -+	test_must_be_empty "$stderr_log_path" &&
+    - 	shift 4 &&
+    - 	case "$gitdirenv" in
+    - 	/* | ?:/* | unset) ;;
+    -@@ t/t1510-repo-setup.sh: try_repo () {
+    - 		gitdirenv=../$gitdirenv ;;
+    - 	esac &&
+    - 	try_case "$name/sub" "$worktreeenv" "$gitdirenv" \
+    --		"$1" "$2" "$3" "$4"
+    -+		"$1" "$2" "$3" "$4" &&
+    -+	test_must_be_empty "$stderr_log_path"
+    - }
+    - 
+    - # Bit 0 = GIT_WORK_TREE
+    -@@ t/t1510-repo-setup.sh: try_repo () {
+    - test_expect_success '#0: nonbare repo, no explicit configuration' '
+    - 	try_repo 0 unset unset unset "" unset \
+    - 		.git "$here/0" "$here/0" "(null)" \
+    --		.git "$here/0" "$here/0" sub/ 2>message &&
+    --	test_must_be_empty message
+    -+		.git "$here/0" "$here/0" sub/
+    + ## t/t0500-progress-display.sh ##
+    +@@ t/t0500-progress-display.sh: test_expect_success 'progress generates traces' '
+    + 	grep "\"key\":\"total_bytes\",\"value\":\"409600\"" trace.event
+      '
+      
+    - test_expect_success '#1: GIT_WORK_TREE without explicit GIT_DIR is accepted' '
+    - 	try_repo 1 "$here" unset unset "" unset \
+    - 		"$here/1/.git" "$here" "$here" 1/ \
+    --		"$here/1/.git" "$here" "$here" 1/sub/ 2>message &&
+    --	test_must_be_empty message
+    -+		"$here/1/.git" "$here" "$here" 1/sub/
+    - '
+    - 
+    - test_expect_success '#2: worktree defaults to cwd with explicit GIT_DIR' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#4: core.worktree without GIT_DIR set is accepted' '
+    - 	mkdir -p 4/sub sub &&
+    - 	try_case 4 unset unset \
+    - 		.git "$here/4/sub" "$here/4" "(null)" \
+    --		"$here/4/.git" "$here/4/sub" "$here/4/sub" "(null)" 2>message &&
+    --	test_must_be_empty message
+    -+		"$here/4/.git" "$here/4/sub" "$here/4/sub" "(null)"
+    - '
+    - 
+    --test_expect_success '#5: core.worktree + GIT_WORK_TREE is accepted' '
+    -+test_expect_success '#5.1: core.worktree + GIT_WORK_TREE is accepted' '
+    - 	# or: you cannot intimidate away the lack of GIT_DIR setting
+    - 	try_repo 5 "$here" unset "$here/5" "" unset \
+    - 		"$here/5/.git" "$here" "$here" 5/ \
+    --		"$here/5/.git" "$here" "$here" 5/sub/ 2>message &&
+    -+		"$here/5/.git" "$here" "$here" 5/sub/
+    ++test_expect_success 'progress generates traces: stop / start' '
+    ++	cat >in <<-\EOF &&
+    ++	start 0
+    ++	stop
+    ++	EOF
+    ++
+    ++	GIT_TRACE2_EVENT="$(pwd)/trace-startstop.event" test-tool progress \
+    ++		<in 2>stderr &&
+    ++	test_region progress "Working hard" trace-startstop.event
+     +'
+     +
+    -+test_expect_success '#5.2: core.worktree + GIT_WORK_TREE is accepted' '
+    - 	try_repo 5a .. unset "$here/5a" "" unset \
+    - 		"$here/5a/.git" "$here" "$here" 5a/ \
+    --		"$here/5a/.git" "$here/5a" "$here/5a" sub/ &&
+    --	test_must_be_empty message
+    -+		"$here/5a/.git" "$here/5a" "$here/5a" sub/
+    - '
+    - 
+    - test_expect_success '#6: setting GIT_DIR brings core.worktree to life' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#9: GIT_WORK_TREE accepted with gitfile' '
+    - 	mkdir -p 9/wt &&
+    - 	try_repo 9 wt unset unset gitfile unset \
+    - 		"$here/9.git" "$here/9/wt" "$here/9" "(null)" \
+    --		"$here/9.git" "$here/9/sub/wt" "$here/9/sub" "(null)" 2>message &&
+    --	test_must_be_empty message
+    -+		"$here/9.git" "$here/9/sub/wt" "$here/9/sub" "(null)"
+    - '
+    - 
+    - test_expect_success '#10: GIT_DIR can point to gitfile' '
+    -@@ t/t1510-repo-setup.sh: run_wt_tests 11 gitfile
+    - test_expect_success '#12: core.worktree with gitfile is accepted' '
+    - 	try_repo 12 unset unset "$here/12" gitfile unset \
+    - 		"$here/12.git" "$here/12" "$here/12" "(null)" \
+    --		"$here/12.git" "$here/12" "$here/12" sub/ 2>message &&
+    --	test_must_be_empty message
+    -+		"$here/12.git" "$here/12" "$here/12" sub/
+    - '
+    - 
+    - test_expect_success '#13: core.worktree+GIT_WORK_TREE accepted (with gitfile)' '
+    - 	# or: you cannot intimidate away the lack of GIT_DIR setting
+    - 	try_repo 13 non-existent-too unset non-existent gitfile unset \
+    - 		"$here/13.git" "$here/13/non-existent-too" "$here/13" "(null)" \
+    --		"$here/13.git" "$here/13/sub/non-existent-too" "$here/13/sub" "(null)" 2>message &&
+    --	test_must_be_empty message
+    -+		"$here/13.git" "$here/13/sub/non-existent-too" "$here/13/sub" "(null)"
+    - '
+    - 
+    - # case #14.
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#17: GIT_WORK_TREE without explicit GIT_DIR is accepted (ba
+    - 	mkdir -p 17b/.git/wt/sub &&
+    - 
+    - 	try_case 17a/.git "$here/17a" unset \
+    --		"$here/17a/.git" "$here/17a" "$here/17a" .git/ \
+    --		2>message &&
+    -+		"$here/17a/.git" "$here/17a" "$here/17a" .git/ &&
+    - 	try_case 17a/.git/wt "$here/17a" unset \
+    - 		"$here/17a/.git" "$here/17a" "$here/17a" .git/wt/ &&
+    - 	try_case 17a/.git/wt/sub "$here/17a" unset \
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#17: GIT_WORK_TREE without explicit GIT_DIR is accepted (ba
+    - 
+    - 	try_repo 17c "$here/17c" unset unset "" true \
+    - 		.git "$here/17c" "$here/17c" "(null)" \
+    --		"$here/17c/.git" "$here/17c" "$here/17c" sub/ 2>message &&
+    --	test_must_be_empty message
+    -+		"$here/17c/.git" "$here/17c" "$here/17c" sub/
+    - '
+    - 
+    --test_expect_success '#18: bare .git named by GIT_DIR has no worktree' '
+    -+test_expect_success '#18.1: bare .git named by GIT_DIR has no worktree' '
+    - 	try_repo 18 unset .git unset "" true \
+    - 		.git "(null)" "$here/18" "(null)" \
+    --		../.git "(null)" "$here/18/sub" "(null)" &&
+    -+		../.git "(null)" "$here/18/sub" "(null)"
+    ++test_expect_success 'progress generates traces: start without stop' '
+    ++	cat >in <<-\EOF &&
+    ++	start 0
+    ++	EOF
+    ++
+    ++	GIT_TRACE2_EVENT="$(pwd)/trace-start.event" \
+    ++	LSAN_OPTIONS=detect_leaks=0 \
+    ++	test-tool progress \
+    ++		<in 2>stderr &&
+    ++	grep region_enter.*progress trace-start.event &&
+    ++	! grep region_leave.*progress trace-start.event
+     +'
+     +
+    -+test_expect_success '#18.2: bare .git named by GIT_DIR has no worktree' '
+    - 	try_repo 18b unset "$here/18b/.git" unset "" true \
+    - 		"$here/18b/.git" "(null)" "$here/18b" "(null)" \
+    - 		"$here/18b/.git" "(null)" "$here/18b/sub" "(null)"
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#20a: core.worktree without GIT_DIR accepted (inside .git)'
+    - 	setup_repo 20a "$here/20a" "" unset &&
+    - 	mkdir -p 20a/.git/wt/sub &&
+    - 	try_case 20a/.git unset unset \
+    --		"$here/20a/.git" "$here/20a" "$here/20a" .git/ 2>message &&
+    -+		"$here/20a/.git" "$here/20a" "$here/20a" .git/ &&
+    - 	try_case 20a/.git/wt unset unset \
+    - 		"$here/20a/.git" "$here/20a" "$here/20a" .git/wt/ &&
+    - 	try_case 20a/.git/wt/sub unset unset \
+    --		"$here/20a/.git" "$here/20a" "$here/20a" .git/wt/sub/ &&
+    --	test_must_be_empty message
+    -+		"$here/20a/.git" "$here/20a" "$here/20a" .git/wt/sub/
+    - '
+    - 
+    - test_expect_success '#20b/c: core.worktree and core.bare conflict' '
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#21: setup, core.worktree warns before overriding core.bare
+    - 		cd 21/.git &&
+    - 		GIT_WORK_TREE="$here/21" &&
+    - 		export GIT_WORK_TREE &&
+    --		git status >/dev/null
+    --	) 2>message &&
+    --	test_must_be_empty message
+    --
+    -+		git status 2>message &&
+    -+		test_must_be_empty message
+    -+	)
+    - '
+    - run_wt_tests 21
+    - 
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#24: bare repo has no worktree (gitfile case)' '
+    - test_expect_success '#25: GIT_WORK_TREE accepted if GIT_DIR unset (bare gitfile case)' '
+    - 	try_repo 25 "$here/25" unset unset gitfile true \
+    - 		"$here/25.git" "$here/25" "$here/25" "(null)"  \
+    --		"$here/25.git" "$here/25" "$here/25" "sub/" 2>message &&
+    --	test_must_be_empty message
+    -+		"$here/25.git" "$here/25" "$here/25" "sub/"
+    - '
+    - 
+    --test_expect_success '#26: bare repo has no worktree (GIT_DIR -> gitfile case)' '
+    -+test_expect_success '#26.1: bare repo has no worktree (GIT_DIR -> gitfile case)' '
+    - 	try_repo 26 unset "$here/26/.git" unset gitfile true \
+    - 		"$here/26.git" "(null)" "$here/26" "(null)" \
+    --		"$here/26.git" "(null)" "$here/26/sub" "(null)" &&
+    -+		"$here/26.git" "(null)" "$here/26/sub" "(null)"
+    ++test_expect_success 'progress generates traces: stop without start' '
+    ++	cat >in <<-\EOF &&
+    ++	stop
+    ++	EOF
+    ++
+    ++	GIT_TRACE2_EVENT="$(pwd)/trace-stop.event" test-tool progress \
+    ++		<in 2>stderr &&
+    ++	! grep region_enter.*progress trace-stop.event &&
+    ++	! grep region_leave.*progress trace-stop.event
+     +'
+     +
+    -+test_expect_success '#26.2: bare repo has no worktree (GIT_DIR -> gitfile case)' '
+    - 	try_repo 26b unset .git unset gitfile true \
+    - 		"$here/26b.git" "(null)" "$here/26b" "(null)" \
+    - 		"$here/26b.git" "(null)" "$here/26b/sub" "(null)"
+    -@@ t/t1510-repo-setup.sh: test_expect_success '#29: setup' '
+    - 		cd 29 &&
+    - 		GIT_WORK_TREE="$here/29" &&
+    - 		export GIT_WORK_TREE &&
+    --		git status
+    --	) 2>message &&
+    --	test_must_be_empty message
+    -+		git status 2>message &&
+    -+		test_must_be_empty message
+    -+	)
+    - '
+    - run_wt_tests 29 gitfile
+    - 
+    + test_done
+2:  a7fc794e20d ! 5:  72a31bd7191 test-lib.sh: remove the now-unused "test_untraceable" facility
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib.sh: remove the now-unused "test_untraceable" facility
+    +    progress.c: add temporary variable from progress struct
+     
+    -    In the preceding commit the use of "test_untraceable=UnfortunatelyYes"
+    -    was removed from "t1510-repo-setup.sh" in favor of more narrow
+    -    redirections of the output of specific commands (and not entire
+    -    sub-shells or functions).
+    +    Since 98a13647408 (trace2: log progress time and throughput,
+    +    2020-05-12) stop_progress() dereferences a "struct progress **"
+    +    parameter in several places. Extract a dereferenced variable (like in
+    +    stop_progress_msg()) to reduce clutter and make it clearer who needs
+    +    to write to this parameter.
+     
+    -    This is in line with the fixes in the series that introduced the
+    -    "test_untraceable" facility. See 571e472dc43 (Merge branch
+    -    'sg/test-x', 2018-03-14) for the series as a whole, and
+    -    e.g. 91538d0cde9 (t5570-git-daemon: don't check the stderr of a
+    -    subshell, 2018-02-24) for a commit that's in line with the changes in
+    -    the preceding commit.
+    -
+    -    We've thus solved the TODO item noted when "test_untraceable" was
+    -    added to "t1510-repo-setup.sh" in 58275069288 (t1510-repo-setup: mark
+    -    as untraceable with '-x', 2018-02-24).
+    -
+    -    So let's remove the feature entirely. Not only is it currently unused,
+    -    but it actively encourages an anti-pattern in our tests. We should be
+    -    testing the output of specific commands, not entire subshells or
+    -    functions.
+    -
+    -    That the "-x" output had to be disabled as a result is only one
+    -    symptom, but even under bash those tests will be harder to debug as
+    -    the subsequent check of the redirected file will be far removed from
+    -    the command that emitted the output.
+    +    Now instead of using "*p_progress" several times in stop_progress() we
+    +    check it once for NULL and then use a dereferenced "progress" variable
+    +    thereafter. This continues the same pattern used in the above
+    +    stop_progress() function, see ac900fddb7f (progress: don't dereference
+    +    before checking for NULL, 2020-08-10).
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/README ##
+    -@@ t/README: appropriately before running "make". Short options can be bundled, i.e.
+    - -x::
+    - 	Turn on shell tracing (i.e., `set -x`) during the tests
+    - 	themselves. Implies `--verbose`.
+    --	Ignored in test scripts that set the variable 'test_untraceable'
+    --	to a non-empty value, unless it's run with a Bash version
+    --	supporting BASH_XTRACEFD, i.e. v4.1 or later.
+    + ## progress.c ##
+    +@@ progress.c: static void finish_if_sparse(struct progress *progress)
+      
+    - -d::
+    - --debug::
+    -
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: then
+    - 	exit
+    - fi
+    + void stop_progress(struct progress **p_progress)
+    + {
+    ++	struct progress *progress;
+    + 	if (!p_progress)
+    + 		BUG("don't provide NULL to stop_progress");
+    ++	progress = *p_progress;
+    + 
+    +-	finish_if_sparse(*p_progress);
+    ++	finish_if_sparse(progress);
+      
+    --if test -n "$trace" && test -n "$test_untraceable"
+    --then
+    --	# '-x' tracing requested, but this test script can't be reliably
+    --	# traced, unless it is run with a Bash version supporting
+    --	# BASH_XTRACEFD (introduced in Bash v4.1).
+    --	#
+    --	# Perform this version check _after_ the test script was
+    --	# potentially re-executed with $TEST_SHELL_PATH for '--tee' or
+    --	# '--verbose-log', so the right shell is checked and the
+    --	# warning is issued only once.
+    --	if test -n "$BASH_VERSION" && eval '
+    --	     test ${BASH_VERSINFO[0]} -gt 4 || {
+    --	       test ${BASH_VERSINFO[0]} -eq 4 &&
+    --	       test ${BASH_VERSINFO[1]} -ge 1
+    --	     }
+    --	   '
+    --	then
+    --		: Executed by a Bash version supporting BASH_XTRACEFD.  Good.
+    --	else
+    --		echo >&2 "warning: ignoring -x; '$0' is untraceable without BASH_XTRACEFD"
+    --		trace=
+    --	fi
+    --fi
+    - if test -n "$trace" && test -z "$verbose_log"
+    - then
+    - 	verbose=t
+    -@@ t/test-lib.sh: else
+    - 	exec 4>/dev/null 3>/dev/null
+    - fi
+    +-	if (*p_progress) {
+    ++	if (progress) {
+    + 		trace2_data_intmax("progress", the_repository, "total_objects",
+    +-				   (*p_progress)->total);
+    ++				   progress->total);
+      
+    --# Send any "-x" output directly to stderr to avoid polluting tests
+    --# which capture stderr. We can do this unconditionally since it
+    --# has no effect if tracing isn't turned on.
+    --#
+    --# Note that this sets up the trace fd as soon as we assign the variable, so it
+    --# must come after the creation of descriptor 4 above. Likewise, we must never
+    --# unset this, as it has the side effect of closing descriptor 4, which we
+    --# use to show verbose tests to the user.
+    --#
+    --# Note also that we don't need or want to export it. The tracing is local to
+    --# this shell, and we would not want to influence any shells we exec.
+    --BASH_XTRACEFD=4
+    --
+    - test_failure=0
+    - test_count=0
+    - test_fixed=0
+    -@@ t/test-lib.sh: test_eval_ () {
+    - 	# the shell from printing the "set +x" to turn it off (nor the saving
+    - 	# of $? before that). But we can make sure that the output goes to
+    - 	# /dev/null.
+    --	#
+    --	# There are a few subtleties here:
+    --	#
+    --	#   - we have to redirect descriptor 4 in addition to 2, to cover
+    --	#     BASH_XTRACEFD
+    --	#
+    --	#   - the actual eval has to come before the redirection block (since
+    --	#     it needs to see descriptor 4 to set up its stderr)
+    --	#
+    --	#   - likewise, any error message we print must be outside the block to
+    --	#     access descriptor 4
+    --	#
+    --	#   - checking $? has to come immediately after the eval, but it must
+    --	#     be _inside_ the block to avoid polluting the "set -x" output
+    --	#
+    --
+    --	test_eval_inner_ "$@" </dev/null >&3 2>&4
+    - 	{
+    -+		test_eval_inner_ "$@" </dev/null >&3 2>&4
+    - 		test_eval_ret_=$?
+    - 		if want_trace
+    - 		then
+    - 			test 1 = $trace_level_ && set +x
+    - 			trace_level_=$(($trace_level_-1))
+    --		fi
+    --	} 2>/dev/null 4>&2
+    +-		if ((*p_progress)->throughput)
+    ++		if (progress->throughput)
+    + 			trace2_data_intmax("progress", the_repository,
+    + 					   "total_bytes",
+    +-					   (*p_progress)->throughput->curr_total);
+    ++					   progress->throughput->curr_total);
+      
+    --	if test "$test_eval_ret_" != 0 && want_trace
+    --	then
+    --		say_color error >&4 "error: last command exited with \$?=$test_eval_ret_"
+    --	fi
+    -+			if test "$test_eval_ret_" != 0
+    -+			then
+    -+				say_color error >&4 "error: last command exited with \$?=$test_eval_ret_"
+    -+			fi
+    -+		fi
+    -+	} 2>/dev/null
+    - 	return $test_eval_ret_
+    - }
+    +-		trace2_region_leave("progress", (*p_progress)->title, the_repository);
+    ++		trace2_region_leave("progress", progress->title, the_repository);
+    + 	}
+      
+    + 	stop_progress_msg(p_progress, _("done"));
+-:  ----------- > 6:  0bd08e1b018 pack-bitmap-write.c: don't return without stop_progress()
+-:  ----------- > 7:  060483fb5ce *.c: use isatty(0|2), not isatty(STDIN_FILENO|STDERR_FILENO)
+-- 
+2.34.1.1257.g2af47340c7b
+
