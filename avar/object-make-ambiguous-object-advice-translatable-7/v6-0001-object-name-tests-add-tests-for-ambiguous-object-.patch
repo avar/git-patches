@@ -1,0 +1,137 @@
+From 27f267ad555d52da0b39cc10e2783ba13418e43b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-1.6-27f267ad555-20211228T142722Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-0.6-00000000000-20211228T142722Z-avarab@gmail.com>
+References: <cover-v5-0.6-00000000000-20211125T215529Z-avarab@gmail.com>
+	<cover-v6-0.6-00000000000-20211228T142722Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 24 Nov 2021 12:18:06 +0100
+Subject: [PATCH v6 1/6] object-name tests: add tests for ambiguous object
+ blind spots
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the tests for ambiguous objects to check how we handle objects
+where we return OBJ_BAD when trying to parse them. As noted in [1] we
+have a blindspot when it comes to this behavior.
+
+Since we need to add new test data here let's extend these tests to be
+tested under SHA-256, in d7a2fc82491 (t1512: skip test if not using
+SHA-1, 2018-05-13) all of the existing tests were skipped, as they
+rely on specific SHA-1 object IDs.
+
+For these tests it only matters that the first 4 characters of the OID
+prefix are the same for both SHA-1 and SHA-256. This uses strings that
+I mined, and have the same prefix when hashed with both.
+
+We "test_cmp" the full output to guard against any future regressions,
+and because a subsequent commit will tweak it. Showing a diff of how
+the output changes is helpful to explain those subsequent commits.
+
+1. https://lore.kernel.org/git/YZwbphPpfGk78w2f@coredump.intra.peff.net/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1512-rev-parse-disambiguation.sh | 85 +++++++++++++++++++++++++++++
+ 1 file changed, 85 insertions(+)
+
+diff --git a/t/t1512-rev-parse-disambiguation.sh b/t/t1512-rev-parse-disambiguation.sh
+index 7891a6becf3..60d2a457067 100755
+--- a/t/t1512-rev-parse-disambiguation.sh
++++ b/t/t1512-rev-parse-disambiguation.sh
+@@ -25,6 +25,91 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
+ . ./test-lib.sh
+ 
++test_cmp_failed_rev_parse () {
++	dir=$1
++	rev=$2
++	shift
++
++	test_must_fail git -C "$dir" rev-parse "$rev" 2>actual.raw &&
++	sed "s/\($rev\)[0-9a-f]*/\1.../g" <actual.raw >actual &&
++	test_cmp expect actual
++}
++
++test_expect_success 'ambiguous blob output' '
++	git init --bare blob.prefix &&
++	(
++		cd blob.prefix &&
++
++		# Both start with "dead..", under both SHA-1 and SHA-256
++		echo brocdnra | git hash-object -w --stdin &&
++		echo brigddsv | git hash-object -w --stdin &&
++
++		# Both start with "beef.."
++		echo 1agllotbh | git hash-object -w --stdin &&
++		echo 1bbfctrkc | git hash-object -w --stdin
++	) &&
++
++	test_must_fail git -C blob.prefix rev-parse dead &&
++	cat >expect <<-\EOF &&
++	error: short object ID beef... is ambiguous
++	hint: The candidates are:
++	hint:   beef... blob
++	hint:   beef... blob
++	fatal: ambiguous argument '\''beef...'\'': unknown revision or path not in the working tree.
++	Use '\''--'\'' to separate paths from revisions, like this:
++	'\''git <command> [<revision>...] -- [<file>...]'\''
++	EOF
++	test_cmp_failed_rev_parse blob.prefix beef
++'
++
++test_expect_success 'ambiguous loose blob parsed as OBJ_BAD' '
++	git init --bare blob.bad &&
++	(
++		cd blob.bad &&
++
++		# Both have the prefix "bad0"
++		echo xyzfaowcoh | git hash-object -t bad -w --stdin --literally &&
++		echo xyzhjpyvwl | git hash-object -t bad -w --stdin --literally
++	) &&
++
++	cat >expect <<-\EOF &&
++	error: short object ID bad0... is ambiguous
++	hint: The candidates are:
++	fatal: invalid object type
++	EOF
++	test_cmp_failed_rev_parse blob.bad bad0
++'
++
++test_expect_success POSIXPERM 'ambigous zlib corrupt loose blob' '
++	git init --bare blob.corrupt &&
++	(
++		cd blob.corrupt &&
++
++		# Both have the prefix "cafe"
++		echo bnkxmdwz | git hash-object -w --stdin &&
++		oid=$(echo bmwsjxzi | git hash-object -w --stdin) &&
++
++		oidf=objects/$(test_oid_to_path "$oid") &&
++		chmod 755 $oidf &&
++		echo broken >$oidf
++	) &&
++
++	cat >expect <<-\EOF &&
++	error: short object ID cafe... is ambiguous
++	hint: The candidates are:
++	error: inflate: data stream error (incorrect header check)
++	error: unable to unpack cafe... header
++	error: inflate: data stream error (incorrect header check)
++	error: unable to unpack cafe... header
++	hint:   cafe... unknown type
++	hint:   cafe... blob
++	fatal: ambiguous argument '\''cafe...'\'': unknown revision or path not in the working tree.
++	Use '\''--'\'' to separate paths from revisions, like this:
++	'\''git <command> [<revision>...] -- [<file>...]'\''
++	EOF
++	test_cmp_failed_rev_parse blob.corrupt cafe
++'
++
+ if ! test_have_prereq SHA1
+ then
+ 	skip_all='not using SHA-1 for objects'
+-- 
+2.34.1.1257.g2af47340c7b
+
