@@ -1,0 +1,94 @@
+From 08fd12fe7b451dd3b00ea18e8bc56eaf4bcc1ef5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-7.7-08fd12fe7b4-20211228T152913Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20211228T152913Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20211228T152913Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 22 Dec 2021 00:12:51 +0100
+Subject: [PATCH 7/7] help: don't print "\n" before single-section output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a formatting regression in 1b81d8cb19d (help: use command-list.txt
+for the source of guides, 2018-05-20). Adjust the output of "git help
+--guides" and any other future single-section commands so that a
+newline isn't inserted before the only section being printed.
+
+This changes the output from:
+
+    $ git help --guides
+
+    The Git concept guides are:
+    [...]
+
+To:
+
+    $ git help --guides
+    The Git concept guides are:
+    [...]
+
+That we started printing an extra "\n" in 1b81d8cb19d wasn't intended,
+but an emergent effect of moving all of the printing of "git help"
+output to code that was ready to handle printing N sections.
+
+With 1b81d8cb19d we started using the "print_cmd_by_category()"
+function added earlier in the same series, or in cfb22a02ab5 (help:
+use command-list.h for common command list, 2018-05-10).
+
+Fixing this formatting nit is easy enough. Let's have all of the
+output that would like to be "\n"-separated from other lines emit its
+own "\n". We then adjust "print_cmd_by_category()" to only print a
+"\n" to delimit the sections it's printing out.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ help.c          | 5 ++++-
+ t/t0012-help.sh | 1 -
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/help.c b/help.c
+index 2296f06ad9f..30be45cea59 100644
+--- a/help.c
++++ b/help.c
+@@ -124,7 +124,8 @@ static void print_cmd_by_category(const struct category_description *catdesc,
+ 		uint32_t mask = catdesc[i].category;
+ 		const char *desc = catdesc[i].desc;
+ 
+-		putchar('\n');
++		if (i)
++			putchar('\n');
+ 		puts(_(desc));
+ 		print_command_list(cmds, mask, longest);
+ 	}
+@@ -328,6 +329,7 @@ void list_commands(struct cmdnames *main_cmds, struct cmdnames *other_cmds)
+ void list_common_cmds_help(void)
+ {
+ 	puts(_("These are common Git commands used in various situations:"));
++	putchar('\n');
+ 	print_cmd_by_category(common_categories, NULL);
+ }
+ 
+@@ -481,6 +483,7 @@ void list_all_cmds_help(int show_external_commands, int show_aliases)
+ 	int longest;
+ 
+ 	puts(_("See 'git help <command>' to read about a specific subcommand"));
++	putchar('\n');
+ 	print_cmd_by_category(main_categories, &longest);
+ 
+ 	if (show_external_commands)
+diff --git a/t/t0012-help.sh b/t/t0012-help.sh
+index c41b412e34a..aae01f15229 100755
+--- a/t/t0012-help.sh
++++ b/t/t0012-help.sh
+@@ -223,7 +223,6 @@ test_expect_success "'git help -a' section spacing" '
+ 
+ test_expect_success "'git help -g' section spacing" '
+ 	test_section_spacing_trailer git help -g <<-\EOF &&
+-
+ 	The Git concept guides are:
+ 
+ 	EOF
+-- 
+2.34.1.1257.g2af47340c7b
+

@@ -1,0 +1,130 @@
+From 12ff152bd5776db8aa15e49679be6184db526cbc Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.7-12ff152bd57-20211228T152913Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20211228T152913Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20211228T152913Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 22 Dec 2021 03:03:32 +0100
+Subject: [PATCH 5/7] help: error if [-a|-g|-c] and [-i|-m|-w] are combined
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add more sanity checking to "git help" usage by erroring out if these
+man viewer options are combined with incompatible command-modes that
+will never use these documentation viewers.
+
+This continues the work started in d35d03cf93e (help: simplify by
+moving to OPT_CMDMODE(), 2021-09-22) of adding more sanity checking to
+"git help". Doing this allows us to clarify the "SYNOPSIS" in the
+documentation, and the "git help -h" output.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-help.txt |  2 +-
+ builtin/help.c             | 20 ++++++++++++++++++--
+ t/t0012-help.sh            | 10 ++++++++++
+ 3 files changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/git-help.txt b/Documentation/git-help.txt
+index cf1d53e9499..61d52d30f6c 100644
+--- a/Documentation/git-help.txt
++++ b/Documentation/git-help.txt
+@@ -9,7 +9,7 @@ SYNOPSIS
+ --------
+ [verse]
+ 'git help' [-a|--all] [--[no-]verbose]
+-	   [[-i|--info] [-m|--man] [-w|--web]] [<command>|<guide>]
++'git help' [[-i|--info] [-m|--man] [-w|--web]] [<command>|<guide>]
+ 'git help' [-g|--guides]
+ 'git help' [-c|--config]
+ 
+diff --git a/builtin/help.c b/builtin/help.c
+index d387131dd83..125f50f1bb0 100644
+--- a/builtin/help.c
++++ b/builtin/help.c
+@@ -75,8 +75,8 @@ static struct option builtin_help_options[] = {
+ };
+ 
+ static const char * const builtin_help_usage[] = {
+-	N_("git help [-a|--all] [--[no-]verbose]]\n"
+-	   "         [[-i|--info] [-m|--man] [-w|--web]] [<command>]"),
++	N_("git help [-a|--all] [--[no-]verbose]]"),
++	N_("git help [[-i|--info] [-m|--man] [-w|--web]] [<command>]"),
+ 	N_("git help [-g|--guides]"),
+ 	N_("git help [-c|--config]"),
+ 	NULL
+@@ -581,6 +581,13 @@ static void no_extra_argc(int argc)
+ 			      builtin_help_usage, builtin_help_options);
+ }
+ 
++static void no_format(void)
++{
++	if (help_format != HELP_FORMAT_NONE)
++		usage_msg_opt(_("[-a|--all] cannot be combined with [[-i|--info] [-m|--man] [-w|--web]]"),
++			      builtin_help_usage, builtin_help_options);
++}
++
+ int cmd_help(int argc, const char **argv, const char *prefix)
+ {
+ 	int nongit;
+@@ -593,6 +600,7 @@ int cmd_help(int argc, const char **argv, const char *prefix)
+ 
+ 	switch (cmd_mode) {
+ 	case HELP_ACTION_ALL:
++		no_format();
+ 		if (verbose) {
+ 			setup_pager();
+ 			list_all_cmds_help();
+@@ -605,19 +613,27 @@ int cmd_help(int argc, const char **argv, const char *prefix)
+ 		break;
+ 	case HELP_ACTION_GUIDES:
+ 		no_extra_argc(argc);
++		no_format();
++
+ 		list_guides_help();
+ 		printf("%s\n", _(git_more_info_string));
+ 		return 0;
+ 	case HELP_ACTION_CONFIG_FOR_COMPLETION:
+ 		no_extra_argc(argc);
++		no_format();
++
+ 		list_config_help(SHOW_CONFIG_VARS);
+ 		return 0;
+ 	case HELP_ACTION_CONFIG_SECTIONS_FOR_COMPLETION:
+ 		no_extra_argc(argc);
++		no_format();
++
+ 		list_config_help(SHOW_CONFIG_SECTIONS);
+ 		return 0;
+ 	case HELP_ACTION_CONFIG:
+ 		no_extra_argc(argc);
++		no_format();
++
+ 		setup_pager();
+ 		list_config_help(SHOW_CONFIG_HUMAN);
+ 		printf("\n%s\n", _("'git help config' for more information"));
+diff --git a/t/t0012-help.sh b/t/t0012-help.sh
+index 6ac293c19ed..a8c603abd44 100755
+--- a/t/t0012-help.sh
++++ b/t/t0012-help.sh
+@@ -46,6 +46,16 @@ test_expect_success 'invalid usage' '
+ 	test_expect_code 129 git help --config-sections-for-completion add
+ '
+ 
++for opt in '-a' '-g' '-c' '--config-for-completion' '--config-sections-for-completion'
++do
++	test_expect_success "invalid usage of '$opt' with [-i|-m|-w]" '
++		git help $opt &&
++		test_expect_code 129 git help $opt -i &&
++		test_expect_code 129 git help $opt -m &&
++		test_expect_code 129 git help $opt -w
++	'
++done
++
+ test_expect_success "works for commands and guides by default" '
+ 	configure_help &&
+ 	git help status &&
+-- 
+2.34.1.1257.g2af47340c7b
+
