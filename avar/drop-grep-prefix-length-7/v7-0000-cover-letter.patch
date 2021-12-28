@@ -1,0 +1,321 @@
+From f88b79cf93584880ed6236482ee3c9f01e9a90a4 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v7-00.10-00000000000-20211228T003730Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-0.7-00000000000-20211226T223035Z-avarab@gmail.com>
+References: <cover-v6-0.7-00000000000-20211226T223035Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 28 Dec 2021 01:37:30 +0100
+Subject: [PATCH v7 00/10] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (10):
+  grep.h: remove unused "regex_t regexp" from grep_opt
+  log tests: check if grep_config() is called by "log"-like cmds
+  grep tests: add missing "grep.patternType" config tests
+  built-ins: trust the "prefix" from run_builtin()
+  grep.c: don't pass along NULL callback value
+  grep API: call grep_config() after grep_init()
+  grep.h: make "grep_opt.pattern_type_option" use its enum
+  grep.c: do "if (bool && memchr())" not "if (memchr() && bool)"
+  grep: simplify config parsing and option parsing
+  grep.[ch]: remove GREP_PATTERN_TYPE_UNSPECIFIED
+
+ builtin/grep.c    |  27 +++++-----
+ builtin/log.c     |  13 ++++-
+ builtin/ls-tree.c |   2 +-
+ git.c             |   1 +
+ grep.c            | 126 +++++++++-------------------------------------
+ grep.h            |  34 +++++++++----
+ revision.c        |   4 +-
+ t/t4202-log.sh    |  24 +++++++++
+ t/t7810-grep.sh   |  68 +++++++++++++++++++++++++
+ 9 files changed, 168 insertions(+), 131 deletions(-)
+
+Range-diff against v6:
+ -:  ----------- >  1:  b62e6b6162a grep.h: remove unused "regex_t regexp" from grep_opt
+ -:  ----------- >  2:  0edcdb50afd log tests: check if grep_config() is called by "log"-like cmds
+ 1:  1b724d5e2e9 !  3:  00dc9139e24 grep tests: add missing "grep.patternType" config tests
+    @@ t/t7810-grep.sh: do
+     +		test_cmp expected actual
+     +	'
+     +
+    ++	test_expect_success "grep $L with grep.extendedRegexp and grep.patternType are both last-one-wins independently" '
+    ++		echo "${HC}ab:abc" >expected &&
+    ++		git \
+    ++			-c grep.patternType=fixed \
+    ++			-c grep.extendedRegexp=true \
+    ++			-c grep.patternType=default \
+    ++			grep "a+b*c" $H ab >actual &&
+    ++		test_cmp expected actual
+    ++	'
+    ++
+    ++	test_expect_success "grep $L with grep.extendedRegexp and grep.patternType are both last-one-wins independently" '
+    ++		echo "${HC}ab:a+bc" >expected &&
+    ++		git \
+    ++			-c grep.patternType=default \
+    ++			-c grep.extendedRegexp=true \
+    ++			-c grep.patternType=basic \
+    ++			grep "a+b*c" $H ab >actual &&
+    ++		test_cmp expected actual
+    ++	'
+    ++
+     +	test_expect_success "grep $L with grep.patternType=extended and grep.patternType=default" '
+     +		echo "${HC}ab:a+bc" >expected &&
+     +		git \
+    @@ t/t7810-grep.sh: do
+      	test_expect_success "grep $L with grep.patternType=extended and grep.extendedRegexp=false" '
+      		echo "${HC}ab:abc" >expected &&
+      		git \
+    +@@ t/t7810-grep.sh: do
+    + 		test_cmp expected actual
+    + 	'
+    + 
+    ++	test_expect_success "grep $L with grep.extendedRegexp=false and grep.patternType=default" '
+    ++		echo "${HC}ab:abc" >expected &&
+    ++		git \
+    ++			-c grep.extendedRegexp=false \
+    ++			-c grep.patternType=extended \
+    ++			grep "a+b*c" $H ab >actual &&
+    ++		test_cmp expected actual
+    ++	'
+    ++
+    + 	test_expect_success "grep $L with grep.extendedRegexp=true and grep.patternType=basic" '
+    + 		echo "${HC}ab:a+bc" >expected &&
+    + 		git \
+ 2:  f4876552771 =  4:  4607079b73b built-ins: trust the "prefix" from run_builtin()
+ 3:  069b0339146 =  5:  6d4d3c659ec grep.c: don't pass along NULL callback value
+ 4:  e38eca56959 =  6:  856f8d7ca48 grep API: call grep_config() after grep_init()
+ -:  ----------- >  7:  00fee205ab7 grep.h: make "grep_opt.pattern_type_option" use its enum
+ -:  ----------- >  8:  f64e8865439 grep.c: do "if (bool && memchr())" not "if (memchr() && bool)"
+ 5:  88dfd40bf9e !  9:  dc8df7c0041 grep: simplify config parsing and option parsing
+    @@ Commit message
+         grep_init(), which means that much of the complexity here can go
+         away.
+     
+    -    As before "grep.extendedRegexp" is a last-one-wins variable. We need
+    -    to maintain state inside parse_pattern_type_arg() to ignore it if a
+    -    non-"default" grep.patternType was seen, but otherwise flip between
+    -    BRE and ERE for "grep.extendedRegexp=[false|true]".
+    +    As before both "grep.patternType" and "grep.extendedRegexp" are
+    +    last-one-wins variable, with "grep.extendedRegexp" yielding to
+    +    "grep.patternType", except when "grep.patternType=default".
+    +
+    +    Note that this applies as we parse the config, i.e. a sequence of:
+    +
+    +        -c grep.patternType=perl
+    +        -c grep.extendedRegexp=true \
+    +        -c grep.patternType=default
+    +
+    +    Should select ERE due to "grep.extendedRegexp=true and
+    +    grep.extendedRegexp=default", not BRE, even though that's the
+    +    "default" patternType. We can determine this as we parse the config,
+    +    because:
+    +
+    +     * If we see "grep.extendedRegexp" we set the internal "ero" to its
+    +       boolean value.
+    +
+    +     * If we see "grep.extendedRegexp" but
+    +       "grep.patternType=[default|<unset>]" is in effect we *don't* set
+    +       the internal "pattern_type_option" to update the pattern type.
+    +
+    +     * If we see "grep.patternType!=default" we can set our internal
+    +       "pattern_type_option" directly, it doesn't matter what the state of
+    +       "grep.extendedRegexp" is, but we don't forget what it was, in case
+    +       we see a "grep.patternType=default" again.
+    +
+    +     * If we see a "grep.patternType=default" we can set the pattern to
+    +       ERE or BRE depending on whether we last saw a
+    +       "grep.extendedRegexp=true" or
+    +       "grep.extendedRegexp=[false|<unset>]".
+    +
+    +    We could equally call this new adjust_pattern_type() in
+    +    compile_regexp(), i.e. this fixup on top of this passes all our
+    +    tests (with -U0 for brevity):
+    +
+    +        @@ -60,0 +61 @@ static void adjust_pattern_type(enum grep_pattern_type *pto, const int ero)
+    +        +static int ero = -1;
+    +        @@ -65 +65,0 @@ int grep_config(const char *var, const char *value, void *cb)
+    +        -       static int ero = -1;
+    +        @@ -72 +71,0 @@ int grep_config(const char *var, const char *value, void *cb)
+    +        -               adjust_pattern_type(&opt->pattern_type_option, ero);
+    +        @@ -80 +78,0 @@ int grep_config(const char *var, const char *value, void *cb)
+    +        -               adjust_pattern_type(&opt->pattern_type_option, ero);
+    +        @@ -445,0 +444,2 @@ static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+    +        +       if (ero != -1)
+    +        +               adjust_pattern_type(&opt->pattern_type_option, ero);
+    +
+    +    But doing it as we stream the git_config() makes it
+    +    clear that we can determine the interplay between these two variables
+    +    as we go. We don't need to wait until we see the last value of the two
+    +    configuration variables.
+    +
+    +    This is true because of the rationale above, and because the
+    +    subsequent code in compile_regexp() treats
+    +    "pattern_type_option=GREP_PATTERN_TYPE_{UNSPECIFIED,BRE}"
+    +    equally. I.e. we'll end up with different internal
+    +    ""pattern_type_option" values there for:
+    +
+    +        # UNSPECIFIED
+    +        -c grep.patternType=default
+    +        # BRE
+    +        -c grep.extendedRegexp=false -c grep.patternType=default
+    +
+    +    But the difference won't matter, which simplifies some of this logic,
+    +    we never need to adjust a "grep.patternType" if we didn't see a
+    +    "grep.extendedRegexp" before. We can also remove the
+    +    "extended_regexp_option" member from "struct grep_opt" in favor of a
+    +    static variable in grep_config().
+    +
+    +    The command-line parsing in cmd_grep() can then completely ignore
+    +    "grep.extendedRegexp". Whatever effect it had before that step won't
+    +    matter if we see -G, -E, -P etc.
+     
+         See my 07a3d411739 (grep: remove regflags from the public grep_opt
+         API, 2017-06-29) for addition of the two comments being removed here,
+         i.e. the complexity noted in that commit is now going away.
+     
+    -    We don't need grep_commit_pattern_type() anymore, we can instead have
+    -    OPT_SET_INT() in "builtin/grep.c" manipulate the "pattern_type_option"
+    -    member in "struct grep_opt" directly.
+    -
+    -    We can also do away with the indirection of the "int fixed" and "int
+    -    pcre2" members in favor of using "pattern_type_option" directly in
+    -    "grep.c".
+    -
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/grep.c ##
+    @@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+      		int fallback = 0;
+     
+      ## grep.c ##
+    -@@ grep.c: static const char *color_grep_slots[] = {
+    +@@ grep.c: static int parse_pattern_type_arg(const char *opt, const char *arg)
+      
+    - static int parse_pattern_type_arg(const char *opt, const char *arg)
+    - {
+    --	if (!strcmp(arg, "default"))
+    --		return GREP_PATTERN_TYPE_UNSPECIFIED;
+    --	else if (!strcmp(arg, "basic"))
+    -+	if (!strcmp(arg, "basic"))
+    - 		return GREP_PATTERN_TYPE_BRE;
+    - 	else if (!strcmp(arg, "extended"))
+    - 		return GREP_PATTERN_TYPE_ERE;
+    + define_list_config_array_extra(color_grep_slots, {"match"});
+    + 
+    ++static void adjust_pattern_type(enum grep_pattern_type *pto, const int ero)
+    ++{
+    ++	if (*pto == GREP_PATTERN_TYPE_UNSPECIFIED)
+    ++		*pto = ero ? GREP_PATTERN_TYPE_ERE : GREP_PATTERN_TYPE_BRE;
+    ++}
+    ++
+    + /*
+    +  * Read the configuration file once and store it in
+    +  * the grep_defaults template.
+     @@ grep.c: int grep_config(const char *var, const char *value, void *cb)
+    + {
+    + 	struct grep_opt *opt = cb;
+    + 	const char *slot;
+    ++	static int ero = -1;
+    + 
+    + 	if (userdiff_config(var, value) < 0)
+      		return -1;
+      
+      	if (!strcmp(var, "grep.extendedregexp")) {
+    -+		if (opt->extended_regexp_option == -1)
+    -+			return 0;
+    - 		opt->extended_regexp_option = git_config_bool(var, value);
+    -+		if (opt->extended_regexp_option)
+    -+			opt->pattern_type_option = GREP_PATTERN_TYPE_ERE;
+    -+		else
+    -+			opt->pattern_type_option = GREP_PATTERN_TYPE_BRE;
+    -+		return 0;
+    -+	}
+    -+
+    -+	if (!strcmp(var, "grep.patterntype") &&
+    -+	    !strcmp(value, "default")) {
+    -+		opt->pattern_type_option = opt->extended_regexp_option == 1
+    -+			? GREP_PATTERN_TYPE_ERE : GREP_PATTERN_TYPE_BRE;
+    +-		opt->extended_regexp_option = git_config_bool(var, value);
+    ++		ero = git_config_bool(var, value);
+    ++		adjust_pattern_type(&opt->pattern_type_option, ero);
+      		return 0;
+      	}
+      
+      	if (!strcmp(var, "grep.patterntype")) {
+    -+		opt->extended_regexp_option = -1; /* ignore */
+      		opt->pattern_type_option = parse_pattern_type_arg(var, value);
+    ++		if (ero == -1)
+    ++			return 0;
+    ++		adjust_pattern_type(&opt->pattern_type_option, ero);
+      		return 0;
+      	}
+    + 
+     @@ grep.c: void grep_init(struct grep_opt *opt, struct repository *repo)
+      	opt->header_tail = &opt->header_list;
+      }
+    @@ grep.c: static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+     -	p->fixed = opt->fixed;
+     +	p->fixed = opt->pattern_type_option == GREP_PATTERN_TYPE_FIXED;
+      
+    --	if (memchr(p->pattern, 0, p->patternlen) && !opt->pcre2)
+    +-	if (!opt->pcre2 &&
+     +	if (opt->pattern_type_option != GREP_PATTERN_TYPE_PCRE &&
+    -+	    memchr(p->pattern, 0, p->patternlen))
+    + 	    memchr(p->pattern, 0, p->patternlen))
+      		die(_("given pattern contains NULL byte (via -f <file>). This is only supported with -P under PCRE v2"));
+      
+    - 	p->is_fixed = is_fixed(p->pattern, p->patternlen);
+     @@ grep.c: static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+      		return;
+      	}
+    @@ grep.c: static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+      	if (err) {
+     
+      ## grep.h ##
+    -@@ grep.h: enum grep_expr_node {
+    - };
+    - 
+    - enum grep_pattern_type {
+    --	GREP_PATTERN_TYPE_UNSPECIFIED = 0,
+    --	GREP_PATTERN_TYPE_BRE,
+    -+	GREP_PATTERN_TYPE_BRE = 0,
+    - 	GREP_PATTERN_TYPE_ERE,
+    - 	GREP_PATTERN_TYPE_FIXED,
+    - 	GREP_PATTERN_TYPE_PCRE
+     @@ grep.h: struct grep_opt {
+      	int unmatch_name_only;
+      	int count;
+    @@ grep.h: struct grep_opt {
+      	int pathname;
+      	int null_following_name;
+     @@ grep.h: struct grep_opt {
+    + 	int max_depth;
+      	int funcname;
+      	int funcbody;
+    - 	int extended_regexp_option;
+    --	int pattern_type_option;
+    -+	enum grep_pattern_type pattern_type_option;
+    +-	int extended_regexp_option;
+    + 	enum grep_pattern_type pattern_type_option;
+      	int ignore_locale;
+      	char colors[NR_GREP_COLORS][COLOR_MAXLEN];
+    - 	unsigned pre_context;
+    -@@ grep.h: struct grep_opt {
+    - 	.relative = 1, \
+    - 	.pathname = 1, \
+    - 	.max_depth = -1, \
+    --	.pattern_type_option = GREP_PATTERN_TYPE_UNSPECIFIED, \
+    - 	.colors = { \
+    - 		[GREP_COLOR_CONTEXT] = "", \
+    - 		[GREP_COLOR_FILENAME] = "", \
+     @@ grep.h: struct grep_opt {
+      
+      int grep_config(const char *var, const char *value, void *);
+ -:  ----------- > 10:  f88b79cf935 grep.[ch]: remove GREP_PATTERN_TYPE_UNSPECIFIED
+-- 
+2.34.1.1250.g6a242c1e9ad
+
