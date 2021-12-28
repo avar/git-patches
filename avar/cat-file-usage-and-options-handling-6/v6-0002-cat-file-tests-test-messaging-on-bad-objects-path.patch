@@ -1,0 +1,89 @@
+From 026225928030205841e2f5e846e314456b2d26ba Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-02.10-02622592803-20211228T132637Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.10-00000000000-20211228T132637Z-avarab@gmail.com>
+References: <cover-v5-00.10-00000000000-20211222T041050Z-avarab@gmail.com>
+	<cover-v6-00.10-00000000000-20211228T132637Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 9 Oct 2021 11:17:52 +0200
+Subject: [PATCH v6 02/10] cat-file tests: test messaging on bad objects/paths
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests for the output that's emitted when we disambiguate
+<obj>:<path> in cat-file. This gives us a baseline for improving these
+messages.
+
+For e.g. "git blame" we'll emit:
+
+    $ git blame HEAD:foo
+    fatal: no such path 'HEAD:foo' in HEAD
+
+But cat-file doesn't disambiguate these two cases, and just gives the
+rather unhelpful:
+
+    $ git cat-file --textconv HEAD:foo
+    fatal: Not a valid object name HEAD:foo
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t8007-cat-file-textconv.sh | 42 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+
+diff --git a/t/t8007-cat-file-textconv.sh b/t/t8007-cat-file-textconv.sh
+index eacd49ade63..71ea2ac987e 100755
+--- a/t/t8007-cat-file-textconv.sh
++++ b/t/t8007-cat-file-textconv.sh
+@@ -19,6 +19,48 @@ test_expect_success 'setup ' '
+ 	GIT_AUTHOR_NAME=Number2 git commit -a -m Second --date="2010-01-01 20:00:00"
+ '
+ 
++test_expect_success 'usage: <bad rev>' '
++	cat >expect <<-\EOF &&
++	fatal: Not a valid object name HEAD2
++	EOF
++	test_must_fail git cat-file --textconv HEAD2 2>actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'usage: <bad rev>:<bad path>' '
++	cat >expect <<-\EOF &&
++	fatal: Not a valid object name HEAD2:two.bin
++	EOF
++	test_must_fail git cat-file --textconv HEAD2:two.bin 2>actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'usage: <rev>:<bad path>' '
++	cat >expect <<-\EOF &&
++	fatal: Not a valid object name HEAD:two.bin
++	EOF
++	test_must_fail git cat-file --textconv HEAD:two.bin 2>actual &&
++	test_cmp expect actual
++'
++
++
++test_expect_success 'usage: <rev> with no <path>' '
++	cat >expect <<-\EOF &&
++	fatal: git cat-file --textconv HEAD: <object> must be <sha1:path>
++	EOF
++	test_must_fail git cat-file --textconv HEAD 2>actual &&
++	test_cmp expect actual
++'
++
++
++test_expect_success 'usage: <bad rev>:<good (in HEAD) path>' '
++	cat >expect <<-\EOF &&
++	fatal: Not a valid object name HEAD2:one.bin
++	EOF
++	test_must_fail git cat-file --textconv HEAD2:one.bin 2>actual &&
++	test_cmp expect actual
++'
++
+ cat >expected <<EOF
+ bin: test version 2
+ EOF
+-- 
+2.34.1.1257.g2af47340c7b
+
