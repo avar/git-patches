@@ -1,0 +1,216 @@
+From bf226f67099f8f054d120b078a5b1387c15f5fbf Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v7-0.6-00000000000-20220111T130811Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-0.6-00000000000-20211228T143223Z-avarab@gmail.com>
+References: <cover-v6-0.6-00000000000-20211228T143223Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 11 Jan 2022 14:08:11 +0100
+Subject: [PATCH v7 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (6):
+  object-name tests: add tests for ambiguous object blind spots
+  object-name: explicitly handle OBJ_BAD in show_ambiguous_object()
+  object-name: make ambiguous object output translatable
+  object-name: show date for ambiguous tag objects
+  object-name: iterate ambiguous objects before showing header
+  object-name: re-use "struct strbuf" in show_ambiguous_object()
+
+ object-name.c                       | 113 +++++++++++++++++++++++++---
+ t/t1512-rev-parse-disambiguation.sh |  78 +++++++++++++++++++
+ 2 files changed, 179 insertions(+), 12 deletions(-)
+
+Range-diff against v6:
+1:  27f267ad555 ! 1:  28c01b7f8a5 object-name tests: add tests for ambiguous object blind spots
+    @@ t/t1512-rev-parse-disambiguation.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+      . ./test-lib.sh
+      
+     +test_cmp_failed_rev_parse () {
+    -+	dir=$1
+    -+	rev=$2
+    -+	shift
+    -+
+    -+	test_must_fail git -C "$dir" rev-parse "$rev" 2>actual.raw &&
+    -+	sed "s/\($rev\)[0-9a-f]*/\1.../g" <actual.raw >actual &&
+    ++	cat >expect &&
+    ++	test_must_fail git -C "$1" rev-parse "$2" 2>actual.raw &&
+    ++	sed "s/\($2\)[0-9a-f]*/\1.../" <actual.raw >actual &&
+     +	test_cmp expect actual
+     +}
+     +
+    @@ t/t1512-rev-parse-disambiguation.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+     +	) &&
+     +
+     +	test_must_fail git -C blob.prefix rev-parse dead &&
+    -+	cat >expect <<-\EOF &&
+    ++	test_cmp_failed_rev_parse blob.prefix beef <<-\EOF
+     +	error: short object ID beef... is ambiguous
+     +	hint: The candidates are:
+     +	hint:   beef... blob
+    @@ t/t1512-rev-parse-disambiguation.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+     +	Use '\''--'\'' to separate paths from revisions, like this:
+     +	'\''git <command> [<revision>...] -- [<file>...]'\''
+     +	EOF
+    -+	test_cmp_failed_rev_parse blob.prefix beef
+     +'
+     +
+    -+test_expect_success 'ambiguous loose blob parsed as OBJ_BAD' '
+    ++test_expect_success 'ambiguous loose bad object parsed as OBJ_BAD' '
+     +	git init --bare blob.bad &&
+     +	(
+     +		cd blob.bad &&
+    @@ t/t1512-rev-parse-disambiguation.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+     +		echo xyzhjpyvwl | git hash-object -t bad -w --stdin --literally
+     +	) &&
+     +
+    -+	cat >expect <<-\EOF &&
+    ++	test_cmp_failed_rev_parse blob.bad bad0 <<-\EOF
+     +	error: short object ID bad0... is ambiguous
+     +	hint: The candidates are:
+     +	fatal: invalid object type
+     +	EOF
+    -+	test_cmp_failed_rev_parse blob.bad bad0
+     +'
+     +
+     +test_expect_success POSIXPERM 'ambigous zlib corrupt loose blob' '
+    @@ t/t1512-rev-parse-disambiguation.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+     +		echo broken >$oidf
+     +	) &&
+     +
+    -+	cat >expect <<-\EOF &&
+    ++	test_cmp_failed_rev_parse blob.corrupt cafe <<-\EOF
+     +	error: short object ID cafe... is ambiguous
+     +	hint: The candidates are:
+     +	error: inflate: data stream error (incorrect header check)
+    @@ t/t1512-rev-parse-disambiguation.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+     +	Use '\''--'\'' to separate paths from revisions, like this:
+     +	'\''git <command> [<revision>...] -- [<file>...]'\''
+     +	EOF
+    -+	test_cmp_failed_rev_parse blob.corrupt cafe
+     +'
+     +
+      if ! test_have_prereq SHA1
+2:  c78243dc701 = 2:  b7027dfc843 object-name: explicitly handle OBJ_BAD in show_ambiguous_object()
+3:  daebc95542c ! 3:  65801f2c890 object-name: make ambiguous object output translatable
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+     +		 *    "deadbeef tag Some Tag Message"
+     +		 *
+     +		 * The second argument is the "tag" string from
+    -+		 * object.c, it should (hopefully) already be
+    -+		 * translated.
+    ++		 * object.c.
+     +		 */
+     +		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
+     +	} else if (type == OBJ_TREE) {
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+     -	       desc.buf);
+     +	/*
+     +	 * TRANSLATORS: This is line item of ambiguous object output
+    -+	 * from describe_ambiguous_object() above.
+    ++	 * from describe_ambiguous_object() above. For RTL languages
+    ++	 * you'll probably want to swap the "%s" and leading " " space
+    ++	 * around.
+     +	 */
+     +	advise(_("  %s"), desc.buf);
+      
+4:  b5aa6e266f6 ! 4:  2e5511c9fa5 object-name: show date for ambiguous tag objects
+    @@ Commit message
+     
+             hint:   b7e68c41d92 tag v2.32.0
+     
+    +    As with OBJ_COMMIT we punt on the cases where the date in the object
+    +    is nonsensical, and other cases where parse_tag() might fail. For
+    +    those we'll use our default date of "0" and tag message of
+    +    "". E.g. for some of the corrupt tags created by t3800-mktag.sh we'd
+    +    emit a line like:
+    +
+    +        hint:   8d62cb0b06 tag 1970-01-01 -
+    +
+    +    We could detect that and emit a "%s [bad tag object]" message (to go
+    +    with the existing generic "%s [bad object]"), but I don't think it's
+    +    worth the effort. Users are unlikely to ever run into cases where
+    +    they've got a broken object that's also ambiguous, and in case they do
+    +    output that's a bit nonsensical beats wasting translator time on this
+    +    obscure edge case.
+    +
+    +    We should instead change parse_tag_buffer() to be more eager to emit
+    +    an error() instead of silently aborting with "return -1;". In the case
+    +    of "t3800-mktag.sh" it takes the "size < the_hash_algo->hexsz + 24"
+    +    branch.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## object-name.c ##
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+     +		 *    "deadbeef tag 2021-01-01 - Some Tag Message"
+      		 *
+      		 * The second argument is the "tag" string from
+    - 		 * object.c, it should (hopefully) already be
+    - 		 * translated.
+    + 		 * object.c.
+      		 */
+     -		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
+     +		strbuf_addf(&desc, _("%s tag %s - %s"), hash,
+5:  644b076b2a6 ! 5:  2c03cdd3c1e object-name: iterate ambiguous objects before showing header
+    @@ object-name.c: static int init_object_disambiguation(struct repository *r,
+      	int type;
+      	const char *hash;
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+    - 	 * TRANSLATORS: This is line item of ambiguous object output
+    - 	 * from describe_ambiguous_object() above.
+    + 	 * you'll probably want to swap the "%s" and leading " " space
+    + 	 * around.
+      	 */
+     -	advise(_("  %s"), desc.buf);
+     +	strbuf_addf(advice, _("  %s\n"), desc.buf);
+    @@ object-name.c: static enum get_oid_result get_short_oid(struct repository *r,
+      	return status;
+     
+      ## t/t1512-rev-parse-disambiguation.sh ##
+    -@@ t/t1512-rev-parse-disambiguation.sh: test_expect_success 'ambiguous loose blob parsed as OBJ_BAD' '
+    +@@ t/t1512-rev-parse-disambiguation.sh: test_expect_success 'ambiguous loose bad object parsed as OBJ_BAD' '
+      
+    - 	cat >expect <<-\EOF &&
+    + 	test_cmp_failed_rev_parse blob.bad bad0 <<-\EOF
+      	error: short object ID bad0... is ambiguous
+     -	hint: The candidates are:
+      	fatal: invalid object type
+      	EOF
+    - 	test_cmp_failed_rev_parse blob.bad bad0
+    + '
+     @@ t/t1512-rev-parse-disambiguation.sh: test_expect_success POSIXPERM 'ambigous zlib corrupt loose blob' '
+      
+    - 	cat >expect <<-\EOF &&
+    + 	test_cmp_failed_rev_parse blob.corrupt cafe <<-\EOF
+      	error: short object ID cafe... is ambiguous
+     -	hint: The candidates are:
+      	error: inflate: data stream error (incorrect header check)
+6:  6a31cfcfc29 ! 6:  bf226f67099 object-name: re-use "struct strbuf" in show_ambiguous_object()
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+      		strbuf_release(&date);
+      		strbuf_release(&msg);
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+    - 		 * object.c, it should (hopefully) already be
+    - 		 * translated.
+    + 		 * The second argument is the "tag" string from
+    + 		 * object.c.
+      		 */
+     -		strbuf_addf(&desc, _("%s tag %s - %s"), hash,
+     +		strbuf_addf(sb, _("%s tag %s - %s"), hash,
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+      
+      
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+    - 	 * TRANSLATORS: This is line item of ambiguous object output
+    - 	 * from describe_ambiguous_object() above.
+    + 	 * you'll probably want to swap the "%s" and leading " " space
+    + 	 * around.
+      	 */
+     -	strbuf_addf(advice, _("  %s\n"), desc.buf);
+     +	strbuf_addf(advice, _("  %s\n"), sb->buf);
+-- 
+2.34.1.1373.g062f5534af2
+

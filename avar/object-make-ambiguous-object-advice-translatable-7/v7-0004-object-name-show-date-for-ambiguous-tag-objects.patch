@@ -1,12 +1,12 @@
-From b5aa6e266f6f458316d949032a8f394cfa4fbc70 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v6-4.6-b5aa6e266f6-20211228T142722Z-avarab@gmail.com>
-In-Reply-To: <cover-v6-0.6-00000000000-20211228T142722Z-avarab@gmail.com>
-References: <cover-v5-0.6-00000000000-20211125T215529Z-avarab@gmail.com>
-	<cover-v6-0.6-00000000000-20211228T142722Z-avarab@gmail.com>
+From 2e5511c9fa5b844b29d1ba8e857a79413f3c2aba Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-4.6-2e5511c9fa5-20220111T130811Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-0.6-00000000000-20220111T130811Z-avarab@gmail.com>
+References: <cover-v6-0.6-00000000000-20211228T143223Z-avarab@gmail.com>
+	<cover-v7-0.6-00000000000-20220111T130811Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Fri, 8 Oct 2021 16:57:00 +0200
-Subject: [PATCH v6 4/6] object-name: show date for ambiguous tag objects
+Subject: [PATCH v7 4/6] object-name: show date for ambiguous tag objects
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -29,16 +29,36 @@ Before this we'd emit a "tag" line of:
 
     hint:   b7e68c41d92 tag v2.32.0
 
+As with OBJ_COMMIT we punt on the cases where the date in the object
+is nonsensical, and other cases where parse_tag() might fail. For
+those we'll use our default date of "0" and tag message of
+"". E.g. for some of the corrupt tags created by t3800-mktag.sh we'd
+emit a line like:
+
+    hint:   8d62cb0b06 tag 1970-01-01 -
+
+We could detect that and emit a "%s [bad tag object]" message (to go
+with the existing generic "%s [bad object]"), but I don't think it's
+worth the effort. Users are unlikely to ever run into cases where
+they've got a broken object that's also ambiguous, and in case they do
+output that's a bit nonsensical beats wasting translator time on this
+obscure edge case.
+
+We should instead change parse_tag_buffer() to be more eager to emit
+an error() instead of silently aborting with "return -1;". In the case
+of "t3800-mktag.sh" it takes the "size < the_hash_algo->hexsz + 24"
+branch.
+
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
  object-name.c | 11 ++++++++---
  1 file changed, 8 insertions(+), 3 deletions(-)
 
 diff --git a/object-name.c b/object-name.c
-index dcf3ab99990..990f384129e 100644
+index 743f346842a..7c6cb60ceff 100644
 --- a/object-name.c
 +++ b/object-name.c
-@@ -403,21 +403,26 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+@@ -403,20 +403,25 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
  	} else if (type == OBJ_TAG) {
  		struct tag *tag = lookup_tag(ds->repo, oid);
  		const char *tag_tag = "";
@@ -58,8 +78,7 @@ index dcf3ab99990..990f384129e 100644
 +		 *    "deadbeef tag 2021-01-01 - Some Tag Message"
  		 *
  		 * The second argument is the "tag" string from
- 		 * object.c, it should (hopefully) already be
- 		 * translated.
+ 		 * object.c.
  		 */
 -		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
 +		strbuf_addf(&desc, _("%s tag %s - %s"), hash,
@@ -69,5 +88,5 @@ index dcf3ab99990..990f384129e 100644
  		/*
  		 * TRANSLATORS: This is a line of ambiguous <type>
 -- 
-2.34.1.1257.g2af47340c7b
+2.34.1.1373.g062f5534af2
 
