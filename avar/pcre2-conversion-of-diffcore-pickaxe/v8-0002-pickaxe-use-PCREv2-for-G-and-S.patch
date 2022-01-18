@@ -1,0 +1,381 @@
+From ff9accc3985371548bd8d642f10eb773f386c016 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v8-02.12-ff9accc3985-20220118T155150Z-avarab@gmail.com>
+In-Reply-To: <cover-v8-00.12-00000000000-20220118T155150Z-avarab@gmail.com>
+References: <cover-v7-00.10-00000000000-20211228T004707Z-avarab@gmail.com>
+	<cover-v8-00.12-00000000000-20220118T155150Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Feb 2021 11:33:45 +0100
+Subject: [PATCH v8 02/12] pickaxe: use PCREv2 for -G and -S
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up b65abcafc7a (grep: use PCRE v2 for optimized fixed-string
+search, 2019-07-01) and remove the use of kwset in the pickaxe code
+for fixed-string search, in favor of optimistically using PCRE v2.
+
+This does mean that the semantics of the -G option subtly change,
+before it's an ERE, whereas now it'll be a PCRE if we're compiled with
+PCRE. Since PCRE is almost entirely a strict superset of ERE syntax I
+think this is OK.
+
+Now when running the newly added t/perf/p4209-pickaxe.sh[1] and the
+latest PCRE v2 we'll get the following performance improvements (well,
+mostly improvements):
+
+    Test                                                                           origin/next       HEAD
+    -----------------------------------------------------------------------------------------------------------------------
+    4209.1: git log -S'a' <limit-rev>..                                            0.34(0.31+0.03)   0.40(0.35+0.05) +17.6%
+    4209.2: git log -S'uncommon' <limit-rev>..                                     0.34(0.31+0.02)   0.34(0.31+0.03) +0.0%
+    4209.3: git log -S'ö' <limit-rev>..                                            0.46(0.41+0.04)   0.30(0.25+0.04) -34.8%
+    4209.4: git log --pickaxe-regex -S'[þæö]' <limit-rev>..                        0.36(0.32+0.04)   0.45(0.41+0.03) +25.0%
+    4209.5: git log -G'a' <limit-rev>..                                            0.57(0.53+0.04)   0.48(0.43+0.05) -15.8%
+    4209.6: git log --pickaxe-regex -S'a' <limit-rev>..                            0.62(0.55+0.07)   0.41(0.36+0.05) -33.9%
+    4209.7: git log --text -G'a' <limit-rev>..                                     0.57(0.52+0.04)   0.49(0.43+0.05) -14.0%
+    4209.8: git log --text --pickaxe-all -G'a' <limit-rev>..                       0.41(0.37+0.04)   0.36(0.32+0.04) -12.2%
+    4209.9: git log --pickaxe-all -G'a' <limit-rev>..                              0.42(0.35+0.07)   0.36(0.31+0.05) -14.3%
+    4209.10: git log --pickaxe-all --pickaxe-regex -S'a' <limit-rev>..             0.50(0.47+0.03)   0.34(0.29+0.04) -32.0%
+    4209.11: git log -G'uncommon' <limit-rev>..                                    0.58(0.52+0.06)   0.49(0.41+0.08) -15.5%
+    4209.12: git log --pickaxe-regex -S'uncommon' <limit-rev>..                    0.42(0.37+0.04)   0.34(0.30+0.03) -19.0%
+    4209.13: git log --text -G'uncommon' <limit-rev>..                             0.58(0.51+0.06)   0.49(0.43+0.05) -15.5%
+    4209.14: git log --text --pickaxe-all -G'uncommon' <limit-rev>..               0.58(0.52+0.05)   0.48(0.44+0.04) -17.2%
+    4209.15: git log --pickaxe-all -G'uncommon' <limit-rev>..                      0.58(0.53+0.05)   0.50(0.45+0.04) -13.8%
+    4209.16: git log --pickaxe-all --pickaxe-regex -S'uncommon' <limit-rev>..      0.41(0.37+0.04)   0.34(0.30+0.04) -17.1%
+    4209.17: git log -G'[þæö]' <limit-rev>..                                       0.57(0.51+0.06)   0.49(0.46+0.03) -14.0%
+    4209.18: git log --pickaxe-regex -S'[þæö]' <limit-rev>..                       0.36(0.32+0.04)   0.45(0.41+0.04) +25.0%
+    4209.19: git log --text -G'[þæö]' <limit-rev>..                                0.58(0.52+0.05)   0.48(0.45+0.04) -17.2%
+    4209.20: git log --text --pickaxe-all -G'[þæö]' <limit-rev>..                  0.57(0.52+0.04)   0.48(0.42+0.06) -15.8%
+    4209.21: git log --pickaxe-all -G'[þæö]' <limit-rev>..                         0.59(0.52+0.05)   0.51(0.46+0.05) -13.6%
+    4209.22: git log --pickaxe-all --pickaxe-regex -S'[þæö]' <limit-rev>..         0.36(0.33+0.02)   0.46(0.41+0.04) +27.8%
+    4209.23: git log -i -S'a' <limit-rev>..                                        0.71(0.67+0.03)   0.42(0.38+0.03) -40.8%
+    4209.24: git log -i -S'uncommon' <limit-rev>..                                 0.34(0.30+0.04)   0.34(0.31+0.03) +0.0%
+    4209.25: git log -i -S'ö' <limit-rev>..                                        0.35(0.33+0.01)   0.30(0.25+0.05) -14.3%
+    4209.26: git log -i --pickaxe-regex -S'[þæö]' <limit-rev>..                    0.36(0.34+0.02)   0.46(0.42+0.03) +27.8%
+    4209.27: git log -i -G'a' <limit-rev>..                                        0.57(0.51+0.05)   0.49(0.45+0.04) -14.0%
+    4209.28: git log -i --pickaxe-regex -S'a' <limit-rev>..                        0.77(0.67+0.04)   0.41(0.35+0.06) -46.8%
+    4209.29: git log -i --text -G'a' <limit-rev>..                                 0.57(0.50+0.06)   0.48(0.43+0.05) -15.8%
+    4209.30: git log -i --text --pickaxe-all -G'a' <limit-rev>..                   0.41(0.36+0.04)   0.36(0.32+0.04) -12.2%
+    4209.31: git log -i --pickaxe-all -G'a' <limit-rev>..                          0.41(0.36+0.05)   0.36(0.30+0.06) -12.2%
+    4209.32: git log -i --pickaxe-all --pickaxe-regex -S'a' <limit-rev>..          0.56(0.54+0.02)   0.34(0.31+0.03) -39.3%
+    4209.33: git log -i -G'uncommon' <limit-rev>..                                 0.59(0.53+0.05)   0.52(0.44+0.05) -11.9%
+    4209.34: git log -i --pickaxe-regex -S'uncommon' <limit-rev>..                 0.44(0.39+0.05)   0.34(0.30+0.04) -22.7%
+    4209.35: git log -i --text -G'uncommon' <limit-rev>..                          0.58(0.53+0.05)   0.49(0.43+0.05) -15.5%
+    4209.36: git log -i --text --pickaxe-all -G'uncommon' <limit-rev>..            0.58(0.52+0.06)   0.49(0.45+0.02) -15.5%
+    4209.37: git log -i --pickaxe-all -G'uncommon' <limit-rev>..                   0.59(0.54+0.04)   0.49(0.45+0.04) -16.9%
+    4209.38: git log -i --pickaxe-all --pickaxe-regex -S'uncommon' <limit-rev>..   0.44(0.40+0.03)   0.35(0.30+0.04) -20.5%
+    4209.39: git log -i -G'[þæö]' <limit-rev>..                                    0.57(0.51+0.06)   0.49(0.44+0.04) -14.0%
+    4209.40: git log -i --pickaxe-regex -S'[þæö]' <limit-rev>..                    0.37(0.33+0.03)   0.46(0.40+0.06) +24.3%
+    4209.41: git log -i --text -G'[þæö]' <limit-rev>..                             0.57(0.51+0.06)   0.48(0.43+0.05) -15.8%
+    4209.42: git log -i --text --pickaxe-all -G'[þæö]' <limit-rev>..               0.57(0.53+0.04)   0.48(0.43+0.05) -15.8%
+    4209.43: git log -i --pickaxe-all -G'[þæö]' <limit-rev>..                      0.58(0.50+0.07)   0.49(0.42+0.07) -15.5%
+    4209.44: git log -i --pickaxe-all --pickaxe-regex -S'[þæö]' <limit-rev>..      0.37(0.34+0.03)   0.45(0.42+0.03) +21.6%
+
+1. With these options:
+
+    GIT_PERF_EXTRA=1 GIT_PERF_REPEAT_COUNT=10 GIT_PERF_MAKE_OPTS='-j8 USE_LIBPCRE=Y CFLAGS=-O3 LIBPCREDIR=/home/avar/g/pcre2/inst' ./run origin/next HEAD -- p4209-pickaxe.sh
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.h             |   4 ++
+ diffcore-pickaxe.c | 147 +++++++++++++++++----------------------------
+ 2 files changed, 60 insertions(+), 91 deletions(-)
+
+diff --git a/diff.h b/diff.h
+index 8ba85c5e605..f037f00a59a 100644
+--- a/diff.h
++++ b/diff.h
+@@ -396,6 +396,8 @@ struct diff_options {
+ 	struct repository *repo;
+ 	struct option *parseopts;
+ 
++	struct grep_opt *grep_filter;
++
+ 	int no_free;
+ };
+ 
+@@ -552,6 +554,8 @@ int git_config_rename(const char *var, const char *value);
+ #define DIFF_PICKAXE_KIND_G	8 /* grep in the patch */
+ #define DIFF_PICKAXE_KIND_OBJFIND	16 /* specific object IDs */
+ 
++#define DIFF_PICKAXE_KIND_GS_MASK (DIFF_PICKAXE_KIND_S | \
++				   DIFF_PICKAXE_KIND_G)
+ #define DIFF_PICKAXE_KINDS_MASK (DIFF_PICKAXE_KIND_S | \
+ 				 DIFF_PICKAXE_KIND_G | \
+ 				 DIFF_PICKAXE_KIND_OBJFIND)
+diff --git a/diffcore-pickaxe.c b/diffcore-pickaxe.c
+index c88e50c6329..2ebe28169d4 100644
+--- a/diffcore-pickaxe.c
++++ b/diffcore-pickaxe.c
+@@ -6,16 +6,14 @@
+ #include "diff.h"
+ #include "diffcore.h"
+ #include "xdiff-interface.h"
+-#include "kwset.h"
+-#include "commit.h"
+-#include "quote.h"
++#include "grep.h"
+ 
+ typedef int (*pickaxe_fn)(mmfile_t *one, mmfile_t *two,
+ 			  struct diff_options *o,
+-			  regex_t *regexp, kwset_t kws);
++			  struct grep_opt *grep_filter);
+ 
+ struct diffgrep_cb {
+-	regex_t *regexp;
++	struct grep_opt	*grep_filter;
+ 	int hit;
+ };
+ 
+@@ -23,13 +21,14 @@ static int diffgrep_consume(void *priv, char *line, unsigned long len)
+ {
+ 	struct diffgrep_cb *data = priv;
+ 	regmatch_t regmatch;
++	struct grep_opt *grep_filter = data->grep_filter;
++	struct grep_pat *grep_pat = grep_filter->pattern_list;
+ 
+ 	if (line[0] != '+' && line[0] != '-')
+ 		return 0;
+ 	if (data->hit)
+ 		BUG("Already matched in diffgrep_consume! Broken xdiff_emit_line_fn?");
+-	if (!regexec_buf(data->regexp, line + 1, len - 1, 1,
+-			 &regmatch, 0)) {
++	if (patmatch(grep_pat, line + 1, line + len + 1, &regmatch, 0)) {
+ 		data->hit = 1;
+ 		return 1;
+ 	}
+@@ -38,7 +37,7 @@ static int diffgrep_consume(void *priv, char *line, unsigned long len)
+ 
+ static int diff_grep(mmfile_t *one, mmfile_t *two,
+ 		     struct diff_options *o,
+-		     regex_t *regexp, kwset_t kws)
++		     struct grep_opt *grep_filter)
+ {
+ 	struct diffgrep_cb ecbdata;
+ 	xpparam_t xpp;
+@@ -51,7 +50,7 @@ static int diff_grep(mmfile_t *one, mmfile_t *two,
+ 	 */
+ 	memset(&xpp, 0, sizeof(xpp));
+ 	memset(&xecfg, 0, sizeof(xecfg));
+-	ecbdata.regexp = regexp;
++	ecbdata.grep_filter = grep_filter;
+ 	ecbdata.hit = 0;
+ 	xecfg.flags = XDL_EMIT_NO_HUNK_HDR;
+ 	xecfg.ctxlen = o->context;
+@@ -70,60 +69,44 @@ static int diff_grep(mmfile_t *one, mmfile_t *two,
+ 	return 0;
+ }
+ 
+-static unsigned int contains(mmfile_t *mf, regex_t *regexp, kwset_t kws,
++static unsigned int contains(mmfile_t *mf, struct grep_opt *grep_filter,
+ 			     unsigned int limit)
+ {
++
+ 	unsigned int cnt = 0;
+ 	unsigned long sz = mf->size;
+-	const char *data = mf->ptr;
+-
+-	if (regexp) {
+-		regmatch_t regmatch;
+-		int flags = 0;
+-
+-		while (sz &&
+-		       !regexec_buf(regexp, data, sz, 1, &regmatch, flags)) {
+-			flags |= REG_NOTBOL;
+-			data += regmatch.rm_eo;
+-			sz -= regmatch.rm_eo;
+-			if (sz && regmatch.rm_so == regmatch.rm_eo) {
+-				data++;
+-				sz--;
+-			}
+-			cnt++;
+-
+-			if (limit && cnt == limit)
+-				return cnt;
+-		}
+-
+-	} else { /* Classic exact string match */
+-		while (sz) {
+-			struct kwsmatch kwsm;
+-			size_t offset = kwsexec(kws, data, sz, &kwsm);
+-			if (offset == -1)
+-				break;
+-			sz -= offset + kwsm.size[0];
+-			data += offset + kwsm.size[0];
+-			cnt++;
+-
+-			if (limit && cnt == limit)
+-				return cnt;
++	char *data = mf->ptr;
++	regmatch_t regmatch;
++	int flags = 0;
++	struct grep_pat *grep_pat = grep_filter->pattern_list;
++
++	while (sz &&
++	       patmatch(grep_pat, data, data + sz, &regmatch, flags)) {
++		flags |= REG_NOTBOL;
++		data += regmatch.rm_eo;
++		sz -= regmatch.rm_eo;
++		if (sz && regmatch.rm_so == regmatch.rm_eo) {
++			data++;
++			sz--;
+ 		}
++		cnt++;
++		if (limit && cnt == limit)
++			return cnt;
+ 	}
+ 	return cnt;
+ }
+ 
+ static int has_changes(mmfile_t *one, mmfile_t *two,
+ 		       struct diff_options *o,
+-		       regex_t *regexp, kwset_t kws)
++		       struct grep_opt *grep_filter)
+ {
+-	unsigned int c1 = one ? contains(one, regexp, kws, 0) : 0;
+-	unsigned int c2 = two ? contains(two, regexp, kws, c1 + 1) : 0;
++	unsigned int c1 = one ? contains(one, grep_filter, 0) : 0;
++	unsigned int c2 = two ? contains(two, grep_filter, c1 + 1) : 0;
+ 	return c1 != c2;
+ }
+ 
+ static int pickaxe_match(struct diff_filepair *p, struct diff_options *o,
+-			 regex_t *regexp, kwset_t kws, pickaxe_fn fn)
++			 struct grep_opt *grep_filter, pickaxe_fn fn)
+ {
+ 	struct userdiff_driver *textconv_one = NULL;
+ 	struct userdiff_driver *textconv_two = NULL;
+@@ -165,7 +148,7 @@ static int pickaxe_match(struct diff_filepair *p, struct diff_options *o,
+ 	mf1.size = fill_textconv(o->repo, textconv_one, p->one, &mf1.ptr);
+ 	mf2.size = fill_textconv(o->repo, textconv_two, p->two, &mf2.ptr);
+ 
+-	ret = fn(&mf1, &mf2, o, regexp, kws);
++	ret = fn(&mf1, &mf2, o, grep_filter);
+ 
+ 	if (textconv_one)
+ 		free(mf1.ptr);
+@@ -178,7 +161,7 @@ static int pickaxe_match(struct diff_filepair *p, struct diff_options *o,
+ }
+ 
+ static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+-		    regex_t *regexp, kwset_t kws, pickaxe_fn fn)
++		    struct grep_opt *grep_filter, pickaxe_fn fn)
+ {
+ 	int i;
+ 	struct diff_queue_struct outq;
+@@ -189,7 +172,7 @@ static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+ 		/* Showing the whole changeset if needle exists */
+ 		for (i = 0; i < q->nr; i++) {
+ 			struct diff_filepair *p = q->queue[i];
+-			if (pickaxe_match(p, o, regexp, kws, fn))
++			if (pickaxe_match(p, o, grep_filter, fn))
+ 				return; /* do not munge the queue */
+ 		}
+ 
+@@ -204,7 +187,7 @@ static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+ 		/* Showing only the filepairs that has the needle */
+ 		for (i = 0; i < q->nr; i++) {
+ 			struct diff_filepair *p = q->queue[i];
+-			if (pickaxe_match(p, o, regexp, kws, fn))
++			if (pickaxe_match(p, o, grep_filter, fn))
+ 				diff_q(&outq, p);
+ 			else
+ 				diff_free_filepair(p);
+@@ -215,37 +198,37 @@ static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+ 	*q = outq;
+ }
+ 
+-static void regcomp_or_die(regex_t *regex, const char *needle, int cflags)
+-{
+-	int err = regcomp(regex, needle, cflags);
+-	if (err) {
+-		/* The POSIX.2 people are surely sick */
+-		char errbuf[1024];
+-		regerror(err, regex, errbuf, 1024);
+-		die("invalid regex: %s", errbuf);
+-	}
+-}
+-
+ void diffcore_pickaxe(struct diff_options *o)
+ {
+ 	const char *needle = o->pickaxe;
+ 	int opts = o->pickaxe_opts;
+-	regex_t regex, *regexp = NULL;
+-	kwset_t kws = NULL;
++	struct grep_opt opt;
+ 	pickaxe_fn fn;
+ 
+ 	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND &&
+ 	    (!needle || !*needle))
+ 		BUG("should have needle under -G or -S");
+-	if (opts & (DIFF_PICKAXE_REGEX | DIFF_PICKAXE_KIND_G)) {
+-		int cflags = REG_EXTENDED | REG_NEWLINE;
++	if (opts & (DIFF_PICKAXE_REGEX | DIFF_PICKAXE_KIND_GS_MASK)) {
++		grep_init(&opt, the_repository, NULL);
++#ifdef USE_LIBPCRE2
++		grep_commit_pattern_type(GREP_PATTERN_TYPE_PCRE, &opt);
++#else
++		grep_commit_pattern_type(GREP_PATTERN_TYPE_ERE, &opt);
++#endif
++
+ 		if (o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE)
+-			cflags |= REG_ICASE;
+-		regcomp_or_die(&regex, needle, cflags);
+-		regexp = &regex;
++			opt.ignore_case = 1;
++		if (opts & DIFF_PICKAXE_KIND_S &&
++		    !(opts & DIFF_PICKAXE_REGEX))
++			opt.fixed = 1;
++
++		append_grep_pattern(&opt, needle, "diffcore-pickaxe", 0, GREP_PATTERN);
++		compile_grep_patterns(&opt);
+ 
+ 		if (opts & DIFF_PICKAXE_KIND_G)
+ 			fn = diff_grep;
++		else if (opts & DIFF_PICKAXE_KIND_S)
++			fn = has_changes;
+ 		else if (opts & DIFF_PICKAXE_REGEX)
+ 			fn = has_changes;
+ 		else
+@@ -257,34 +240,16 @@ void diffcore_pickaxe(struct diff_options *o)
+ 			 * t4209-log-pickaxe.sh.
+ 			 */
+ 			BUG("unreachable");
+-	} else if (opts & DIFF_PICKAXE_KIND_S) {
+-		if (o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE &&
+-		    has_non_ascii(needle)) {
+-			struct strbuf sb = STRBUF_INIT;
+-			int cflags = REG_NEWLINE | REG_ICASE;
+-
+-			basic_regex_quote_buf(&sb, needle);
+-			regcomp_or_die(&regex, sb.buf, cflags);
+-			strbuf_release(&sb);
+-			regexp = &regex;
+-		} else {
+-			kws = kwsalloc(o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE
+-				       ? tolower_trans_tbl : NULL);
+-			kwsincr(kws, needle, strlen(needle));
+-			kwsprep(kws);
+-		}
+-		fn = has_changes;
+ 	} else if (opts & DIFF_PICKAXE_KIND_OBJFIND) {
+ 		fn = NULL;
+ 	} else {
+ 		BUG("unknown pickaxe_opts flag");
+ 	}
+ 
+-	pickaxe(&diff_queued_diff, o, regexp, kws, fn);
++	pickaxe(&diff_queued_diff, o, &opt, fn);
++
++	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND)
++		free_grep_patterns(&opt);
+ 
+-	if (regexp)
+-		regfree(regexp);
+-	if (kws)
+-		kwsfree(kws);
+ 	return;
+ }
+-- 
+2.35.0.rc1.864.g57621b115b6
+

@@ -1,0 +1,319 @@
+From c641139cee149117a815568689a147aa9685fa49 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v8-04.12-c641139cee1-20220118T155150Z-avarab@gmail.com>
+In-Reply-To: <cover-v8-00.12-00000000000-20220118T155150Z-avarab@gmail.com>
+References: <cover-v7-00.10-00000000000-20211228T004707Z-avarab@gmail.com>
+	<cover-v8-00.12-00000000000-20220118T155150Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 24 Apr 2019 17:02:20 +0200
+Subject: [PATCH v8 04/12] diffcore-pickaxe: add --pickaxe-patch for use with
+ -G
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add the ability for the -G<regex> pickaxe to search only through any
+of the added, removed or context lines in the displayed diff. When
+combined with -W or -U<n> this allows searching not only through a
+change, but also the context that's adjacent to it.  would be
+
+This has been requested[1][2] a few times in the past, and isn't
+currently possible.
+
+Instead users need to do -G<regex> and then write their own
+post-parsing script to see if the <regex> matched added or removed
+lines, or both. There was no way to match the adjacent context lines
+other than running and grepping the equivalent of a "log -p -U<n>".
+
+Perf test results of the whole thing:
+
+TURNS OUT I WAS USING USE_LIBPCRE= !!!
+
+HEAD~8: contains() limit optimization
+HEAD~5: pickaxe -G:  early termination
+HEAD~4: pickaxe -G: always make the diff
+HEAD~2: use PCRE
+
+Test                                                                      origin/next       HEAD~8                  HEAD~5                  HEAD~4                  HEAD~2
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+4209.1: git log -S'int main' <limit-rev>..                                0.38(0.35+0.03)   0.39(0.34+0.04) +2.6%   0.38(0.34+0.04) +0.0%   0.39(0.34+0.04) +2.6%   0.56(0.52+0.03) +47.4%
+4209.2: git log -S'æ' <limit-rev>..                                       0.51(0.47+0.03)   0.51(0.46+0.04) +0.0%   0.51(0.46+0.04) +0.0%   0.51(0.45+0.05) +0.0%   0.39(0.36+0.02) -23.5%
+4209.3: git log --pickaxe-regex -S'(int|void|null)' <limit-rev>..         0.71(0.68+0.03)   0.71(0.67+0.03) +0.0%   0.71(0.67+0.04) +0.0%   0.71(0.64+0.07) +0.0%   0.70(0.65+0.05) -1.4%
+4209.4: git log --pickaxe-regex -S'if *\([^ ]+ & ' <limit-rev>..          0.57(0.53+0.04)   0.57(0.53+0.03) +0.0%   0.56(0.51+0.05) -1.8%   0.57(0.54+0.03) +0.0%   0.56(0.52+0.04) -1.8%
+4209.5: git log --pickaxe-regex -S'[àáâãäåæñøùúûüýþ]' <limit-rev>..       0.42(0.41+0.02)   0.42(0.38+0.04) +0.0%   0.42(0.40+0.02) +0.0%   0.42(0.38+0.04) +0.0%   0.42(0.36+0.06) +0.0%
+4209.6: git log -G'(int|void|null)' <limit-rev>..                         0.64(0.59+0.05)   0.64(0.58+0.06) +0.0%   0.63(0.54+0.09) -1.6%   0.63(0.57+0.06) -1.6%   0.63(0.57+0.06) -1.6%
+4209.7: git log -G'if *\([^ ]+ & ' <limit-rev>..                          0.65(0.58+0.07)   0.65(0.61+0.04) +0.0%   0.64(0.58+0.06) -1.5%   0.65(0.62+0.03) +0.0%   0.64(0.57+0.07) -1.5%
+4209.8: git log -G'[àáâãäåæñøùúûüýþ]' <limit-rev>..                       0.64(0.57+0.06)   0.64(0.56+0.07) +0.0%   0.63(0.58+0.04) -1.6%   0.63(0.57+0.06) -1.6%   0.62(0.55+0.07) -3.1%
+4209.9: git log -i -S'int main' <limit-rev>..                             0.39(0.35+0.03)   0.39(0.34+0.05) +0.0%   0.39(0.34+0.05) +0.0%   0.39(0.35+0.04) +0.0%   0.63(0.58+0.05) +61.5%
+4209.10: git log -i -S'æ' <limit-rev>..                                   0.39(0.36+0.03)   0.39(0.33+0.06) +0.0%   0.39(0.35+0.03) +0.0%   0.40(0.36+0.04) +2.6%   0.39(0.35+0.04) +0.0%
+4209.11: git log -i --pickaxe-regex -S'(int|void|null)' <limit-rev>..     0.90(0.88+0.02)   0.90(0.87+0.03) +0.0%   0.90(0.83+0.06) +0.0%   0.90(0.86+0.04) +0.0%   0.91(0.86+0.04) +1.1%
+4209.12: git log -i --pickaxe-regex -S'if *\([^ ]+ & ' <limit-rev>..      0.71(0.65+0.05)   0.71(0.65+0.05) +0.0%   0.70(0.64+0.06) -1.4%   0.70(0.65+0.05) -1.4%   0.70(0.67+0.03) -1.4%
+4209.13: git log -i --pickaxe-regex -S'[àáâãäåæñøùúûüýþ]' <limit-rev>..   0.43(0.40+0.03)   0.43(0.39+0.04) +0.0%   0.43(0.39+0.04) +0.0%   0.44(0.40+0.04) +2.3%   0.44(0.40+0.04) +2.3%
+4209.14: git log -i -G'(int|void|null)' <limit-rev>..                     0.65(0.58+0.07)   0.65(0.56+0.09) +0.0%   0.63(0.58+0.05) -3.1%   0.64(0.59+0.05) -1.5%   0.63(0.57+0.06) -3.1%
+4209.15: git log -i -G'if *\([^ ]+ & ' <limit-rev>..                      0.66(0.61+0.05)   0.66(0.60+0.06) +0.0%   0.65(0.59+0.06) -1.5%   0.66(0.61+0.05) +0.0%   0.65(0.59+0.06) -1.5%
+4209.16: git log -i -G'[àáâãäåæñøùúûüýþ]' <limit-rev>..                   0.64(0.58+0.06)   0.65(0.56+0.09) +1.6%   0.62(0.55+0.07) -3.1%   0.63(0.58+0.05) -1.6%   0.62(0.58+0.04) -3.1%
+
+1. https://lore.kernel.org/git/xmqqwoqrr8y2.fsf@gitster-ct.c.googlers.com/
+2. https://lore.kernel.org/git/20190424102609.GA19697@vmlxhi-102.adit-jv.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/diff-options.txt                | 17 +++++++
+ diff.c                                        |  6 +++
+ diff.h                                        | 14 ++++--
+ diffcore-pickaxe.c                            |  7 ++-
+ grep.c                                        |  2 +-
+ t/t4013-diff-various.sh                       |  3 +-
+ ...-s_--pickaxe-patch_--pretty=oneline_master |  3 ++
+ ...-s_--pickaxe-patch_--pretty=oneline_master |  4 ++
+ t/t4209-log-pickaxe.sh                        | 50 +++++++++++++++++++
+ 9 files changed, 98 insertions(+), 8 deletions(-)
+ create mode 100644 t/t4013/diff.log_-GD_-U0_-s_--pickaxe-patch_--pretty=oneline_master
+ create mode 100644 t/t4013/diff.log_-GD_-U1_-s_--pickaxe-patch_--pretty=oneline_master
+
+diff --git a/Documentation/diff-options.txt b/Documentation/diff-options.txt
+index c89d530d3d1..3c0d81befd3 100644
+--- a/Documentation/diff-options.txt
++++ b/Documentation/diff-options.txt
+@@ -656,6 +656,9 @@ occurrences of that string did not change).
+ Unless `--text` is supplied patches of binary files without a textconv
+ filter will be ignored.
+ +
++When `--pickaxe-patch` is supplied the whole diff is searched instead
++of just added/removed lines. See below.
+++
+ See the 'pickaxe' entry in linkgit:gitdiffcore[7] for more
+ information.
+ 
+@@ -677,6 +680,20 @@ The object can be a blob or a submodule commit. It implies the `-t` option in
+ 	Treat the <string> given to `-S` as an extended POSIX regular
+ 	expression to match.
+ 
++--pickaxe-patch::
++	When `-G` looks for a change a diff will be generated, and
++	only the added/removed lines will be matched against with the
++	"+" or "-" stripped.
+++
++Supplying this option skips that pre-processing. This makes it
++possible to match only lines that added or removed something matching
++a <regex> with "\^\+<regex>" and "^-<regex>", respectively.
+++
++It also allows for finding something in the diff context. E.g. "\^
++<regex>" will match the context lines (see `-U<n>` above) around the
++added/removed lines, and doing an unanchored match will match any of
++the the added/removed lines & diff context.
++
+ endif::git-format-patch[]
+ 
+ -O<orderfile>::
+diff --git a/diff.c b/diff.c
+index c862771a589..4df00adc450 100644
+--- a/diff.c
++++ b/diff.c
+@@ -4597,6 +4597,9 @@ void diff_setup_done(struct diff_options *options)
+ 		die(_("options '%s' and '%s' cannot be used together, use '%s' with '%s'"),
+ 			"-G", "--pickaxe-regex", "--pickaxe-regex", "-S");
+ 
++	if (HAS_MULTI_BITS(options->pickaxe_opts & DIFF_PICKAXE_KINDS_S_PATCH_MASK))
++		die(_("-S and --pickaxe-patch are mutually exclusive, use --pickaxe-patch with -G"));
++
+ 	if (HAS_MULTI_BITS(options->pickaxe_opts & DIFF_PICKAXE_KINDS_ALL_OBJFIND_MASK))
+ 		die(_("options '%s' and '%s' cannot be used together, use '%s' with '%s' and '%s'"),
+ 			"--pickaxe-all", "--find-object", "--pickaxe-all", "-G", "-S");
+@@ -5581,6 +5584,9 @@ static void prep_parse_options(struct diff_options *options)
+ 		OPT_BIT_F(0, "pickaxe-regex", &options->pickaxe_opts,
+ 			  N_("treat <string> in -S as extended POSIX regular expression"),
+ 			  DIFF_PICKAXE_REGEX, PARSE_OPT_NONEG),
++		OPT_BIT_F(0, "pickaxe-patch", &options->pickaxe_opts,
++			  N_("have <string> in -G match the full diff hunk output"),
++			  DIFF_PICKAXE_PATCH, PARSE_OPT_NONEG),
+ 		OPT_FILENAME('O', NULL, &options->orderfile,
+ 			     N_("control the order in which files appear in the output")),
+ 		OPT_CALLBACK_F(0, "rotate-to", options, N_("<path>"),
+diff --git a/diff.h b/diff.h
+index f037f00a59a..daefb798a1d 100644
+--- a/diff.h
++++ b/diff.h
+@@ -549,10 +549,11 @@ int git_config_rename(const char *var, const char *value);
+ 
+ #define DIFF_PICKAXE_ALL	1
+ #define DIFF_PICKAXE_REGEX	2
++#define DIFF_PICKAXE_PATCH	4
+ 
+-#define DIFF_PICKAXE_KIND_S	4 /* traditional plumbing counter */
+-#define DIFF_PICKAXE_KIND_G	8 /* grep in the patch */
+-#define DIFF_PICKAXE_KIND_OBJFIND	16 /* specific object IDs */
++#define DIFF_PICKAXE_KIND_S	8 /* traditional plumbing counter */
++#define DIFF_PICKAXE_KIND_G	16 /* grep in the patch */
++#define DIFF_PICKAXE_KIND_OBJFIND	32 /* specific object IDs */
+ 
+ #define DIFF_PICKAXE_KIND_GS_MASK (DIFF_PICKAXE_KIND_S | \
+ 				   DIFF_PICKAXE_KIND_G)
+@@ -561,10 +562,15 @@ int git_config_rename(const char *var, const char *value);
+ 				 DIFF_PICKAXE_KIND_OBJFIND)
+ #define DIFF_PICKAXE_KINDS_G_REGEX_MASK (DIFF_PICKAXE_KIND_G | \
+ 					 DIFF_PICKAXE_REGEX)
++#define DIFF_PICKAXE_KINDS_S_PATCH_MASK (DIFF_PICKAXE_KIND_S | \
++					 DIFF_PICKAXE_PATCH)
+ #define DIFF_PICKAXE_KINDS_ALL_OBJFIND_MASK (DIFF_PICKAXE_ALL | \
+ 					     DIFF_PICKAXE_KIND_OBJFIND)
++#define DIFF_PICKAXE_KINDS_ALL_OBJFIND_MASK (DIFF_PICKAXE_ALL | \
++					     DIFF_PICKAXE_KIND_OBJFIND)
++
++#define DIFF_PICKAXE_IGNORE_CASE	64
+ 
+-#define DIFF_PICKAXE_IGNORE_CASE	32
+ 
+ void diffcore_std(struct diff_options *);
+ void diffcore_fix_diff_index(void);
+diff --git a/diffcore-pickaxe.c b/diffcore-pickaxe.c
+index 2ebe28169d4..5e117eb5ee3 100644
+--- a/diffcore-pickaxe.c
++++ b/diffcore-pickaxe.c
+@@ -15,6 +15,7 @@ typedef int (*pickaxe_fn)(mmfile_t *one, mmfile_t *two,
+ struct diffgrep_cb {
+ 	struct grep_opt	*grep_filter;
+ 	int hit;
++	int patch;
+ };
+ 
+ static int diffgrep_consume(void *priv, char *line, unsigned long len)
+@@ -23,12 +24,13 @@ static int diffgrep_consume(void *priv, char *line, unsigned long len)
+ 	regmatch_t regmatch;
+ 	struct grep_opt *grep_filter = data->grep_filter;
+ 	struct grep_pat *grep_pat = grep_filter->pattern_list;
++	size_t off = data->patch ? 0 : 1;
+ 
+-	if (line[0] != '+' && line[0] != '-')
++	if (off && line[0] != '+' && line[0] != '-')
+ 		return 0;
+ 	if (data->hit)
+ 		BUG("Already matched in diffgrep_consume! Broken xdiff_emit_line_fn?");
+-	if (patmatch(grep_pat, line + 1, line + len + 1, &regmatch, 0)) {
++	if (patmatch(grep_pat, line + off, line + len + 1, &regmatch, 0)) {
+ 		data->hit = 1;
+ 		return 1;
+ 	}
+@@ -54,6 +56,7 @@ static int diff_grep(mmfile_t *one, mmfile_t *two,
+ 	ecbdata.hit = 0;
+ 	xecfg.flags = XDL_EMIT_NO_HUNK_HDR;
+ 	xecfg.ctxlen = o->context;
++	ecbdata.patch = o->pickaxe_opts & DIFF_PICKAXE_PATCH;
+ 	xecfg.interhunkctxlen = o->interhunkcontext;
+ 
+ 	/*
+diff --git a/grep.c b/grep.c
+index be4bbc4b7c4..9064c714500 100644
+--- a/grep.c
++++ b/grep.c
+@@ -444,7 +444,7 @@ static void compile_fixed_regexp(struct grep_pat *p, struct grep_opt *opt)
+ static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+ {
+ 	int err;
+-	int regflags = REG_NEWLINE;
++	int regflags = 0; //REG_NEWLINE;
+ 
+ 	p->word_regexp = opt->word_regexp;
+ 	p->ignore_case = opt->ignore_case;
+diff --git a/t/t4013-diff-various.sh b/t/t4013-diff-various.sh
+index 750aee17ea9..fc490a09480 100755
+--- a/t/t4013-diff-various.sh
++++ b/t/t4013-diff-various.sh
+@@ -348,7 +348,8 @@ log -SF master --max-count=1
+ log -SF master --max-count=2
+ log -GF master
+ log -GF -p master
+-log -GF -p --pickaxe-all master
++log -GD -U1 -s --pickaxe-patch --pretty=oneline master
++log -GD -U0 -s --pickaxe-patch --pretty=oneline master
+ log -IA -IB -I1 -I2 -p master
+ log --decorate --all
+ log --decorate=full --all
+diff --git a/t/t4013/diff.log_-GD_-U0_-s_--pickaxe-patch_--pretty=oneline_master b/t/t4013/diff.log_-GD_-U0_-s_--pickaxe-patch_--pretty=oneline_master
+new file mode 100644
+index 00000000000..2f266d0664a
+--- /dev/null
++++ b/t/t4013/diff.log_-GD_-U0_-s_--pickaxe-patch_--pretty=oneline_master
+@@ -0,0 +1,3 @@
++$ git log -GD -U0 -s --pickaxe-patch --pretty=oneline master
++1bde4ae5f36c8d9abe3a0fce0c6aab3c4a12fe44 Second
++$
+diff --git a/t/t4013/diff.log_-GD_-U1_-s_--pickaxe-patch_--pretty=oneline_master b/t/t4013/diff.log_-GD_-U1_-s_--pickaxe-patch_--pretty=oneline_master
+new file mode 100644
+index 00000000000..be127382bbd
+--- /dev/null
++++ b/t/t4013/diff.log_-GD_-U1_-s_--pickaxe-patch_--pretty=oneline_master
+@@ -0,0 +1,4 @@
++$ git log -GD -U1 -s --pickaxe-patch --pretty=oneline master
++9a6d4949b6b76956d9d5e26f2791ec2ceff5fdc0 Third
++1bde4ae5f36c8d9abe3a0fce0c6aab3c4a12fe44 Second
++$
+diff --git a/t/t4209-log-pickaxe.sh b/t/t4209-log-pickaxe.sh
+index 7f6bb27f141..f1f11042838 100755
+--- a/t/t4209-log-pickaxe.sh
++++ b/t/t4209-log-pickaxe.sh
+@@ -65,6 +65,9 @@ test_expect_success 'usage' '
+ 	test_expect_code 128 git log -Gregex -Sstring 2>err &&
+ 	grep "cannot be used together" err &&
+ 
++	test_expect_code 128 git log -Sstring --pickaxe-patch 2>err &&
++	test_i18ngrep "mutually exclusive" err &&
++
+ 	test_expect_code 128 git log -Gregex --find-object=HEAD 2>err &&
+ 	grep "cannot be used together" err &&
+ 
+@@ -223,4 +226,51 @@ test_expect_success 'log -S --pickaxe-regex looks into binary files' '
+ 	test_cmp log full-log
+ '
+ 
++test_expect_success 'setup log -G --pickaxe-patch' '
++	git checkout --orphan G-patch &&
++	test_write_lines A B C D E F G >file &&
++	git add file &&
++	git commit --allow-empty-message file &&
++	sed "s/B/2/" <file >tmp &&
++	mv tmp file &&
++	git add file &&
++	git commit --allow-empty-message file &&
++	sed -e "s/D/4/" <file >tmp &&
++	mv tmp file &&
++	git add file &&
++	git commit --allow-empty-message file &&
++	git rm file &&
++	git commit --allow-empty-message &&
++	git log --oneline -1 HEAD~0 >file.fourth &&
++	git log --oneline -1 HEAD~1 >file.third &&
++	git log --oneline -1 HEAD~2 >file.second &&
++	git log --oneline -1 HEAD~3 >file.first
++'
++
++test_expect_success 'log -G --pickaxe-patch skips header and range information' '
++	git log --pickaxe-patch -p -G"(@@|file)" >log &&
++	test_must_be_empty log
++'
++
++test_expect_success 'log -G --pickaxe-patch searching in context' '
++	git log --oneline --pickaxe-patch -G"^ F" -U2 -s >log &&
++	test_cmp file.third log &&
++	git log --oneline --pickaxe-patch -G"^ F" -U1 -s >log &&
++	test_must_be_empty log
++'
++
++test_expect_success 'log -G --pickaxe-patch searching added / removed lines (skip create/delete)' '
++	git log --oneline --pickaxe-patch -G"^-[D2]" -s HEAD~1 >log &&
++	test_cmp file.third log &&
++	git log --oneline --pickaxe-patch -G"^\+[D2]" -s -1 >log &&
++	test_cmp file.second log
++'
++
++test_expect_success 'log -G --pickaxe-patch searching created / deleted files' '
++	git log --oneline --pickaxe-patch -G"^\+A" -s >log &&
++	test_cmp file.first log &&
++	git log --oneline --pickaxe-patch -G"^\-A" -s >log &&
++	test_cmp file.fourth log
++'
++
+ test_done
+-- 
+2.35.0.rc1.864.g57621b115b6
+

@@ -1,0 +1,163 @@
+From 2b1bcafb1436c61cef1ba31d960d82a2b126f092 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v8-06.12-2b1bcafb143-20220118T155150Z-avarab@gmail.com>
+In-Reply-To: <cover-v8-00.12-00000000000-20220118T155150Z-avarab@gmail.com>
+References: <cover-v7-00.10-00000000000-20211228T004707Z-avarab@gmail.com>
+	<cover-v8-00.12-00000000000-20220118T155150Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 4 Feb 2021 16:31:45 +0100
+Subject: [PATCH v8 06/12] only compile pattern once: TODO, free it
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+That's more like it:
+
+GIT_TEST_LONG= GIT_PERF_REPEAT_COUNT=10 GIT_PERF_MAKE_OPTS='-j8 USE_LIBPCRE=1 CFLAGS=-O3 LIBPCREDIR=/home/avar/g/pcre2/inst' ./run origin/next HEAD -- p4209-pickaxe.sh
+Test                                                                      origin/next       HEAD
+------------------------------------------------------------------------------------------------------------------
+4209.1: git log -S'int main' <limit-rev>..                                0.38(0.36+0.01)   0.37(0.33+0.04) -2.6%
+4209.2: git log -S'æ' <limit-rev>..                                       0.51(0.47+0.04)   0.32(0.27+0.05) -37.3%
+4209.3: git log --pickaxe-regex -S'(int|void|null)' <limit-rev>..         0.72(0.68+0.03)   0.57(0.54+0.03) -20.8%
+4209.4: git log --pickaxe-regex -S'if *\([^ ]+ & ' <limit-rev>..          0.60(0.55+0.02)   0.39(0.34+0.05) -35.0%
+4209.5: git log --pickaxe-regex -S'[àáâãäåæñøùúûüýþ]' <limit-rev>..       0.43(0.40+0.03)   0.50(0.44+0.06) +16.3%
+4209.6: git log -G'(int|void|null)' <limit-rev>..                         0.64(0.55+0.09)   0.63(0.56+0.05) -1.6%
+4209.7: git log -G'if *\([^ ]+ & ' <limit-rev>..                          0.64(0.59+0.05)   0.63(0.56+0.06) -1.6%
+4209.8: git log -G'[àáâãäåæñøùúûüýþ]' <limit-rev>..                       0.63(0.54+0.08)   0.62(0.55+0.06) -1.6%
+4209.9: git log -i -S'int main' <limit-rev>..                             0.39(0.35+0.03)   0.38(0.35+0.02) -2.6%
+4209.10: git log -i -S'æ' <limit-rev>..                                   0.39(0.33+0.06)   0.32(0.28+0.04) -17.9%
+4209.11: git log -i --pickaxe-regex -S'(int|void|null)' <limit-rev>..     0.90(0.84+0.05)   0.58(0.53+0.04) -35.6%
+4209.12: git log -i --pickaxe-regex -S'if *\([^ ]+ & ' <limit-rev>..      0.71(0.64+0.06)   0.40(0.37+0.03) -43.7%
+4209.13: git log -i --pickaxe-regex -S'[àáâãäåæñøùúûüýþ]' <limit-rev>..   0.43(0.40+0.03)   0.50(0.46+0.04) +16.3%
+4209.14: git log -i -G'(int|void|null)' <limit-rev>..                     0.64(0.57+0.06)   0.62(0.56+0.05) -3.1%
+4209.15: git log -i -G'if *\([^ ]+ & ' <limit-rev>..                      0.65(0.59+0.06)   0.63(0.54+0.08) -3.1%
+4209.16: git log -i -G'[àáâãäåæñøùúûüýþ]' <limit-rev>..                   0.63(0.55+0.08)   0.62(0.56+0.05) -1.6%
+---
+ diff.h             |  9 +++++++++
+ diffcore-pickaxe.c | 38 ++++++++++++++++++++++----------------
+ 2 files changed, 31 insertions(+), 16 deletions(-)
+
+diff --git a/diff.h b/diff.h
+index daefb798a1d..c23a33ff774 100644
+--- a/diff.h
++++ b/diff.h
+@@ -8,6 +8,8 @@
+ #include "pathspec.h"
+ #include "object.h"
+ #include "oidset.h"
++#include "xdiff-interface.h"
++#include "grep.h"
+ 
+ /**
+  * The diff API is for programs that compare two sets of files (e.g. two trees,
+@@ -230,6 +232,10 @@ enum diff_submodule_format {
+ 	DIFF_SUBMODULE_INLINE_DIFF
+ };
+ 
++typedef int (*pickaxe_fn)(mmfile_t *one, mmfile_t *two,
++			  struct diff_options *o,
++			  struct grep_opt *grep_filter);
++
+ /**
+  * the set of options the calling program wants to affect the operation of
+  * diffcore library with.
+@@ -266,6 +272,9 @@ struct diff_options {
+ 	 */
+ 	const char *pickaxe;
+ 	unsigned pickaxe_opts;
++	int pickaxed_compiled;
++	pickaxe_fn pickaxe_fn;
++	struct grep_opt pickaxe_grep_opt;
+ 
+ 	/* -I<regex> */
+ 	regex_t **ignore_regex;
+diff --git a/diffcore-pickaxe.c b/diffcore-pickaxe.c
+index 5e117eb5ee3..2f6940c9647 100644
+--- a/diffcore-pickaxe.c
++++ b/diffcore-pickaxe.c
+@@ -8,10 +8,6 @@
+ #include "xdiff-interface.h"
+ #include "grep.h"
+ 
+-typedef int (*pickaxe_fn)(mmfile_t *one, mmfile_t *two,
+-			  struct diff_options *o,
+-			  struct grep_opt *grep_filter);
+-
+ struct diffgrep_cb {
+ 	struct grep_opt	*grep_filter;
+ 	int hit;
+@@ -201,32 +197,35 @@ static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+ 	*q = outq;
+ }
+ 
+-void diffcore_pickaxe(struct diff_options *o)
++static void compile_pickaxe(struct diff_options *o)
+ {
+ 	const char *needle = o->pickaxe;
+ 	int opts = o->pickaxe_opts;
+-	struct grep_opt opt;
+ 	pickaxe_fn fn;
+ 
++	assert(!o->pickaxed_compiled);
++	o->pickaxed_compiled = 1;
++
+ 	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND &&
+ 	    (!needle || !*needle))
+ 		BUG("should have needle under -G or -S");
+ 	if (opts & (DIFF_PICKAXE_REGEX | DIFF_PICKAXE_KIND_GS_MASK)) {
+-		grep_init(&opt, the_repository, NULL);
++		grep_init(&o->pickaxe_grep_opt, the_repository, NULL);
+ #ifdef USE_LIBPCRE2
+-		grep_commit_pattern_type(GREP_PATTERN_TYPE_PCRE, &opt);
++		grep_commit_pattern_type(GREP_PATTERN_TYPE_PCRE, &o->pickaxe_grep_opt);
+ #else
+-		grep_commit_pattern_type(GREP_PATTERN_TYPE_ERE, &opt);
++		grep_commit_pattern_type(GREP_PATTERN_TYPE_ERE, &o->pickaxe_grep_opt);
+ #endif
+ 
+ 		if (o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE)
+-			opt.ignore_case = 1;
++			o->pickaxe_grep_opt.ignore_case = 1;
+ 		if (opts & DIFF_PICKAXE_KIND_S &&
+ 		    !(opts & DIFF_PICKAXE_REGEX))
+-			opt.fixed = 1;
++			o->pickaxe_grep_opt.fixed = 1;
+ 
+-		append_grep_pattern(&opt, needle, "diffcore-pickaxe", 0, GREP_PATTERN);
+-		compile_grep_patterns(&opt);
++		append_grep_pattern(&o->pickaxe_grep_opt, needle, "diffcore-pickaxe", 0, GREP_PATTERN);
++		fprintf(stderr, "compiling for %s\n", needle);
++		compile_grep_patterns(&o->pickaxe_grep_opt);
+ 
+ 		if (opts & DIFF_PICKAXE_KIND_G)
+ 			fn = diff_grep;
+@@ -243,16 +242,23 @@ void diffcore_pickaxe(struct diff_options *o)
+ 			 * t4209-log-pickaxe.sh.
+ 			 */
+ 			BUG("unreachable");
++
++		o->pickaxe_fn = fn;
+ 	} else if (opts & DIFF_PICKAXE_KIND_OBJFIND) {
+ 		fn = NULL;
+ 	} else {
+ 		BUG("unknown pickaxe_opts flag");
+ 	}
++}
+ 
+-	pickaxe(&diff_queued_diff, o, &opt, fn);
++void diffcore_pickaxe(struct diff_options *o)
++{
++	if (!o->pickaxed_compiled)
++		compile_pickaxe(o);
++	pickaxe(&diff_queued_diff, o, &o->pickaxe_grep_opt, o->pickaxe_fn);
+ 
+-	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND)
+-		free_grep_patterns(&opt);
++	/*if (opts & ~DIFF_PICKAXE_KIND_OBJFIND)
++		free_grep_patterns(&o->pickaxe_grep_opt);*/
+ 
+ 	return;
+ }
+-- 
+2.35.0.rc1.864.g57621b115b6
+
