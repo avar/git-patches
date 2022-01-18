@@ -1,0 +1,103 @@
+From d9c1183f4c655d317d1da9f48ccf075b62680575 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-d9c1183f4c6-20220118T151148Z-avarab@gmail.com>
+In-Reply-To: <220113.86tue7vr6d.gmgdl@evledraar.gmail.com>
+References: <220113.86tue7vr6d.gmgdl@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 18 Jan 2022 14:45:17 +0100
+Subject: [PATCH] config.mak.dev: make DEVELOPER=1 work on FreeBSD with
+ -std=gnu99
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since the addition of -std=gnu99 to CFLAGS under DEVELOPER=1 in
+5f46385309b (config.mak.dev: specify -std=gnu99 for gcc/clang,
+2021-12-08) the compilation has been broken on newer FreeBSD
+systems. E.g. on FreeBSD 13 we'll now get this when compiling
+archive.o:
+
+    archive.c:337:35: error: '_Generic' is a C11 extension [-Werror,-Wc11-extensions]
+                    strbuf_addstr(&path_in_archive, basename(path));
+                                                    ^
+    /usr/include/libgen.h:61:21: note: expanded from macro 'basename'
+    #define basename(x)     __generic(x, const char *, __old_basename, basename)(x)
+                            ^
+    /usr/include/sys/cdefs.h:325:2: note: expanded from macro '__generic'
+            _Generic(expr, t: yes, default: no)
+            ^
+
+This issue is a bug in FreeBSD introduced in
+freebsd/freebsd-src@62b7f85d4749 (Leave the C11 keywords alone when we
+have a recent version of GCC., 2014-09-03)[1].
+
+That commit started conditionally using the C11 _Generic() keyword as
+a function of either a __STDC_VERSION__ check, or
+__has_extension(c_generic_selections). The current FreeBSD code in
+sys/cdefs.h being (slightly modified since that commit):
+
+    #if (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L) || \
+        __has_extension(c_generic_selections)
+    [...]
+
+The inherent problem is that __has_extension() is a way to ask
+Clang (and GCC) whether the compiler supports that feature, but the
+-Wc11-extensions warning will be issued on the basis of the selected
+__STDC_VERSION__. With -std=gnu99 the __has_extension() built-in will
+return true, but the warning will still fire.
+
+Let's narrowly work around this by checking whether:
+
+ A. We are under FreeBSD
+ B. We are using a C standard older than C11
+
+In that case we'll include sys/cdefs.h, and undefine FreeBSD's
+__generic() wrapper if it's been defined. We'll then load libgen.h,
+and restore whatever __generic definition we temporarily undefined
+earlier.
+
+An alternate solution would be to simply define NO_LIBGEN_H=Y in
+config.mak.uname for FreeBSD, but this way we'll use its OS-provided
+basename() and dirname(), and in the general case ensure that nothing
+changes outside of DEVELOPER=1 builds.
+
+1. https://github.com/freebsd/freebsd-src/commit/62b7f85d4749
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-compat-util.h | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/git-compat-util.h b/git-compat-util.h
+index 1229c8296b9..69d9b5f202f 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -318,7 +318,25 @@ static inline int setitimer(int which, const struct itimerval *value, struct iti
+ #endif
+ 
+ #ifndef NO_LIBGEN_H
++/*
++ * FreeBSD's libgen.h inadvertently requires C11 features, due to its
++ * sys/cdefs.h using _Generic() if
++ * __has_extension(c_generic_selections) is true, regardless of
++ * __STDC_VERSION__....
++ */
++#if defined(__FreeBSD__) && __STDC_VERSION__ - 0 < 201112L
++#include <sys/cdefs.h>
++#ifdef __generic
++#define __fbsd_generic __generic
++#endif
++#undef __generic
++#endif
+ #include <libgen.h>
++/* ...continue FreeBSD-specific hack above */
++#ifdef __fbsd_generic
++#define __generic __fbsd_generic
++#undef __fbsd_generic
++#endif
+ #else
+ #define basename gitbasename
+ char *gitbasename(char *);
+-- 
+2.35.0.rc1.862.gadd77378860
+
