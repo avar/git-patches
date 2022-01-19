@@ -1,0 +1,324 @@
+From 444eacf30be54f2bcdd1285836d4513dfabc8bcd Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-444eacf30be-20220119T094428Z-avarab@gmail.com>
+In-Reply-To: <patch-1.1-9cea01a1395-20220117T170457Z-avarab@gmail.com>
+References: <patch-1.1-9cea01a1395-20220117T170457Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 17 Jan 2022 17:15:35 +0100
+Subject: [PATCH v2] cache.h: auto-detect if zlib has uncompress2()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the NO_UNCOMPRESS2=Y setting to auto-detect those older zlib
+versions that don't have uncompress2().
+
+This makes the compilation of git less annoying on older systems.
+Since the inclusion of a322920d0bb (Provide zlib's uncompress2 from
+compat/zlib-compat.c, 2021-10-07) in v2.35.0-rc0 our default
+dependency on a zlib 1.2.9 or newer, unless NO_UNCOMPRESS2=Y is
+specified. This results in new errors when git is compiled on older
+systems, requiring the packager to define NO_UNCOMPRESS2=Y.
+
+To get around those errors we've needed to bundle config.mak.uname
+changes such as 68d1da41c4e (build: NonStop ships with an older zlib,
+2022-01-10), and ffb9f298090 (build: centos/RHEL 7 ships with an older
+gcc and zlib, 2022-01-15).
+
+Let's instead rely on ZLIB_VERNUM, as we in zlib.c already for
+NO_DEFLATE_BOUND. See 9da3acfb194 ([PATCH] compat: support pre-1.2
+zlib, 2005-04-30) and 609a2289d76 (Improve accuracy of check for
+presence of deflateBound., 2007-11-07) for that prior art.
+
+With this change it should be safe to remove the NO_UNCOMPRESS2=Y
+lines from config.mak.uname, but let's leave them in place for now.
+
+Ideally we'd add compat/zlib-uncompress2.o to COMPAT_OBJS, but it's
+being added to our zlib.c instead. This is because we need to look at
+ZLIB_VERNUM to know if we need it. Hoisting that logic over to the
+Makefile would be inconvenient (we'd need shell out to "cc -E" or
+equivalent just to get the macro value). The zlib.c file already has
+the similar deflateBound() compatibility macro added in 9da3acfb194.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff against v1:
+1:  9cea01a1395 ! 1:  444eacf30be cache.h: auto-detect if zlib has uncompress2()
+    @@ Commit message
+         Change the NO_UNCOMPRESS2=Y setting to auto-detect those older zlib
+         versions that don't have uncompress2().
+     
+    -    This makes the compilation of git less annoying on older systems,
+    -    since the inclusion of a322920d0bb (Provide zlib's uncompress2 from
+    +    This makes the compilation of git less annoying on older systems.
+    +    Since the inclusion of a322920d0bb (Provide zlib's uncompress2 from
+         compat/zlib-compat.c, 2021-10-07) in v2.35.0-rc0 our default
+    -    dependency on a zlib 1.2.9 or newer unless NO_UNCOMPRESS2=Y is
+    -    specified has resulted in errors when git is compiled.
+    +    dependency on a zlib 1.2.9 or newer, unless NO_UNCOMPRESS2=Y is
+    +    specified. This results in new errors when git is compiled on older
+    +    systems, requiring the packager to define NO_UNCOMPRESS2=Y.
+     
+         To get around those errors we've needed to bundle config.mak.uname
+    -    changes such as such as 68d1da41c4e (build: NonStop ships with an
+    -    older zlib, 2022-01-10) and the in-flight
+    -    https://lore.kernel.org/git/20220116020520.26895-1-davvid@gmail.com/.
+    +    changes such as 68d1da41c4e (build: NonStop ships with an older zlib,
+    +    2022-01-10), and ffb9f298090 (build: centos/RHEL 7 ships with an older
+    +    gcc and zlib, 2022-01-15).
+     
+    -    Let's instead rely on ZLIB_VERNUM. Now only those systems where zlib
+    -    is so broken that it can't be rely on (such a system probably doesn't
+    -    exist) need to provide a NO_UNCOMPRESS2=Y.
+    +    Let's instead rely on ZLIB_VERNUM, as we in zlib.c already for
+    +    NO_DEFLATE_BOUND. See 9da3acfb194 ([PATCH] compat: support pre-1.2
+    +    zlib, 2005-04-30) and 609a2289d76 (Improve accuracy of check for
+    +    presence of deflateBound., 2007-11-07) for that prior art.
+     
+    -    See 9da3acfb194 ([PATCH] compat: support pre-1.2 zlib, 2005-04-30) and
+    -    609a2289d76 (Improve accuracy of check for presence of deflateBound.,
+    -    2007-11-07) for in-tree prior art using ZLIB_VERNUM.
+    +    With this change it should be safe to remove the NO_UNCOMPRESS2=Y
+    +    lines from config.mak.uname, but let's leave them in place for now.
+    +
+    +    Ideally we'd add compat/zlib-uncompress2.o to COMPAT_OBJS, but it's
+    +    being added to our zlib.c instead. This is because we need to look at
+    +    ZLIB_VERNUM to know if we need it. Hoisting that logic over to the
+    +    Makefile would be inconvenient (we'd need shell out to "cc -E" or
+    +    equivalent just to get the macro value). The zlib.c file already has
+    +    the similar deflateBound() compatibility macro added in 9da3acfb194.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Makefile ##
+     @@ Makefile: all::
+    - #
+      # Define NO_DEFLATE_BOUND if your zlib does not have deflateBound.
+      #
+    --# Define NO_UNCOMPRESS2 if your zlib does not have uncompress2.
+    -+# Define NO_UNCOMPRESS2 if your zlib is older than v1.2.9 and does not
+    -+# have uncompress2. You should not need to define this unless your
+    -+# zlib's ZLIB_VERNUM is broken. We'll auto-detect this on the basis of
+    -+# that macro.
+    + # Define NO_UNCOMPRESS2 if your zlib does not have uncompress2.
+    ++# You should not need to define this, it will be auto-detected using
+    ++# the ZLIB_VERNUM macro.
+      #
+      # Define NO_NORETURN if using buggy versions of gcc 4.6+ and profile feedback,
+      # as the compiler can crash (http://gcc.gnu.org/bugzilla/show_bug.cgi?id=49299)
+    @@ Makefile: endif
+      
+      ifdef NO_POSIX_GOODIES
+     
+    - ## cache.h ##
+    -@@ cache.h: typedef struct git_zstream {
+    - 	unsigned char *next_out;
+    - } git_zstream;
+    - 
+    -+#if defined(NO_UNCOMPRESS2) || ZLIB_VERNUM < 0x1290
+    -+#define GIT_NO_UNCOMPRESS2 1
+    -+int uncompress2(Bytef *dest, uLongf *destLen, const Bytef *source,
+    -+		uLong *sourceLen);
+    -+#endif
+    - void git_inflate_init(git_zstream *);
+    - void git_inflate_init_gzip_only(git_zstream *);
+    - void git_inflate_end(git_zstream *);
+    -
+      ## compat/zlib-uncompress2.c ##
+     @@
+      
+      */
+      
+     -#include "../reftable/system.h"
+    --#define z_const
+    --
+    - /*
+    -  * Copyright (C) 1995-2003, 2010, 2014, 2016 Jean-loup Gailly, Mark Adler
+    -  * For conditions of distribution and use, see copyright notice in zlib.h
+    -  */
+    + #define z_const
+      
+    --#include <zlib.h>
+    -+/* No "#include <zlib.h>", done in cache.h */
+    - 
+    - /* clang-format off */
+    - 
+    -
+    - ## config.mak.uname ##
+    -@@ config.mak.uname: ifeq ($(uname_S),FreeBSD)
+    - 	FILENO_IS_A_MACRO = UnfortunatelyYes
+    - endif
+    - ifeq ($(uname_S),OpenBSD)
+    --	# Versions < 7.0 need compatibility layer
+    --	ifeq ($(shell expr "$(uname_R)" : "[1-6]\."),2)
+    --		NO_UNCOMPRESS2 = UnfortunatelyYes
+    --	endif
+    - 	NO_STRCASESTR = YesPlease
+    - 	NO_MEMMEM = YesPlease
+    - 	USE_ST_TIMESPEC = YesPlease
+    -@@ config.mak.uname: ifeq ($(uname_S),Interix)
+    - 	endif
+    - endif
+    - ifeq ($(uname_S),Minix)
+    --	NO_UNCOMPRESS2 = YesPlease
+    - 	NO_IPV6 = YesPlease
+    - 	NO_ST_BLOCKS_IN_STRUCT_STAT = YesPlease
+    - 	NO_NSEC = YesPlease
+    -@@ config.mak.uname: ifeq ($(uname_S),NONSTOP_KERNEL)
+    - 	NO_SETENV = YesPlease
+    - 	NO_UNSETENV = YesPlease
+    - 	NO_MKDTEMP = YesPlease
+    --	NO_UNCOMPRESS2 = YesPlease
+    - 	# Currently libiconv-1.9.1.
+    - 	OLD_ICONV = UnfortunatelyYes
+    - 	NO_REGEX = NeedsStartEnd
+    + /*
+     
+    - ## reftable/block.c ##
+    -@@ reftable/block.c: license that can be found in the LICENSE file or at
+    - #include "record.h"
+    - #include "reftable-error.h"
+    - #include "system.h"
+    --#include <zlib.h>
+    -+#include "zlib.h"
+    + ## git-compat-util.h ##
+    +@@ git-compat-util.h: void unleak_memory(const void *ptr, size_t len);
+    + #define UNLEAK(var) do {} while (0)
+    + #endif
+      
+    - int header_size(int version)
+    - {
+    ++#if defined(NO_UNCOMPRESS2) || ZLIB_VERNUM < 0x1290
+    ++#include <zlib.h>
+    ++#define GIT_NO_UNCOMPRESS2 1
+    ++int uncompress2(Bytef *dest, uLongf *destLen, const Bytef *source,
+    ++		uLong *sourceLen);
+    ++#endif
+    ++
+    + /*
+    +  * This include must come after system headers, since it introduces macros that
+    +  * replace system names.
+     
+      ## reftable/system.h ##
+     @@ reftable/system.h: license that can be found in the LICENSE file or at
+    - #include "strbuf.h"
+    - #include "hash.h" /* hash ID, sizes.*/
+    - #include "dir.h" /* remove_dir_recursively, for tests.*/
+    --
+    --#include <zlib.h>
+    --
+    + 
+    + #include <zlib.h>
+    + 
+     -#ifdef NO_UNCOMPRESS2
+     -/*
+     - * This is uncompress2, which is only available in zlib >= 1.2.9
+    @@ reftable/system.h: license that can be found in the LICENSE file or at
+     -int uncompress2(Bytef *dest, uLongf *destLen, const Bytef *source,
+     -		uLong *sourceLen);
+     -#endif
+    -+#include "zlib.h"
+    - 
+    +-
+      int hash_size(uint32_t id);
+      
+    + #endif
+     
+      ## zlib.c ##
+     @@
+
+ Makefile                  | 3 ++-
+ compat/zlib-uncompress2.c | 1 -
+ git-compat-util.h         | 7 +++++++
+ reftable/system.h         | 9 ---------
+ zlib.c                    | 3 +++
+ 5 files changed, 12 insertions(+), 11 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 5580859afdb..616f6527f07 100644
+--- a/Makefile
++++ b/Makefile
+@@ -257,6 +257,8 @@ all::
+ # Define NO_DEFLATE_BOUND if your zlib does not have deflateBound.
+ #
+ # Define NO_UNCOMPRESS2 if your zlib does not have uncompress2.
++# You should not need to define this, it will be auto-detected using
++# the ZLIB_VERNUM macro.
+ #
+ # Define NO_NORETURN if using buggy versions of gcc 4.6+ and profile feedback,
+ # as the compiler can crash (http://gcc.gnu.org/bugzilla/show_bug.cgi?id=49299)
+@@ -1728,7 +1730,6 @@ endif
+ 
+ ifdef NO_UNCOMPRESS2
+ 	BASIC_CFLAGS += -DNO_UNCOMPRESS2
+-	REFTABLE_OBJS += compat/zlib-uncompress2.o
+ endif
+ 
+ ifdef NO_POSIX_GOODIES
+diff --git a/compat/zlib-uncompress2.c b/compat/zlib-uncompress2.c
+index 722610b9718..8592dc3dab5 100644
+--- a/compat/zlib-uncompress2.c
++++ b/compat/zlib-uncompress2.c
+@@ -8,7 +8,6 @@
+ 
+ */
+ 
+-#include "../reftable/system.h"
+ #define z_const
+ 
+ /*
+diff --git a/git-compat-util.h b/git-compat-util.h
+index 1229c8296b9..0c5e373e917 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -1386,6 +1386,13 @@ void unleak_memory(const void *ptr, size_t len);
+ #define UNLEAK(var) do {} while (0)
+ #endif
+ 
++#if defined(NO_UNCOMPRESS2) || ZLIB_VERNUM < 0x1290
++#include <zlib.h>
++#define GIT_NO_UNCOMPRESS2 1
++int uncompress2(Bytef *dest, uLongf *destLen, const Bytef *source,
++		uLong *sourceLen);
++#endif
++
+ /*
+  * This include must come after system headers, since it introduces macros that
+  * replace system names.
+diff --git a/reftable/system.h b/reftable/system.h
+index 4907306c0c5..c69caaabeba 100644
+--- a/reftable/system.h
++++ b/reftable/system.h
+@@ -18,15 +18,6 @@ license that can be found in the LICENSE file or at
+ 
+ #include <zlib.h>
+ 
+-#ifdef NO_UNCOMPRESS2
+-/*
+- * This is uncompress2, which is only available in zlib >= 1.2.9
+- * (released as of early 2017)
+- */
+-int uncompress2(Bytef *dest, uLongf *destLen, const Bytef *source,
+-		uLong *sourceLen);
+-#endif
+-
+ int hash_size(uint32_t id);
+ 
+ #endif
+diff --git a/zlib.c b/zlib.c
+index d594cba3fc9..d9440dfb784 100644
+--- a/zlib.c
++++ b/zlib.c
+@@ -3,6 +3,9 @@
+  * at init time.
+  */
+ #include "cache.h"
++#ifdef GIT_NO_UNCOMPRESS2
++#include "compat/zlib-uncompress2.c"
++#endif
+ 
+ static const char *zerr_to_string(int status)
+ {
+-- 
+2.35.0.rc1.864.g57621b115b6
+
