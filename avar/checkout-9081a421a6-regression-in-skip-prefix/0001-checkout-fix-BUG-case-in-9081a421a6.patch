@@ -1,0 +1,103 @@
+From 21ddf7c628d8512c8094223d1cd28d7ce468ba72 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-21ddf7c628d-20220120T212233Z-avarab@gmail.com>
+In-Reply-To: <YemTGQZ97vAPUPY0@pobox.com>
+References: <YemTGQZ97vAPUPY0@pobox.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 20 Jan 2022 22:03:37 +0100
+Subject: [PATCH] checkout: fix BUG() case in 9081a421a6
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in my 9081a421a6d (checkout: fix "branch info" memory
+leaks, 2021-11-16) where I'd assumed that the old_branch_info.path
+would have to start with refs/heads/*, but as has been reported[1]
+that's not the case.
+
+As a test case[2] to reproduce this shows the second "git checkout"
+here runs into the BUG() in the pre-image. The test being added is
+amended from[2] and will pass both with this change, and before
+9081a421a6. I.e. our behavior now is again the same as before that
+commit.
+
+1. https://bugzilla.redhat.com/show_bug.cgi?id=2042920
+2. https://lore.kernel.org/git/YemTGQZ97vAPUPY0@pobox.com/
+
+Reported-by: Petr Šplíchal <psplicha@redhat.com>
+Reported-by: Todd Zullinger <tmz@pobox.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/checkout.c         | 11 ++++-------
+ t/t2018-checkout-branch.sh | 33 +++++++++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index 6a5dd2a2a22..52a47ef40e1 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -1090,13 +1090,10 @@ static int switch_branches(const struct checkout_opts *opts,
+ 		FREE_AND_NULL(old_branch_info.path);
+ 
+ 	if (old_branch_info.path) {
+-		const char *const prefix = "refs/heads/";
+-		const char *p;
+-		if (skip_prefix(old_branch_info.path, prefix, &p))
+-			old_branch_info.name = xstrdup(p);
+-		else
+-			BUG("should be able to skip past '%s' in '%s'!",
+-			    prefix, old_branch_info.path);
++		const char *p = old_branch_info.path;
++
++		skip_prefix(old_branch_info.path, "refs/heads/", &p);
++		old_branch_info.name = xstrdup(p);
+ 	}
+ 
+ 	if (opts->new_orphan_branch && opts->orphan_from_empty_tree) {
+diff --git a/t/t2018-checkout-branch.sh b/t/t2018-checkout-branch.sh
+index 3e93506c045..82df9b8bf64 100755
+--- a/t/t2018-checkout-branch.sh
++++ b/t/t2018-checkout-branch.sh
+@@ -85,6 +85,39 @@ test_expect_success 'setup' '
+ 	git branch -m branch1
+ '
+ 
++test_expect_success REFFILES 'checkout a branch without refs/heads/* prefix' '
++	git clone --no-tags . repo-odd-prefix &&
++	(
++		cd repo-odd-prefix &&
++
++		cp .git/refs/remotes/origin/HEAD .git/refs/heads/a-branch &&
++
++		echo branch1 >expect.ref &&
++		git rev-parse --abbrev-ref HEAD >actual.ref &&
++		test_cmp expect.ref actual.ref &&
++
++		git checkout -f a-branch &&
++
++		echo origin/branch1 >expect.ref &&
++		git rev-parse --abbrev-ref HEAD >actual.ref &&
++		test_cmp expect.ref actual.ref &&
++
++		git checkout -f a-branch &&
++
++		cat >expect <<-EOF &&
++		$(git rev-parse HEAD) commit	refs/heads/a-branch
++		$(git rev-parse HEAD) commit	refs/heads/branch1
++		$(git rev-parse HEAD) commit	refs/remotes/origin/HEAD
++		$(git rev-parse HEAD) commit	refs/remotes/origin/branch1
++		EOF
++		git for-each-ref >actual &&
++		test_cmp expect actual &&
++
++		git rev-parse --abbrev-ref HEAD >actual &&
++		test_cmp expect.ref actual.ref
++	)
++'
++
+ test_expect_success 'checkout -b to a new branch, set to HEAD' '
+ 	test_when_finished "
+ 		git checkout branch1 &&
+-- 
+2.35.0.rc1.864.g57621b115b6
+
