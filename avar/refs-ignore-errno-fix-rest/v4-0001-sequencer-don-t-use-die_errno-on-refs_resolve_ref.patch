@@ -1,0 +1,64 @@
+From 7f31277fd57b4ba560f1ba955ee234d72c10974b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-1.2-7f31277fd57-20220126T141840Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.2-00000000000-20220126T141840Z-avarab@gmail.com>
+References: <xmqqo84gu4sb.fsf@gitster.g>
+	<cover-v4-0.2-00000000000-20220126T141840Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 Dec 2021 03:45:04 +0100
+Subject: [PATCH v4 1/2] sequencer: don't use die_errno() on
+ refs_resolve_ref_unsafe() failure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code that was faithfully migrated to the new "resolve_errno"
+API in ed90f04155d (refs API: make resolve_ref_unsafe() not set errno,
+2021-10-16) to stop caring about the errno at all.
+
+When we fail to resolve "HEAD" after the sequencer runs it doesn't
+really help to say what the "errno" value is, since the fake backend
+errno may or may not reflect anything real about the state of the
+".git/HEAD". With the upcoming reftable backend this fakery will
+become even more pronounced.
+
+So let's just die() instead of die_errno() here. This will also help
+simplify the refs_resolve_ref_unsafe() API. This was the only user of
+it that wasn't ignoring the "failure_errno" output parameter.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 10 ++++------
+ 1 file changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index 6abd72160cc..03cdf548d72 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -1281,7 +1281,7 @@ void print_commit_summary(struct repository *r,
+ 	struct strbuf author_ident = STRBUF_INIT;
+ 	struct strbuf committer_ident = STRBUF_INIT;
+ 	struct ref_store *refs;
+-	int resolve_errno;
++	int ignore_errno;
+ 
+ 	commit = lookup_commit(r, oid);
+ 	if (!commit)
+@@ -1333,11 +1333,9 @@ void print_commit_summary(struct repository *r,
+ 
+ 	refs = get_main_ref_store(the_repository);
+ 	head = refs_resolve_ref_unsafe(refs, "HEAD", 0, NULL, NULL,
+-				       &resolve_errno);
+-	if (!head) {
+-		errno = resolve_errno;
+-		die_errno(_("unable to resolve HEAD after creating commit"));
+-	}
++				       &ignore_errno);
++	if (!head)
++		die(_("unable to resolve HEAD after creating commit"));
+ 	if (!strcmp(head, "HEAD"))
+ 		head = _("detached HEAD");
+ 	else
+-- 
+2.35.0.rc2.886.ga87834885e8
+
