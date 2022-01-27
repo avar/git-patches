@@ -1,0 +1,71 @@
+From f31fd72fba26fc7238aedf612f754efa4425a16f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-3.6-f31fd72fba2-20220127T140146Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.6-00000000000-20220127T140146Z-avarab@gmail.com>
+References: <20211013051805.45662-1-raykar.ath@gmail.com>
+	<cover-v4-0.6-00000000000-20220127T140146Z-avarab@gmail.com>
+From: Atharva Raykar <raykar.ath@gmail.com>
+Date: Wed, 13 Oct 2021 10:48:01 +0530
+Subject: [PATCH v4 3/6] submodule--helper: allow setting superprefix for
+ init_submodule()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We allow callers of the `init_submodule()` function to optionally
+override the superprefix from the environment.
+
+We need to enable this option because in our conversion of the update
+command that will follow, the '--init' option will be handled through
+this API. We will need to change the superprefix at that time to ensure
+the display paths show correctly in the output messages.
+
+Mentored-by: Christian Couder <christian.couder@gmail.com>
+Mentored-by: Shourya Shukla <periperidip@gmail.com>
+Signed-off-by: Atharva Raykar <raykar.ath@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index d38a64c7b7d..f8e18820ace 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -608,18 +608,22 @@ static int module_foreach(int argc, const char **argv, const char *prefix)
+ 
+ struct init_cb {
+ 	const char *prefix;
++	const char *superprefix;
+ 	unsigned int flags;
+ };
+ #define INIT_CB_INIT { 0 }
+ 
+ static void init_submodule(const char *path, const char *prefix,
+-			   unsigned int flags)
++			   const char *superprefix, unsigned int flags)
+ {
+ 	const struct submodule *sub;
+ 	struct strbuf sb = STRBUF_INIT;
+ 	char *upd = NULL, *url = NULL, *displaypath;
+ 
+-	displaypath = get_submodule_displaypath(path, prefix);
++	/* try superprefix from the environment, if it is not passed explicitly */
++	if (!superprefix)
++		superprefix = get_super_prefix();
++	displaypath = do_get_submodule_displaypath(path, prefix, superprefix);
+ 
+ 	sub = submodule_from_path(the_repository, null_oid(), path);
+ 
+@@ -693,7 +697,7 @@ static void init_submodule(const char *path, const char *prefix,
+ static void init_submodule_cb(const struct cache_entry *list_item, void *cb_data)
+ {
+ 	struct init_cb *info = cb_data;
+-	init_submodule(list_item->name, info->prefix, info->flags);
++	init_submodule(list_item->name, info->prefix, info->superprefix, info->flags);
+ }
+ 
+ static int module_init(int argc, const char **argv, const char *prefix)
+-- 
+2.35.0.894.g563b84683b9
+

@@ -1,0 +1,139 @@
+From 1a0b1323cd7599e7f74af0f3255743a1b6cdeae7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-1.6-1a0b1323cd7-20220127T140146Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.6-00000000000-20220127T140146Z-avarab@gmail.com>
+References: <20211013051805.45662-1-raykar.ath@gmail.com>
+	<cover-v4-0.6-00000000000-20220127T140146Z-avarab@gmail.com>
+From: Atharva Raykar <raykar.ath@gmail.com>
+Date: Wed, 13 Oct 2021 10:47:58 +0530
+Subject: [PATCH v4 1/6] submodule--helper: get remote names from any
+ repository
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`get_default_remote()` retrieves the name of a remote by resolving the
+refs from of the current repository's ref store.
+
+Thus in order to use it for retrieving the remote name of a submodule,
+we have to start a new subprocess which runs from the submodule
+directory.
+
+Let's instead introduce a function called `repo_get_default_remote()`
+which takes any repository object and retrieves the remote accordingly.
+
+`get_default_remote()` is then defined as a call to
+`repo_get_default_remote()` with 'the_repository' passed to it.
+
+Now that we have `repo_get_default_remote()`, we no longer have to start
+a subprocess that called `submodule--helper get-default-remote` from
+within the submodule directory.
+
+So let's make a function called `get_default_remote_submodule()` which
+takes a submodule path, and returns the default remote for that
+submodule, all within the same process.
+
+We can now use this function to save an unnecessary subprocess spawn in
+`sync_submodule()`, and also in the next patch, which will require this
+functionality.
+
+Mentored-by: Christian Couder <christian.couder@gmail.com>
+Mentored-by: Shourya Shukla <periperidip@gmail.com>
+Signed-off-by: Atharva Raykar <raykar.ath@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 41 +++++++++++++++++++++++--------------
+ 1 file changed, 26 insertions(+), 15 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index c5d3fc3817f..965260edb22 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -29,11 +29,10 @@
+ typedef void (*each_submodule_fn)(const struct cache_entry *list_item,
+ 				  void *cb_data);
+ 
+-static char *get_default_remote(void)
++static char *repo_get_default_remote(struct repository *repo, const char *refname)
+ {
+ 	char *dest = NULL, *ret;
+ 	struct strbuf sb = STRBUF_INIT;
+-	const char *refname = resolve_ref_unsafe("HEAD", 0, NULL, NULL);
+ 
+ 	if (!refname)
+ 		die(_("No such ref: %s"), "HEAD");
+@@ -46,7 +45,7 @@ static char *get_default_remote(void)
+ 		die(_("Expecting a full ref name, got %s"), refname);
+ 
+ 	strbuf_addf(&sb, "branch.%s.remote", refname);
+-	if (git_config_get_string(sb.buf, &dest))
++	if (repo_config_get_string(repo, sb.buf, &dest))
+ 		ret = xstrdup("origin");
+ 	else
+ 		ret = dest;
+@@ -55,6 +54,25 @@ static char *get_default_remote(void)
+ 	return ret;
+ }
+ 
++static char *get_default_remote_submodule(const char *module_path)
++{
++	const char *refname;
++	struct repository subrepo;
++	int ignore_errno;
++
++	refname = refs_resolve_ref_unsafe(get_submodule_ref_store(module_path),
++					  "HEAD", 0, NULL, NULL,
++					  &ignore_errno);
++	repo_submodule_init(&subrepo, the_repository, module_path, null_oid());
++	return repo_get_default_remote(&subrepo, refname);
++}
++
++static char *get_default_remote(void)
++{
++	const char *refname = resolve_ref_unsafe("HEAD", 0, NULL, NULL);
++	return repo_get_default_remote(the_repository, refname);
++}
++
+ static int print_default_remote(int argc, const char **argv, const char *prefix)
+ {
+ 	char *remote;
+@@ -1341,9 +1359,8 @@ static void sync_submodule(const char *path, const char *prefix,
+ {
+ 	const struct submodule *sub;
+ 	char *remote_key = NULL;
+-	char *sub_origin_url, *super_config_url, *displaypath;
++	char *sub_origin_url, *super_config_url, *displaypath, *default_remote;
+ 	struct strbuf sb = STRBUF_INIT;
+-	struct child_process cp = CHILD_PROCESS_INIT;
+ 	char *sub_config_path = NULL;
+ 
+ 	if (!is_submodule_active(the_repository, path))
+@@ -1382,21 +1399,15 @@ static void sync_submodule(const char *path, const char *prefix,
+ 	if (!is_submodule_populated_gently(path, NULL))
+ 		goto cleanup;
+ 
+-	prepare_submodule_repo_env(&cp.env_array);
+-	cp.git_cmd = 1;
+-	cp.dir = path;
+-	strvec_pushl(&cp.args, "submodule--helper",
+-		     "print-default-remote", NULL);
+-
+ 	strbuf_reset(&sb);
+-	if (capture_command(&cp, &sb, 0))
++	default_remote = get_default_remote_submodule(path);
++	if (!default_remote)
+ 		die(_("failed to get the default remote for submodule '%s'"),
+ 		      path);
+ 
+-	strbuf_strip_suffix(&sb, "\n");
+-	remote_key = xstrfmt("remote.%s.url", sb.buf);
++	remote_key = xstrfmt("remote.%s.url", default_remote);
++	free(default_remote);
+ 
+-	strbuf_reset(&sb);
+ 	submodule_to_gitdir(&sb, path);
+ 	strbuf_addstr(&sb, "/config");
+ 
+-- 
+2.35.0.894.g563b84683b9
+
