@@ -1,11 +1,11 @@
-From 9bf101153055072ee0892ae1d715a835b80e1a50 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v4-6.6-9bf10115305-20220127T141815Z-avarab@gmail.com>
-In-Reply-To: <cover-v4-0.6-00000000000-20220127T141815Z-avarab@gmail.com>
+From 818c1eec94307aa8a52b2269df960cf0c345e45d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-7.7-818c1eec943-20220127T143508Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.7-00000000000-20220127T143508Z-avarab@gmail.com>
 References: <20211013051805.45662-1-raykar.ath@gmail.com>
-	<cover-v4-0.6-00000000000-20220127T141815Z-avarab@gmail.com>
+	<cover-v4-0.7-00000000000-20220127T143508Z-avarab@gmail.com>
 From: Atharva Raykar <raykar.ath@gmail.com>
 Date: Wed, 13 Oct 2021 10:47:57 +0530
-Subject: [PATCH v4 6/6] submodule: move core cmd_update() logic to C
+Subject: [PATCH v4 7/7] submodule: move core cmd_update() logic to C
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -43,12 +43,12 @@ Signed-off-by: Atharva Raykar <raykar.ath@gmail.com>
 Signed-off-by: Junio C Hamano <gitster@pobox.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- builtin/submodule--helper.c | 670 +++++++++++++++++++++---------------
+ builtin/submodule--helper.c | 662 ++++++++++++++++++++----------------
  git-submodule.sh            | 145 +-------
- 2 files changed, 400 insertions(+), 415 deletions(-)
+ 2 files changed, 389 insertions(+), 418 deletions(-)
 
 diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
-index 1553b318cc7..f3828eea488 100644
+index a96976b1772..916df6d9947 100644
 --- a/builtin/submodule--helper.c
 +++ b/builtin/submodule--helper.c
 @@ -73,21 +73,6 @@ static char *get_default_remote(void)
@@ -124,20 +124,23 @@ index 1553b318cc7..f3828eea488 100644
  	struct submodule_update_strategy update_strategy;
 +	int max_jobs;
  	int depth;
+-	unsigned int force: 1;
+-	unsigned int quiet: 1;
+-	unsigned int nofetch: 1;
+-	unsigned int just_cloned: 1;
 +	int recommend_shallow;
 +	int single_branch;
-+	unsigned int init: 1;
- 	unsigned int force: 1;
- 	unsigned int quiet: 1;
- 	unsigned int nofetch: 1;
--	unsigned int just_cloned: 1;
-+	unsigned int remote: 1;
-+	unsigned int recursive: 1;
-+	unsigned int progress: 1;
-+	unsigned int dissociate: 1;
-+	unsigned int require_init: 1;
-+	unsigned warn_if_uninitialized : 1;
-+	unsigned int just_cloned : 1;
++	unsigned int init;
++	unsigned int force;
++	unsigned int quiet;
++	unsigned int nofetch;
++	unsigned int remote;
++	unsigned int recursive;
++	unsigned int progress;
++	unsigned int dissociate;
++	unsigned int require_init;
++	unsigned warn_if_uninitialized ;
++	unsigned int just_cloned ;
 +	struct string_list references;
 +	struct module_list list;
  };
@@ -187,14 +190,14 @@ index 1553b318cc7..f3828eea488 100644
 +	struct strbuf out = STRBUF_INIT;
  	int must_die_on_failure = 0;
 +	struct submodule_update_strategy strategy = SUBMODULE_UPDATE_STRATEGY_INIT;
-+
+ 
+-	switch (ud->update_strategy.type) {
 +	if (ud->update_strategy.type == SM_UPDATE_UNSPECIFIED || ud->just_cloned)
 +		determine_submodule_update_strategy(the_repository, ud->just_cloned,
 +						    ud->sm_path, NULL, &strategy);
 +	else
 +		strategy = ud->update_strategy;
- 
--	switch (ud->update_strategy.type) {
++
 +	switch (strategy.type) {
  	case SM_UPDATE_CHECKOUT:
  		cp.git_cmd = 1;
@@ -370,36 +373,36 @@ index 1553b318cc7..f3828eea488 100644
 -{
 -	const char *update = NULL;
 -	struct pathspec pathspec;
--	struct submodule_update_clone suc = SUBMODULE_UPDATE_CLONE_INIT;
+-	struct submodule_update_clone opt = SUBMODULE_UPDATE_CLONE_INIT;
 -
 -	struct option module_update_clone_options[] = {
 -		OPT_STRING(0, "prefix", &prefix,
 -			   N_("path"),
 -			   N_("path into the working tree")),
--		OPT_STRING(0, "recursive-prefix", &suc.recursive_prefix,
+-		OPT_STRING(0, "recursive-prefix", &opt.recursive_prefix,
 -			   N_("path"),
 -			   N_("path into the working tree, across nested "
 -			      "submodule boundaries")),
 -		OPT_STRING(0, "update", &update,
 -			   N_("string"),
 -			   N_("rebase, merge, checkout or none")),
--		OPT_STRING_LIST(0, "reference", &suc.references, N_("repo"),
+-		OPT_STRING_LIST(0, "reference", &opt.references, N_("repo"),
 -			   N_("reference repository")),
--		OPT_BOOL(0, "dissociate", &suc.dissociate,
+-		OPT_BOOL(0, "dissociate", &opt.dissociate,
 -			   N_("use --reference only while cloning")),
--		OPT_STRING(0, "depth", &suc.depth, "<depth>",
+-		OPT_STRING(0, "depth", &opt.depth, "<depth>",
 -			   N_("create a shallow clone truncated to the "
 -			      "specified number of revisions")),
--		OPT_INTEGER('j', "jobs", &suc.max_jobs,
+-		OPT_INTEGER('j', "jobs", &opt.max_jobs,
 -			    N_("parallel jobs")),
--		OPT_BOOL(0, "recommend-shallow", &suc.recommend_shallow,
+-		OPT_BOOL(0, "recommend-shallow", &opt.recommend_shallow,
 -			    N_("whether the initial clone should follow the shallow recommendation")),
--		OPT__QUIET(&suc.quiet, N_("don't print cloning progress")),
--		OPT_BOOL(0, "progress", &suc.progress,
+-		OPT__QUIET(&opt.quiet, N_("don't print cloning progress")),
+-		OPT_BOOL(0, "progress", &opt.progress,
 -			    N_("force cloning progress")),
--		OPT_BOOL(0, "require-init", &suc.require_init,
+-		OPT_BOOL(0, "require-init", &opt.require_init,
 -			   N_("disallow cloning into non-empty directory")),
--		OPT_BOOL(0, "single-branch", &suc.single_branch,
+-		OPT_BOOL(0, "single-branch", &opt.single_branch,
 -			 N_("clone only one branch, HEAD or --branch")),
 -		OPT_END()
 -	};
@@ -408,25 +411,25 @@ index 1553b318cc7..f3828eea488 100644
 -		N_("git submodule--helper update-clone [--prefix=<path>] [<path>...]"),
 -		NULL
 -	};
--	suc.prefix = prefix;
+-	opt.prefix = prefix;
 -
--	update_clone_config_from_gitmodules(&suc.max_jobs);
--	git_config(git_update_clone_config, &suc.max_jobs);
+-	update_clone_config_from_gitmodules(&opt.max_jobs);
+-	git_config(git_update_clone_config, &opt.max_jobs);
 -
 -	argc = parse_options(argc, argv, prefix, module_update_clone_options,
 -			     git_submodule_helper_usage, 0);
 -
 -	if (update)
--		if (parse_submodule_update_strategy(update, &suc.update) < 0)
+-		if (parse_submodule_update_strategy(update, &opt.update) < 0)
 -			die(_("bad value for update parameter"));
 -
--	if (module_list_compute(argc, argv, prefix, &pathspec, &suc.list) < 0)
+-	if (module_list_compute(argc, argv, prefix, &pathspec, &opt.list) < 0)
 -		return 1;
 -
 -	if (pathspec.nr)
--		suc.warn_if_uninitialized = 1;
+-		opt.warn_if_uninitialized = 1;
 -
--	return update_submodules(&suc);
+-	return update_submodules(&opt);
 -}
 -
 -static int run_update_procedure(int argc, const char **argv, const char *prefix)
@@ -537,7 +540,7 @@ index 1553b318cc7..f3828eea488 100644
  }
  
  static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
-@@ -3006,6 +2830,293 @@ static int module_set_branch(int argc, const char **argv, const char *prefix)
+@@ -3006,6 +2830,279 @@ static int module_set_branch(int argc, const char **argv, const char *prefix)
  	return !!ret;
  }
  
@@ -719,50 +722,47 @@ index 1553b318cc7..f3828eea488 100644
 +
 +static int module_update(int argc, const char **argv, const char *prefix)
 +{
-+	int init = 0, force = 0, quiet = 0, nofetch = 0;
-+	int remote = 0, recursive = 0, dissociate = 0;
-+	int progress = 0, require_init = 0;
 +	const char *update = NULL;
 +	struct pathspec pathspec;
-+	struct update_data update_data = UPDATE_DATA_INIT;
++	struct update_data opt = UPDATE_DATA_INIT;
 +
 +	struct option module_update_clone_options[] = {
-+		OPT__FORCE(&force, N_("force checkout updates"), 0),
-+		OPT_BOOL(0, "init", &init,
++		OPT__FORCE(&opt.force, N_("force checkout updates"), 0),
++		OPT_BOOL(0, "init", &opt.init,
 +			 N_("initialize uninitialized submodules before update")),
-+		OPT_BOOL(0, "remote", &remote,
++		OPT_BOOL(0, "remote", &opt.remote,
 +			 N_("use SHA-1 of submodule's remote tracking branch")),
-+		OPT_BOOL(0, "recursive", &recursive,
++		OPT_BOOL(0, "recursive", &opt.recursive,
 +			 N_("traverse submodules recursively")),
-+		OPT_BOOL('N', "no-fetch", &nofetch,
++		OPT_BOOL('N', "no-fetch", &opt.nofetch,
 +			 N_("don't fetch new objects from the remote site")),
-+		OPT_STRING(0, "prefix", &prefix,
++		OPT_STRING(0, "prefix", &opt.prefix,
 +			   N_("path"),
 +			   N_("path into the working tree")),
-+		OPT_STRING(0, "recursive-prefix", &update_data.recursive_prefix,
++		OPT_STRING(0, "recursive-prefix", &opt.recursive_prefix,
 +			   N_("path"),
 +			   N_("path into the working tree, across nested "
 +			      "submodule boundaries")),
 +		OPT_STRING(0, "update", &update,
 +			   N_("string"),
 +			   N_("rebase, merge, checkout or none")),
-+		OPT_STRING_LIST(0, "reference", &update_data.references, N_("repo"),
++		OPT_STRING_LIST(0, "reference", &opt.references, N_("repo"),
 +				N_("reference repository")),
-+		OPT_BOOL(0, "dissociate", &dissociate,
++		OPT_BOOL(0, "dissociate", &opt.dissociate,
 +			 N_("use --reference only while cloning")),
-+		OPT_INTEGER(0, "depth", &update_data.depth,
++		OPT_INTEGER(0, "depth", &opt.depth,
 +			    N_("create a shallow clone truncated to the "
 +			       "specified number of revisions")),
-+		OPT_INTEGER('j', "jobs", &update_data.max_jobs,
++		OPT_INTEGER('j', "jobs", &opt.max_jobs,
 +			    N_("parallel jobs")),
-+		OPT_BOOL(0, "recommend-shallow", &update_data.recommend_shallow,
++		OPT_BOOL(0, "recommend-shallow", &opt.recommend_shallow,
 +			 N_("whether the initial clone should follow the shallow recommendation")),
-+		OPT__QUIET(&quiet, N_("don't print cloning progress")),
-+		OPT_BOOL(0, "progress", &progress,
++		OPT__QUIET(&opt.quiet, N_("don't print cloning progress")),
++		OPT_BOOL(0, "progress", &opt.progress,
 +			 N_("force cloning progress")),
-+		OPT_BOOL(0, "require-init", &require_init,
++		OPT_BOOL(0, "require-init", &opt.require_init,
 +			 N_("disallow cloning into non-empty directory")),
-+		OPT_BOOL(0, "single-branch", &update_data.single_branch,
++		OPT_BOOL(0, "single-branch", &opt.single_branch,
 +			 N_("clone only one branch, HEAD or --branch")),
 +		OPT_END()
 +	};
@@ -772,41 +772,30 @@ index 1553b318cc7..f3828eea488 100644
 +		NULL
 +	};
 +
-+	update_clone_config_from_gitmodules(&update_data.max_jobs);
-+	git_config(git_update_clone_config, &update_data.max_jobs);
++	update_clone_config_from_gitmodules(&opt.max_jobs);
++	git_config(git_update_clone_config, &opt.max_jobs);
 +
 +	argc = parse_options(argc, argv, prefix, module_update_clone_options,
 +			     git_submodule_helper_usage, 0);
-+	update_data.prefix = prefix;
-+
-+	update_data.force = !!force;
-+	update_data.quiet = !!quiet;
-+	update_data.nofetch = !!nofetch;
-+	update_data.init = !!init;
-+	update_data.require_init = !!require_init;
-+	update_data.remote = !!remote;
-+	update_data.recursive = !!recursive;
-+	update_data.progress = !!progress;
-+	update_data.dissociate = !!dissociate;
-+	oidcpy(&update_data.oid, null_oid());
-+	oidcpy(&update_data.suboid, null_oid());
++	oidcpy(&opt.oid, null_oid());
++	oidcpy(&opt.suboid, null_oid());
 +
 +	if (update)
 +		if (parse_submodule_update_strategy(update,
-+						    &update_data.update_strategy) < 0)
++						    &opt.update_strategy) < 0)
 +			die(_("bad value for update parameter"));
 +
-+	if (module_list_compute(argc, argv, prefix, &pathspec, &update_data.list) < 0)
++	if (module_list_compute(argc, argv, prefix, &pathspec, &opt.list) < 0)
 +		return 1;
 +
 +	if (pathspec.nr)
-+		update_data.warn_if_uninitialized = 1;
++		opt.warn_if_uninitialized = 1;
 +
-+	if (update_data.init) {
++	if (opt.init) {
 +		struct module_list list = MODULE_LIST_INIT;
 +		struct init_cb info = INIT_CB_INIT;
 +
-+		if (module_list_compute(argc, argv, update_data.prefix,
++		if (module_list_compute(argc, argv, opt.prefix,
 +					&pathspec, &list) < 0)
 +			return 1;
 +
@@ -817,21 +806,21 @@ index 1553b318cc7..f3828eea488 100644
 +		if (!argc && git_config_get_value_multi("submodule.active"))
 +			module_list_active(&list);
 +
-+		info.prefix = update_data.prefix;
-+		info.superprefix = update_data.recursive_prefix;
-+		if (update_data.quiet)
++		info.prefix = opt.prefix;
++		info.superprefix = opt.recursive_prefix;
++		if (opt.quiet)
 +			info.flags |= OPT_QUIET;
 +
 +		for_each_listed_submodule(&list, init_submodule_cb, &info);
 +	}
 +
-+	return update_submodules(&update_data);
++	return update_submodules(&opt);
 +}
 +
  struct add_data {
  	const char *prefix;
  	const char *branch;
-@@ -3393,16 +3504,11 @@ static struct cmd_struct commands[] = {
+@@ -3393,16 +3490,11 @@ static struct cmd_struct commands[] = {
  	{"name", module_name, 0},
  	{"clone", module_clone, 0},
  	{"add", module_add, SUPPORT_SUPER_PREFIX},
