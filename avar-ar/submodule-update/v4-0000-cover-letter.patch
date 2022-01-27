@@ -4,12 +4,64 @@ In-Reply-To: <20211013051805.45662-1-raykar.ath@gmail.com>
 References: <20211013051805.45662-1-raykar.ath@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Thu, 27 Jan 2022 15:03:03 +0100
-Subject: [PATCH v4 0/6] *** SUBJECT HERE ***
+Subject: [PATCH v4 0/6] submodule: convert the rest of 'update' to C
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series rewrites "git submodule update" in C. It's a rebased and
+re-rolled version of v3[1] submitted back in October. Per [2] the
+author doesn't have time to push it forward now.
+
+There was discussion in the thread at [2] about the interaction
+between this and es/superproject-aware-submodules.
+
+Per [3] I think it would be better to get this in first, as the big
+outstanding question about the superproject aware submodules[3] was
+whether it was an optimization or not. It's currently an optimization,
+but whether it's needed is muddied by "git-submodule.sh" being a
+shellscript and invoking "git rev-parse" in a loop, which a version
+rebased on this could do in C.
+
+Per the v3 CL of this series[1] there is a C version of the required
+code for es/superproject-aware-submodules, but when I tried to rebase
+it it failed because it's based on an older version of
+es/superproject-aware-submodules which linked to the .git dir rather
+than the working tree.
+
+I.e. the C code[4] produces "../.git" in the tests, but we're
+expecting "../..". I couldn't find the right API to get that path from
+path.c et al, but it's presumably easy for someone more familiar with
+it.
+
+As for changes in this v4:
+
+ * Rebased on master, it didn't compile due to my changes to the
+   refs_resolve_ref_unsafe() API.
+
+ * There was some back & forth about large patches v.s. split-up
+   commits in previous iterations. This version squashes several
+   patches together, because I thought a rename/add/removal of code
+   that's all related (and really can only be done as one logical step
+   without a major rewrite) was easier to look at than having to jump
+   back and forth in the series.
+
+   The resulting diff is large, but I think it's better than looking
+   at it piecemeal. You can see what new code replaces what old code.
+
+ * There's a new 5/6 that I added to make the 6/6 diff a tad smaller
+   (but not by much).
+
+ * I fixed a strbuf and string_list memory leak in the new
+   code. There's still a *lot* of memory leaks in
+   builtin/submodule--helper.c, but they're all (well, to the extent
+   that I can extract signal from the noise) in existing code, or in
+   generic APIs that uses which leak.
+
+1. https://lore.kernel.org/git/20211013051805.45662-1-raykar.ath@gmail.com/
+2. https://lore.kernel.org/git/CADi-XoThCqfvPnBd0p6yAhrtotK_3z2pQQMugWPsYpHLbXge7w@mail.gmail.com/
+3. https://lore.kernel.org/git/211203.86o85xqw7o.gmgdl@evledraar.gmail.com/
+4. https://github.com/tfidfwastaken/git/blob/a74aaf2540c536970f2541d3042c825f82a69770/builtin/submodule--helper.c#L2922-L2930
 
 Atharva Raykar (6):
   submodule--helper: get remote names from any repository
