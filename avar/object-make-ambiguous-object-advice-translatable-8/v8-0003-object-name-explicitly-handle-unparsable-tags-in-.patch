@@ -1,0 +1,54 @@
+From f99cb33061cf3d7ff2194e4d55a2ab973919aace Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v8-3.7-f99cb33061c-20220127T051710Z-avarab@gmail.com>
+In-Reply-To: <cover-v8-0.7-00000000000-20220127T051710Z-avarab@gmail.com>
+References: <cover-v7-0.6-00000000000-20220111T130811Z-avarab@gmail.com>
+	<cover-v8-0.7-00000000000-20220127T051710Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 27 Jan 2022 05:14:00 +0100
+Subject: [PATCH v8 3/7] object-name: explicitly handle unparsable tags in
+ show_ambiguous_object()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up the handling of OBJ_BAD in the preceding commit and
+explicitly handle those cases where parse_tag() fails, or we don't end
+up with a non-NULL pointer in in tag->tag.
+
+If we run into such a tag we'd previously be silent about it. We
+really should be handling these batter in parse_tag_buffer() by being
+more eager to emit an error(), instead of silently aborting with
+"return -1;". One example of such a case is tested for
+in"t3800-mktag.sh", where the code takes the "size <
+the_hash_algo->hexsz + 24" branch.
+
+But for now let's show the user something, now instead of showing:
+
+    hint:   deadbeef tag
+
+We'll instead display:
+
+    hint:   deadbeef tag [tag could not be parsed]
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-name.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/object-name.c b/object-name.c
+index 9750634ee76..298b742bac9 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -382,6 +382,8 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 		struct tag *tag = lookup_tag(ds->repo, oid);
+ 		if (!parse_tag(tag) && tag->tag)
+ 			strbuf_addf(&desc, " %s", tag->tag);
++		else
++			strbuf_addstr(&desc, " [tag could not be parsed]");
+ 	}
+ 
+ out:
+-- 
+2.35.0.890.gd7e422415d9
+

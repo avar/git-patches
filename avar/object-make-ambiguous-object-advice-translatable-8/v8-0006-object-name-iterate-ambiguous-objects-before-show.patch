@@ -1,0 +1,127 @@
+From 514b94b39e3d8cc3e2359d1b4d783030a1b9a35a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v8-6.7-514b94b39e3-20220127T051710Z-avarab@gmail.com>
+In-Reply-To: <cover-v8-0.7-00000000000-20220127T051710Z-avarab@gmail.com>
+References: <cover-v7-0.6-00000000000-20220111T130811Z-avarab@gmail.com>
+	<cover-v8-0.7-00000000000-20220127T051710Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 4 Oct 2021 15:17:17 +0200
+Subject: [PATCH v8 6/7] object-name: iterate ambiguous objects before showing
+ header
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "The candidates are" header that's shown for ambiguous
+objects to be shown after we've iterated over all of the objects.
+
+If we get any errors while doing so we don't want to split up the the
+header and the list as a result. The two will now be printed together,
+as shown in the updated testcase.
+
+As we're accumulating the lines into as "struct strbuf" before
+emitting them we need to add a trailing newline to the call in
+show_ambiguous_object(). This and the change from "The candidates
+are:" to "The candidates are:\n%s" helps to give translators more
+context.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-name.c                       | 27 +++++++++++++++++++++++----
+ t/t1512-rev-parse-disambiguation.sh |  3 +--
+ 2 files changed, 24 insertions(+), 6 deletions(-)
+
+diff --git a/object-name.c b/object-name.c
+index cbf459f5664..6154e1ec6f8 100644
+--- a/object-name.c
++++ b/object-name.c
+@@ -351,9 +351,16 @@ static int init_object_disambiguation(struct repository *r,
+ 	return 0;
+ }
+ 
++struct ambiguous_output {
++	const struct disambiguate_state *ds;
++	struct strbuf advice;
++};
++
+ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ {
+-	const struct disambiguate_state *ds = data;
++	struct ambiguous_output *state = data;
++	const struct disambiguate_state *ds = state->ds;
++	struct strbuf *advice = &state->advice;
+ 	struct strbuf desc = STRBUF_INIT;
+ 	int type;
+ 	const char *hash;
+@@ -452,7 +459,7 @@ static int show_ambiguous_object(const struct object_id *oid, void *data)
+ 	 * you'll probably want to swap the "%s" and leading " " space
+ 	 * around.
+ 	 */
+-	advise(_("  %s"), desc.buf);
++	strbuf_addf(advice, _("  %s\n"), desc.buf);
+ 
+ 	strbuf_release(&desc);
+ 	return 0;
+@@ -551,6 +558,10 @@ static enum get_oid_result get_short_oid(struct repository *r,
+ 
+ 	if (!quietly && (status == SHORT_NAME_AMBIGUOUS)) {
+ 		struct oid_array collect = OID_ARRAY_INIT;
++		struct ambiguous_output out = {
++			.ds = &ds,
++			.advice = STRBUF_INIT,
++		};
+ 
+ 		error(_("short object ID %s is ambiguous"), ds.hex_pfx);
+ 
+@@ -563,13 +574,21 @@ static enum get_oid_result get_short_oid(struct repository *r,
+ 		if (!ds.ambiguous)
+ 			ds.fn = NULL;
+ 
+-		advise(_("The candidates are:"));
+ 		repo_for_each_abbrev(r, ds.hex_pfx, collect_ambiguous, &collect);
+ 		sort_ambiguous_oid_array(r, &collect);
+ 
+-		if (oid_array_for_each(&collect, show_ambiguous_object, &ds))
++		if (oid_array_for_each(&collect, show_ambiguous_object, &out))
+ 			BUG("show_ambiguous_object shouldn't return non-zero");
++
++		/*
++		 * TRANSLATORS: The argument is the list of ambiguous
++		 * objects composed in show_ambiguous_object(). See
++		 * its "TRANSLATORS" comments for details.
++		 */
++		advise(_("The candidates are:\n%s"), out.advice.buf);
++
+ 		oid_array_clear(&collect);
++		strbuf_release(&out.advice);
+ 	}
+ 
+ 	return status;
+diff --git a/t/t1512-rev-parse-disambiguation.sh b/t/t1512-rev-parse-disambiguation.sh
+index 80102cc43a3..98cefe3b703 100755
+--- a/t/t1512-rev-parse-disambiguation.sh
++++ b/t/t1512-rev-parse-disambiguation.sh
+@@ -73,7 +73,6 @@ test_expect_success 'ambiguous loose bad object parsed as OBJ_BAD' '
+ 
+ 	test_cmp_failed_rev_parse blob.bad bad0 <<-\EOF
+ 	error: short object ID bad0... is ambiguous
+-	hint: The candidates are:
+ 	fatal: invalid object type
+ 	EOF
+ '
+@@ -94,11 +93,11 @@ test_expect_success POSIXPERM 'ambigous zlib corrupt loose blob' '
+ 
+ 	test_cmp_failed_rev_parse blob.corrupt cafe <<-\EOF
+ 	error: short object ID cafe... is ambiguous
+-	hint: The candidates are:
+ 	error: inflate: data stream error (incorrect header check)
+ 	error: unable to unpack cafe... header
+ 	error: inflate: data stream error (incorrect header check)
+ 	error: unable to unpack cafe... header
++	hint: The candidates are:
+ 	hint:   cafe... [bad object]
+ 	hint:   cafe... blob
+ 	fatal: ambiguous argument '\''cafe...'\'': unknown revision or path not in the working tree.
+-- 
+2.35.0.890.gd7e422415d9
+

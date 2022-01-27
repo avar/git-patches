@@ -1,0 +1,252 @@
+From 01cf973eb8becc523c674630774645c0dc6f6578 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v8-0.7-00000000000-20220127T051710Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-0.6-00000000000-20220111T130811Z-avarab@gmail.com>
+References: <cover-v7-0.6-00000000000-20220111T130811Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 27 Jan 2022 06:17:10 +0100
+Subject: [PATCH v8 0/7] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (7):
+  object-name tests: add tests for ambiguous object blind spots
+  object-name: explicitly handle OBJ_BAD in show_ambiguous_object()
+  object-name: explicitly handle unparsable tags in
+    show_ambiguous_object()
+  object-name: make ambiguous object output translatable
+  object-name: show date for ambiguous tag objects
+  object-name: iterate ambiguous objects before showing header
+  object-name: re-use "struct strbuf" in show_ambiguous_object()
+
+ object-name.c                       | 121 +++++++++++++++++++++++++---
+ t/t1512-rev-parse-disambiguation.sh |  81 +++++++++++++++++++
+ 2 files changed, 190 insertions(+), 12 deletions(-)
+
+Range-diff against v7:
+1:  28c01b7f8a5 ! 1:  756c94bda7a object-name tests: add tests for ambiguous object blind spots
+    @@ Commit message
+         and because a subsequent commit will tweak it. Showing a diff of how
+         the output changes is helpful to explain those subsequent commits.
+     
+    +    The "sed" invocation in test_cmp_failed_rev_parse() doesn't need a
+    +    "/g" because under both SHA-1 and SHA-256 we'll wildcard match any
+    +    trailing part of the OID after our known starting prefix. We'd like to
+    +    convert all of that to just "..." for the "test_cmp" which follows.
+    +
+         1. https://lore.kernel.org/git/YZwbphPpfGk78w2f@coredump.intra.peff.net/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    @@ t/t1512-rev-parse-disambiguation.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+      . ./test-lib.sh
+      
+     +test_cmp_failed_rev_parse () {
+    ++	dir=$1
+    ++	rev=$2
+    ++
+     +	cat >expect &&
+    -+	test_must_fail git -C "$1" rev-parse "$2" 2>actual.raw &&
+    -+	sed "s/\($2\)[0-9a-f]*/\1.../" <actual.raw >actual &&
+    ++	test_must_fail git -C "$dir" rev-parse "$rev" 2>actual.raw &&
+    ++	sed "s/\($rev\)[0-9a-f]*/\1.../" <actual.raw >actual &&
+     +	test_cmp expect actual
+     +}
+     +
+2:  b7027dfc843 = 2:  e60f100003a object-name: explicitly handle OBJ_BAD in show_ambiguous_object()
+4:  2e5511c9fa5 ! 3:  f99cb33061c object-name: show date for ambiguous tag objects
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    object-name: show date for ambiguous tag objects
+    +    object-name: explicitly handle unparsable tags in show_ambiguous_object()
+     
+    -    Make the ambiguous tag object output nicer in the case of tag objects
+    -    such as ebf3c04b262 (Git 2.32, 2021-06-06) by including the date in
+    -    the "tagger" header. I.e.:
+    +    Follow-up the handling of OBJ_BAD in the preceding commit and
+    +    explicitly handle those cases where parse_tag() fails, or we don't end
+    +    up with a non-NULL pointer in in tag->tag.
+     
+    -        $ git rev-parse b7e68
+    -        error: short object ID b7e68 is ambiguous
+    -        hint: The candidates are:
+    -        hint:   b7e68c41d92 tag 2021-06-06 - v2.32.0
+    -        hint:   b7e68ae18e0 commit 2019-12-23 - bisect: use the standard 'if (!var)' way to check for 0
+    -        hint:   b7e68f6b413 tree
+    -        hint:   b7e68490b97 blob
+    -        b7e68
+    -        [...]
+    +    If we run into such a tag we'd previously be silent about it. We
+    +    really should be handling these batter in parse_tag_buffer() by being
+    +    more eager to emit an error(), instead of silently aborting with
+    +    "return -1;". One example of such a case is tested for
+    +    in"t3800-mktag.sh", where the code takes the "size <
+    +    the_hash_algo->hexsz + 24" branch.
+     
+    -    Before this we'd emit a "tag" line of:
+    +    But for now let's show the user something, now instead of showing:
+     
+    -        hint:   b7e68c41d92 tag v2.32.0
+    +        hint:   deadbeef tag
+     
+    -    As with OBJ_COMMIT we punt on the cases where the date in the object
+    -    is nonsensical, and other cases where parse_tag() might fail. For
+    -    those we'll use our default date of "0" and tag message of
+    -    "". E.g. for some of the corrupt tags created by t3800-mktag.sh we'd
+    -    emit a line like:
+    +    We'll instead display:
+     
+    -        hint:   8d62cb0b06 tag 1970-01-01 -
+    -
+    -    We could detect that and emit a "%s [bad tag object]" message (to go
+    -    with the existing generic "%s [bad object]"), but I don't think it's
+    -    worth the effort. Users are unlikely to ever run into cases where
+    -    they've got a broken object that's also ambiguous, and in case they do
+    -    output that's a bit nonsensical beats wasting translator time on this
+    -    obscure edge case.
+    -
+    -    We should instead change parse_tag_buffer() to be more eager to emit
+    -    an error() instead of silently aborting with "return -1;". In the case
+    -    of "t3800-mktag.sh" it takes the "size < the_hash_algo->hexsz + 24"
+    -    branch.
+    +        hint:   deadbeef tag [tag could not be parsed]
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## object-name.c ##
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+    - 	} else if (type == OBJ_TAG) {
+      		struct tag *tag = lookup_tag(ds->repo, oid);
+    - 		const char *tag_tag = "";
+    -+		timestamp_t tag_date = 0;
+    - 
+    --		if (!parse_tag(tag) && tag->tag)
+    -+		if (!parse_tag(tag) && tag->tag) {
+    - 			tag_tag = tag->tag;
+    -+			tag_date = tag->date;
+    -+		}
+    + 		if (!parse_tag(tag) && tag->tag)
+    + 			strbuf_addf(&desc, " %s", tag->tag);
+    ++		else
+    ++			strbuf_addstr(&desc, " [tag could not be parsed]");
+    + 	}
+      
+    - 		/*
+    - 		 * TRANSLATORS: This is a line of
+    - 		 * ambiguous tag object output. E.g.:
+    - 		 *
+    --		 *    "deadbeef tag Some Tag Message"
+    -+		 *    "deadbeef tag 2021-01-01 - Some Tag Message"
+    - 		 *
+    - 		 * The second argument is the "tag" string from
+    - 		 * object.c.
+    - 		 */
+    --		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
+    -+		strbuf_addf(&desc, _("%s tag %s - %s"), hash,
+    -+			    show_date(tag_date, 0, DATE_MODE(SHORT)),
+    -+			    tag_tag);
+    - 	} else if (type == OBJ_TREE) {
+    - 		/*
+    - 		 * TRANSLATORS: This is a line of ambiguous <type>
+    + out:
+3:  65801f2c890 ! 4:  7e90dee0c4e object-name: make ambiguous object output translatable
+    @@ Commit message
+         for RTL languages, who'd presumably like to change that to
+         "%s<SP><SP>\n".
+     
+    +    In the case of the existing "tag [tag could not be parsed]" output
+    +    we'll now instead emit "[bad tag, could not parse it]". This is
+    +    consistent with the "[bad object]" output. Rephrasing the message like
+    +    this is possible because we're not unconditionally adding the
+    +    type_name() at the beginning.
+    +
+         1. 1ffa26c461 (get_short_sha1: list ambiguous objects on error,
+            2016-09-26)
+         2. 5cc044e0257 (get_short_oid: sort ambiguous objects by type,
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+     +		strbuf_release(&msg);
+      	} else if (type == OBJ_TAG) {
+      		struct tag *tag = lookup_tag(ds->repo, oid);
+    -+		const char *tag_tag = "";
+    -+
+    - 		if (!parse_tag(tag) && tag->tag)
+    +-		if (!parse_tag(tag) && tag->tag)
+     -			strbuf_addf(&desc, " %s", tag->tag);
+    -+			tag_tag = tag->tag;
+    +-		else
+    +-			strbuf_addstr(&desc, " [tag could not be parsed]");
+     +
+    -+		/*
+    -+		 * TRANSLATORS: This is a line of
+    -+		 * ambiguous tag object output. E.g.:
+    -+		 *
+    -+		 *    "deadbeef tag Some Tag Message"
+    -+		 *
+    -+		 * The second argument is the "tag" string from
+    -+		 * object.c.
+    -+		 */
+    -+		strbuf_addf(&desc, _("%s tag %s"), hash, tag_tag);
+    ++		if (!parse_tag(tag) && tag->tag) {
+    ++			/*
+    ++			 * TRANSLATORS: This is a line of ambiguous
+    ++			 * tag object output. E.g.:
+    ++			 *
+    ++			 *    "deadbeef tag Some Tag Message"
+    ++			 *
+    ++			 * The second argument is the "tag" string
+    ++			 * from object.c.
+    ++			 */
+    ++			strbuf_addf(&desc, _("%s tag %s"), hash, tag->tag);
+    ++		} else {
+    ++			/*
+    ++			 * TRANSLATORS: This is a line of ambiguous
+    ++			 * tag object output where we couldn't parse
+    ++			 * the tag itself. E.g.:
+    ++			 *
+    ++			 *    "deadbeef tag [bad tag, could not parse it]"
+    ++			 */
+    ++			strbuf_addf(&desc, _("%s [bad tag, could not parse it]"),
+    ++				    hash);
+    ++		}
+     +	} else if (type == OBJ_TREE) {
+     +		/*
+     +		 * TRANSLATORS: This is a line of ambiguous <type>
+-:  ----------- > 5:  3e323ae90c3 object-name: show date for ambiguous tag objects
+5:  2c03cdd3c1e = 6:  514b94b39e3 object-name: iterate ambiguous objects before showing header
+6:  bf226f67099 ! 7:  01cf973eb8b object-name: re-use "struct strbuf" in show_ambiguous_object()
+    @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, voi
+      		strbuf_release(&date);
+      		strbuf_release(&msg);
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+    - 		 * The second argument is the "tag" string from
+    - 		 * object.c.
+    - 		 */
+    --		strbuf_addf(&desc, _("%s tag %s - %s"), hash,
+    -+		strbuf_addf(sb, _("%s tag %s - %s"), hash,
+    - 			    show_date(tag_date, 0, DATE_MODE(SHORT)),
+    - 			    tag_tag);
+    + 			 * The third argument is the "tag" string
+    + 			 * from object.c.
+    + 			 */
+    +-			strbuf_addf(&desc, _("%s tag %s - %s"), hash,
+    ++			strbuf_addf(sb, _("%s tag %s - %s"), hash,
+    + 				    show_date(tag->date, 0, DATE_MODE(SHORT)),
+    + 				    tag->tag);
+    + 		} else {
+    +@@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+    + 			 *
+    + 			 *    "deadbeef [bad tag, could not parse it]"
+    + 			 */
+    +-			strbuf_addf(&desc, _("%s [bad tag, could not parse it]"),
+    ++			strbuf_addf(sb, _("%s [bad tag, could not parse it]"),
+    + 				    hash);
+    + 		}
+      	} else if (type == OBJ_TREE) {
+     @@ object-name.c: static int show_ambiguous_object(const struct object_id *oid, void *data)
+      		 * TRANSLATORS: This is a line of ambiguous <type>
+-- 
+2.35.0.890.gd7e422415d9
+
