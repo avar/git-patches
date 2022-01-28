@@ -1,0 +1,77 @@
+From b4f841322019113b3b10833f60a582d6ad46b1ab Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-8.9-b4f84132201-20220128T124905Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.9-00000000000-20220128T124905Z-avarab@gmail.com>
+References: <cover-v4-0.7-00000000000-20220127T143552Z-avarab@gmail.com>
+	<cover-v5-0.9-00000000000-20220128T124905Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 28 Jan 2022 12:26:43 +0100
+Subject: [PATCH v5 8/9] submodule tests: test for init and update failure
+ output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend some submodule tests to test for the failure output of "git
+submodule [update|init]". The lack of such tests hid a regression in
+an earlier version of a subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7406-submodule-update.sh    | 14 ++++++++++++--
+ t/t7408-submodule-reference.sh | 14 +++++++++++++-
+ 2 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/t/t7406-submodule-update.sh b/t/t7406-submodule-update.sh
+index 11cccbb333b..7764c1c3cb6 100755
+--- a/t/t7406-submodule-update.sh
++++ b/t/t7406-submodule-update.sh
+@@ -205,8 +205,18 @@ test_expect_success 'submodule update should fail due to local changes' '
+ 	 (cd submodule &&
+ 	  compare_head
+ 	 ) &&
+-	 test_must_fail git submodule update submodule
+-	)
++	 test_must_fail git submodule update submodule 2>../actual.raw
++	) &&
++	sed "s/^> //" >expect <<-\EOF &&
++	> error: Your local changes to the following files would be overwritten by checkout:
++	> 	file
++	> Please commit your changes or stash them before you switch branches.
++	> Aborting
++	> fatal: Unable to checkout OID in submodule path '\''submodule'\''
++	EOF
++	sed -e "s/checkout $SQ[^$SQ]*$SQ/checkout OID/" <actual.raw >actual &&
++	test_cmp expect actual
++
+ '
+ test_expect_success 'submodule update should throw away changes with --force ' '
+ 	(cd super &&
+diff --git a/t/t7408-submodule-reference.sh b/t/t7408-submodule-reference.sh
+index a3892f494b6..c3a45455106 100755
+--- a/t/t7408-submodule-reference.sh
++++ b/t/t7408-submodule-reference.sh
+@@ -193,7 +193,19 @@ test_expect_success 'missing nested submodule alternate fails clone and submodul
+ 		cd supersuper-clone &&
+ 		check_that_two_of_three_alternates_are_used &&
+ 		# update of the submodule fails
+-		test_must_fail git submodule update --init --recursive
++		cat >expect <<-\EOF &&
++		fatal: submodule '\''sub'\'' cannot add alternate: path ... does not exist
++		Failed to clone '\''sub'\''. Retry scheduled
++		fatal: submodule '\''sub-dissociate'\'' cannot add alternate: path ... does not exist
++		Failed to clone '\''sub-dissociate'\''. Retry scheduled
++		fatal: submodule '\''sub'\'' cannot add alternate: path ... does not exist
++		Failed to clone '\''sub'\'' a second time, aborting
++		fatal: Failed to recurse into submodule path ...
++		EOF
++		test_must_fail git submodule update --init --recursive 2>err &&
++		grep -e fatal: -e ^Failed err >actual.raw &&
++		sed -e "s/path $SQ[^$SQ]*$SQ/path .../" <actual.raw >actual &&
++		test_cmp expect actual
+ 	)
+ '
+ 
+-- 
+2.35.0.914.ge5c8aab0d5b
+

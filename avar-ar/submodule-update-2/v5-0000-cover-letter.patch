@@ -1,33 +1,15 @@
-From bc899c66beb94240bfe2b1dddb2b4c0cb110787a Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v5-0.8-00000000000-20220128T111519Z-avarab@gmail.com>
+From bbe467c507f5f57bb253351589bf1bfa1def9d22 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v5-0.9-00000000000-20220128T124905Z-avarab@gmail.com>
 In-Reply-To: <cover-v4-0.7-00000000000-20220127T143552Z-avarab@gmail.com>
 References: <cover-v4-0.7-00000000000-20220127T143552Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 28 Jan 2022 12:15:19 +0100
-Subject: [PATCH v5 0/8] submodule: convert the rest of 'update' to C
+Date: Fri, 28 Jan 2022 13:49:05 +0100
+Subject: [PATCH v5 0/9] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-A rewrite of "git submodule" in C, except the trivial pass-through
-wrapping code (basically getopt etc.) in git-submodule.sh. For a
-greater summary & context see v4's CL:
-https://lore.kernel.org/git/cover-v4-0.7-00000000000-20220127T143552Z-avarab@gmail.com/
-
-Changes in v5:
-
- * Took Glen Choo's suggestion for a code change in 1/8, thanks!
-
- * A bit more mid-series churn to make the large commit at the end
-   have a smaller diff. The result is that in v4/v5 we have in that
-   last commit:
-
-   - 2 files changed, 389 insertions(+), 418 deletions(-)
-   + 2 files changed, 378 insertions(+), 401 deletions(-)
-
- * Changed some xstrfmt()/die() code to be a bit more understandable,
-   and not just use die() for formatting a string instead of passing
-   it xstrfmt().
+*** BLURB HERE ***
 
 Atharva Raykar (6):
   submodule--helper: get remote names from any repository
@@ -37,16 +19,19 @@ Atharva Raykar (6):
   builtin/submodule--helper.c: reformat designated initializers
   submodule: move core cmd_update() logic to C
 
-Ævar Arnfjörð Bjarmason (2):
+Ævar Arnfjörð Bjarmason (3):
   builtin/submodule--helper.c: rename option variables to "opt"
   submodule--helper: don't use bitfield indirection for parse_options()
+  submodule tests: test for init and update failure output
 
- builtin/submodule--helper.c | 739 +++++++++++++++++++++---------------
- git-submodule.sh            | 145 +------
- 2 files changed, 440 insertions(+), 444 deletions(-)
+ builtin/submodule--helper.c    | 707 +++++++++++++++++++--------------
+ git-submodule.sh               | 145 +------
+ t/t7406-submodule-update.sh    |  14 +-
+ t/t7408-submodule-reference.sh |  14 +-
+ 4 files changed, 445 insertions(+), 435 deletions(-)
 
 Range-diff against v4:
-1:  1a0b1323cd7 ! 1:  088c7236a16 submodule--helper: get remote names from any repository
+ 1:  1a0b1323cd7 !  1:  088c7236a16 submodule--helper: get remote names from any repository
     @@ Commit message
      
          Mentored-by: Christian Couder <christian.couder@gmail.com>
@@ -96,11 +81,11 @@ Range-diff against v4:
      +}
      +
       static int print_default_remote(int argc, const char **argv, const char *prefix)
-2:  7e2df3ff220 = 2:  bc694987893 submodule--helper: refactor get_submodule_displaypath()
-3:  f31fd72fba2 = 3:  e2cc7f0e23b submodule--helper: allow setting superprefix for init_submodule()
-4:  76c5a826a80 = 4:  e1df2dd4457 submodule--helper: run update using child process struct
-5:  29aa2fc0851 = 5:  fa815e37f9f builtin/submodule--helper.c: reformat designated initializers
-6:  d3ad6e7a351 ! 6:  ef097f7ea51 builtin/submodule--helper.c: rename "suc" variable to "opt"
+ 2:  7e2df3ff220 =  2:  bc694987893 submodule--helper: refactor get_submodule_displaypath()
+ 3:  f31fd72fba2 =  3:  e2cc7f0e23b submodule--helper: allow setting superprefix for init_submodule()
+ 4:  76c5a826a80 =  4:  e1df2dd4457 submodule--helper: run update using child process struct
+ 5:  29aa2fc0851 =  5:  fa815e37f9f builtin/submodule--helper.c: reformat designated initializers
+ 6:  d3ad6e7a351 !  6:  ef097f7ea51 builtin/submodule--helper.c: rename "suc" variable to "opt"
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -202,8 +187,9 @@ Range-diff against v4:
     + 
     + 	return 3;
     + }
--:  ----------- > 7:  6b038f558c1 submodule--helper: don't use bitfield indirection for parse_options()
-7:  02954603763 ! 8:  bc899c66beb submodule: move core cmd_update() logic to C
+ -:  ----------- >  7:  6b038f558c1 submodule--helper: don't use bitfield indirection for parse_options()
+ -:  ----------- >  8:  b4f84132201 submodule tests: test for init and update failure output
+ 7:  02954603763 !  9:  bbe467c507f submodule: move core cmd_update() logic to C
     @@ Commit message
      
       ## builtin/submodule--helper.c ##
@@ -248,54 +234,54 @@ Range-diff against v4:
      +	struct string_list references;
      +	struct module_list list;
       };
-    @@ builtin/submodule--helper.c: static int fetch_in_submodule(const char *module_pa
-     +	struct strbuf out = STRBUF_INIT;
+    @@ builtin/submodule--helper.c: struct submodule_update_clone {
+      }
+      
+      static void next_submodule_warn_missing(struct submodule_update_clone *suc,
+    -@@ builtin/submodule--helper.c: static int fetch_in_submodule(const char *module_path, int depth, int quiet, str
+    - 	return run_command(&cp);
+    - }
+    - 
+    --static int run_update_command(struct update_data *ud, int subforce)
+    -+static int run_update_command(struct update_data *ud, int subforce, struct string_list *err)
+    - {
+    +@@ builtin/submodule--helper.c: static int run_update_command(struct update_data *ud, int subforce)
+      	struct child_process cp = CHILD_PROCESS_INIT;
+      	char *oid = oid_to_hex(&ud->oid);
+    -+	struct strbuf out = STRBUF_INIT;
       	int must_die_on_failure = 0;
      +	struct submodule_update_strategy strategy = SUBMODULE_UPDATE_STRATEGY_INIT;
-    - 
-    --	switch (ud->update_strategy.type) {
-    ++
-     +	if (ud->update_strategy.type == SM_UPDATE_UNSPECIFIED || ud->just_cloned)
-     +		determine_submodule_update_strategy(the_repository, ud->just_cloned,
-     +						    ud->sm_path, NULL, &strategy);
-     +	else
-     +		strategy = ud->update_strategy;
-    -+
-    + 
-    +-	switch (ud->update_strategy.type) {
-     +	switch (strategy.type) {
-      	case SM_UPDATE_CHECKOUT:
-      		cp.git_cmd = 1;
+      
     @@ builtin/submodule--helper.c: static int run_update_command(struct update_data *u
+      
+      	cp.dir = xstrdup(ud->sm_path);
       	prepare_submodule_repo_env(&cp.env_array);
-     -	if (run_command(&cp)) {
+    --	if (run_command(&cp)) {
+    + 	if (run_command(&cp)) {
      -		switch (ud->update_strategy.type) {
-    +-		case SM_UPDATE_CHECKOUT:
-    +-			printf(_("Unable to checkout '%s' in submodule path '%s'"),
-    +-			       oid, ud->displaypath);
-    +-			break;
-    +-		case SM_UPDATE_REBASE:
-    +-			printf(_("Unable to rebase '%s' in submodule path '%s'"),
-    +-			       oid, ud->displaypath);
-    +-			break;
-    +-		case SM_UPDATE_MERGE:
-    +-			printf(_("Unable to merge '%s' in submodule path '%s'"),
-    +-			       oid, ud->displaypath);
-    +-			break;
-    +-		case SM_UPDATE_COMMAND:
-    +-			printf(_("Execution of '%s %s' failed in submodule path '%s'"),
-    +-			       ud->update_strategy.command, oid, ud->displaypath);
-    +-			break;
-    +-		default:
-    +-			BUG("unexpected update strategy type: %s",
-    +-			    submodule_strategy_to_string(&ud->update_strategy));
-     +	if (capture_command(&cp, &out, 0)) {
-     +		if (must_die_on_failure) {
-     +			switch (strategy.type) {
-    @@ builtin/submodule--helper.c: static int run_update_command(struct update_data *u
-     +				BUG("unexpected update strategy type: %s",
-     +				    submodule_strategy_to_string(&strategy));
-     +			}
+    -+	if (capture_command(&cp, &out, 0)) {
+    -+		if (must_die_on_failure) {
+    -+			switch (strategy.type) {
+    -+			case SM_UPDATE_CHECKOUT:
+    -+				die(_("Unable to checkout '%s' in submodule path '%s'"),
+    -+				    oid, ud->displaypath);
+    -+				break;
+    -+			case SM_UPDATE_REBASE:
+    -+				die(_("Unable to rebase '%s' in submodule path '%s'"),
+    -+				    oid, ud->displaypath);
+    -+				break;
+    -+			case SM_UPDATE_MERGE:
+    -+				die(_("Unable to merge '%s' in submodule path '%s'"),
+    -+				    oid, ud->displaypath);
+    -+				break;
+    -+			case SM_UPDATE_COMMAND:
+    -+				die(_("Execution of '%s %s' failed in submodule path '%s'"),
+    -+				    strategy.command, oid, ud->displaypath);
+    -+				break;
+    -+			default:
+    -+				BUG("unexpected update strategy type: %s",
+    -+				    submodule_strategy_to_string(&strategy));
+    -+			}
     -+		}
     -+
     -+		/* the command failed, but update must continue */
@@ -304,38 +290,47 @@ Range-diff against v4:
     -+	}
     -+
     -+	if (!ud->quiet) {
-    -+		switch (strategy.type) {
-    - 		case SM_UPDATE_CHECKOUT:
-    --			printf(_("Unable to checkout '%s' in submodule path '%s'"),
-    --			       oid, ud->displaypath);
+     +		switch (strategy.type) {
+      		case SM_UPDATE_CHECKOUT:
+     -			printf(_("Unable to checkout '%s' in submodule path '%s'"),
+     -			       oid, ud->displaypath);
     -+			printf(_("Submodule path '%s': checked out '%s'\n"),
     -+			       ud->displaypath, oid);
-    - 			break;
-    - 		case SM_UPDATE_REBASE:
-    --			printf(_("Unable to rebase '%s' in submodule path '%s'"),
-    --			       oid, ud->displaypath);
+    ++			die_message(_("Unable to checkout '%s' in submodule path '%s'"),
+    ++				    oid, ud->displaypath);
+      			break;
+      		case SM_UPDATE_REBASE:
+     -			printf(_("Unable to rebase '%s' in submodule path '%s'"),
+     -			       oid, ud->displaypath);
     -+			printf(_("Submodule path '%s': rebased into '%s'\n"),
     -+			       ud->displaypath, oid);
-    - 			break;
-    - 		case SM_UPDATE_MERGE:
-    --			printf(_("Unable to merge '%s' in submodule path '%s'"),
-    --			       oid, ud->displaypath);
+    ++			if (!must_die_on_failure)
+    ++				break;
+    ++			die(_("Unable to rebase '%s' in submodule path '%s'"),
+    ++			    oid, ud->displaypath);
+      			break;
+      		case SM_UPDATE_MERGE:
+     -			printf(_("Unable to merge '%s' in submodule path '%s'"),
+     -			       oid, ud->displaypath);
     -+			printf(_("Submodule path '%s': merged in '%s'\n"),
     -+			       ud->displaypath, oid);
-    - 			break;
-    - 		case SM_UPDATE_COMMAND:
-    --			printf(_("Execution of '%s %s' failed in submodule path '%s'"),
-    --			       ud->update_strategy.command, oid, ud->displaypath);
+    ++			if (!must_die_on_failure)
+    ++				break;
+    ++			die(_("Unable to merge '%s' in submodule path '%s'"),
+    ++			    oid, ud->displaypath);
+      			break;
+      		case SM_UPDATE_COMMAND:
+     -			printf(_("Execution of '%s %s' failed in submodule path '%s'"),
+     -			       ud->update_strategy.command, oid, ud->displaypath);
     -+			printf(_("Submodule path '%s': '%s %s'\n"),
     -+			       ud->displaypath, strategy.command, oid);
-    - 			break;
-    - 		default:
-    - 			BUG("unexpected update strategy type: %s",
-    --			    submodule_strategy_to_string(&ud->update_strategy));
-    -+			    submodule_strategy_to_string(&strategy));
-      		}
-     -		/*
-     -		 * NEEDSWORK: We are currently printing to stdout with error
+    ++			if (!must_die_on_failure)
+    ++				break;
+    ++			die(_("Execution of '%s %s' failed in submodule path '%s'"),
+    ++			    strategy.command, oid, ud->displaypath);
+      			break;
+      		default:
+      			BUG("unexpected update strategy type: %s",
     @@ builtin/submodule--helper.c: static int run_update_command(struct update_data *u
      -		 * This signifies to the caller in shell that the command
      -		 * failed without dying
@@ -345,7 +340,6 @@ Range-diff against v4:
     --
     ++
     ++		/* the command failed, but update must continue */
-    ++		string_list_append_nodup(err, strbuf_detach(&out, NULL));
     + 		return 1;
     + 	}
     + 
@@ -365,7 +359,7 @@ Range-diff against v4:
     --	case SM_UPDATE_COMMAND:
     --		printf(_("Submodule path '%s': '%s %s'\n"),
     ++	if (ud->quiet)
-    ++		goto cleanup;
+    ++		return 0;
     ++
     ++	switch (strategy.type) {
     + 	case SM_UPDATE_CHECKOUT:
@@ -387,10 +381,28 @@ Range-diff against v4:
     ++		    submodule_strategy_to_string(&strategy));
       	}
       
-    ++cleanup:
-     +	strbuf_release(&out);
+    -+	strbuf_release(&out);
       	return 0;
       }
+      
+     -static int do_run_update_procedure(struct update_data *ud)
+    -+static int run_update_procedure(struct update_data *ud, struct string_list *err)
+    ++static int run_update_procedure(struct update_data *ud)
+      {
+      	int subforce = is_null_oid(&ud->suboid) || ud->force;
+      
+     @@ builtin/submodule--helper.c: static int do_run_update_procedure(struct update_data *ud)
+    - 			    ud->displaypath, oid_to_hex(&ud->oid));
+    - 	}
+    + 	return run_update_command(ud, subforce);
+    + }
+      
+    --	return run_update_command(ud, subforce);
+    --}
+    --
+     -static void update_submodule(struct update_clone_data *ucd)
+     -{
+     -	fprintf(stdout, "dummy %s %d\t%s\n",
     @@ builtin/submodule--helper.c: static int do_run_update_procedure(struct update_da
      -
      -static int run_update_procedure(int argc, const char **argv, const char *prefix)
@@ -472,34 +484,78 @@ Range-diff against v4:
      -
      -	return 3;
      -}
+    @@ builtin/submodule--helper.c: static int do_run_update_procedure(struct update_da
+     -	printf("%s", relative_path(argv[1], argv[2], &sb));
+     -	strbuf_release(&sb);
+     -	return 0;
+    -+	return run_update_command(ud, subforce, err);
+    - }
+    - 
+    +-}
+    +-
+      static const char *remote_submodule_branch(const char *path)
+    + {
+    + 	const struct submodule *sub;
+     @@ builtin/submodule--helper.c: static int push_check(int argc, const char **argv, const char *prefix)
+      	return 0;
+      }
     @@ builtin/submodule--helper.c: static int module_set_branch(int argc, const char *
-     +		int res;
+     +static int update_submodule(struct update_data *update_data)
+     +{
+     +	char *prefixed_path;
+    -+	struct string_list err = STRING_LIST_INIT_DUP;
+     +
+     +	ensure_core_worktree(update_data->sm_path);
+     +
+    @@ builtin/submodule--helper.c: static int module_set_branch(int argc, const char *
+     +	}
+     +
+     +	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force)
+    -+		if (run_update_procedure(update_data, &err))
+    ++		if (run_update_procedure(update_data))
+     +			return 1;
+     +
+     +	if (update_data->recursive) {
+    -+		int res;
      +		struct child_process cp = CHILD_PROCESS_INIT;
      +		struct update_data next = *update_data;
     -+		char *die_msg = xstrfmt(_("Failed to recurse into submodule path '%s'"),
     -+					update_data->displaypath);
-    ++		const char *fmt = _("Failed to recurse into submodule path '%s'");
+    ++		int res;
+    ++		int code;
      +
      +		if (update_data->recursive_prefix)
      +			prefixed_path = xstrfmt("%s%s/", update_data->recursive_prefix,
     @@ builtin/submodule--helper.c: static int module_set_branch(int argc, const char *
+     +		update_data_to_args(&next, &cp.args);
      +
      +		/* die() if child process die()'d */
-     +		if ((res = run_command(&cp)) == 128)
+    -+		if ((res = run_command(&cp)) == 128)
     -+			die("%s", die_msg);
     -+		if (res)
     -+			string_list_append(&err, die_msg);
-    ++			die(fmt, update_data->displaypath);
-    ++		if (res) {
-    ++			const char *path = update_data->displaypath;
-    ++			char *str = xstrfmt(fmt, path);
-     +
+    -+
     -+		free(die_msg);
-    ++			string_list_append_nodup(&err, str);
-    ++		}
+    -+	}
+    -+
+    -+	if (err.nr) {
+    -+		struct string_list_item *item;
+    -+		for_each_string_list_item(item, &err)
+    -+			fputs(item->string, stderr);
+    -+		string_list_clear(&err, 0);
+    -+		return 1;
+    ++		res = run_command(&cp);
+    ++		if (!res)
+    ++			return 0;
+    ++		code = die_message(_("Failed to recurse into submodule path '%s'"),
+    ++				   update_data->displaypath);
+    ++		if (res == code)
+    ++			exit(code);
+    ++		else if (res)
+    ++			return 1;
      +	}
      +
-     +	if (err.nr) {
+     +	return 0;
 -- 
 2.35.0.914.ge5c8aab0d5b
 
