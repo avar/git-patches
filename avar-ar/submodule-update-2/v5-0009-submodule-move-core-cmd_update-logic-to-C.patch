@@ -1,8 +1,8 @@
-From bbe467c507f5f57bb253351589bf1bfa1def9d22 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v5-9.9-bbe467c507f-20220128T124905Z-avarab@gmail.com>
-In-Reply-To: <cover-v5-0.9-00000000000-20220128T124905Z-avarab@gmail.com>
+From e8e57606ee93abfe824cb018cf6ee3d2f0549aae Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-9.9-e8e57606ee9-20220128T125206Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.9-00000000000-20220128T125206Z-avarab@gmail.com>
 References: <cover-v4-0.7-00000000000-20220127T143552Z-avarab@gmail.com>
-	<cover-v5-0.9-00000000000-20220128T124905Z-avarab@gmail.com>
+	<cover-v5-0.9-00000000000-20220128T125206Z-avarab@gmail.com>
 From: Atharva Raykar <raykar.ath@gmail.com>
 Date: Wed, 13 Oct 2021 10:47:57 +0530
 Subject: [PATCH v5 9/9] submodule: move core cmd_update() logic to C
@@ -43,12 +43,12 @@ Signed-off-by: Atharva Raykar <raykar.ath@gmail.com>
 Signed-off-by: Junio C Hamano <gitster@pobox.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- builtin/submodule--helper.c | 600 +++++++++++++++++++++---------------
+ builtin/submodule--helper.c | 599 +++++++++++++++++++++---------------
  git-submodule.sh            | 145 +--------
- 2 files changed, 357 insertions(+), 388 deletions(-)
+ 2 files changed, 356 insertions(+), 388 deletions(-)
 
 diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
-index 4a0890954e9..fadc00237d9 100644
+index 4a0890954e9..1c28b6f479c 100644
 --- a/builtin/submodule--helper.c
 +++ b/builtin/submodule--helper.c
 @@ -71,21 +71,6 @@ static char *get_default_remote(void)
@@ -499,7 +499,7 @@ index 4a0890954e9..fadc00237d9 100644
  }
  
  static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
-@@ -3001,6 +2830,272 @@ static int module_set_branch(int argc, const char **argv, const char *prefix)
+@@ -3001,6 +2830,271 @@ static int module_set_branch(int argc, const char **argv, const char *prefix)
  	return !!ret;
  }
  
@@ -598,7 +598,6 @@ index 4a0890954e9..fadc00237d9 100644
 +		struct child_process cp = CHILD_PROCESS_INIT;
 +		struct update_data next = *update_data;
 +		int res;
-+		int code;
 +
 +		if (update_data->recursive_prefix)
 +			prefixed_path = xstrfmt("%s%s/", update_data->recursive_prefix,
@@ -621,10 +620,10 @@ index 4a0890954e9..fadc00237d9 100644
 +		res = run_command(&cp);
 +		if (!res)
 +			return 0;
-+		code = die_message(_("Failed to recurse into submodule path '%s'"),
-+				   update_data->displaypath);
-+		if (res == code)
-+			exit(code);
++		die_message(_("Failed to recurse into submodule path '%s'"),
++			    update_data->displaypath);
++		if (res == 128)
++			exit(res);
 +		else if (res)
 +			return 1;
 +	}
@@ -772,7 +771,7 @@ index 4a0890954e9..fadc00237d9 100644
  struct add_data {
  	const char *prefix;
  	const char *branch;
-@@ -3388,16 +3483,11 @@ static struct cmd_struct commands[] = {
+@@ -3388,16 +3482,11 @@ static struct cmd_struct commands[] = {
  	{"name", module_name, 0},
  	{"clone", module_clone, 0},
  	{"add", module_add, SUPPORT_SUPER_PREFIX},

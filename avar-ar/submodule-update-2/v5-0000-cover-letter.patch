@@ -1,41 +1,15 @@
-From bbe467c507f5f57bb253351589bf1bfa1def9d22 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v5-0.9-00000000000-20220128T124905Z-avarab@gmail.com>
+From e8e57606ee93abfe824cb018cf6ee3d2f0549aae Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v5-0.9-00000000000-20220128T125206Z-avarab@gmail.com>
 In-Reply-To: <cover-v4-0.7-00000000000-20220127T143552Z-avarab@gmail.com>
 References: <cover-v4-0.7-00000000000-20220127T143552Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 28 Jan 2022 13:49:05 +0100
-Subject: [PATCH v5 0/9] submodule: convert the rest of 'update' to C
+Date: Fri, 28 Jan 2022 13:52:06 +0100
+Subject: [PATCH v5 0/9] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-A rewrite of "git submodule" in C, except the trivial pass-through
-wrapping code (basically getopt etc.) in git-submodule.sh. For a
-greater summary & context see v4's CL:
-https://lore.kernel.org/git/cover-v4-0.7-00000000000-20220127T143552Z-avarab@gmail.com/
-
-Changes in v5:
-
- * Took Glen Choo's suggestion for a code change in 1/8, thanks!
-
- * A bit more mid-series churn to make the large commit at the end
-   have a smaller diff. The result is that in v4/v5 we have in that
-   last commit (but see below).
-
-   - 2 files changed, 389 insertions(+), 418 deletions(-)
-   + 2 files changed, 357 insertions(+), 388 deletions(-)
-
- * There were some logic errors in v4 around how we handled error
-   reporting. A new 8/9 adds tests for the existing behavior, and
-   we're now bug-for-bug compatible.
-
-   It turned out that we were passing around string lists of errors
-   etc. in a way that wasn't needed, i.e. the initial code can just
-   report the error.
-
-   Much of this was also simplified with my recently added
-   die_message() function. I.e. sometimes we want to have a "fatal: "
-   message, but exit non-128.
+*** BLURB HERE ***
 
 Atharva Raykar (6):
   submodule--helper: get remote names from any repository
@@ -50,11 +24,11 @@ Atharva Raykar (6):
   submodule--helper: don't use bitfield indirection for parse_options()
   submodule tests: test for init and update failure output
 
- builtin/submodule--helper.c    | 707 +++++++++++++++++++--------------
+ builtin/submodule--helper.c    | 706 +++++++++++++++++++--------------
  git-submodule.sh               | 145 +------
  t/t7406-submodule-update.sh    |  14 +-
  t/t7408-submodule-reference.sh |  14 +-
- 4 files changed, 445 insertions(+), 435 deletions(-)
+ 4 files changed, 444 insertions(+), 435 deletions(-)
 
 Range-diff against v4:
  1:  1a0b1323cd7 !  1:  088c7236a16 submodule--helper: get remote names from any repository
@@ -215,7 +189,7 @@ Range-diff against v4:
     + }
  -:  ----------- >  7:  6b038f558c1 submodule--helper: don't use bitfield indirection for parse_options()
  -:  ----------- >  8:  b4f84132201 submodule tests: test for init and update failure output
- 7:  02954603763 !  9:  bbe467c507f submodule: move core cmd_update() logic to C
+ 7:  02954603763 !  9:  e8e57606ee9 submodule: move core cmd_update() logic to C
     @@ Commit message
      
       ## builtin/submodule--helper.c ##
@@ -548,7 +522,6 @@ Range-diff against v4:
     -+		char *die_msg = xstrfmt(_("Failed to recurse into submodule path '%s'"),
     -+					update_data->displaypath);
     ++		int res;
-    ++		int code;
      +
      +		if (update_data->recursive_prefix)
      +			prefixed_path = xstrfmt("%s%s/", update_data->recursive_prefix,
@@ -573,10 +546,10 @@ Range-diff against v4:
     ++		res = run_command(&cp);
     ++		if (!res)
     ++			return 0;
-    ++		code = die_message(_("Failed to recurse into submodule path '%s'"),
-    ++				   update_data->displaypath);
-    ++		if (res == code)
-    ++			exit(code);
+    ++		die_message(_("Failed to recurse into submodule path '%s'"),
+    ++			    update_data->displaypath);
+    ++		if (res == 128)
+    ++			exit(res);
     ++		else if (res)
     ++			return 1;
      +	}
