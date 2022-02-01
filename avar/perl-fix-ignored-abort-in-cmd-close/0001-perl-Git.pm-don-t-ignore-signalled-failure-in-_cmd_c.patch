@@ -1,0 +1,132 @@
+From 86353c3b366ab169e5c9253e3707826c10bb5cbc Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-86353c3b366-20220201T205218Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 17 Dec 2021 02:42:17 +0100
+Subject: [PATCH] perl Git.pm: don't ignore signalled failure in _cmd_close()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix misbehavior in Git.pm that dates back to the very first version of
+the library in git.git added in b1edc53d062 (Introduce Git.pm (v4),
+2006-06-24). When we fail to execute a command we shouldn't ignore all
+signals, those can happen e.g. if abort() is called, or if the command
+segfaults.
+
+Because of this we'd consider e.g. a command that died due to LSAN
+exiting with abort() successful, as is the case with the tests listed
+as running successfully with SANITIZE=leak in 9081a421a6d (checkout:
+fix "branch info" memory leaks, 2021-11-16). We did run them
+successfully, but only because we ignored these errors.
+
+This was then made worse by the use of "abort_on_error=1" for LSAN
+added in 85b81b35ff9 (test-lib: set LSAN_OPTIONS to abort by default,
+2017-09-05). Doing that makes sense, but without providing that option
+we'd have a "$? >> 8" of "23" on failure, with abort_on_error=1 we'll
+get "0".
+
+All of our tests pass even without the SIGPIPE exception being added
+here, but as the code appears to have been trying to ignore it let's
+keep ignoring it for now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ perl/Git.pm                                 | 21 +++++++++++++++++++--
+ t/t9102-git-svn-deep-rmdir.sh               |  1 -
+ t/t9123-git-svn-rebuild-with-rewriteroot.sh |  1 -
+ t/t9128-git-svn-cmd-branch.sh               |  1 -
+ t/t9167-git-svn-cmd-branch-subproject.sh    |  1 -
+ 5 files changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/perl/Git.pm b/perl/Git.pm
+index 090a7df63fc..080cdc2a21d 100644
+--- a/perl/Git.pm
++++ b/perl/Git.pm
+@@ -1686,6 +1686,16 @@ sub _setup_git_cmd_env {
+ # by searching for it at proper places.
+ sub _execv_git_cmd { exec('git', @_); }
+ 
++sub _is_sig {
++	my ($v, $n) = @_;
++
++	# We are avoiding a "use POSIX qw(SIGPIPE SIGABRT)" in the hot
++	# Git.pm codepath.
++	require POSIX;
++	no strict 'refs';
++	$v == *{"POSIX::$n"}->();
++}
++
+ # Close pipe to a subprocess.
+ sub _cmd_close {
+ 	my $ctx = shift @_;
+@@ -1698,9 +1708,16 @@ sub _cmd_close {
+ 		} elsif ($? >> 8) {
+ 			# The caller should pepper this.
+ 			throw Git::Error::Command($ctx, $? >> 8);
++		} elsif ($? & 127 && _is_sig($? & 127, "SIGPIPE")) {
++			# we might e.g. closed a live stream; the command
++			# dying of SIGPIPE would drive us here.
++		} elsif ($? & 127 && _is_sig($? & 127, "SIGABRT")) {
++			die sprintf('BUG?: got SIGABRT ($? = %d, $? & 127 = %d) when closing pipe',
++				    $?, $? & 127);
++		} elsif ($? & 127) {
++			die sprintf('got signal ($? = %d, $? & 127 = %d) when closing pipe',
++				    $?, $? & 127);
+ 		}
+-		# else we might e.g. closed a live stream; the command
+-		# dying of SIGPIPE would drive us here.
+ 	}
+ }
+ 
+diff --git a/t/t9102-git-svn-deep-rmdir.sh b/t/t9102-git-svn-deep-rmdir.sh
+index 7b2049caa0c..946ef85eb98 100755
+--- a/t/t9102-git-svn-deep-rmdir.sh
++++ b/t/t9102-git-svn-deep-rmdir.sh
+@@ -1,7 +1,6 @@
+ #!/bin/sh
+ test_description='git svn rmdir'
+ 
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'initialize repo' '
+diff --git a/t/t9123-git-svn-rebuild-with-rewriteroot.sh b/t/t9123-git-svn-rebuild-with-rewriteroot.sh
+index 3320b1f39cf..ead404589eb 100755
+--- a/t/t9123-git-svn-rebuild-with-rewriteroot.sh
++++ b/t/t9123-git-svn-rebuild-with-rewriteroot.sh
+@@ -5,7 +5,6 @@
+ 
+ test_description='git svn respects rewriteRoot during rebuild'
+ 
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ mkdir import
+diff --git a/t/t9128-git-svn-cmd-branch.sh b/t/t9128-git-svn-cmd-branch.sh
+index 9871f5abc93..783e3ba0c53 100755
+--- a/t/t9128-git-svn-cmd-branch.sh
++++ b/t/t9128-git-svn-cmd-branch.sh
+@@ -5,7 +5,6 @@
+ 
+ test_description='git svn partial-rebuild tests'
+ 
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'initialize svnrepo' '
+diff --git a/t/t9167-git-svn-cmd-branch-subproject.sh b/t/t9167-git-svn-cmd-branch-subproject.sh
+index d9fd111c105..d8128430a8d 100755
+--- a/t/t9167-git-svn-cmd-branch-subproject.sh
++++ b/t/t9167-git-svn-cmd-branch-subproject.sh
+@@ -5,7 +5,6 @@
+ 
+ test_description='git svn branch for subproject clones'
+ 
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'initialize svnrepo' '
+-- 
+2.35.0.913.g12b4baa2536
+
