@@ -1,0 +1,129 @@
+From 055aca0ba1e05d4e0aa6bffc9f81301f52deee31 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-08.10-055aca0ba1e-20220201T141936Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20220201T141936Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220201T141936Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 21 Dec 2021 13:35:57 +0100
+Subject: [PATCH 08/10] object-file: replace check_object_signature() with
+ stream_*
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the task of the the check_object_signature() function so that
+it no longer confusingly does two unrelated things.
+
+Now the "!map" branch of it is exposed as a renamed
+stream_object_signature(). In preceding commits we migrated all of the
+"if (map)" callers over to "hash_object_file_oideq()" or
+"hash_object_file_literally()" followed by "!oideq(...)".
+
+This makes the caller in parse_object() less confusing, as we'll now
+no longer need to pass NULL for "map" and "OBJ_BAD" for the unused
+"type" argument. The "verify_packfile()" caller is arguably a bit
+worse off than before, but as we're only using this function in a
+couple of places now a bit more verbosity there is acceptable.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ cache.h       | 11 ++++++++---
+ object-file.c | 17 +++--------------
+ object.c      |  2 +-
+ pack-check.c  |  8 ++++++--
+ 4 files changed, 18 insertions(+), 20 deletions(-)
+
+diff --git a/cache.h b/cache.h
+index d9c68c66d53..881ae36fd47 100644
+--- a/cache.h
++++ b/cache.h
+@@ -1319,9 +1319,14 @@ enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+ struct object_info;
+ int parse_loose_header(const char *hdr, struct object_info *oi);
+ 
+-int check_object_signature(struct repository *r, const struct object_id *oid,
+-			   void *buf, unsigned long size, enum object_type type,
+-			   struct object_id *real_oidp);
++
++/**
++ * stream_object_signature() tries to read the object named with "oid"
++ * using the streaming interface and rehash it to make sure the object
++ * name actually matches "oid" to detect object corruption.
++ */
++int stream_object_signature(struct repository *r, const struct object_id *oid,
++			    struct object_id *real_oidp);
+ 
+ int finalize_object_file(const char *tmpfile, const char *filename);
+ 
+diff --git a/object-file.c b/object-file.c
+index 7dd07c07cf9..64e95a0a641 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1066,29 +1066,18 @@ int format_object_header_literally(char *str, size_t size, const char *type,
+ 	return xsnprintf(str, size, "%s %"PRIuMAX, type, (uintmax_t)objsize) + 1;
+ }
+ 
+-/*
+- * With an in-core object data in "map", rehash it to make sure the
+- * object name actually matches "oid" to detect object corruption.
+- * With "map" == NULL, try reading the object named with "oid" using
+- * the streaming interface and rehash it to do the same.
+- */
+-int check_object_signature(struct repository *r, const struct object_id *oid,
+-			   void *map, unsigned long size, enum object_type type,
+-			   struct object_id *real_oidp)
++int stream_object_signature(struct repository *r, const struct object_id *oid,
++			    struct object_id *real_oidp)
+ {
+ 	struct object_id tmp;
+ 	struct object_id *real_oid = real_oidp ? real_oidp : &tmp;
++	unsigned long size;
+ 	enum object_type obj_type;
+ 	struct git_istream *st;
+ 	git_hash_ctx c;
+ 	char hdr[MAX_HEADER_LEN];
+ 	int hdrlen;
+ 
+-	if (map) {
+-		hash_object_file(r->hash_algo, map, size, type, real_oid);
+-		return !oideq(oid, real_oid) ? -1 : 0;
+-	}
+-
+ 	st = open_istream(r, oid, &obj_type, &size, NULL);
+ 	if (!st)
+ 		return -1;
+diff --git a/object.c b/object.c
+index 795b1356a1b..bf51b2056e9 100644
+--- a/object.c
++++ b/object.c
+@@ -279,7 +279,7 @@ struct object *parse_object(struct repository *r, const struct object_id *oid)
+ 	if ((obj && obj->type == OBJ_BLOB && repo_has_object_file(r, oid)) ||
+ 	    (!obj && repo_has_object_file(r, oid) &&
+ 	     oid_object_info(r, oid, NULL) == OBJ_BLOB)) {
+-		if (check_object_signature(r, repl, NULL, 0, OBJ_BAD, NULL) < 0) {
++		if (stream_object_signature(r, repl, NULL) < 0) {
+ 			error(_("hash mismatch %s"), oid_to_hex(oid));
+ 			return NULL;
+ 		}
+diff --git a/pack-check.c b/pack-check.c
+index faceae610d3..5d5169507ec 100644
+--- a/pack-check.c
++++ b/pack-check.c
+@@ -142,8 +142,12 @@ static int verify_packfile(struct repository *r,
+ 			err = error("cannot unpack %s from %s at offset %"PRIuMAX"",
+ 				    oid_to_hex(&oid), p->pack_name,
+ 				    (uintmax_t)entries[i].offset);
+-		else if (check_object_signature(r, &oid, data, size,
+-						type, NULL))
++		else if (data && !hash_object_file_oideq(r->hash_algo, data,
++							 size, type, &oid,
++							 NULL))
++			err = error("packed %s from %s is corrupt",
++				    oid_to_hex(&oid), p->pack_name);
++		else if (!data && stream_object_signature(r, &oid, NULL))
+ 			err = error("packed %s from %s is corrupt",
+ 				    oid_to_hex(&oid), p->pack_name);
+ 		else if (fn) {
+-- 
+2.35.0.913.g12b4baa2536
+

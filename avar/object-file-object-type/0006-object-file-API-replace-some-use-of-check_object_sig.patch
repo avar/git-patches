@@ -1,0 +1,114 @@
+From 3994fa7b0f98a18615913514bac6b3b2b3ef9d9b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.10-3994fa7b0f9-20220201T141936Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20220201T141936Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220201T141936Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 21 Dec 2021 13:15:10 +0100
+Subject: [PATCH 06/10] object-file API: replace some use of
+ check_object_signature()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a "hash_object_file_literally()" function to go with the existing
+"hash_object_file()" function. This is currently a wrapper for its
+sibling, but this change will allow us to change it to take an "enum
+object_type" in a subsequent commit.
+
+The only caller that wanted to pass a custom type to
+"check_object_signature()" was the "git fsck" via its
+"read_loose_object()", which is being changed here.
+
+There was an existing hash_object_file_literally() which I'm renaming
+to "hash_write_object_file_literally()", that function is only used
+for "hash-object --literally". That renaming is being done because it
+would be confusing to have a "hash_object_file_literally()" and a
+"hash_object_file()" that do very different things.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/hash-object.c |  4 ++--
+ object-file.c         | 18 +++++++++++++-----
+ object-store.h        |  6 +++---
+ 3 files changed, 18 insertions(+), 10 deletions(-)
+
+diff --git a/builtin/hash-object.c b/builtin/hash-object.c
+index c7b3ad74c60..624e9e677fb 100644
+--- a/builtin/hash-object.c
++++ b/builtin/hash-object.c
+@@ -25,8 +25,8 @@ static int hash_literally(struct object_id *oid, int fd, const char *type, unsig
+ 	if (strbuf_read(&buf, fd, 4096) < 0)
+ 		ret = -1;
+ 	else
+-		ret = hash_object_file_literally(buf.buf, buf.len, type, oid,
+-						 flags);
++		ret = hash_write_object_file_literally(buf.buf, buf.len, type, oid,
++						       flags);
+ 	strbuf_release(&buf);
+ 	return ret;
+ }
+diff --git a/object-file.c b/object-file.c
+index 15bde7208bf..e0b0b892a35 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1862,6 +1862,13 @@ void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+ 	write_object_file_prepare(algo, buf, len, type, oid, hdr, &hdrlen);
+ }
+ 
++static void hash_object_file_literally(const struct git_hash_algo *algo, const void *buf,
++				       unsigned long len, const char *type,
++				       struct object_id *oid)
++{
++	hash_object_file(algo, buf, len, type, oid);
++}
++
+ int hash_object_file_oideq(const struct git_hash_algo *algo, const void *buf,
+ 			   unsigned long len, enum object_type type,
+ 			   const struct object_id *oid,
+@@ -2043,9 +2050,9 @@ int write_object_file_flags(const void *buf, unsigned long len,
+ 	return write_loose_object(oid, hdr, hdrlen, buf, len, 0, flags);
+ }
+ 
+-int hash_object_file_literally(const void *buf, unsigned long len,
+-			       const char *type, struct object_id *oid,
+-			       unsigned flags)
++int hash_write_object_file_literally(const void *buf, unsigned long len,
++				     const char *type, struct object_id *oid,
++				     unsigned flags)
+ {
+ 	char *header;
+ 	int hdrlen, status = 0;
+@@ -2630,9 +2637,10 @@ int read_loose_object(const char *path,
+ 			git_inflate_end(&stream);
+ 			goto out;
+ 		}
+-		if (check_object_signature(the_repository, expected_oid,
++		hash_object_file_literally(the_repository->hash_algo,
+ 					   *contents, *size,
+-					   oi->type_name->buf, real_oid))
++					   oi->type_name->buf, real_oid);
++		if (!oideq(expected_oid, real_oid))
+ 			goto out;
+ 	}
+ 
+diff --git a/object-store.h b/object-store.h
+index 008916e8de2..7d1cccd9e8e 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -272,9 +272,9 @@ static inline int write_object_file(const void *buf, unsigned long len,
+ 	return write_object_file_flags(buf, len, type, oid, 0);
+ }
+ 
+-int hash_object_file_literally(const void *buf, unsigned long len,
+-			       const char *type, struct object_id *oid,
+-			       unsigned flags);
++int hash_write_object_file_literally(const void *buf, unsigned long len,
++				     const char *type, struct object_id *oid,
++				     unsigned flags);
+ 
+ /*
+  * Add an object file to the in-memory object store, without writing it
+-- 
+2.35.0.913.g12b4baa2536
+
