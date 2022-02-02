@@ -1,0 +1,123 @@
+From 2e2e3569e02a9c51fefa61a60a2367ab597a27fd Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.2-2e2e3569e02-20220202T111228Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.2-00000000000-20220202T111228Z-avarab@gmail.com>
+References: <patch-1.1-5f18305ca08-20220125T124757Z-avarab@gmail.com>
+	<cover-v2-0.2-00000000000-20220202T111228Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 Jan 2022 12:10:11 +0100
+Subject: [PATCH v2 2/2] completion: add a GIT_COMPLETION_SHOW_ALL_COMMANDS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a GIT_COMPLETION_SHOW_ALL_COMMANDS=1 configuration setting to go
+with the existing GIT_COMPLETION_SHOW_ALL=1 added in
+c099f579b98 (completion: add GIT_COMPLETION_SHOW_ALL env var,
+2020-08-19).
+
+This will include plumbing commands such as "cat-file" in "git <TAB>"
+and "git c<TAB>" completion. Without/with this I have 134 and 243
+completion with git <TAB>, respectively.
+
+It was already possible to do this by tweaking
+GIT_TESTING_PORCELAIN_COMMAND_LIST= from the outside, that testing
+variable was added in 84a97131065 (completion: let git provide the
+completable command list, 2018-05-20). Doing this before loading
+git-completion.bash worked:
+
+    export GIT_TESTING_PORCELAIN_COMMAND_LIST="$(git --list-cmds=builtins,main,list-mainporcelain,others,nohelpers,alias,list-complete,config)"
+
+But such testing variables are not meant to be used from the outside,
+and we make no guarantees that those internal won't change. So let's
+expose this as a dedicated configuration knob.
+
+It would be better to teach --list-cmds=* a new category which would
+include all of these groups, but that's a larger change that we can
+leave for some other time.
+
+1. https://lore.kernel.org/git/CAGP6POJ9gwp+t-eP3TPkivBLLbNb2+qj=61Mehcj=1BgrVOSLA@mail.gmail.com/
+
+Reported-by: Hongyi Zhao <hongyi.zhao@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ contrib/completion/git-completion.bash | 13 ++++++++++-
+ t/t9902-completion.sh                  | 31 ++++++++++++++++++++++++++
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/contrib/completion/git-completion.bash b/contrib/completion/git-completion.bash
+index 377d6c5494a..2436b8eb6b9 100644
+--- a/contrib/completion/git-completion.bash
++++ b/contrib/completion/git-completion.bash
+@@ -49,6 +49,11 @@
+ #     and git-switch completion (e.g., completing "foo" when "origin/foo"
+ #     exists).
+ #
++#   GIT_COMPLETION_SHOW_ALL_COMMANDS
++#
++#     When set to "1" suggest all commands, including plumbing commands
++#     which are hidden by default (e.g. "cat-file" on "git ca<TAB>").
++#
+ #   GIT_COMPLETION_SHOW_ALL
+ #
+ #     When set to "1" suggest all options, including options which are
+@@ -3455,7 +3460,13 @@ __git_main ()
+ 			then
+ 				__gitcomp "$GIT_TESTING_PORCELAIN_COMMAND_LIST"
+ 			else
+-				__gitcomp "$(__git --list-cmds=list-mainporcelain,others,nohelpers,alias,list-complete,config)"
++				local list_cmds=list-mainporcelain,others,nohelpers,alias,list-complete,config
++
++				if test "${GIT_COMPLETION_SHOW_ALL_COMMANDS-}" = "1"
++				then
++					list_cmds=builtins,$list_cmds
++				fi
++				__gitcomp "$(__git --list-cmds=$list_cmds)"
+ 			fi
+ 			;;
+ 		esac
+diff --git a/t/t9902-completion.sh b/t/t9902-completion.sh
+index c9805f2147d..c6d6d6ef896 100755
+--- a/t/t9902-completion.sh
++++ b/t/t9902-completion.sh
+@@ -2440,6 +2440,37 @@ test_expect_success 'option aliases are shown with GIT_COMPLETION_SHOW_ALL' '
+ 	)
+ '
+ 
++test_expect_success 'plumbing commands are excluded without GIT_COMPLETION_SHOW_ALL_COMMANDS' '
++	(
++		. "$GIT_BUILD_DIR/contrib/completion/git-completion.bash" &&
++		sane_unset GIT_TESTING_PORCELAIN_COMMAND_LIST &&
++
++		# Just mainporcelain, not plumbing commands
++		run_completion "git c" &&
++		grep checkout out &&
++		! grep cat-file out
++	)
++'
++
++test_expect_success 'all commands are shown with GIT_COMPLETION_SHOW_ALL_COMMANDS (also main non-builtin)' '
++	(
++		. "$GIT_BUILD_DIR/contrib/completion/git-completion.bash" &&
++		GIT_COMPLETION_SHOW_ALL_COMMANDS=1 &&
++		export GIT_COMPLETION_SHOW_ALL_COMMANDS &&
++		sane_unset GIT_TESTING_PORCELAIN_COMMAND_LIST &&
++
++		# Both mainporcelain and plumbing commands
++		run_completion "git c" &&
++		grep checkout out &&
++		grep cat-file out &&
++
++		# Check "gitk", a "main" command, but not a built-in + more plumbing
++		run_completion "git g" &&
++		grep gitk out &&
++		grep get-tar-commit-id out
++	)
++'
++
+ test_expect_success '__git_complete' '
+ 	unset -f __git_wrap__git_main &&
+ 
+-- 
+2.35.0.913.g12b4baa2536
+
