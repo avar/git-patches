@@ -1,0 +1,119 @@
+From 3406d71b49945369dde1acf6861f7642155bf2f5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v9-7.9-3406d71b499-20220203T213350Z-avarab@gmail.com>
+In-Reply-To: <cover-v9-0.9-00000000000-20220203T213350Z-avarab@gmail.com>
+References: <cover-v6-0.8-00000000000-20211102T122507Z-avarab@gmail.com>
+	<cover-v9-0.9-00000000000-20220203T213350Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 2 Feb 2022 14:14:25 +0100
+Subject: [PATCH v9 7/9] progress.c: refactor stop_progress{,_msg}() to use
+ helpers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Create two new static helpers for the stop_progress() and
+stop_progress_msg() functions.
+
+As we'll see in the subsequent commit having those two split up
+doesn't make much sense, and results in a bug in how we log to
+trace2. This narrow preparatory change makes the diff for that
+subsequent change smaller.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ progress.c | 64 ++++++++++++++++++++++++++++++------------------------
+ 1 file changed, 36 insertions(+), 28 deletions(-)
+
+diff --git a/progress.c b/progress.c
+index 6e7daa3f8a2..6cc7f902f5e 100644
+--- a/progress.c
++++ b/progress.c
+@@ -317,6 +317,36 @@ static void finish_if_sparse(struct progress *progress)
+ 		display_progress(progress, progress->total);
+ }
+ 
++static void force_last_update(struct progress *progress, const char *msg)
++{
++	char *buf;
++	struct throughput *tp = progress->throughput;
++
++	if (tp) {
++		uint64_t now_ns = progress_getnanotime(progress);
++		unsigned int misecs, rate;
++		misecs = ((now_ns - progress->start_ns) * 4398) >> 32;
++		rate = tp->curr_total / (misecs ? misecs : 1);
++		throughput_string(&tp->display, tp->curr_total, rate);
++	}
++	progress_update = 1;
++	buf = xstrfmt(", %s.\n", msg);
++	display(progress, progress->last_value, buf);
++	free(buf);
++}
++
++static void log_trace2(struct progress *progress)
++{
++	trace2_data_intmax("progress", the_repository, "total_objects",
++			   progress->total);
++
++	if (progress->throughput)
++		trace2_data_intmax("progress", the_repository, "total_bytes",
++				   progress->throughput->curr_total);
++
++	trace2_region_leave("progress", progress->title, the_repository);
++}
++
+ void stop_progress(struct progress **p_progress)
+ {
+ 	struct progress *progress;
+@@ -327,17 +357,8 @@ void stop_progress(struct progress **p_progress)
+ 
+ 	finish_if_sparse(progress);
+ 
+-	if (progress) {
+-		trace2_data_intmax("progress", the_repository, "total_objects",
+-				   progress->total);
+-
+-		if (progress->throughput)
+-			trace2_data_intmax("progress", the_repository,
+-					   "total_bytes",
+-					   progress->throughput->curr_total);
+-
+-		trace2_region_leave("progress", progress->title, the_repository);
+-	}
++	if (progress)
++		log_trace2(*p_progress);
+ 
+ 	stop_progress_msg(p_progress, _("done"));
+ }
+@@ -353,23 +374,10 @@ void stop_progress_msg(struct progress **p_progress, const char *msg)
+ 	if (!progress)
+ 		return;
+ 	*p_progress = NULL;
+-	if (progress->last_value != -1) {
+-		/* Force the last update */
+-		char *buf;
+-		struct throughput *tp = progress->throughput;
+-
+-		if (tp) {
+-			uint64_t now_ns = progress_getnanotime(progress);
+-			unsigned int misecs, rate;
+-			misecs = ((now_ns - progress->start_ns) * 4398) >> 32;
+-			rate = tp->curr_total / (misecs ? misecs : 1);
+-			throughput_string(&tp->display, tp->curr_total, rate);
+-		}
+-		progress_update = 1;
+-		buf = xstrfmt(", %s.\n", msg);
+-		display(progress, progress->last_value, buf);
+-		free(buf);
+-	}
++
++	if (progress->last_value != -1)
++		force_last_update(progress, msg);
++
+ 	clear_progress_signal();
+ 	strbuf_release(&progress->counters_sb);
+ 	if (progress->throughput)
+-- 
+2.35.1.939.g42bf83caa3d
+

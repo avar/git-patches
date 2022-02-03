@@ -1,0 +1,152 @@
+From 0b2248a2d741df4b666418ea959a5cf54a6f406d Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v9-0.9-00000000000-20220203T213350Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-0.8-00000000000-20211102T122507Z-avarab@gmail.com>
+References: <cover-v6-0.8-00000000000-20211102T122507Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 3 Feb 2022 22:33:50 +0100
+Subject: [PATCH v9 0/9] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (9):
+  leak tests: fix a memory leak in "test-progress" helper
+  progress.c test helper: add missing braces
+  progress.c tests: make start/stop commands on stdin
+  progress.c tests: test some invalid usage
+  progress.h: format and be consistent with progress.c naming
+  progress.c: use dereferenced "progress" variable, not "(*p_progress)"
+  progress.c: refactor stop_progress{,_msg}() to use helpers
+  progress API: unify stop_progress{,_msg}(), fix trace2 bug
+  pack-bitmap-write.c: don't return without stop_progress()
+
+ pack-bitmap-write.c         |   6 +-
+ progress.c                  |  66 ++++++++++------------
+ progress.h                  |   9 ++-
+ t/helper/test-progress.c    |  50 ++++++++++++-----
+ t/t0500-progress-display.sh | 109 +++++++++++++++++++++++++++++-------
+ t/t5316-pack-delta-depth.sh |   6 +-
+ 6 files changed, 170 insertions(+), 76 deletions(-)
+
+Range-diff against v8:
+ 1:  aa08dab654d =  1:  dc304df9468 leak tests: fix a memory leak in "test-progress" helper
+ 2:  3ecdab074b6 =  2:  6951c059aa9 progress.c test helper: add missing braces
+ 3:  271f6d7ec3b !  3:  4548144a0b4 progress.c tests: make start/stop commands on stdin
+    @@ t/helper/test-progress.c
+     +		if (skip_prefix(line.buf, "start ", (const char **) &end)) {
+     +			uint64_t total = strtoull(end, &end, 10);
+     +			const char *title;
+    -+			const char *str;
+     +
+     +			/*
+     +			 * We can't use "end + 1" as an argument to
+    @@ t/helper/test-progress.c
+     +			else
+     +				die("invalid input: '%s'\n", line.buf);
+     +
+    -+			str = title ? title : default_title;
+    -+			progress = start_progress(str, total);
+    ++			progress = start_progress(title, total);
+     +		} else if (skip_prefix(line.buf, "progress ", (const char **) &end)) {
+      			uint64_t item_count = strtoull(end, &end, 10);
+      			if (*end != '\0')
+ 4:  7c1b8b287c5 !  4:  965d4ba7b54 progress.c tests: test some invalid usage
+    @@ Commit message
+         progress.c tests: test some invalid usage
+     
+         Test what happens when we "stop" without a "start", omit the "stop"
+    -    after a "start", or try to start two concurrent progress bars. This
+    +    after a "start", or start two concurrent progress bars. This
+         extends the trace2 tests added in 98a13647408 (trace2: log progress
+         time and throughput, 2020-05-12).
+     
+    @@ t/t0500-progress-display.sh: test_expect_success 'progress generates traces' '
+     +	stop
+     +	EOF
+     +
+    -+	GIT_TRACE2_EVENT="$(pwd)/trace-startstop.event" test-tool progress \
+    ++	GIT_TRACE2_EVENT="$PWD/trace-startstop.event" test-tool progress \
+     +		<in 2>stderr &&
+     +	test_region progress "Working hard" trace-startstop.event
+     +'
+    @@ t/t0500-progress-display.sh: test_expect_success 'progress generates traces' '
+     +	start 0
+     +	EOF
+     +
+    -+	GIT_TRACE2_EVENT="$(pwd)/trace-start.event" \
+    ++	GIT_TRACE2_EVENT="$PWD/trace-start.event" \
+     +	LSAN_OPTIONS=detect_leaks=0 \
+     +	test-tool progress \
+     +		<in 2>stderr &&
+    @@ t/t0500-progress-display.sh: test_expect_success 'progress generates traces' '
+     +	stop
+     +	EOF
+     +
+    -+	GIT_TRACE2_EVENT="$(pwd)/trace-stop.event" test-tool progress \
+    ++	GIT_TRACE2_EVENT="$PWD/trace-stop.event" test-tool progress \
+     +		<in 2>stderr &&
+     +	! grep region_enter.*progress trace-stop.event &&
+     +	! grep region_leave.*progress trace-stop.event
+     +'
+    ++
+    ++test_expect_success 'progress generates traces: start with active progress bar (no stops)' '
+    ++	cat >in <<-\EOF &&
+    ++	start 0 One
+    ++	start 0 Two
+    ++	EOF
+    ++
+    ++	GIT_TRACE2_EVENT="$PWD/trace-2start.event" \
+    ++	LSAN_OPTIONS=detect_leaks=0 \
+    ++	test-tool progress \
+    ++		<in 2>stderr &&
+    ++	grep region_enter.*progress.*One trace-2start.event &&
+    ++	grep region_enter.*progress.*Two trace-2start.event &&
+    ++	! grep region_leave trace-2start.event
+    ++'
+     +
+      test_done
+ -:  ----------- >  5:  4ab4eb3a20a progress.h: format and be consistent with progress.c naming
+ 5:  72a31bd7191 !  6:  ab24cb78d73 progress.c: add temporary variable from progress struct
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    progress.c: add temporary variable from progress struct
+    +    progress.c: use dereferenced "progress" variable, not "(*p_progress)"
+     
+         Since 98a13647408 (trace2: log progress time and throughput,
+         2020-05-12) stop_progress() dereferences a "struct progress **"
+    -    parameter in several places. Extract a dereferenced variable (like in
+    -    stop_progress_msg()) to reduce clutter and make it clearer who needs
+    -    to write to this parameter.
+    +    parameter in several places. Extract a dereferenced variable to reduce
+    +    clutter and make it clearer who needs to write to this parameter.
+     
+         Now instead of using "*p_progress" several times in stop_progress() we
+         check it once for NULL and then use a dereferenced "progress" variable
+    -    thereafter. This continues the same pattern used in the above
+    -    stop_progress() function, see ac900fddb7f (progress: don't dereference
+    -    before checking for NULL, 2020-08-10).
+    +    thereafter. This uses the same pattern as the adjacent
+    +    stop_progress_msg() function, see ac900fddb7f (progress: don't
+    +    dereference before checking for NULL, 2020-08-10).
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ progress.c: static void finish_if_sparse(struct progress *progress)
+      void stop_progress(struct progress **p_progress)
+      {
+     +	struct progress *progress;
+    ++
+      	if (!p_progress)
+      		BUG("don't provide NULL to stop_progress");
+     +	progress = *p_progress;
+ -:  ----------- >  7:  3406d71b499 progress.c: refactor stop_progress{,_msg}() to use helpers
+ -:  ----------- >  8:  62a93bb98b0 progress API: unify stop_progress{,_msg}(), fix trace2 bug
+ 6:  0bd08e1b018 =  9:  0b2248a2d74 pack-bitmap-write.c: don't return without stop_progress()
+ 7:  060483fb5ce <  -:  ----------- *.c: use isatty(0|2), not isatty(STDIN_FILENO|STDERR_FILENO)
+-- 
+2.35.1.939.g42bf83caa3d
+
