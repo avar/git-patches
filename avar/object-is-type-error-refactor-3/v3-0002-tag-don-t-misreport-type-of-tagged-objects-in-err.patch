@@ -1,0 +1,439 @@
+From 87676b57854c87655d5a7843616f2df5af0a2dc7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-2.2-87676b57854-20220204T234345Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.2-00000000000-20220204T234345Z-avarab@gmail.com>
+References: <cover-v2-00.11-00000000000-20220204T135005Z-avarab@gmail.com>
+	<cover-v3-0.2-00000000000-20220204T234345Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 7 Mar 2021 01:38:29 +0100
+Subject: [PATCH v3 2/2] tag: don't misreport type of tagged objects in errors
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in 89e4202f982 ([PATCH] Parse tags for absent
+objects, 2005-06-21) (yes, that ancient!) and correctly report an
+error on a tag like:
+
+    object <a tree hash>
+    type commit
+
+As:
+
+    error: object <a tree hash> is tree, not a commit
+
+Instead of our long-standing misbehavior of inverting the two, and
+reporting:
+
+    error: object <a tree hash> is commit, not a tree
+
+Which, as can be trivially seen with 'git cat-file -t <a tree hash>'
+is incorrect.
+
+The reason for this misreporting is that in parse_tag_buffer() we end
+up doing a lookup_{blob,commit,tag,tree}() depending on what we read
+out of the "type" line.
+
+If we haven't parsed that object before we end up dispatching to the
+type-specific lookup functions, e.g. this for commit.c in
+lookup_commit_type():
+
+	struct object *obj = lookup_object(r, oid);
+	if (!obj)
+		return create_object(r, oid, alloc_commit_node(r));
+
+Its allocation will then set the obj->type according to what the tag
+told us the type was, but which we've never validated. At this point
+we've got an object in memory that hasn't been parsed, and whose type
+is incorrect, since we mistrusted a tag to tell us the type.
+
+Then when we actually load the object with parse_object() we read it
+and find that it's a "tree". See 8ff226a9d5e (add object_as_type
+helper for casting objects, 2014-07-13) for that behavior (that's just
+a refactoring commit, but shows all the code involved).
+
+Which explains why we inverted the error report. Normally when
+object_as_type() is called it's by the lookup_{blob,commit,tag,tree}()
+functions via parse_object(). At that point we can trust the
+obj->type.
+
+In the case of parsing objects we've learned about via a tag with an
+incorrect type it's the opposite, the obj->type isn't correct and
+holds the mislabeled type, but we're parsing the object and know for
+sure what object type we're dealing with.
+
+Hence the non-intuitive solution of adding a
+lookup_{blob,commit,tag,tree}_type() function. It's to distinguish
+calls from parse_object_buffer() where we actually know the type, from
+a parse_tag_buffer() where we're just guessing about the type.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ blob.c                                 | 15 ++++++++++++++-
+ blob.h                                 |  3 +++
+ builtin/fsck.c                         |  2 +-
+ commit.c                               | 15 ++++++++++++++-
+ commit.h                               |  2 ++
+ object.c                               | 13 ++++++++-----
+ t/t6102-rev-list-unexpected-objects.sh | 16 ++++++++--------
+ tag.c                                  | 24 +++++++++++++++++++++---
+ tag.h                                  |  2 ++
+ tree.c                                 | 15 ++++++++++++++-
+ tree.h                                 |  2 ++
+ 11 files changed, 89 insertions(+), 20 deletions(-)
+
+diff --git a/blob.c b/blob.c
+index f8d8f0b84e1..c7ed7d8906e 100644
+--- a/blob.c
++++ b/blob.c
+@@ -10,10 +10,23 @@ struct blob *create_blob(struct repository *r, const struct object_id *oid)
+ 	return create_object(r, oid, alloc_blob_node(r));
+ }
+ 
+-struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
++struct blob *lookup_blob_type(struct repository *r,
++			      const struct object_id *oid,
++			      enum object_type type)
+ {
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_blob(r, oid);
++	if (type != OBJ_NONE && obj->type != OBJ_NONE) {
++		if (oid_is_type_or_error(oid, OBJ_BLOB, obj->type) < 0) {
++			obj->type = OBJ_BLOB;
++			return NULL;
++		}
++	}
+ 	return object_as_type(obj, OBJ_BLOB);
+ }
++
++struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
++{
++	return lookup_blob_type(r, oid, OBJ_NONE);
++}
+diff --git a/blob.h b/blob.h
+index 6e6b23a769d..50bbdd98b73 100644
+--- a/blob.h
++++ b/blob.h
+@@ -11,5 +11,8 @@ struct blob {
+ 
+ struct blob *create_blob(struct repository *r, const struct object_id *oid);
+ struct blob *lookup_blob(struct repository *r, const struct object_id *oid);
++struct blob *lookup_blob_type(struct repository *r,
++			      const struct object_id *oid,
++			      enum object_type type);
+ 
+ #endif /* BLOB_H */
+diff --git a/builtin/fsck.c b/builtin/fsck.c
+index 867065b47bb..6e12568e0a4 100644
+--- a/builtin/fsck.c
++++ b/builtin/fsck.c
+@@ -222,7 +222,7 @@ static void mark_unreachable_referents(const struct object_id *oid)
+ 		enum object_type type = oid_object_info(the_repository,
+ 							&obj->oid, NULL);
+ 		if (type > 0)
+-			object_as_type(obj, type);
++			obj->type = type;
+ 	}
+ 
+ 	options.walk = mark_used;
+diff --git a/commit.c b/commit.c
+index f4ddb267eaf..2044412b332 100644
+--- a/commit.c
++++ b/commit.c
+@@ -70,14 +70,27 @@ struct commit *create_commit(struct repository *r, const struct object_id *oid)
+ 	return create_object(r, oid, alloc_commit_node(r));
+ }
+ 
+-struct commit *lookup_commit(struct repository *r, const struct object_id *oid)
++struct commit *lookup_commit_type(struct repository *r,
++				  const struct object_id *oid,
++				  enum object_type type)
+ {
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_commit(r, oid);
++	if (type != OBJ_NONE && obj->type != OBJ_NONE) {
++		if (oid_is_type_or_error(oid, OBJ_COMMIT, obj->type)) {
++			obj->type = OBJ_COMMIT;
++			return NULL;
++		}
++	}
+ 	return object_as_type(obj, OBJ_COMMIT);
+ }
+ 
++struct commit *lookup_commit(struct repository *r, const struct object_id *oid)
++{
++	return lookup_commit_type(r, oid, OBJ_NONE);
++}
++
+ struct commit *lookup_commit_reference_by_name(const char *name)
+ {
+ 	struct object_id oid;
+diff --git a/commit.h b/commit.h
+index 1d7af4848d8..1de40a0af2b 100644
+--- a/commit.h
++++ b/commit.h
+@@ -66,6 +66,8 @@ const struct name_decoration *get_name_decoration(const struct object *obj);
+ 
+ struct commit *create_commit(struct repository *r, const struct object_id *oid);
+ struct commit *lookup_commit(struct repository *r, const struct object_id *oid);
++struct commit *lookup_commit_type(struct repository *r, const struct object_id *oid,
++				  enum object_type type);
+ struct commit *lookup_commit_reference(struct repository *r,
+ 				       const struct object_id *oid);
+ struct commit *lookup_commit_reference_gently(struct repository *r,
+diff --git a/object.c b/object.c
+index 06c3176ec9a..bc045908102 100644
+--- a/object.c
++++ b/object.c
+@@ -163,6 +163,7 @@ void *create_object(struct repository *r, const struct object_id *oid, void *o)
+ }
+ 
+ static const char *object_type_mismatch_msg = N_("object %s is a %s, not a %s");
++static const char *object_maybe_type_mismatch_msg = N_("object %s is referred to as a %s, not a %s");
+ 
+ void oid_is_type_or_die(const struct object_id *oid,
+ 			const enum object_type got,
+@@ -208,7 +209,9 @@ void *object_as_type(struct object *obj, enum object_type type)
+ 			obj->type = type;
+ 		return obj;
+ 	} else {
+-		error(_(object_type_mismatch_msg),
++		error(obj->parsed
++		      ? _(object_type_mismatch_msg)
++		      : _(object_maybe_type_mismatch_msg),
+ 		      oid_to_hex(&obj->oid),
+ 		      type_name(obj->type), type_name(type));
+ 		return NULL;
+@@ -246,13 +249,13 @@ struct object *parse_object_buffer(struct repository *r, const struct object_id
+ 	*eaten_p = 0;
+ 
+ 	if (type == OBJ_BLOB) {
+-		struct blob *blob = lookup_blob(r, oid);
++		struct blob *blob = lookup_blob_type(r, oid, type);
+ 		if (blob) {
+ 			blob->object.parsed = 1;
+ 			return &blob->object;
+ 		}
+ 	} else if (type == OBJ_TREE) {
+-		struct tree *tree = lookup_tree(r, oid);
++		struct tree *tree = lookup_tree_type(r, oid, type);
+ 		if (tree) {
+ 			if (!tree->buffer)
+ 				tree->object.parsed = 0;
+@@ -264,7 +267,7 @@ struct object *parse_object_buffer(struct repository *r, const struct object_id
+ 			return &tree->object;
+ 		}
+ 	} else if (type == OBJ_COMMIT) {
+-		struct commit *commit = lookup_commit(r, oid);
++		struct commit *commit = lookup_commit_type(r, oid, type);
+ 		if (commit) {
+ 			if (parse_commit_buffer(r, commit, buffer, size, 1))
+ 				return NULL;
+@@ -275,7 +278,7 @@ struct object *parse_object_buffer(struct repository *r, const struct object_id
+ 			return &commit->object;
+ 		}
+ 	} else if (type == OBJ_TAG) {
+-		struct tag *tag = lookup_tag(r, oid);
++		struct tag *tag = lookup_tag_type(r, oid, type);
+ 		if (tag) {
+ 			if (parse_tag_buffer(r, tag, buffer, size))
+ 			       return NULL;
+diff --git a/t/t6102-rev-list-unexpected-objects.sh b/t/t6102-rev-list-unexpected-objects.sh
+index a9f088f7890..af5fbe5be0f 100755
+--- a/t/t6102-rev-list-unexpected-objects.sh
++++ b/t/t6102-rev-list-unexpected-objects.sh
+@@ -156,14 +156,14 @@ test_expect_success !SANITIZE_LEAK 'setup unexpected non-tag tag' '
+ test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to commit & tag)' '
+ 	test_must_fail git rev-list --objects $tag_tag_commit 2>err &&
+ 	cat >expected <<-EOF &&
+-	error: object $commit is a tag, not a commit
++	error: object $commit is a commit, not a tag
+ 	fatal: bad object $commit
+ 	EOF
+ 	test_cmp expected err &&
+ 
+ 	test_must_fail git rev-list --objects $commit_tag_tag 2>err &&
+ 	cat >expected <<-EOF &&
+-	error: object $tag_commit is a commit, not a tag
++	error: object $tag_commit is a tag, not a commit
+ 	fatal: bad object $tag_commit
+ 	EOF
+ 	test_cmp expected err
+@@ -172,14 +172,14 @@ test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (t
+ test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to tree)' '
+ 	test_must_fail git rev-list --objects $tag_tag_tree 2>err &&
+ 	cat >expected <<-EOF &&
+-	error: object $tree is a tag, not a tree
++	error: object $tree is a tree, not a tag
+ 	fatal: bad object $tree
+ 	EOF
+ 	test_cmp expected err &&
+ 
+ 	test_must_fail git rev-list --objects $commit_tag_tree 2>err &&
+ 	cat >expected <<-EOF &&
+-	error: object $tree is a commit, not a tree
++	error: object $tree is a tree, not a commit
+ 	fatal: bad object $tree
+ 	EOF
+ 	test_cmp expected err
+@@ -188,14 +188,14 @@ test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (t
+ test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to blob)' '
+ 	test_must_fail git rev-list --objects $tag_tag_blob 2>err &&
+ 	cat >expected <<-EOF &&
+-	error: object $blob is a tag, not a blob
++	error: object $blob is a blob, not a tag
+ 	fatal: bad object $blob
+ 	EOF
+ 	test_cmp expected err &&
+ 
+ 	test_must_fail git rev-list --objects $commit_tag_blob 2>err &&
+ 	cat >expected <<-EOF &&
+-	error: object $blob is a commit, not a blob
++	error: object $blob is a blob, not a commit
+ 	fatal: bad object $blob
+ 	EOF
+ 	test_cmp expected err
+@@ -204,14 +204,14 @@ test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (t
+ test_expect_success !SANITIZE_LEAK 'traverse unexpected non-tag tag (tree seen to blob)' '
+ 	test_must_fail git rev-list --objects $tree $commit_tag_blob 2>err &&
+ 	cat >expected <<-EOF &&
+-	error: object $blob is a commit, not a blob
++	error: object $blob is a blob, not a commit
+ 	fatal: bad object $blob
+ 	EOF
+ 	test_cmp expected err &&
+ 
+ 	test_must_fail git rev-list --objects $tree $tag_tag_blob 2>err &&
+ 	cat >expected <<-EOF &&
+-	error: object $blob is a tag, not a blob
++	error: object $blob is a blob, not a tag
+ 	fatal: bad object $blob
+ 	EOF
+ 	test_cmp expected err
+diff --git a/tag.c b/tag.c
+index a1c536ccc6e..64b3c44d027 100644
+--- a/tag.c
++++ b/tag.c
+@@ -105,14 +105,26 @@ static struct tag *create_tag(struct repository *r, const struct object_id *oid)
+ 	return create_object(r, oid, alloc_tag_node(r));
+ }
+ 
+-struct tag *lookup_tag(struct repository *r, const struct object_id *oid)
++struct tag *lookup_tag_type(struct repository *r, const struct object_id *oid,
++			    enum object_type type)
+ {
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_tag(r, oid);
++	if (type != OBJ_NONE && obj->type != OBJ_NONE) {
++		if (oid_is_type_or_error(oid, OBJ_TAG, obj->type)) {
++			obj->type = OBJ_TAG;
++			return NULL;
++		}
++	}
+ 	return object_as_type(obj, OBJ_TAG);
+ }
+ 
++struct tag *lookup_tag(struct repository *r, const struct object_id *oid)
++{
++	return lookup_tag_type(r, oid, OBJ_NONE);
++}
++
+ static timestamp_t parse_tag_date(const char *buf, const char *tail)
+ {
+ 	const char *dateptr;
+@@ -140,6 +152,7 @@ void release_tag_memory(struct tag *t)
+ 
+ int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, unsigned long size)
+ {
++	struct object *obj;
+ 	struct object_id oid;
+ 	enum object_type type;
+ 	const char *bufptr = data;
+@@ -173,7 +186,11 @@ int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, u
+ 	if (!nl)
+ 		return -1;
+ 	type = type_from_string_gently(bufptr, taglen);
+-	if (type == OBJ_BLOB)
++	obj = lookup_object(r, &oid);
++
++	if (obj)
++		item->tagged = obj;
++	else if (type == OBJ_BLOB)
+ 		item->tagged = (struct object *)lookup_blob(r, &oid);
+ 	else if (type == OBJ_TREE)
+ 		item->tagged = (struct object *)lookup_tree(r, &oid);
+@@ -188,7 +205,8 @@ int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, u
+ 		BUG("unreachable type_from_string_gently() = %d", type);
+ 	bufptr = nl + 1;
+ 
+-	if (!item->tagged)
++	if (!item->tagged || oid_is_type_or_error(&oid, item->tagged->type,
++						  type))
+ 		return error("bad tag pointer to %s in %s",
+ 			     oid_to_hex(&oid),
+ 			     oid_to_hex(&item->object.oid));
+diff --git a/tag.h b/tag.h
+index 3ce8e721924..42bd3e64011 100644
+--- a/tag.h
++++ b/tag.h
+@@ -12,6 +12,8 @@ struct tag {
+ 	timestamp_t date;
+ };
+ struct tag *lookup_tag(struct repository *r, const struct object_id *oid);
++struct tag *lookup_tag_type(struct repository *r, const struct object_id *oid,
++			    enum object_type type);
+ int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, unsigned long size);
+ int parse_tag(struct tag *item);
+ void release_tag_memory(struct tag *t);
+diff --git a/tree.c b/tree.c
+index 80bdd484be3..66f5c24d580 100644
+--- a/tree.c
++++ b/tree.c
+@@ -107,14 +107,27 @@ static struct tree *create_tree(struct repository *r, const struct object_id *oi
+ 	return create_object(r, oid, alloc_tree_node(r));
+ }
+ 
+-struct tree *lookup_tree(struct repository *r, const struct object_id *oid)
++struct tree *lookup_tree_type(struct repository *r,
++			      const struct object_id *oid,
++			      enum object_type type)
+ {
+ 	struct object *obj = lookup_object(r, oid);
+ 	if (!obj)
+ 		return create_tree(r, oid);
++	if (type != OBJ_NONE && obj->type != OBJ_NONE) {
++		if (oid_is_type_or_error(oid, OBJ_TREE, obj->type)) {
++			obj->type = OBJ_TREE;
++			return NULL;
++		}
++	}
+ 	return object_as_type(obj, OBJ_TREE);
+ }
+ 
++struct tree *lookup_tree(struct repository *r, const struct object_id *oid)
++{
++	return lookup_tree_type(r, oid, OBJ_NONE);
++}
++
+ int parse_tree_buffer(struct tree *item, void *buffer, unsigned long size)
+ {
+ 	if (item->object.parsed)
+diff --git a/tree.h b/tree.h
+index 6efff003e21..4af3b617f3d 100644
+--- a/tree.h
++++ b/tree.h
+@@ -15,6 +15,8 @@ struct tree {
+ extern const char *tree_type;
+ 
+ struct tree *lookup_tree(struct repository *r, const struct object_id *oid);
++struct tree *lookup_tree_type(struct repository *r, const struct object_id *oid,
++			      enum object_type type);
+ 
+ int parse_tree_buffer(struct tree *item, void *buffer, unsigned long size);
+ 
+-- 
+2.35.1.940.ge7a5b4b05f2
+

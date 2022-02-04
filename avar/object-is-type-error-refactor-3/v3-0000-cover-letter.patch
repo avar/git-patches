@@ -1,0 +1,914 @@
+From 87676b57854c87655d5a7843616f2df5af0a2dc7 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.2-00000000000-20220204T234345Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20220204T135005Z-avarab@gmail.com>
+References: <cover-v2-00.11-00000000000-20220204T135005Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Sat, 5 Feb 2022 00:43:45 +0100
+Subject: [PATCH v3 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  object tests: add test for unexpected objects in tags
+  tag: don't misreport type of tagged objects in errors
+
+ blob.c                                 |  15 +++-
+ blob.h                                 |   3 +
+ builtin/fsck.c                         |   2 +-
+ commit.c                               |  15 +++-
+ commit.h                               |   2 +
+ object.c                               |  13 +--
+ t/t6102-rev-list-unexpected-objects.sh | 110 +++++++++++++++++++++++++
+ tag.c                                  |  24 +++++-
+ tag.h                                  |   2 +
+ tree.c                                 |  15 +++-
+ tree.h                                 |   2 +
+ 11 files changed, 191 insertions(+), 12 deletions(-)
+
+Range-diff against v2:
+1:  d259f901114 < -:  ----------- object-file API: have write_object_file() take "enum object_type"
+2:  207aec4eb64 < -:  ----------- object API: correct "buf" v.s. "map" mismatch in *.c and *.h
+3:  636a647ac51 < -:  ----------- object API: make check_object_signature() oideq()-like, move docs
+4:  c38af53e889 < -:  ----------- object-file API: split up and simplify check_object_signature()
+5:  a5ebd04d462 < -:  ----------- object API: rename hash_object_file_literally() to write_*()
+7:  e39edfbce05 ! 1:  342e50e441f object-file.c: add a literal version of write_object_file_prepare()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    object-file.c: add a literal version of write_object_file_prepare()
+    +    object tests: add test for unexpected objects in tags
+     
+    -    Split off a *_literally() variant of the write_object_file_prepare()
+    -    function. To do this create a new "hash_object_body()" static helper.
+    +    Fix a blind spot in the tests added in 0616617c7e1 (t: introduce tests
+    +    for unexpected object types, 2019-04-09), there were no meaningful
+    +    tests for checking how we reported on finding the incorrect object
+    +    type in a tag, i.e. one that broke the "type" promise in the tag
+    +    header.
+     
+    -    We now defer the type_name() call until the very last moment in
+    -    format_object_header() for those callers that aren't "hash-object
+    -    --literally".
+    +    [TODO: These tests happen to leak memory, so let's mark them as
+    +    !SANITIZE_LEAK. I've got another cooking/in-flight change that marks
+    +    these tests as passing with SANITIZE=leak].
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## object-file.c ##
+    -@@ object-file.c: void *read_object_with_reference(struct repository *r,
+    - 	}
+    - }
+    + ## t/t6102-rev-list-unexpected-objects.sh ##
+    +@@ t/t6102-rev-list-unexpected-objects.sh: test_expect_success 'traverse unexpected non-blob tag (seen)' '
+    + 	test_i18ngrep "not a blob" output
+    + '
+      
+    -+static void hash_object_body(const struct git_hash_algo *algo, git_hash_ctx *c,
+    -+			     const void *buf, unsigned long len,
+    -+			     struct object_id *oid,
+    -+			     char *hdr, int *hdrlen)
+    -+{
+    -+	algo->init_fn(c);
+    -+	algo->update_fn(c, hdr, *hdrlen);
+    -+	algo->update_fn(c, buf, len);
+    -+	algo->final_oid_fn(oid, c);
+    -+}
+    -+
+    - static void write_object_file_prepare(const struct git_hash_algo *algo,
+    - 				      const void *buf, unsigned long len,
+    --				      const char *type, struct object_id *oid,
+    -+				      enum object_type type, struct object_id *oid,
+    - 				      char *hdr, int *hdrlen)
+    - {
+    - 	git_hash_ctx c;
+    - 
+    - 	/* Generate the header */
+    --	*hdrlen = format_object_header_literally(hdr, *hdrlen, type, len);
+    -+	*hdrlen = format_object_header(hdr, *hdrlen, type, len);
+    - 
+    - 	/* Sha1.. */
+    --	algo->init_fn(&c);
+    --	algo->update_fn(&c, hdr, *hdrlen);
+    --	algo->update_fn(&c, buf, len);
+    --	algo->final_oid_fn(oid, &c);
+    -+	hash_object_body(algo, &c, buf, len, oid, hdr, hdrlen);
+    -+}
+    -+
+    -+static void write_object_file_prepare_literally(const struct git_hash_algo *algo,
+    -+				      const void *buf, unsigned long len,
+    -+				      const char *type, struct object_id *oid,
+    -+				      char *hdr, int *hdrlen)
+    -+{
+    -+	git_hash_ctx c;
+    -+
+    -+	*hdrlen = format_object_header_literally(hdr, *hdrlen, type, len);
+    -+	hash_object_body(algo, &c, buf, len, oid, hdr, hdrlen);
+    - }
+    - 
+    - /*
+    -@@ object-file.c: static void hash_object_file_literally(const struct git_hash_algo *algo,
+    - 	char hdr[MAX_HEADER_LEN];
+    - 	int hdrlen = sizeof(hdr);
+    - 
+    --	write_object_file_prepare(algo, buf, len, type, oid, hdr, &hdrlen);
+    -+	write_object_file_prepare_literally(algo, buf, len, type, oid, hdr, &hdrlen);
+    - }
+    - 
+    - void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+    -@@ object-file.c: int write_object_file_flags(const void *buf, unsigned long len,
+    - 	/* Normally if we have it in the pack then we do not bother writing
+    - 	 * it out into .git/objects/??/?{38} file.
+    - 	 */
+    --	write_object_file_prepare(the_hash_algo, buf, len, type_name(type), oid, hdr,
+    -+	write_object_file_prepare(the_hash_algo, buf, len, type, oid, hdr,
+    - 				  &hdrlen);
+    - 	if (freshen_packed_object(oid) || freshen_loose_object(oid))
+    - 		return 0;
+    -@@ object-file.c: int write_object_file_literally(const void *buf, unsigned long len,
+    - 	/* type string, SP, %lu of the length plus NUL must fit this */
+    - 	hdrlen = strlen(type) + MAX_HEADER_LEN;
+    - 	header = xmalloc(hdrlen);
+    --	write_object_file_prepare(the_hash_algo, buf, len, type, oid, header,
+    --				  &hdrlen);
+    -+	write_object_file_prepare_literally(the_hash_algo, buf, len, type,
+    -+					    oid, header, &hdrlen);
+    - 
+    - 	if (!(flags & HASH_WRITE_OBJECT))
+    - 		goto cleanup;
+    ++test_expect_success !SANITIZE_LEAK 'setup unexpected non-tag tag' '
+    ++	test_when_finished "git tag -d tag-commit tag-tag" &&
+    ++
+    ++	git tag -a -m"tagged commit" tag-commit $commit &&
+    ++	tag_commit=$(git rev-parse tag-commit) &&
+    ++	git tag -a -m"tagged tag" tag-tag tag-commit &&
+    ++	tag_tag=$(git rev-parse tag-tag) &&
+    ++
+    ++	git cat-file tag tag-tag >good-tag-tag &&
+    ++	git cat-file tag tag-commit >good-commit-tag &&
+    ++
+    ++	sed -e "s/$tag_commit/$commit/" <good-tag-tag >broken-tag-tag-commit &&
+    ++	sed -e "s/$tag_commit/$tree/" <good-tag-tag >broken-tag-tag-tree &&
+    ++	sed -e "s/$tag_commit/$blob/" <good-tag-tag >broken-tag-tag-blob &&
+    ++
+    ++	sed -e "s/$commit/$tag_commit/" <good-commit-tag >broken-commit-tag-tag &&
+    ++	sed -e "s/$commit/$tree/" <good-commit-tag >broken-commit-tag-tree &&
+    ++	sed -e "s/$commit/$blob/" <good-commit-tag >broken-commit-tag-blob &&
+    ++
+    ++	tag_tag_commit=$(git hash-object -w -t tag broken-tag-tag-commit) &&
+    ++	tag_tag_tree=$(git hash-object -w -t tag broken-tag-tag-tree) &&
+    ++	tag_tag_blob=$(git hash-object -w -t tag broken-tag-tag-blob) &&
+    ++
+    ++	commit_tag_tag=$(git hash-object -w -t tag broken-commit-tag-tag) &&
+    ++	commit_tag_tree=$(git hash-object -w -t tag broken-commit-tag-tree) &&
+    ++	commit_tag_blob=$(git hash-object -w -t tag broken-commit-tag-blob)
+    ++'
+    ++
+    ++test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to commit & tag)' '
+    ++	test_must_fail git rev-list --objects $tag_tag_commit 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $commit is a tag, not a commit
+    ++	fatal: bad object $commit
+    ++	EOF
+    ++	test_cmp expected err &&
+    ++
+    ++	test_must_fail git rev-list --objects $commit_tag_tag 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $tag_commit is a commit, not a tag
+    ++	fatal: bad object $tag_commit
+    ++	EOF
+    ++	test_cmp expected err
+    ++'
+    ++
+    ++test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to tree)' '
+    ++	test_must_fail git rev-list --objects $tag_tag_tree 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $tree is a tag, not a tree
+    ++	fatal: bad object $tree
+    ++	EOF
+    ++	test_cmp expected err &&
+    ++
+    ++	test_must_fail git rev-list --objects $commit_tag_tree 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $tree is a commit, not a tree
+    ++	fatal: bad object $tree
+    ++	EOF
+    ++	test_cmp expected err
+    ++'
+    ++
+    ++test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to blob)' '
+    ++	test_must_fail git rev-list --objects $tag_tag_blob 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $blob is a tag, not a blob
+    ++	fatal: bad object $blob
+    ++	EOF
+    ++	test_cmp expected err &&
+    ++
+    ++	test_must_fail git rev-list --objects $commit_tag_blob 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $blob is a commit, not a blob
+    ++	fatal: bad object $blob
+    ++	EOF
+    ++	test_cmp expected err
+    ++'
+    ++
+    ++test_expect_success !SANITIZE_LEAK 'traverse unexpected non-tag tag (tree seen to blob)' '
+    ++	test_must_fail git rev-list --objects $tree $commit_tag_blob 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $blob is a commit, not a blob
+    ++	fatal: bad object $blob
+    ++	EOF
+    ++	test_cmp expected err &&
+    ++
+    ++	test_must_fail git rev-list --objects $tree $tag_tag_blob 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $blob is a tag, not a blob
+    ++	fatal: bad object $blob
+    ++	EOF
+    ++	test_cmp expected err
+    ++'
+    ++
+    ++test_expect_success !SANITIZE_LEAK 'traverse unexpected non-tag tag (blob seen to blob)' '
+    ++	test_must_fail git rev-list --objects $blob $commit_tag_blob 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $blob is a blob, not a commit
+    ++	error: bad tag pointer to $blob in $commit_tag_blob
+    ++	fatal: bad object $commit_tag_blob
+    ++	EOF
+    ++	test_cmp expected err &&
+    ++
+    ++	test_must_fail git rev-list --objects $blob $tag_tag_blob 2>err &&
+    ++	cat >expected <<-EOF &&
+    ++	error: object $blob is a blob, not a tag
+    ++	error: bad tag pointer to $blob in $tag_tag_blob
+    ++	fatal: bad object $tag_tag_blob
+    ++	EOF
+    ++	test_cmp expected err
+    ++'
+    ++
+    + test_done
+6:  40647be525b ! 2:  87676b57854 object-file API: have hash_object_file() take "enum object_type"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    object-file API: have hash_object_file() take "enum object_type"
+    +    tag: don't misreport type of tagged objects in errors
+     
+    -    Change the hash_object_file() function to take an "enum
+    -    object_type".
+    +    Fix a regression in 89e4202f982 ([PATCH] Parse tags for absent
+    +    objects, 2005-06-21) (yes, that ancient!) and correctly report an
+    +    error on a tag like:
+     
+    -    Since a preceding commit all of its callers are passing either
+    -    "{commit,tree,blob,tag}_type", or the result of a call to type_name(),
+    -    the parse_object() caller that would pass NULL is now using
+    -    stream_object_signature().
+    +        object <a tree hash>
+    +        type commit
+    +
+    +    As:
+    +
+    +        error: object <a tree hash> is tree, not a commit
+    +
+    +    Instead of our long-standing misbehavior of inverting the two, and
+    +    reporting:
+    +
+    +        error: object <a tree hash> is commit, not a tree
+    +
+    +    Which, as can be trivially seen with 'git cat-file -t <a tree hash>'
+    +    is incorrect.
+    +
+    +    The reason for this misreporting is that in parse_tag_buffer() we end
+    +    up doing a lookup_{blob,commit,tag,tree}() depending on what we read
+    +    out of the "type" line.
+    +
+    +    If we haven't parsed that object before we end up dispatching to the
+    +    type-specific lookup functions, e.g. this for commit.c in
+    +    lookup_commit_type():
+    +
+    +            struct object *obj = lookup_object(r, oid);
+    +            if (!obj)
+    +                    return create_object(r, oid, alloc_commit_node(r));
+    +
+    +    Its allocation will then set the obj->type according to what the tag
+    +    told us the type was, but which we've never validated. At this point
+    +    we've got an object in memory that hasn't been parsed, and whose type
+    +    is incorrect, since we mistrusted a tag to tell us the type.
+    +
+    +    Then when we actually load the object with parse_object() we read it
+    +    and find that it's a "tree". See 8ff226a9d5e (add object_as_type
+    +    helper for casting objects, 2014-07-13) for that behavior (that's just
+    +    a refactoring commit, but shows all the code involved).
+    +
+    +    Which explains why we inverted the error report. Normally when
+    +    object_as_type() is called it's by the lookup_{blob,commit,tag,tree}()
+    +    functions via parse_object(). At that point we can trust the
+    +    obj->type.
+    +
+    +    In the case of parsing objects we've learned about via a tag with an
+    +    incorrect type it's the opposite, the obj->type isn't correct and
+    +    holds the mislabeled type, but we're parsing the object and know for
+    +    sure what object type we're dealing with.
+    +
+    +    Hence the non-intuitive solution of adding a
+    +    lookup_{blob,commit,tag,tree}_type() function. It's to distinguish
+    +    calls from parse_object_buffer() where we actually know the type, from
+    +    a parse_tag_buffer() where we're just guessing about the type.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## apply.c ##
+    -@@ apply.c: static int apply_binary(struct apply_state *state,
+    - 		 * See if the old one matches what the patch
+    - 		 * applies to.
+    - 		 */
+    --		hash_object_file(the_hash_algo, img->buf, img->len, blob_type,
+    -+		hash_object_file(the_hash_algo, img->buf, img->len, OBJ_BLOB,
+    - 				 &oid);
+    - 		if (strcmp(oid_to_hex(&oid), patch->old_oid_prefix))
+    - 			return error(_("the patch applies to '%s' (%s), "
+    -@@ apply.c: static int apply_binary(struct apply_state *state,
+    - 				     name);
+    + ## blob.c ##
+    +@@ blob.c: struct blob *create_blob(struct repository *r, const struct object_id *oid)
+    + 	return create_object(r, oid, alloc_blob_node(r));
+    + }
+      
+    - 		/* verify that the result matches */
+    --		hash_object_file(the_hash_algo, img->buf, img->len, blob_type,
+    -+		hash_object_file(the_hash_algo, img->buf, img->len, OBJ_BLOB,
+    - 				 &oid);
+    - 		if (strcmp(oid_to_hex(&oid), patch->new_oid_prefix))
+    - 			return error(_("binary patch to '%s' creates incorrect result (expecting %s, got %s)"),
+    -
+    - ## builtin/fast-export.c ##
+    -@@ builtin/fast-export.c: static void export_blob(const struct object_id *oid)
+    - 		if (!buf)
+    - 			die("could not read blob %s", oid_to_hex(oid));
+    - 		if (!check_object_signature(the_repository, oid, buf, size,
+    --					    type_name(type)))
+    -+					    type))
+    - 			die("oid mismatch in blob %s", oid_to_hex(oid));
+    - 		object = parse_object_buffer(the_repository, oid, type,
+    - 					     size, buf, &eaten);
+    +-struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
+    ++struct blob *lookup_blob_type(struct repository *r,
+    ++			      const struct object_id *oid,
+    ++			      enum object_type type)
+    + {
+    + 	struct object *obj = lookup_object(r, oid);
+    + 	if (!obj)
+    + 		return create_blob(r, oid);
+    ++	if (type != OBJ_NONE && obj->type != OBJ_NONE) {
+    ++		if (oid_is_type_or_error(oid, OBJ_BLOB, obj->type) < 0) {
+    ++			obj->type = OBJ_BLOB;
+    ++			return NULL;
+    ++		}
+    ++	}
+    + 	return object_as_type(obj, OBJ_BLOB);
+    + }
+    ++
+    ++struct blob *lookup_blob(struct repository *r, const struct object_id *oid)
+    ++{
+    ++	return lookup_blob_type(r, oid, OBJ_NONE);
+    ++}
+     
+    - ## builtin/index-pack.c ##
+    -@@ builtin/index-pack.c: static struct base_data *resolve_delta(struct object_entry *delta_obj,
+    - 	if (!result_data)
+    - 		bad_object(delta_obj->idx.offset, _("failed to apply delta"));
+    - 	hash_object_file(the_hash_algo, result_data, result_size,
+    --			 type_name(delta_obj->real_type), &delta_obj->idx.oid);
+    -+			 delta_obj->real_type, &delta_obj->idx.oid);
+    - 	sha1_object(result_data, NULL, result_size, delta_obj->real_type,
+    - 		    &delta_obj->idx.oid);
+    + ## blob.h ##
+    +@@ blob.h: struct blob {
+      
+    -@@ builtin/index-pack.c: static void fix_unresolved_deltas(struct hashfile *f)
+    - 			continue;
+    + struct blob *create_blob(struct repository *r, const struct object_id *oid);
+    + struct blob *lookup_blob(struct repository *r, const struct object_id *oid);
+    ++struct blob *lookup_blob_type(struct repository *r,
+    ++			      const struct object_id *oid,
+    ++			      enum object_type type);
+      
+    - 		if (!check_object_signature(the_repository, &d->oid, data,
+    --					    size, type_name(type)))
+    -+					    size, type))
+    - 			die(_("local object %s is corrupt"), oid_to_hex(&d->oid));
+    + #endif /* BLOB_H */
+    +
+    + ## builtin/fsck.c ##
+    +@@ builtin/fsck.c: static void mark_unreachable_referents(const struct object_id *oid)
+    + 		enum object_type type = oid_object_info(the_repository,
+    + 							&obj->oid, NULL);
+    + 		if (type > 0)
+    +-			object_as_type(obj, type);
+    ++			obj->type = type;
+    + 	}
+      
+    - 		/*
+    + 	options.walk = mark_used;
+     
+    - ## builtin/mktag.c ##
+    -@@ builtin/mktag.c: static int verify_object_in_tag(struct object_id *tagged_oid, int *tagged_type)
+    + ## commit.c ##
+    +@@ commit.c: struct commit *create_commit(struct repository *r, const struct object_id *oid)
+    + 	return create_object(r, oid, alloc_commit_node(r));
+    + }
+      
+    - 	repl = lookup_replace_object(the_repository, tagged_oid);
+    - 	ret = !check_object_signature(the_repository, repl, buffer, size,
+    --				      type_name(*tagged_type));
+    -+				     *tagged_type);
+    - 	free(buffer);
+    +-struct commit *lookup_commit(struct repository *r, const struct object_id *oid)
+    ++struct commit *lookup_commit_type(struct repository *r,
+    ++				  const struct object_id *oid,
+    ++				  enum object_type type)
+    + {
+    + 	struct object *obj = lookup_object(r, oid);
+    + 	if (!obj)
+    + 		return create_commit(r, oid);
+    ++	if (type != OBJ_NONE && obj->type != OBJ_NONE) {
+    ++		if (oid_is_type_or_error(oid, OBJ_COMMIT, obj->type)) {
+    ++			obj->type = OBJ_COMMIT;
+    ++			return NULL;
+    ++		}
+    ++	}
+    + 	return object_as_type(obj, OBJ_COMMIT);
+    + }
+      
+    - 	return ret;
+    ++struct commit *lookup_commit(struct repository *r, const struct object_id *oid)
+    ++{
+    ++	return lookup_commit_type(r, oid, OBJ_NONE);
+    ++}
+    ++
+    + struct commit *lookup_commit_reference_by_name(const char *name)
+    + {
+    + 	struct object_id oid;
+     
+    - ## builtin/replace.c ##
+    -@@ builtin/replace.c: static int check_one_mergetag(struct commit *commit,
+    - 	int i;
+    + ## commit.h ##
+    +@@ commit.h: const struct name_decoration *get_name_decoration(const struct object *obj);
+      
+    - 	hash_object_file(the_hash_algo, extra->value, extra->len,
+    --			 type_name(OBJ_TAG), &tag_oid);
+    -+			 OBJ_TAG, &tag_oid);
+    - 	tag = lookup_tag(the_repository, &tag_oid);
+    - 	if (!tag)
+    - 		return error(_("bad mergetag in commit '%s'"), ref);
+    + struct commit *create_commit(struct repository *r, const struct object_id *oid);
+    + struct commit *lookup_commit(struct repository *r, const struct object_id *oid);
+    ++struct commit *lookup_commit_type(struct repository *r, const struct object_id *oid,
+    ++				  enum object_type type);
+    + struct commit *lookup_commit_reference(struct repository *r,
+    + 				       const struct object_id *oid);
+    + struct commit *lookup_commit_reference_gently(struct repository *r,
+     
+    - ## builtin/unpack-objects.c ##
+    -@@ builtin/unpack-objects.c: static void write_object(unsigned nr, enum object_type type,
+    + ## object.c ##
+    +@@ object.c: void *create_object(struct repository *r, const struct object_id *oid, void *o)
+    + }
+    + 
+    + static const char *object_type_mismatch_msg = N_("object %s is a %s, not a %s");
+    ++static const char *object_maybe_type_mismatch_msg = N_("object %s is referred to as a %s, not a %s");
+    + 
+    + void oid_is_type_or_die(const struct object_id *oid,
+    + 			const enum object_type got,
+    +@@ object.c: void *object_as_type(struct object *obj, enum object_type type)
+    + 			obj->type = type;
+    + 		return obj;
+      	} else {
+    - 		struct object *obj;
+    - 		int eaten;
+    --		hash_object_file(the_hash_algo, buf, size, type_name(type),
+    -+		hash_object_file(the_hash_algo, buf, size, type,
+    - 				 &obj_list[nr].oid);
+    - 		added_object(nr, type, buf, size);
+    - 		obj = parse_object_buffer(the_repository, &obj_list[nr].oid,
+    -
+    - ## cache-tree.c ##
+    -@@ cache-tree.c: static int update_one(struct cache_tree *it,
+    - 	if (repair) {
+    - 		struct object_id oid;
+    - 		hash_object_file(the_hash_algo, buffer.buf, buffer.len,
+    --				 tree_type, &oid);
+    -+				 OBJ_TREE, &oid);
+    - 		if (has_object_file_with_flags(&oid, OBJECT_INFO_SKIP_FETCH_OBJECT))
+    - 			oidcpy(&it->oid, &oid);
+    - 		else
+    - 			to_invalidate = 1;
+    - 	} else if (dryrun) {
+    - 		hash_object_file(the_hash_algo, buffer.buf, buffer.len,
+    --				 tree_type, &it->oid);
+    -+				 OBJ_TREE, &it->oid);
+    - 	} else if (write_object_file_flags(buffer.buf, buffer.len, OBJ_TREE,
+    - 					   &it->oid, flags & WRITE_TREE_SILENT
+    - 					   ? HASH_SILENT : 0)) {
+    -@@ cache-tree.c: static int verify_one(struct repository *r,
+    - 		strbuf_addf(&tree_buf, "%o %.*s%c", mode, entlen, name, '\0');
+    - 		strbuf_add(&tree_buf, oid->hash, r->hash_algo->rawsz);
+    - 	}
+    --	hash_object_file(r->hash_algo, tree_buf.buf, tree_buf.len, tree_type,
+    -+	hash_object_file(r->hash_algo, tree_buf.buf, tree_buf.len, OBJ_TREE,
+    - 			 &new_oid);
+    - 	if (!oideq(&new_oid, &it->oid))
+    - 		BUG("cache-tree for path %.*s does not match. "
+    -
+    - ## cache.h ##
+    -@@ cache.h: int parse_loose_header(const char *hdr, struct object_info *oi);
+    -  * except that negative values might also indicate a generic error.
+    -  */
+    - int check_object_signature(struct repository *r, const struct object_id *oid,
+    --			   void *buf, unsigned long size, const char *type);
+    -+			   void *map, unsigned long size,
+    -+			   enum object_type type);
+    +-		error(_(object_type_mismatch_msg),
+    ++		error(obj->parsed
+    ++		      ? _(object_type_mismatch_msg)
+    ++		      : _(object_maybe_type_mismatch_msg),
+    + 		      oid_to_hex(&obj->oid),
+    + 		      type_name(obj->type), type_name(type));
+    + 		return NULL;
+    +@@ object.c: struct object *parse_object_buffer(struct repository *r, const struct object_id
+    + 	*eaten_p = 0;
+      
+    - /**
+    -  * A streaming version of check_object_signature().
+    + 	if (type == OBJ_BLOB) {
+    +-		struct blob *blob = lookup_blob(r, oid);
+    ++		struct blob *blob = lookup_blob_type(r, oid, type);
+    + 		if (blob) {
+    + 			blob->object.parsed = 1;
+    + 			return &blob->object;
+    + 		}
+    + 	} else if (type == OBJ_TREE) {
+    +-		struct tree *tree = lookup_tree(r, oid);
+    ++		struct tree *tree = lookup_tree_type(r, oid, type);
+    + 		if (tree) {
+    + 			if (!tree->buffer)
+    + 				tree->object.parsed = 0;
+    +@@ object.c: struct object *parse_object_buffer(struct repository *r, const struct object_id
+    + 			return &tree->object;
+    + 		}
+    + 	} else if (type == OBJ_COMMIT) {
+    +-		struct commit *commit = lookup_commit(r, oid);
+    ++		struct commit *commit = lookup_commit_type(r, oid, type);
+    + 		if (commit) {
+    + 			if (parse_commit_buffer(r, commit, buffer, size, 1))
+    + 				return NULL;
+    +@@ object.c: struct object *parse_object_buffer(struct repository *r, const struct object_id
+    + 			return &commit->object;
+    + 		}
+    + 	} else if (type == OBJ_TAG) {
+    +-		struct tag *tag = lookup_tag(r, oid);
+    ++		struct tag *tag = lookup_tag_type(r, oid, type);
+    + 		if (tag) {
+    + 			if (parse_tag_buffer(r, tag, buffer, size))
+    + 			       return NULL;
+     
+    - ## convert.c ##
+    -@@ convert.c: static int ident_to_worktree(const char *src, size_t len,
+    - 	/* are we "faking" in place editing ? */
+    - 	if (src == buf->buf)
+    - 		to_free = strbuf_detach(buf, NULL);
+    --	hash_object_file(the_hash_algo, src, len, "blob", &oid);
+    -+	hash_object_file(the_hash_algo, src, len, OBJ_BLOB, &oid);
+    + ## t/t6102-rev-list-unexpected-objects.sh ##
+    +@@ t/t6102-rev-list-unexpected-objects.sh: test_expect_success !SANITIZE_LEAK 'setup unexpected non-tag tag' '
+    + test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to commit & tag)' '
+    + 	test_must_fail git rev-list --objects $tag_tag_commit 2>err &&
+    + 	cat >expected <<-EOF &&
+    +-	error: object $commit is a tag, not a commit
+    ++	error: object $commit is a commit, not a tag
+    + 	fatal: bad object $commit
+    + 	EOF
+    + 	test_cmp expected err &&
+      
+    - 	strbuf_grow(buf, len + cnt * (the_hash_algo->hexsz + 3));
+    - 	for (;;) {
+    + 	test_must_fail git rev-list --objects $commit_tag_tag 2>err &&
+    + 	cat >expected <<-EOF &&
+    +-	error: object $tag_commit is a commit, not a tag
+    ++	error: object $tag_commit is a tag, not a commit
+    + 	fatal: bad object $tag_commit
+    + 	EOF
+    + 	test_cmp expected err
+    +@@ t/t6102-rev-list-unexpected-objects.sh: test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (t
+    + test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to tree)' '
+    + 	test_must_fail git rev-list --objects $tag_tag_tree 2>err &&
+    + 	cat >expected <<-EOF &&
+    +-	error: object $tree is a tag, not a tree
+    ++	error: object $tree is a tree, not a tag
+    + 	fatal: bad object $tree
+    + 	EOF
+    + 	test_cmp expected err &&
+    + 
+    + 	test_must_fail git rev-list --objects $commit_tag_tree 2>err &&
+    + 	cat >expected <<-EOF &&
+    +-	error: object $tree is a commit, not a tree
+    ++	error: object $tree is a tree, not a commit
+    + 	fatal: bad object $tree
+    + 	EOF
+    + 	test_cmp expected err
+    +@@ t/t6102-rev-list-unexpected-objects.sh: test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (t
+    + test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (to blob)' '
+    + 	test_must_fail git rev-list --objects $tag_tag_blob 2>err &&
+    + 	cat >expected <<-EOF &&
+    +-	error: object $blob is a tag, not a blob
+    ++	error: object $blob is a blob, not a tag
+    + 	fatal: bad object $blob
+    + 	EOF
+    + 	test_cmp expected err &&
+    + 
+    + 	test_must_fail git rev-list --objects $commit_tag_blob 2>err &&
+    + 	cat >expected <<-EOF &&
+    +-	error: object $blob is a commit, not a blob
+    ++	error: object $blob is a blob, not a commit
+    + 	fatal: bad object $blob
+    + 	EOF
+    + 	test_cmp expected err
+    +@@ t/t6102-rev-list-unexpected-objects.sh: test_expect_success !SANITIZE_LEAK 'traverse unexpected incorrectly typed tag (t
+    + test_expect_success !SANITIZE_LEAK 'traverse unexpected non-tag tag (tree seen to blob)' '
+    + 	test_must_fail git rev-list --objects $tree $commit_tag_blob 2>err &&
+    + 	cat >expected <<-EOF &&
+    +-	error: object $blob is a commit, not a blob
+    ++	error: object $blob is a blob, not a commit
+    + 	fatal: bad object $blob
+    + 	EOF
+    + 	test_cmp expected err &&
+    + 
+    + 	test_must_fail git rev-list --objects $tree $tag_tag_blob 2>err &&
+    + 	cat >expected <<-EOF &&
+    +-	error: object $blob is a tag, not a blob
+    ++	error: object $blob is a blob, not a tag
+    + 	fatal: bad object $blob
+    + 	EOF
+    + 	test_cmp expected err
+     
+    - ## diffcore-rename.c ##
+    -@@ diffcore-rename.c: static unsigned int hash_filespec(struct repository *r,
+    - 		if (diff_populate_filespec(r, filespec, NULL))
+    - 			return 0;
+    - 		hash_object_file(r->hash_algo, filespec->data, filespec->size,
+    --				 "blob", &filespec->oid);
+    -+				 OBJ_BLOB, &filespec->oid);
+    - 	}
+    - 	return oidhash(&filespec->oid);
+    + ## tag.c ##
+    +@@ tag.c: static struct tag *create_tag(struct repository *r, const struct object_id *oid)
+    + 	return create_object(r, oid, alloc_tag_node(r));
+      }
+    -
+    - ## dir.c ##
+    -@@ dir.c: static int add_patterns(const char *fname, const char *base, int baselen,
+    - 				       &istate->cache[pos]->oid);
+    - 			else
+    - 				hash_object_file(the_hash_algo, buf, size,
+    --						 "blob", &oid_stat->oid);
+    -+						 OBJ_BLOB, &oid_stat->oid);
+    - 			fill_stat_data(&oid_stat->stat, &st);
+    - 			oid_stat->valid = 1;
+    - 		}
+    -
+    - ## log-tree.c ##
+    -@@ log-tree.c: static int show_one_mergetag(struct commit *commit,
+    - 	struct strbuf signature = STRBUF_INIT;
+      
+    - 	hash_object_file(the_hash_algo, extra->value, extra->len,
+    --			 type_name(OBJ_TAG), &oid);
+    -+			 OBJ_TAG, &oid);
+    - 	tag = lookup_tag(the_repository, &oid);
+    - 	if (!tag)
+    - 		return -1; /* error message already given */
+    -
+    - ## object-file.c ##
+    -@@ object-file.c: int format_object_header(char *str, size_t size, enum object_type type,
+    +-struct tag *lookup_tag(struct repository *r, const struct object_id *oid)
+    ++struct tag *lookup_tag_type(struct repository *r, const struct object_id *oid,
+    ++			    enum object_type type)
+    + {
+    + 	struct object *obj = lookup_object(r, oid);
+    + 	if (!obj)
+    + 		return create_tag(r, oid);
+    ++	if (type != OBJ_NONE && obj->type != OBJ_NONE) {
+    ++		if (oid_is_type_or_error(oid, OBJ_TAG, obj->type)) {
+    ++			obj->type = OBJ_TAG;
+    ++			return NULL;
+    ++		}
+    ++	}
+    + 	return object_as_type(obj, OBJ_TAG);
+      }
+      
+    - int check_object_signature(struct repository *r, const struct object_id *oid,
+    --			   void *buf, unsigned long size, const char *type)
+    -+			   void *buf, unsigned long size,
+    -+			   enum object_type type)
+    ++struct tag *lookup_tag(struct repository *r, const struct object_id *oid)
+    ++{
+    ++	return lookup_tag_type(r, oid, OBJ_NONE);
+    ++}
+    ++
+    + static timestamp_t parse_tag_date(const char *buf, const char *tail)
+      {
+    - 	struct object_id real_oid;
+    + 	const char *dateptr;
+    +@@ tag.c: void release_tag_memory(struct tag *t)
+      
+    -@@ object-file.c: int pretend_object_file(void *buf, unsigned long len, enum object_type type,
+    + int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, unsigned long size)
+      {
+    - 	struct cached_object *co;
+    ++	struct object *obj;
+    + 	struct object_id oid;
+    + 	enum object_type type;
+    + 	const char *bufptr = data;
+    +@@ tag.c: int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, u
+    + 	if (!nl)
+    + 		return -1;
+    + 	type = type_from_string_gently(bufptr, taglen);
+    +-	if (type == OBJ_BLOB)
+    ++	obj = lookup_object(r, &oid);
+    ++
+    ++	if (obj)
+    ++		item->tagged = obj;
+    ++	else if (type == OBJ_BLOB)
+    + 		item->tagged = (struct object *)lookup_blob(r, &oid);
+    + 	else if (type == OBJ_TREE)
+    + 		item->tagged = (struct object *)lookup_tree(r, &oid);
+    +@@ tag.c: int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, u
+    + 		BUG("unreachable type_from_string_gently() = %d", type);
+    + 	bufptr = nl + 1;
+      
+    --	hash_object_file(the_hash_algo, buf, len, type_name(type), oid);
+    -+	hash_object_file(the_hash_algo, buf, len, type, oid);
+    - 	if (has_object_file_with_flags(oid, OBJECT_INFO_QUICK | OBJECT_INFO_SKIP_FETCH_OBJECT) ||
+    - 	    find_cached_object(oid))
+    - 		return 0;
+    -@@ object-file.c: static int write_buffer(int fd, const void *buf, size_t len)
+    - 	return 0;
+    +-	if (!item->tagged)
+    ++	if (!item->tagged || oid_is_type_or_error(&oid, item->tagged->type,
+    ++						  type))
+    + 		return error("bad tag pointer to %s in %s",
+    + 			     oid_to_hex(&oid),
+    + 			     oid_to_hex(&item->object.oid));
+    +
+    + ## tag.h ##
+    +@@ tag.h: struct tag {
+    + 	timestamp_t date;
+    + };
+    + struct tag *lookup_tag(struct repository *r, const struct object_id *oid);
+    ++struct tag *lookup_tag_type(struct repository *r, const struct object_id *oid,
+    ++			    enum object_type type);
+    + int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, unsigned long size);
+    + int parse_tag(struct tag *item);
+    + void release_tag_memory(struct tag *t);
+    +
+    + ## tree.c ##
+    +@@ tree.c: static struct tree *create_tree(struct repository *r, const struct object_id *oi
+    + 	return create_object(r, oid, alloc_tree_node(r));
+      }
+      
+    --void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+    --		     unsigned long len, const char *type,
+    --		     struct object_id *oid)
+    -+static void hash_object_file_literally(const struct git_hash_algo *algo,
+    -+				       const void *buf, unsigned long len,
+    -+				       const char *type, struct object_id *oid)
+    +-struct tree *lookup_tree(struct repository *r, const struct object_id *oid)
+    ++struct tree *lookup_tree_type(struct repository *r,
+    ++			      const struct object_id *oid,
+    ++			      enum object_type type)
+      {
+    - 	char hdr[MAX_HEADER_LEN];
+    - 	int hdrlen = sizeof(hdr);
+    -+
+    - 	write_object_file_prepare(algo, buf, len, type, oid, hdr, &hdrlen);
+    + 	struct object *obj = lookup_object(r, oid);
+    + 	if (!obj)
+    + 		return create_tree(r, oid);
+    ++	if (type != OBJ_NONE && obj->type != OBJ_NONE) {
+    ++		if (oid_is_type_or_error(oid, OBJ_TREE, obj->type)) {
+    ++			obj->type = OBJ_TREE;
+    ++			return NULL;
+    ++		}
+    ++	}
+    + 	return object_as_type(obj, OBJ_TREE);
+      }
+      
+    -+void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+    -+		      unsigned long len, enum object_type type,
+    -+		      struct object_id *oid)
+    ++struct tree *lookup_tree(struct repository *r, const struct object_id *oid)
+     +{
+    -+	hash_object_file_literally(algo, buf, len, type_name(type), oid);
+    ++	return lookup_tree_type(r, oid, OBJ_NONE);
+     +}
+     +
+    - /* Finalize a file on disk, and close it. */
+    - static void close_loose_object(int fd)
+    + int parse_tree_buffer(struct tree *item, void *buffer, unsigned long size)
+      {
+    -@@ object-file.c: static int index_mem(struct index_state *istate,
+    - 	if (write_object)
+    - 		ret = write_object_file(buf, size, type, oid);
+    - 	else
+    --		hash_object_file(the_hash_algo, buf, size, type_name(type),
+    --				 oid);
+    --
+    -+		hash_object_file(the_hash_algo, buf, size, type, oid);
+    - 	if (re_allocated)
+    - 		free(buf);
+    - 	return ret;
+    -@@ object-file.c: static int index_stream_convert_blob(struct index_state *istate,
+    - 		ret = write_object_file(sbuf.buf, sbuf.len, OBJ_BLOB,
+    - 					oid);
+    - 	else
+    --		hash_object_file(the_hash_algo, sbuf.buf, sbuf.len,
+    --				 type_name(OBJ_BLOB), oid);
+    -+		hash_object_file(the_hash_algo, sbuf.buf, sbuf.len, OBJ_BLOB,
+    -+				 oid);
+    - 	strbuf_release(&sbuf);
+    - 	return ret;
+    - }
+    -@@ object-file.c: int index_path(struct index_state *istate, struct object_id *oid,
+    - 			return error_errno("readlink(\"%s\")", path);
+    - 		if (!(flags & HASH_WRITE_OBJECT))
+    - 			hash_object_file(the_hash_algo, sb.buf, sb.len,
+    --					 blob_type, oid);
+    -+					 OBJ_BLOB, oid);
+    - 		else if (write_object_file(sb.buf, sb.len, OBJ_BLOB, oid))
+    - 			rc = error(_("%s: failed to insert into database"), path);
+    - 		strbuf_release(&sb);
+    -@@ object-file.c: int read_loose_object(const char *path,
+    - 			goto out;
+    - 		}
+    - 
+    --		hash_object_file(the_repository->hash_algo,
+    --				 *contents, *size, oi->type_name->buf,
+    --				 real_oid);
+    -+		hash_object_file_literally(the_repository->hash_algo,
+    -+					   *contents, *size,
+    -+					   oi->type_name->buf, real_oid);
+    - 		if (!oideq(expected_oid, real_oid))
+    - 			goto out;
+    - 	}
+    + 	if (item->object.parsed)
+     
+    - ## object-store.h ##
+    -@@ object-store.h: static inline void *repo_read_object_file(struct repository *r,
+    - int oid_object_info(struct repository *r, const struct object_id *, unsigned long *);
+    + ## tree.h ##
+    +@@ tree.h: struct tree {
+    + extern const char *tree_type;
+      
+    - void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+    --		      unsigned long len, const char *type,
+    -+		      unsigned long len, enum object_type type,
+    - 		      struct object_id *oid);
+    + struct tree *lookup_tree(struct repository *r, const struct object_id *oid);
+    ++struct tree *lookup_tree_type(struct repository *r, const struct object_id *oid,
+    ++			      enum object_type type);
+      
+    - int write_object_file_flags(const void *buf, unsigned long len,
+    -
+    - ## object.c ##
+    -@@ object.c: struct object *parse_object(struct repository *r, const struct object_id *oid)
+    + int parse_tree_buffer(struct tree *item, void *buffer, unsigned long size);
+      
+    - 	buffer = repo_read_object_file(r, oid, &type, &size);
+    - 	if (buffer) {
+    --		if (!check_object_signature(r, repl, buffer, size,
+    --					    type_name(type))) {
+    -+		if (!check_object_signature(r, repl, buffer, size, type)) {
+    - 			free(buffer);
+    - 			error(_("hash mismatch %s"), oid_to_hex(repl));
+    - 			return NULL;
+    -
+    - ## pack-check.c ##
+    -@@ pack-check.c: static int verify_packfile(struct repository *r,
+    - 				    oid_to_hex(&oid), p->pack_name,
+    - 				    (uintmax_t)entries[i].offset);
+    - 		else if (data && !check_object_signature(r, &oid, data, size,
+    --							 type_name(type)))
+    -+							 type))
+    - 			err = error("packed %s from %s is corrupt",
+    - 				    oid_to_hex(&oid), p->pack_name);
+    - 		else if (!data && !stream_object_signature(r, &oid))
+8:  f2b1cb861a0 < -:  ----------- object-file API: pass an enum to read_object_with_reference()
+-- 
+2.35.1.940.ge7a5b4b05f2
+
