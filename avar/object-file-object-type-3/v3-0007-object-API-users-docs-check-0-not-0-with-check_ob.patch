@@ -1,0 +1,103 @@
+From 75abf75a4375095b0308b4ea393c5268952f0b8b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-07.12-75abf75a437-20220204T234435Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.12-00000000000-20220204T234435Z-avarab@gmail.com>
+References: <cover-v2-00.11-00000000000-20220204T135005Z-avarab@gmail.com>
+	<cover-v3-00.12-00000000000-20220204T234435Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 5 Feb 2022 00:02:34 +0100
+Subject: [PATCH v3 07/12] object API users + docs: check <0, not !0 with
+ check_object_signature()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change those users of the object API that misused
+check_object_signature() by assuming it returned any non-zero when the
+OID didn't match the expected value to check <0 instead. In practice
+all of this code worked before, but it wasn't consistent with rest of
+the users of the API.
+
+Let's also clarify what the <0 return value means in API docs.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/index-pack.c | 5 ++---
+ builtin/mktag.c      | 2 +-
+ cache.h              | 3 +++
+ object-file.c        | 2 +-
+ pack-check.c         | 2 +-
+ 5 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index 01574378ce2..416f60a98c1 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -1412,9 +1412,8 @@ static void fix_unresolved_deltas(struct hashfile *f)
+ 		if (!data)
+ 			continue;
+ 
+-		if (check_object_signature(the_repository, &d->oid,
+-					   data, size,
+-					   type_name(type), NULL))
++		if (check_object_signature(the_repository, &d->oid, data, size,
++					   type_name(type), NULL) < 0)
+ 			die(_("local object %s is corrupt"), oid_to_hex(&d->oid));
+ 
+ 		/*
+diff --git a/builtin/mktag.c b/builtin/mktag.c
+index 96a3686af53..98d1e66f327 100644
+--- a/builtin/mktag.c
++++ b/builtin/mktag.c
+@@ -97,7 +97,7 @@ int cmd_mktag(int argc, const char **argv, const char *prefix)
+ 				&tagged_oid, &tagged_type))
+ 		die(_("tag on stdin did not pass our strict fsck check"));
+ 
+-	if (verify_object_in_tag(&tagged_oid, &tagged_type))
++	if (verify_object_in_tag(&tagged_oid, &tagged_type) < 0)
+ 		die(_("tag on stdin did not refer to a valid object"));
+ 
+ 	if (write_object_file(buf.buf, buf.len, OBJ_TAG, &result) < 0)
+diff --git a/cache.h b/cache.h
+index 98d1ef08579..5d081952121 100644
+--- a/cache.h
++++ b/cache.h
+@@ -1324,6 +1324,9 @@ int parse_loose_header(const char *hdr, struct object_info *oi);
+  * object name actually matches "oid" to detect object corruption.
+  * With "buf" == NULL, try reading the object named with "oid" using
+  * the streaming interface and rehash it to do the same.
++ *
++ * A negative value indicates an error, usually that the OID is not
++ * what we expected, but it might also indicate another error.
+  */
+ int check_object_signature(struct repository *r, const struct object_id *oid,
+ 			   void *buf, unsigned long size, const char *type,
+diff --git a/object-file.c b/object-file.c
+index 44e0b32d71a..d628f58c0d2 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -2613,7 +2613,7 @@ int read_loose_object(const char *path,
+ 		}
+ 		if (check_object_signature(the_repository, expected_oid,
+ 					   *contents, *size,
+-					   oi->type_name->buf, real_oid))
++					   oi->type_name->buf, real_oid) < 0)
+ 			goto out;
+ 	}
+ 
+diff --git a/pack-check.c b/pack-check.c
+index 3f418e3a6af..48d818ee7b4 100644
+--- a/pack-check.c
++++ b/pack-check.c
+@@ -143,7 +143,7 @@ static int verify_packfile(struct repository *r,
+ 				    oid_to_hex(&oid), p->pack_name,
+ 				    (uintmax_t)entries[i].offset);
+ 		else if (check_object_signature(r, &oid, data, size,
+-						type_name(type), NULL))
++						type_name(type), NULL) < 0)
+ 			err = error("packed %s from %s is corrupt",
+ 				    oid_to_hex(&oid), p->pack_name);
+ 		else if (fn) {
+-- 
+2.35.1.940.ge7a5b4b05f2
+

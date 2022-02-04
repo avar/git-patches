@@ -1,0 +1,84 @@
+From 1276c2d1ed69437f61d5d02da4f8daa458c70ad6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-09.12-1276c2d1ed6-20220204T234435Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.12-00000000000-20220204T234435Z-avarab@gmail.com>
+References: <cover-v2-00.11-00000000000-20220204T135005Z-avarab@gmail.com>
+	<cover-v3-00.12-00000000000-20220204T234435Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 3 Feb 2022 13:22:19 +0100
+Subject: [PATCH v3 09/12] object API: rename hash_object_file_literally() to
+ write_*()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Before 0c3db67cc81 (hash-object --literally: fix buffer overrun with
+extra-long object type, 2015-05-04) the hash-object code being changed
+here called write_sha1_file() to both hash and write a loose
+object. Before that we'd use hash_sha1_file() to if "-w" wasn't
+provided, and otherwise call write_sha1_file().
+
+Now we'll always call the same function for both writing. Let's rename
+it from hash_*_literally() to write_*_literally(). Even though the
+write_*() might not actually write if HASH_WRITE_OBJECT isn't in
+"flags", having it be more similar to write_object_file_flags() than
+hash_object_file(), but carrying a name that would suggest that it's a
+variant of the latter is confusing.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/hash-object.c | 2 +-
+ object-file.c         | 6 +++---
+ object-store.h        | 6 +++---
+ 3 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/hash-object.c b/builtin/hash-object.c
+index c7b3ad74c60..f4cbd9c4ae3 100644
+--- a/builtin/hash-object.c
++++ b/builtin/hash-object.c
+@@ -25,7 +25,7 @@ static int hash_literally(struct object_id *oid, int fd, const char *type, unsig
+ 	if (strbuf_read(&buf, fd, 4096) < 0)
+ 		ret = -1;
+ 	else
+-		ret = hash_object_file_literally(buf.buf, buf.len, type, oid,
++		ret = write_object_file_literally(buf.buf, buf.len, type, oid,
+ 						 flags);
+ 	strbuf_release(&buf);
+ 	return ret;
+diff --git a/object-file.c b/object-file.c
+index f9854922741..9e5b849693e 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -2027,9 +2027,9 @@ int write_object_file_flags(const void *buf, unsigned long len,
+ 	return write_loose_object(oid, hdr, hdrlen, buf, len, 0, flags);
+ }
+ 
+-int hash_object_file_literally(const void *buf, unsigned long len,
+-			       const char *type, struct object_id *oid,
+-			       unsigned flags)
++int write_object_file_literally(const void *buf, unsigned long len,
++				const char *type, struct object_id *oid,
++				unsigned flags)
+ {
+ 	char *header;
+ 	int hdrlen, status = 0;
+diff --git a/object-store.h b/object-store.h
+index eab1e2a967e..29169d117f7 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -258,9 +258,9 @@ static inline int write_object_file(const void *buf, unsigned long len,
+ 	return write_object_file_flags(buf, len, type, oid, 0);
+ }
+ 
+-int hash_object_file_literally(const void *buf, unsigned long len,
+-			       const char *type, struct object_id *oid,
+-			       unsigned flags);
++int write_object_file_literally(const void *buf, unsigned long len,
++				const char *type, struct object_id *oid,
++				unsigned flags);
+ 
+ /*
+  * Add an object file to the in-memory object store, without writing it
+-- 
+2.35.1.940.ge7a5b4b05f2
+
