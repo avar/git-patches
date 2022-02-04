@@ -1,0 +1,110 @@
+From 5ba49778ac1d8503179a65f93b52af2a1ab21785 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-02.11-5ba49778ac1-20220204T134344Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20220204T134344Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220201T144803Z-avarab@gmail.com>
+	<cover-v2-00.11-00000000000-20220204T134344Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 21 Dec 2021 04:33:50 +0100
+Subject: [PATCH v2 02/11] object-file API: return "void", not "int" from
+ hash_object_file()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The hash_object_file() function added in abdc3fc8421 (Add
+hash_sha1_file(), 2006-10-14) did not have a meaningful return value,
+and it never has.
+
+One was seemingly added to avoid adding braces to the "ret = "
+assignments being modified here. Let's instead assign "0" to the "ret"
+variables at the beginning of the relevant functions, and have them
+return "void".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-file.c  | 16 ++++++++--------
+ object-store.h |  6 +++---
+ 2 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index ecc77973292..eeb6814780a 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1836,14 +1836,13 @@ static int write_buffer(int fd, const void *buf, size_t len)
+ 	return 0;
+ }
+ 
+-int hash_object_file(const struct git_hash_algo *algo, const void *buf,
++void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+ 		     unsigned long len, const char *type,
+ 		     struct object_id *oid)
+ {
+ 	char hdr[MAX_HEADER_LEN];
+ 	int hdrlen = sizeof(hdr);
+ 	write_object_file_prepare(algo, buf, len, type, oid, hdr, &hdrlen);
+-	return 0;
+ }
+ 
+ /* Finalize a file on disk, and close it. */
+@@ -2118,7 +2117,7 @@ static int index_mem(struct index_state *istate,
+ 		     enum object_type type,
+ 		     const char *path, unsigned flags)
+ {
+-	int ret;
++	int ret = 0;
+ 	int re_allocated = 0;
+ 	int write_object = flags & HASH_WRITE_OBJECT;
+ 
+@@ -2148,8 +2147,9 @@ static int index_mem(struct index_state *istate,
+ 	if (write_object)
+ 		ret = write_object_file(buf, size, type_name(type), oid);
+ 	else
+-		ret = hash_object_file(the_hash_algo, buf, size,
+-				       type_name(type), oid);
++		hash_object_file(the_hash_algo, buf, size, type_name(type),
++				 oid);
++
+ 	if (re_allocated)
+ 		free(buf);
+ 	return ret;
+@@ -2161,7 +2161,7 @@ static int index_stream_convert_blob(struct index_state *istate,
+ 				     const char *path,
+ 				     unsigned flags)
+ {
+-	int ret;
++	int ret = 0;
+ 	const int write_object = flags & HASH_WRITE_OBJECT;
+ 	struct strbuf sbuf = STRBUF_INIT;
+ 
+@@ -2175,8 +2175,8 @@ static int index_stream_convert_blob(struct index_state *istate,
+ 		ret = write_object_file(sbuf.buf, sbuf.len, type_name(OBJ_BLOB),
+ 					oid);
+ 	else
+-		ret = hash_object_file(the_hash_algo, sbuf.buf, sbuf.len,
+-				       type_name(OBJ_BLOB), oid);
++		hash_object_file(the_hash_algo, sbuf.buf, sbuf.len,
++				 type_name(OBJ_BLOB), oid);
+ 	strbuf_release(&sbuf);
+ 	return ret;
+ }
+diff --git a/object-store.h b/object-store.h
+index 6f89482df03..44f6868cc9c 100644
+--- a/object-store.h
++++ b/object-store.h
+@@ -245,9 +245,9 @@ static inline void *repo_read_object_file(struct repository *r,
+ /* Read and unpack an object file into memory, write memory to an object file */
+ int oid_object_info(struct repository *r, const struct object_id *, unsigned long *);
+ 
+-int hash_object_file(const struct git_hash_algo *algo, const void *buf,
+-		     unsigned long len, const char *type,
+-		     struct object_id *oid);
++void hash_object_file(const struct git_hash_algo *algo, const void *buf,
++		      unsigned long len, const char *type,
++		      struct object_id *oid);
+ 
+ int write_object_file_flags(const void *buf, unsigned long len,
+ 			    const char *type, struct object_id *oid,
+-- 
+2.35.1.940.ge7a5b4b05f2
+
