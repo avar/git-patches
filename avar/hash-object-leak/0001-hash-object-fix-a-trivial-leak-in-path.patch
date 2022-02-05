@@ -1,0 +1,73 @@
+From 53863df1455709862ddcfce05a9cd7fcfb378d31 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-53863df1455-20220205T000422Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 10 Nov 2021 01:51:22 +0100
+Subject: [PATCH] hash-object: fix a trivial leak in --path
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak that happened when the --path option was
+provided. This leak has been with us ever since the option was added
+in 39702431500 (add --path option to git hash-object, 2008-08-03).
+
+We can now mark "t1007-hash-object.sh" as passing when git is compiled
+with SANITIZE=leak. It'll now run in the the
+"GIT_TEST_PASSING_SANITIZE_LEAK=true" test mode (the "linux-leaks" CI
+target).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/hash-object.c  | 9 +++++++--
+ t/t1007-hash-object.sh | 1 +
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/hash-object.c b/builtin/hash-object.c
+index c7b3ad74c60..db9b2535271 100644
+--- a/builtin/hash-object.c
++++ b/builtin/hash-object.c
+@@ -92,6 +92,7 @@ int cmd_hash_object(int argc, const char **argv, const char *prefix)
+ 	int nongit = 0;
+ 	unsigned flags = HASH_FORMAT_CHECK;
+ 	const char *vpath = NULL;
++	char *vpath_free = NULL;
+ 	const struct option hash_object_options[] = {
+ 		OPT_STRING('t', NULL, &type, N_("type"), N_("object type")),
+ 		OPT_BIT('w', NULL, &flags, N_("write the object into the object database"),
+@@ -114,8 +115,10 @@ int cmd_hash_object(int argc, const char **argv, const char *prefix)
+ 	else
+ 		prefix = setup_git_directory_gently(&nongit);
+ 
+-	if (vpath && prefix)
+-		vpath = prefix_filename(prefix, vpath);
++	if (vpath && prefix) {
++		vpath_free = prefix_filename(prefix, vpath);
++		vpath = vpath_free;
++	}
+ 
+ 	git_config(git_default_config, NULL);
+ 
+@@ -156,5 +159,7 @@ int cmd_hash_object(int argc, const char **argv, const char *prefix)
+ 	if (stdin_paths)
+ 		hash_stdin_paths(type, no_filters, flags, literally);
+ 
++	free(vpath_free);
++
+ 	return 0;
+ }
+diff --git a/t/t1007-hash-object.sh b/t/t1007-hash-object.sh
+index 64b340f2272..ac5ad8c7402 100755
+--- a/t/t1007-hash-object.sh
++++ b/t/t1007-hash-object.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description="git hash-object"
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ echo_without_newline() {
+-- 
+2.35.1.945.g180f8b8dd92
+
