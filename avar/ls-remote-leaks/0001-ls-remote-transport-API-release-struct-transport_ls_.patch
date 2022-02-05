@@ -1,0 +1,199 @@
+From e80e8f64eaed9d9543ba604da8da4bccc47fbbf6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-e80e8f64eae-20220205T000809Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 27 Dec 2021 02:17:01 +0100
+Subject: [PATCH] ls-remote & transport API: release "struct
+ transport_ls_refs_options"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in codepaths that use the "struct
+transport_ls_refs_options" API. Since the introduction of the struct
+in 39835409d10 (connect, transport: encapsulate arg in struct,
+2021-02-05) the caller has been responsible for freeing it.
+
+That commit in turn migrated code originally added in
+402c47d9391 (clone: send ref-prefixes when using protocol v2,
+2018-07-20) and b4be74105fe (ls-remote: pass ref prefixes when
+requesting a remote's refs, 2018-03-15). Only some of those codepaths
+were releasing the allocated resources of the struct, now all of them
+will.
+
+Mark the "t/t5511-refspec.sh" test as passing when git is compiled
+with SANITIZE=leak. They'll now be listed as running under the
+"GIT_TEST_PASSING_SANITIZE_LEAK=true" test mode (the "linux-leaks" CI
+target). Previously 24/47 tests would fail.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/clone.c     | 13 ++++++-------
+ builtin/fetch.c     |  2 +-
+ builtin/ls-remote.c |  3 ++-
+ connect.c           |  4 ++--
+ t/t5511-refspec.sh  |  1 +
+ transport.c         |  8 +++++++-
+ transport.h         | 10 +++++++---
+ 7 files changed, 26 insertions(+), 15 deletions(-)
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index 727e16e0aea..8564e5f603f 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -1233,7 +1233,8 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 	}
+ 	else {
+ 		const char *branch;
+-		char *ref;
++		const char *ref;
++		char *ref_free = NULL;
+ 
+ 		if (option_branch)
+ 			die(_("Remote branch %s not found in upstream %s"),
+@@ -1250,17 +1251,16 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 		    skip_prefix(transport_ls_refs_options.unborn_head_target,
+ 				"refs/heads/", &branch)) {
+ 			ref = transport_ls_refs_options.unborn_head_target;
+-			transport_ls_refs_options.unborn_head_target = NULL;
+ 			create_symref("HEAD", ref, reflog_msg.buf);
+ 		} else {
+ 			branch = git_default_branch_name(0);
+-			ref = xstrfmt("refs/heads/%s", branch);
++			ref_free = xstrfmt("refs/heads/%s", branch);
++			ref = ref_free;
+ 		}
+ 
+ 		if (!option_bare)
+ 			install_branch_config(0, branch, remote_name, ref);
+-
+-		free(ref);
++		free(ref_free);
+ 	}
+ 
+ 	write_refspec_config(src_ref_prefix, our_head_points_at,
+@@ -1312,7 +1312,6 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 	UNLEAK(repo);
+ 	junk_mode = JUNK_LEAVE_ALL;
+ 
+-	strvec_clear(&transport_ls_refs_options.ref_prefixes);
+-	free(transport_ls_refs_options.unborn_head_target);
++	transport_ls_refs_options_release(&transport_ls_refs_options);
+ 	return err;
+ }
+diff --git a/builtin/fetch.c b/builtin/fetch.c
+index 5f06b21f8e9..a3ffab727eb 100644
+--- a/builtin/fetch.c
++++ b/builtin/fetch.c
+@@ -1593,7 +1593,7 @@ static int do_fetch(struct transport *transport,
+ 	} else
+ 		remote_refs = NULL;
+ 
+-	strvec_clear(&transport_ls_refs_options.ref_prefixes);
++	transport_ls_refs_options_release(&transport_ls_refs_options);
+ 
+ 	ref_map = get_ref_map(transport->remote, remote_refs, rs,
+ 			      tags, &autotags);
+diff --git a/builtin/ls-remote.c b/builtin/ls-remote.c
+index 44448fa61d1..d856085e941 100644
+--- a/builtin/ls-remote.c
++++ b/builtin/ls-remote.c
+@@ -155,6 +155,7 @@ int cmd_ls_remote(int argc, const char **argv, const char *prefix)
+ 
+ 	ref_array_clear(&ref_array);
+ 	if (transport_disconnect(transport))
+-		return 1;
++		status = 1;
++	transport_ls_refs_options_release(&transport_options);
+ 	return status;
+ }
+diff --git a/connect.c b/connect.c
+index eaf7d6d2618..afc79a6236e 100644
+--- a/connect.c
++++ b/connect.c
+@@ -379,7 +379,7 @@ struct ref **get_remote_heads(struct packet_reader *reader,
+ 
+ /* Returns 1 when a valid ref has been added to `list`, 0 otherwise */
+ static int process_ref_v2(struct packet_reader *reader, struct ref ***list,
+-			  char **unborn_head_target)
++			  const char **unborn_head_target)
+ {
+ 	int ret = 1;
+ 	int i = 0;
+@@ -483,7 +483,7 @@ struct ref **get_remote_refs(int fd_out, struct packet_reader *reader,
+ 	const char *hash_name;
+ 	struct strvec *ref_prefixes = transport_options ?
+ 		&transport_options->ref_prefixes : NULL;
+-	char **unborn_head_target = transport_options ?
++	const char **unborn_head_target = transport_options ?
+ 		&transport_options->unborn_head_target : NULL;
+ 	*list = NULL;
+ 
+diff --git a/t/t5511-refspec.sh b/t/t5511-refspec.sh
+index be025b90f98..fc55681a3f2 100755
+--- a/t/t5511-refspec.sh
++++ b/t/t5511-refspec.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='refspec parsing'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_refspec () {
+diff --git a/transport.c b/transport.c
+index 2a3e3241545..253d6671b1f 100644
+--- a/transport.c
++++ b/transport.c
+@@ -1292,7 +1292,7 @@ int transport_push(struct repository *r,
+ 							       &transport_options);
+ 		trace2_region_leave("transport_push", "get_refs_list", r);
+ 
+-		strvec_clear(&transport_options.ref_prefixes);
++		transport_ls_refs_options_release(&transport_options);
+ 
+ 		if (flags & TRANSPORT_PUSH_ALL)
+ 			match_flags |= MATCH_REFS_ALL;
+@@ -1420,6 +1420,12 @@ const struct ref *transport_get_remote_refs(struct transport *transport,
+ 	return transport->remote_refs;
+ }
+ 
++void transport_ls_refs_options_release(struct transport_ls_refs_options *opts)
++{
++	strvec_clear(&opts->ref_prefixes);
++	free((char *)opts->unborn_head_target);
++}
++
+ int transport_fetch_refs(struct transport *transport, struct ref *refs)
+ {
+ 	int rc;
+diff --git a/transport.h b/transport.h
+index 3f16e50c196..a0bc6a1e9eb 100644
+--- a/transport.h
++++ b/transport.h
+@@ -257,15 +257,19 @@ struct transport_ls_refs_options {
+ 	/*
+ 	 * If unborn_head_target is not NULL, and the remote reports HEAD as
+ 	 * pointing to an unborn branch, transport_get_remote_refs() stores the
+-	 * unborn branch in unborn_head_target. It should be freed by the
+-	 * caller.
++	 * unborn branch in unborn_head_target.
+ 	 */
+-	char *unborn_head_target;
++	const char *unborn_head_target;
+ };
+ #define TRANSPORT_LS_REFS_OPTIONS_INIT { \
+ 	.ref_prefixes = STRVEC_INIT, \
+ }
+ 
++/**
++ * Release the "struct transport_ls_refs_options".
++ */
++void transport_ls_refs_options_release(struct transport_ls_refs_options *opts);
++
+ /*
+  * Retrieve refs from a remote.
+  */
+-- 
+2.35.1.945.g180f8b8dd92
+
