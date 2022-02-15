@@ -1,0 +1,1545 @@
+From f44714fe59e74a5ce12765cc27a8f1e9777db580 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v11-00.12-00000000000-20220215T235428Z-avarab@gmail.com>
+In-Reply-To: <cover-v10-0.9-00000000000-20220204T211534Z-avarab@gmail.com>
+References: <cover-v10-0.9-00000000000-20220204T211534Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 16 Feb 2022 00:54:28 +0100
+Subject: [PATCH v11 00/12] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (12):
+  grep.h: make patmatch() a public function
+  pickaxe: use PCREv2 for -G and -S
+  Remove unused kwset.[ch]
+  diffcore-pickaxe: add --pickaxe-patch for use with -G
+  wip reg_newline etc. test
+  only compile pattern once: TODO, free it
+  Revert "wip reg_newline etc. test"
+  free stuff, is the objfind a bug?
+  better?
+  fixup earlier, ./t7810-grep.sh (and maybe ./t4014-format-patch.sh?)
+    fails without this
+  remove ad-hoc debug
+  fixup for being on top of avar/drop-grep-prefix-length now
+
+ Documentation/diff-options.txt                |  17 +
+ Makefile                                      |   3 -
+ compat/obstack.c                              | 413 ----------
+ compat/obstack.h                              | 511 ------------
+ ctype.c                                       |  36 -
+ diff.c                                        |  13 +
+ diff.h                                        |  27 +-
+ diffcore-pickaxe.c                            | 161 ++--
+ git-compat-util.h                             |   3 -
+ grep.c                                        |   6 +-
+ grep.h                                        |   3 +
+ kwset.c                                       | 775 ------------------
+ kwset.h                                       |  65 --
+ t/t4013-diff-various.sh                       |   3 +-
+ ...-s_--pickaxe-patch_--pretty=oneline_master |   3 +
+ ...-s_--pickaxe-patch_--pretty=oneline_master |   4 +
+ t/t4209-log-pickaxe.sh                        |  50 ++
+ 17 files changed, 183 insertions(+), 1910 deletions(-)
+ delete mode 100644 compat/obstack.c
+ delete mode 100644 compat/obstack.h
+ delete mode 100644 kwset.c
+ delete mode 100644 kwset.h
+ create mode 100644 t/t4013/diff.log_-GD_-U0_-s_--pickaxe-patch_--pretty=oneline_master
+ create mode 100644 t/t4013/diff.log_-GD_-U1_-s_--pickaxe-patch_--pretty=oneline_master
+
+Range-diff against v10:
+ 1:  184f7e0c5bd <  -:  ----------- grep.h: remove unused "regex_t regexp" from grep_opt
+ 9:  ccbdfa48315 !  1:  c92a400878c grep: simplify config parsing and option parsing
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep: simplify config parsing and option parsing
+    +    grep.h: make patmatch() a public function
+     
+    -    Simplify the parsing of "grep.patternType" and
+    -    "grep.extendedRegexp". This changes no behavior, but gets rid of
+    -    complex parsing logic that isn't needed anymore.
+    +    I'd like to use the PCRE & ERE etc. code in grep.c for more things in
+    +    git, starting with diffcore-pickaxe.c.
+     
+    -    When "grep.patternType" was introduced in 84befcd0a4a (grep: add a
+    -    grep.patternType configuration setting, 2012-08-03) we promised that:
+    +    The current API just exposes grep_{source,buffer}() for that
+    +    purpose. I could use those, but they're very fat entry points into the
+    +    entire set of bells and whistles that grep.c supports for "git
+    +    grep". I just want the equivalent of a light regexec() wrapper for my
+    +    compiled patterns.
+     
+    -     1. You can set "grep.patternType", and "[setting it to] 'default'
+    -        will return to the default matching behavior".
+    -
+    -        In that context "the default" meant whatever the configuration
+    -        system specified before that change, i.e. via grep.extendedRegexp.
+    -
+    -     2. We'd support the existing "grep.extendedRegexp" option, but ignore
+    -        it when the new "grep.patternType" option is set. We said we'd
+    -        only ignore the older "grep.extendedRegexp" option "when the
+    -        `grep.patternType` option is set to a value other than
+    -        'default'".
+    -
+    -    In a preceding commit we changed grep_config() to be called after
+    -    grep_init(), which means that much of the complexity here can go
+    -    away.
+    -
+    -    As before both "grep.patternType" and "grep.extendedRegexp" are
+    -    last-one-wins variable, with "grep.extendedRegexp" yielding to
+    -    "grep.patternType", except when "grep.patternType=default".
+    -
+    -    Note that as the previously added tests indicate this cannot be done
+    -    on-the-fly as we see the config variables, without introducing more
+    -    state keeping. I.e. if we see:
+    -
+    -        -c grep.extendedRegexp=false
+    -        -c grep.patternType=default
+    -        -c extendedRegexp=true
+    -
+    -    We need to select ERE, since grep.patternType=default unselects that
+    -    variable, which normally has higher precedence, but we also need to
+    -    select BRE in cases of:
+    -
+    -        -c grep.extendedRegexp=true \
+    -        -c grep.extendedRegexp=false
+    -
+    -    Which would not be the case for this, which select ERE:
+    -
+    -        -c grep.patternType=extended \
+    -        -c grep.extendedRegexp=false
+    -
+    -    Therefore we cannot do this on-the-fly in grep_config without also
+    -    introducing tracking variables for not only the pattern type, but what
+    -    the source of that pattern type was.
+    -
+    -    So we need to decide on the pattern after our config was fully
+    -    parsed. Let's do that by deferring the decision on the pattern type
+    -    until it's time to compile it in compile_regexp().
+    -
+    -    By that time we've not only parsed the config, but also handled the
+    -    command-line options. Those will set "opt.pattern_type_option" (*not*
+    -    "opt.extended_regexp_option"!).
+    -
+    -    At that point all we need to do is see if "grep.patternType" was
+    -    UNSPECIFIED in the end (including an explicit "=default"), if so we'll
+    -    use the "grep.extendedRegexp" configuration, if any.
+    -
+    -    See my 07a3d411739 (grep: remove regflags from the public grep_opt
+    -    API, 2017-06-29) for addition of the two comments being removed here,
+    -    i.e. the complexity noted in that commit is now going away.
+    -
+    -    1. https://lore.kernel.org/git/patch-v8-09.10-c211bb0c69d-20220118T155211Z-avarab@gmail.com/
+    +    So let's expose patmatch() for that purpose. It's not perfect, in
+    +    particular it's a bit ugly that we need to pop a pattern off the
+    +    opt->pattern_list if all we've got is the "grep_opt" wrapper struct,
+    +    but it'll do for now.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## builtin/grep.c ##
+    -@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    - 	int i;
+    - 	int dummy;
+    - 	int use_index = 1;
+    --	int pattern_type_arg = GREP_PATTERN_TYPE_UNSPECIFIED;
+    - 	int allow_revs;
+    - 
+    - 	struct option options[] = {
+    -@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    - 			N_("descend at most <depth> levels"), PARSE_OPT_NONEG,
+    - 			NULL, 1 },
+    - 		OPT_GROUP(""),
+    --		OPT_SET_INT('E', "extended-regexp", &pattern_type_arg,
+    -+		OPT_SET_INT('E', "extended-regexp", &opt.pattern_type_option,
+    - 			    N_("use extended POSIX regular expressions"),
+    - 			    GREP_PATTERN_TYPE_ERE),
+    --		OPT_SET_INT('G', "basic-regexp", &pattern_type_arg,
+    -+		OPT_SET_INT('G', "basic-regexp", &opt.pattern_type_option,
+    - 			    N_("use basic POSIX regular expressions (default)"),
+    - 			    GREP_PATTERN_TYPE_BRE),
+    --		OPT_SET_INT('F', "fixed-strings", &pattern_type_arg,
+    -+		OPT_SET_INT('F', "fixed-strings", &opt.pattern_type_option,
+    - 			    N_("interpret patterns as fixed strings"),
+    - 			    GREP_PATTERN_TYPE_FIXED),
+    --		OPT_SET_INT('P', "perl-regexp", &pattern_type_arg,
+    -+		OPT_SET_INT('P', "perl-regexp", &opt.pattern_type_option,
+    - 			    N_("use Perl-compatible regular expressions"),
+    - 			    GREP_PATTERN_TYPE_PCRE),
+    - 		OPT_GROUP(""),
+    -@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    - 	argc = parse_options(argc, argv, prefix, options, grep_usage,
+    - 			     PARSE_OPT_KEEP_DASHDASH |
+    - 			     PARSE_OPT_STOP_AT_NON_OPTION);
+    --	grep_commit_pattern_type(pattern_type_arg, &opt);
+    - 
+    - 	if (use_index && !startup_info->have_repository) {
+    - 		int fallback = 0;
+    -
+      ## grep.c ##
+    -@@ grep.c: void grep_init(struct grep_opt *opt, struct repository *repo)
+    - 	opt->header_tail = &opt->header_list;
+    +@@ grep.c: static void show_name(struct grep_opt *opt, const char *name)
+    + 	opt->output(opt, opt->null_following_name ? "\0" : "\n", 1);
+      }
+      
+    --static void grep_set_pattern_type_option(enum grep_pattern_type pattern_type, struct grep_opt *opt)
+    --{
+    --	/*
+    --	 * When committing to the pattern type by setting the relevant
+    --	 * fields in grep_opt it's generally not necessary to zero out
+    --	 * the fields we're not choosing, since they won't have been
+    --	 * set by anything. The extended_regexp_option field is the
+    --	 * only exception to this.
+    --	 *
+    --	 * This is because in the process of parsing grep.patternType
+    --	 * & grep.extendedRegexp we set opt->pattern_type_option and
+    --	 * opt->extended_regexp_option, respectively. We then
+    --	 * internally use opt->extended_regexp_option to see if we're
+    --	 * compiling an ERE. It must be unset if that's not actually
+    --	 * the case.
+    --	 */
+    --	if (pattern_type != GREP_PATTERN_TYPE_ERE &&
+    --	    opt->extended_regexp_option)
+    --		opt->extended_regexp_option = 0;
+    --
+    --	switch (pattern_type) {
+    --	case GREP_PATTERN_TYPE_UNSPECIFIED:
+    --		/* fall through */
+    --
+    --	case GREP_PATTERN_TYPE_BRE:
+    --		break;
+    --
+    --	case GREP_PATTERN_TYPE_ERE:
+    --		opt->extended_regexp_option = 1;
+    --		break;
+    --
+    --	case GREP_PATTERN_TYPE_FIXED:
+    --		opt->fixed = 1;
+    --		break;
+    --
+    --	case GREP_PATTERN_TYPE_PCRE:
+    --		opt->pcre2 = 1;
+    --		break;
+    --	}
+    --}
+    --
+    --void grep_commit_pattern_type(enum grep_pattern_type pattern_type, struct grep_opt *opt)
+    --{
+    --	if (pattern_type != GREP_PATTERN_TYPE_UNSPECIFIED)
+    --		grep_set_pattern_type_option(pattern_type, opt);
+    --	else if (opt->pattern_type_option != GREP_PATTERN_TYPE_UNSPECIFIED)
+    --		grep_set_pattern_type_option(opt->pattern_type_option, opt);
+    --	else if (opt->extended_regexp_option)
+    --		/*
+    --		 * This branch *must* happen after setting from the
+    --		 * opt->pattern_type_option above, we don't want
+    --		 * grep.extendedRegexp to override grep.patternType!
+    --		 */
+    --		grep_set_pattern_type_option(GREP_PATTERN_TYPE_ERE, opt);
+    --}
+    --
+    - static struct grep_pat *create_grep_pat(const char *pat, size_t patlen,
+    - 					const char *origin, int no,
+    - 					enum grep_pat_token t,
+    -@@ grep.c: static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+    - 	int err;
+    - 	int regflags = REG_NEWLINE;
+    - 
+    -+	if (opt->pattern_type_option == GREP_PATTERN_TYPE_UNSPECIFIED)
+    -+		opt->pattern_type_option = (opt->extended_regexp_option
+    -+					    ? GREP_PATTERN_TYPE_ERE
+    -+					    : GREP_PATTERN_TYPE_BRE);
+    -+
+    - 	p->word_regexp = opt->word_regexp;
+    - 	p->ignore_case = opt->ignore_case;
+    --	p->fixed = opt->fixed;
+    -+	p->fixed = opt->pattern_type_option == GREP_PATTERN_TYPE_FIXED;
+    - 
+    --	if (!opt->pcre2 &&
+    -+	if (opt->pattern_type_option != GREP_PATTERN_TYPE_PCRE &&
+    - 	    memchr(p->pattern, 0, p->patternlen))
+    - 		die(_("given pattern contains NULL byte (via -f <file>). This is only supported with -P under PCRE v2"));
+    +-static int patmatch(struct grep_pat *p,
+    +-		    const char *line, const char *eol,
+    +-		    regmatch_t *match, int eflags)
+    ++int patmatch(struct grep_pat *p,
+    ++	     const char *line, const char *eol,
+    ++	     regmatch_t *match, int eflags)
+    + {
+    + 	int hit;
+      
+    -@@ grep.c: static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+    - 		return;
+    - 	}
+    - 
+    --	if (opt->pcre2) {
+    -+	if (opt->pattern_type_option == GREP_PATTERN_TYPE_PCRE) {
+    - 		compile_pcre2_pattern(p, opt);
+    - 		return;
+    - 	}
+    - 
+    - 	if (p->ignore_case)
+    - 		regflags |= REG_ICASE;
+    --	if (opt->extended_regexp_option)
+    -+	if (opt->pattern_type_option == GREP_PATTERN_TYPE_ERE)
+    - 		regflags |= REG_EXTENDED;
+    - 	err = regcomp(&p->regexp, p->pattern, regflags);
+    - 	if (err) {
+     
+      ## grep.h ##
+    -@@ grep.h: struct grep_opt {
+    - 	int unmatch_name_only;
+    - 	int count;
+    - 	int word_regexp;
+    --	int fixed;
+    - 	int all_match;
+    - 	int no_body_match;
+    - 	int body_hit;
+    -@@ grep.h: struct grep_opt {
+    - 	int allow_textconv;
+    - 	int extended;
+    - 	int use_reflog_filter;
+    --	int pcre2;
+    - 	int relative;
+    - 	int pathname;
+    - 	int null_following_name;
+    -@@ grep.h: struct grep_opt {
+    +@@ grep.h: void grep_source_load_driver(struct grep_source *gs,
+      
+    - int grep_config(const char *var, const char *value, void *);
+    - void grep_init(struct grep_opt *, struct repository *repo);
+    --void grep_commit_pattern_type(enum grep_pattern_type, struct grep_opt *opt);
+      
+    - void append_grep_pat(struct grep_opt *opt, const char *pat, size_t patlen, const char *origin, int no, enum grep_pat_token t);
+    - void append_grep_pattern(struct grep_opt *opt, const char *pat, const char *origin, int no, enum grep_pat_token t);
+    -
+    - ## revision.c ##
+    -@@ revision.c: int setup_revisions(int argc, const char **argv, struct rev_info *revs, struct s
+    + int grep_source(struct grep_opt *opt, struct grep_source *gs);
+    ++int patmatch(struct grep_pat *p,
+    ++	     const char *line, const char *eol,
+    ++	     regmatch_t *match, int eflags);
+      
+    - 	diff_setup_done(&revs->diffopt);
+    + struct grep_opt *grep_opt_dup(const struct grep_opt *opt);
+      
+    --	grep_commit_pattern_type(GREP_PATTERN_TYPE_UNSPECIFIED,
+    --				 &revs->grep_filter);
+    - 	if (!is_encoding_utf8(get_log_output_encoding()))
+    - 		revs->grep_filter.ignore_locale = 1;
+    - 	compile_grep_patterns(&revs->grep_filter);
+ 6:  ce646154538 !  2:  744d40577f2 grep API: call grep_config() after grep_init()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep API: call grep_config() after grep_init()
+    +    pickaxe: use PCREv2 for -G and -S
+     
+    -    The grep_init() function used the odd pattern of initializing the
+    -    passed-in "struct grep_opt" with a statically defined "grep_defaults"
+    -    struct, which would be modified in-place when we invoked
+    -    grep_config().
+    +    Follow-up b65abcafc7a (grep: use PCRE v2 for optimized fixed-string
+    +    search, 2019-07-01) and remove the use of kwset in the pickaxe code
+    +    for fixed-string search, in favor of optimistically using PCRE v2.
+     
+    -    So we effectively (b) initialized config, (a) then defaults, (c)
+    -    followed by user options. Usually those are ordered as "a", "b" and
+    -    "c" instead.
+    +    This does mean that the semantics of the -G option subtly change,
+    +    before it's an ERE, whereas now it'll be a PCRE if we're compiled with
+    +    PCRE. Since PCRE is almost entirely a strict superset of ERE syntax I
+    +    think this is OK.
+     
+    -    As the comments being removed here show the previous behavior needed
+    -    to be carefully explained as we'd potentially share the populated
+    -    configuration among different instances of grep_init(). In practice we
+    -    didn't do that, but now that it can't be a concern anymore let's
+    -    remove those comments.
+    +    Now when running the newly added t/perf/p4209-pickaxe.sh[1] and the
+    +    latest PCRE v2 we'll get the following performance improvements (well,
+    +    mostly improvements):
+     
+    -    This does not change the behavior of any of the configuration
+    -    variables or options. That would have been the case if we didn't move
+    -    around the grep_config() call in "builtin/log.c". But now that we call
+    -    "grep_config" after "git_log_config" and "git_format_config" we'll
+    -    need to pass in the already initialized "struct grep_opt *".
+    +        Test                                                                           origin/next       HEAD
+    +        -----------------------------------------------------------------------------------------------------------------------
+    +        4209.1: git log -S'a' <limit-rev>..                                            0.34(0.31+0.03)   0.40(0.35+0.05) +17.6%
+    +        4209.2: git log -S'uncommon' <limit-rev>..                                     0.34(0.31+0.02)   0.34(0.31+0.03) +0.0%
+    +        4209.3: git log -S'ö' <limit-rev>..                                            0.46(0.41+0.04)   0.30(0.25+0.04) -34.8%
+    +        4209.4: git log --pickaxe-regex -S'[þæö]' <limit-rev>..                        0.36(0.32+0.04)   0.45(0.41+0.03) +25.0%
+    +        4209.5: git log -G'a' <limit-rev>..                                            0.57(0.53+0.04)   0.48(0.43+0.05) -15.8%
+    +        4209.6: git log --pickaxe-regex -S'a' <limit-rev>..                            0.62(0.55+0.07)   0.41(0.36+0.05) -33.9%
+    +        4209.7: git log --text -G'a' <limit-rev>..                                     0.57(0.52+0.04)   0.49(0.43+0.05) -14.0%
+    +        4209.8: git log --text --pickaxe-all -G'a' <limit-rev>..                       0.41(0.37+0.04)   0.36(0.32+0.04) -12.2%
+    +        4209.9: git log --pickaxe-all -G'a' <limit-rev>..                              0.42(0.35+0.07)   0.36(0.31+0.05) -14.3%
+    +        4209.10: git log --pickaxe-all --pickaxe-regex -S'a' <limit-rev>..             0.50(0.47+0.03)   0.34(0.29+0.04) -32.0%
+    +        4209.11: git log -G'uncommon' <limit-rev>..                                    0.58(0.52+0.06)   0.49(0.41+0.08) -15.5%
+    +        4209.12: git log --pickaxe-regex -S'uncommon' <limit-rev>..                    0.42(0.37+0.04)   0.34(0.30+0.03) -19.0%
+    +        4209.13: git log --text -G'uncommon' <limit-rev>..                             0.58(0.51+0.06)   0.49(0.43+0.05) -15.5%
+    +        4209.14: git log --text --pickaxe-all -G'uncommon' <limit-rev>..               0.58(0.52+0.05)   0.48(0.44+0.04) -17.2%
+    +        4209.15: git log --pickaxe-all -G'uncommon' <limit-rev>..                      0.58(0.53+0.05)   0.50(0.45+0.04) -13.8%
+    +        4209.16: git log --pickaxe-all --pickaxe-regex -S'uncommon' <limit-rev>..      0.41(0.37+0.04)   0.34(0.30+0.04) -17.1%
+    +        4209.17: git log -G'[þæö]' <limit-rev>..                                       0.57(0.51+0.06)   0.49(0.46+0.03) -14.0%
+    +        4209.18: git log --pickaxe-regex -S'[þæö]' <limit-rev>..                       0.36(0.32+0.04)   0.45(0.41+0.04) +25.0%
+    +        4209.19: git log --text -G'[þæö]' <limit-rev>..                                0.58(0.52+0.05)   0.48(0.45+0.04) -17.2%
+    +        4209.20: git log --text --pickaxe-all -G'[þæö]' <limit-rev>..                  0.57(0.52+0.04)   0.48(0.42+0.06) -15.8%
+    +        4209.21: git log --pickaxe-all -G'[þæö]' <limit-rev>..                         0.59(0.52+0.05)   0.51(0.46+0.05) -13.6%
+    +        4209.22: git log --pickaxe-all --pickaxe-regex -S'[þæö]' <limit-rev>..         0.36(0.33+0.02)   0.46(0.41+0.04) +27.8%
+    +        4209.23: git log -i -S'a' <limit-rev>..                                        0.71(0.67+0.03)   0.42(0.38+0.03) -40.8%
+    +        4209.24: git log -i -S'uncommon' <limit-rev>..                                 0.34(0.30+0.04)   0.34(0.31+0.03) +0.0%
+    +        4209.25: git log -i -S'ö' <limit-rev>..                                        0.35(0.33+0.01)   0.30(0.25+0.05) -14.3%
+    +        4209.26: git log -i --pickaxe-regex -S'[þæö]' <limit-rev>..                    0.36(0.34+0.02)   0.46(0.42+0.03) +27.8%
+    +        4209.27: git log -i -G'a' <limit-rev>..                                        0.57(0.51+0.05)   0.49(0.45+0.04) -14.0%
+    +        4209.28: git log -i --pickaxe-regex -S'a' <limit-rev>..                        0.77(0.67+0.04)   0.41(0.35+0.06) -46.8%
+    +        4209.29: git log -i --text -G'a' <limit-rev>..                                 0.57(0.50+0.06)   0.48(0.43+0.05) -15.8%
+    +        4209.30: git log -i --text --pickaxe-all -G'a' <limit-rev>..                   0.41(0.36+0.04)   0.36(0.32+0.04) -12.2%
+    +        4209.31: git log -i --pickaxe-all -G'a' <limit-rev>..                          0.41(0.36+0.05)   0.36(0.30+0.06) -12.2%
+    +        4209.32: git log -i --pickaxe-all --pickaxe-regex -S'a' <limit-rev>..          0.56(0.54+0.02)   0.34(0.31+0.03) -39.3%
+    +        4209.33: git log -i -G'uncommon' <limit-rev>..                                 0.59(0.53+0.05)   0.52(0.44+0.05) -11.9%
+    +        4209.34: git log -i --pickaxe-regex -S'uncommon' <limit-rev>..                 0.44(0.39+0.05)   0.34(0.30+0.04) -22.7%
+    +        4209.35: git log -i --text -G'uncommon' <limit-rev>..                          0.58(0.53+0.05)   0.49(0.43+0.05) -15.5%
+    +        4209.36: git log -i --text --pickaxe-all -G'uncommon' <limit-rev>..            0.58(0.52+0.06)   0.49(0.45+0.02) -15.5%
+    +        4209.37: git log -i --pickaxe-all -G'uncommon' <limit-rev>..                   0.59(0.54+0.04)   0.49(0.45+0.04) -16.9%
+    +        4209.38: git log -i --pickaxe-all --pickaxe-regex -S'uncommon' <limit-rev>..   0.44(0.40+0.03)   0.35(0.30+0.04) -20.5%
+    +        4209.39: git log -i -G'[þæö]' <limit-rev>..                                    0.57(0.51+0.06)   0.49(0.44+0.04) -14.0%
+    +        4209.40: git log -i --pickaxe-regex -S'[þæö]' <limit-rev>..                    0.37(0.33+0.03)   0.46(0.40+0.06) +24.3%
+    +        4209.41: git log -i --text -G'[þæö]' <limit-rev>..                             0.57(0.51+0.06)   0.48(0.43+0.05) -15.8%
+    +        4209.42: git log -i --text --pickaxe-all -G'[þæö]' <limit-rev>..               0.57(0.53+0.04)   0.48(0.43+0.05) -15.8%
+    +        4209.43: git log -i --pickaxe-all -G'[þæö]' <limit-rev>..                      0.58(0.50+0.07)   0.49(0.42+0.07) -15.5%
+    +        4209.44: git log -i --pickaxe-all --pickaxe-regex -S'[þæö]' <limit-rev>..      0.37(0.34+0.03)   0.45(0.42+0.03) +21.6%
+     
+    -    See 6ba9bb76e02 (grep: copy struct in one fell swoop, 2020-11-29) and
+    -    7687a0541e0 (grep: move the configuration parsing logic to grep.[ch],
+    -    2012-10-09) for the commits that added the comments.
+    +    1. With these options:
+     
+    -    The memcpy() pattern here will be optimized away and follows the
+    -    convention of other *_init() functions. See 5726a6b4012 (*.c *_init():
+    -    define in terms of corresponding *_INIT macro, 2021-07-01).
+    +        GIT_PERF_EXTRA=1 GIT_PERF_REPEAT_COUNT=10 GIT_PERF_MAKE_OPTS='-j8 USE_LIBPCRE=Y CFLAGS=-O3 LIBPCREDIR=/home/avar/g/pcre2/inst' ./run origin/next HEAD -- p4209-pickaxe.sh
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## builtin/grep.c ##
+    -@@ builtin/grep.c: static int wait_all(void)
+    + ## diff.h ##
+    +@@ diff.h: struct diff_options {
+    + 	struct repository *repo;
+    + 	struct option *parseopts;
+      
+    - static int grep_cmd_config(const char *var, const char *value, void *cb)
+    - {
+    --	int st = grep_config(var, value, NULL);
+    -+	int st = grep_config(var, value, cb);
+    - 	if (git_color_default_config(var, value, NULL) < 0)
+    - 		st = -1;
+    - 
+    -@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    - 	};
+    - 	grep_prefix = prefix;
+    ++	struct grep_opt *grep_filter;
+    ++
+    + 	int no_free;
+    + };
+      
+    --	git_config(grep_cmd_config, NULL);
+    - 	grep_init(&opt, the_repository);
+    -+	git_config(grep_cmd_config, &opt);
+    +@@ diff.h: int git_config_rename(const char *var, const char *value);
+    + #define DIFF_PICKAXE_KIND_G	8 /* grep in the patch */
+    + #define DIFF_PICKAXE_KIND_OBJFIND	16 /* specific object IDs */
+      
+    - 	/*
+    - 	 * If there is no -- then the paths must exist in the working
+    ++#define DIFF_PICKAXE_KIND_GS_MASK (DIFF_PICKAXE_KIND_S | \
+    ++				   DIFF_PICKAXE_KIND_G)
+    + #define DIFF_PICKAXE_KINDS_MASK (DIFF_PICKAXE_KIND_S | \
+    + 				 DIFF_PICKAXE_KIND_G | \
+    + 				 DIFF_PICKAXE_KIND_OBJFIND)
+     
+    - ## builtin/log.c ##
+    -@@ builtin/log.c: static int git_log_config(const char *var, const char *value, void *cb)
+    + ## diffcore-pickaxe.c ##
+    +@@
+    + #include "diff.h"
+    + #include "diffcore.h"
+    + #include "xdiff-interface.h"
+    +-#include "kwset.h"
+    +-#include "commit.h"
+    +-#include "quote.h"
+    ++#include "grep.h"
+    + 
+    + typedef int (*pickaxe_fn)(mmfile_t *one, mmfile_t *two,
+    + 			  struct diff_options *o,
+    +-			  regex_t *regexp, kwset_t kws);
+    ++			  struct grep_opt *grep_filter);
+    + 
+    + struct diffgrep_cb {
+    +-	regex_t *regexp;
+    ++	struct grep_opt	*grep_filter;
+    + 	int hit;
+    + };
+    + 
+    +@@ diffcore-pickaxe.c: static int diffgrep_consume(void *priv, char *line, unsigned long len)
+    + {
+    + 	struct diffgrep_cb *data = priv;
+    + 	regmatch_t regmatch;
+    ++	struct grep_opt *grep_filter = data->grep_filter;
+    ++	struct grep_pat *grep_pat = grep_filter->pattern_list;
+    + 
+    + 	if (line[0] != '+' && line[0] != '-')
+      		return 0;
+    + 	if (data->hit)
+    + 		BUG("Already matched in diffgrep_consume! Broken xdiff_emit_line_fn?");
+    +-	if (!regexec_buf(data->regexp, line + 1, len - 1, 1,
+    +-			 &regmatch, 0)) {
+    ++	if (patmatch(grep_pat, line + 1, line + len + 1, &regmatch, 0)) {
+    + 		data->hit = 1;
+    + 		return 1;
+      	}
+    +@@ diffcore-pickaxe.c: static int diffgrep_consume(void *priv, char *line, unsigned long len)
+      
+    --	if (grep_config(var, value, cb) < 0)
+    --		return -1;
+    - 	if (git_gpg_config(var, value, cb) < 0)
+    - 		return -1;
+    - 	return git_diff_ui_config(var, value, cb);
+    -@@ builtin/log.c: int cmd_whatchanged(int argc, const char **argv, const char *prefix)
+    - 	git_config(git_log_config, NULL);
+    + static int diff_grep(mmfile_t *one, mmfile_t *two,
+    + 		     struct diff_options *o,
+    +-		     regex_t *regexp, kwset_t kws)
+    ++		     struct grep_opt *grep_filter)
+    + {
+    + 	struct diffgrep_cb ecbdata;
+    + 	xpparam_t xpp;
+    +@@ diffcore-pickaxe.c: static int diff_grep(mmfile_t *one, mmfile_t *two,
+    + 	 */
+    + 	memset(&xpp, 0, sizeof(xpp));
+    + 	memset(&xecfg, 0, sizeof(xecfg));
+    +-	ecbdata.regexp = regexp;
+    ++	ecbdata.grep_filter = grep_filter;
+    + 	ecbdata.hit = 0;
+    + 	xecfg.flags = XDL_EMIT_NO_HUNK_HDR;
+    + 	xecfg.ctxlen = o->context;
+    +@@ diffcore-pickaxe.c: static int diff_grep(mmfile_t *one, mmfile_t *two,
+    + 	return 0;
+    + }
+      
+    - 	repo_init_revisions(the_repository, &rev, prefix);
+    -+	git_config(grep_config, &rev.grep_filter);
+    -+
+    - 	rev.diff = 1;
+    - 	rev.simplify_history = 0;
+    - 	memset(&opt, 0, sizeof(opt));
+    -@@ builtin/log.c: int cmd_show(int argc, const char **argv, const char *prefix)
+    - 
+    - 	memset(&match_all, 0, sizeof(match_all));
+    - 	repo_init_revisions(the_repository, &rev, prefix);
+    -+	git_config(grep_config, &rev.grep_filter);
+    -+
+    - 	rev.diff = 1;
+    - 	rev.always_show_header = 1;
+    - 	rev.no_walk = 1;
+    -@@ builtin/log.c: int cmd_log_reflog(int argc, const char **argv, const char *prefix)
+    - 
+    - 	repo_init_revisions(the_repository, &rev, prefix);
+    - 	init_reflog_walk(&rev.reflog_info);
+    -+	git_config(grep_config, &rev.grep_filter);
+    -+
+    - 	rev.verbose_header = 1;
+    - 	memset(&opt, 0, sizeof(opt));
+    - 	opt.def = "HEAD";
+    -@@ builtin/log.c: int cmd_log(int argc, const char **argv, const char *prefix)
+    - 	git_config(git_log_config, NULL);
+    - 
+    - 	repo_init_revisions(the_repository, &rev, prefix);
+    -+	git_config(grep_config, &rev.grep_filter);
+    -+
+    - 	rev.always_show_header = 1;
+    - 	memset(&opt, 0, sizeof(opt));
+    - 	opt.def = "HEAD";
+    -@@ builtin/log.c: int cmd_format_patch(int argc, const char **argv, const char *prefix)
+    - 	extra_hdr.strdup_strings = 1;
+    - 	extra_to.strdup_strings = 1;
+    - 	extra_cc.strdup_strings = 1;
+    +-static unsigned int contains(mmfile_t *mf, regex_t *regexp, kwset_t kws,
+    ++static unsigned int contains(mmfile_t *mf, struct grep_opt *grep_filter,
+    + 			     unsigned int limit)
+    + {
+     +
+    - 	init_log_defaults();
+    - 	init_display_notes(&notes_opt);
+    - 	git_config(git_format_config, NULL);
+    - 	repo_init_revisions(the_repository, &rev, prefix);
+    -+	git_config(grep_config, &rev.grep_filter);
+    + 	unsigned int cnt = 0;
+    + 	unsigned long sz = mf->size;
+    +-	const char *data = mf->ptr;
+    +-
+    +-	if (regexp) {
+    +-		regmatch_t regmatch;
+    +-		int flags = 0;
+    +-
+    +-		while (sz &&
+    +-		       !regexec_buf(regexp, data, sz, 1, &regmatch, flags)) {
+    +-			flags |= REG_NOTBOL;
+    +-			data += regmatch.rm_eo;
+    +-			sz -= regmatch.rm_eo;
+    +-			if (sz && regmatch.rm_so == regmatch.rm_eo) {
+    +-				data++;
+    +-				sz--;
+    +-			}
+    +-			cnt++;
+    +-
+    +-			if (limit && cnt == limit)
+    +-				return cnt;
+    +-		}
+    +-
+    +-	} else { /* Classic exact string match */
+    +-		while (sz) {
+    +-			struct kwsmatch kwsm;
+    +-			size_t offset = kwsexec(kws, data, sz, &kwsm);
+    +-			if (offset == -1)
+    +-				break;
+    +-			sz -= offset + kwsm.size[0];
+    +-			data += offset + kwsm.size[0];
+    +-			cnt++;
+    +-
+    +-			if (limit && cnt == limit)
+    +-				return cnt;
+    ++	char *data = mf->ptr;
+    ++	regmatch_t regmatch;
+    ++	int flags = 0;
+    ++	struct grep_pat *grep_pat = grep_filter->pattern_list;
+     +
+    - 	rev.show_notes = show_notes;
+    - 	memcpy(&rev.notes_opt, &notes_opt, sizeof(notes_opt));
+    - 	rev.commit_format = CMIT_FMT_EMAIL;
+    -
+    - ## grep.c ##
+    -@@ grep.c: static void std_output(struct grep_opt *opt, const void *buf, size_t size)
+    - 	fwrite(buf, size, 1, stdout);
+    ++	while (sz &&
+    ++	       patmatch(grep_pat, data, data + sz, &regmatch, flags)) {
+    ++		flags |= REG_NOTBOL;
+    ++		data += regmatch.rm_eo;
+    ++		sz -= regmatch.rm_eo;
+    ++		if (sz && regmatch.rm_so == regmatch.rm_eo) {
+    ++			data++;
+    ++			sz--;
+    + 		}
+    ++		cnt++;
+    ++		if (limit && cnt == limit)
+    ++			return cnt;
+    + 	}
+    + 	return cnt;
+      }
+      
+    --static struct grep_opt grep_defaults = {
+    --	.relative = 1,
+    --	.pathname = 1,
+    --	.max_depth = -1,
+    --	.pattern_type_option = GREP_PATTERN_TYPE_UNSPECIFIED,
+    --	.colors = {
+    --		[GREP_COLOR_CONTEXT] = "",
+    --		[GREP_COLOR_FILENAME] = GIT_COLOR_MAGENTA,
+    --		[GREP_COLOR_FUNCTION] = "",
+    --		[GREP_COLOR_LINENO] = GIT_COLOR_GREEN,
+    --		[GREP_COLOR_COLUMNNO] = GIT_COLOR_GREEN,
+    --		[GREP_COLOR_MATCH_CONTEXT] = GIT_COLOR_BOLD_RED,
+    --		[GREP_COLOR_MATCH_SELECTED] = GIT_COLOR_BOLD_RED,
+    --		[GREP_COLOR_SELECTED] = "",
+    --		[GREP_COLOR_SEP] = GIT_COLOR_CYAN,
+    --	},
+    --	.only_matching = 0,
+    --	.color = -1,
+    --	.output = std_output,
+    --};
+    --
+    - static const char *color_grep_slots[] = {
+    - 	[GREP_COLOR_CONTEXT]	    = "context",
+    - 	[GREP_COLOR_FILENAME]	    = "filename",
+    -@@ grep.c: define_list_config_array_extra(color_grep_slots, {"match"});
+    -  */
+    - int grep_config(const char *var, const char *value, void *cb)
+    + static int has_changes(mmfile_t *one, mmfile_t *two,
+    + 		       struct diff_options *o,
+    +-		       regex_t *regexp, kwset_t kws)
+    ++		       struct grep_opt *grep_filter)
+      {
+    --	struct grep_opt *opt = &grep_defaults;
+    -+	struct grep_opt *opt = cb;
+    - 	const char *slot;
+    - 
+    - 	if (userdiff_config(var, value) < 0)
+    - 		return -1;
+    - 
+    --	/*
+    --	 * The instance of grep_opt that we set up here is copied by
+    --	 * grep_init() to be used by each individual invocation.
+    --	 * When populating a new field of this structure here, be
+    --	 * sure to think about ownership -- e.g., you might need to
+    --	 * override the shallow copy in grep_init() with a deep copy.
+    --	 */
+    --
+    - 	if (!strcmp(var, "grep.extendedregexp")) {
+    - 		opt->extended_regexp_option = git_config_bool(var, value);
+    - 		return 0;
+    -@@ grep.c: int grep_config(const char *var, const char *value, void *cb)
+    - 	return 0;
+    +-	unsigned int c1 = one ? contains(one, regexp, kws, 0) : 0;
+    +-	unsigned int c2 = two ? contains(two, regexp, kws, c1 + 1) : 0;
+    ++	unsigned int c1 = one ? contains(one, grep_filter, 0) : 0;
+    ++	unsigned int c2 = two ? contains(two, grep_filter, c1 + 1) : 0;
+    + 	return c1 != c2;
+      }
+      
+    --/*
+    -- * Initialize one instance of grep_opt and copy the
+    -- * default values from the template we read the configuration
+    -- * information in an earlier call to git_config(grep_config).
+    -- */
+    - void grep_init(struct grep_opt *opt, struct repository *repo)
+    + static int pickaxe_match(struct diff_filepair *p, struct diff_options *o,
+    +-			 regex_t *regexp, kwset_t kws, pickaxe_fn fn)
+    ++			 struct grep_opt *grep_filter, pickaxe_fn fn)
+      {
+    --	*opt = grep_defaults;
+    -+	struct grep_opt blank = GREP_OPT_INIT;
+    -+	memcpy(opt, &blank, sizeof(*opt));
+    + 	struct userdiff_driver *textconv_one = NULL;
+    + 	struct userdiff_driver *textconv_two = NULL;
+    +@@ diffcore-pickaxe.c: static int pickaxe_match(struct diff_filepair *p, struct diff_options *o,
+    + 	mf1.size = fill_textconv(o->repo, textconv_one, p->one, &mf1.ptr);
+    + 	mf2.size = fill_textconv(o->repo, textconv_two, p->two, &mf2.ptr);
+      
+    - 	opt->repo = repo;
+    - 	opt->pattern_tail = &opt->pattern_list;
+    -
+    - ## grep.h ##
+    -@@ grep.h: struct grep_opt {
+    - 	void *output_priv;
+    - };
+    +-	ret = fn(&mf1, &mf2, o, regexp, kws);
+    ++	ret = fn(&mf1, &mf2, o, grep_filter);
+    + 
+    + 	if (textconv_one)
+    + 		free(mf1.ptr);
+    +@@ diffcore-pickaxe.c: static int pickaxe_match(struct diff_filepair *p, struct diff_options *o,
+    + }
+    + 
+    + static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+    +-		    regex_t *regexp, kwset_t kws, pickaxe_fn fn)
+    ++		    struct grep_opt *grep_filter, pickaxe_fn fn)
+    + {
+    + 	int i;
+    + 	struct diff_queue_struct outq;
+    +@@ diffcore-pickaxe.c: static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+    + 		/* Showing the whole changeset if needle exists */
+    + 		for (i = 0; i < q->nr; i++) {
+    + 			struct diff_filepair *p = q->queue[i];
+    +-			if (pickaxe_match(p, o, regexp, kws, fn))
+    ++			if (pickaxe_match(p, o, grep_filter, fn))
+    + 				return; /* do not munge the queue */
+    + 		}
+    + 
+    +@@ diffcore-pickaxe.c: static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+    + 		/* Showing only the filepairs that has the needle */
+    + 		for (i = 0; i < q->nr; i++) {
+    + 			struct diff_filepair *p = q->queue[i];
+    +-			if (pickaxe_match(p, o, regexp, kws, fn))
+    ++			if (pickaxe_match(p, o, grep_filter, fn))
+    + 				diff_q(&outq, p);
+    + 			else
+    + 				diff_free_filepair(p);
+    +@@ diffcore-pickaxe.c: static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+    + 	*q = outq;
+    + }
+    + 
+    +-static void regcomp_or_die(regex_t *regex, const char *needle, int cflags)
+    +-{
+    +-	int err = regcomp(regex, needle, cflags);
+    +-	if (err) {
+    +-		/* The POSIX.2 people are surely sick */
+    +-		char errbuf[1024];
+    +-		regerror(err, regex, errbuf, 1024);
+    +-		die("invalid regex: %s", errbuf);
+    +-	}
+    +-}
+    +-
+    + void diffcore_pickaxe(struct diff_options *o)
+    + {
+    + 	const char *needle = o->pickaxe;
+    + 	int opts = o->pickaxe_opts;
+    +-	regex_t regex, *regexp = NULL;
+    +-	kwset_t kws = NULL;
+    ++	struct grep_opt opt;
+    + 	pickaxe_fn fn;
+    + 
+    + 	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND &&
+    + 	    (!needle || !*needle))
+    + 		BUG("should have needle under -G or -S");
+    +-	if (opts & (DIFF_PICKAXE_REGEX | DIFF_PICKAXE_KIND_G)) {
+    +-		int cflags = REG_EXTENDED | REG_NEWLINE;
+    ++	if (opts & (DIFF_PICKAXE_REGEX | DIFF_PICKAXE_KIND_GS_MASK)) {
+    ++		grep_init(&opt, the_repository, NULL);
+    ++#ifdef USE_LIBPCRE2
+    ++		grep_commit_pattern_type(GREP_PATTERN_TYPE_PCRE, &opt);
+    ++#else
+    ++		grep_commit_pattern_type(GREP_PATTERN_TYPE_ERE, &opt);
+    ++#endif
+    ++
+    + 		if (o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE)
+    +-			cflags |= REG_ICASE;
+    +-		regcomp_or_die(&regex, needle, cflags);
+    +-		regexp = &regex;
+    ++			opt.ignore_case = 1;
+    ++		if (opts & DIFF_PICKAXE_KIND_S &&
+    ++		    !(opts & DIFF_PICKAXE_REGEX))
+    ++			opt.fixed = 1;
+    ++
+    ++		append_grep_pattern(&opt, needle, "diffcore-pickaxe", 0, GREP_PATTERN);
+    ++		compile_grep_patterns(&opt);
+    + 
+    + 		if (opts & DIFF_PICKAXE_KIND_G)
+    + 			fn = diff_grep;
+    ++		else if (opts & DIFF_PICKAXE_KIND_S)
+    ++			fn = has_changes;
+    + 		else if (opts & DIFF_PICKAXE_REGEX)
+    + 			fn = has_changes;
+    + 		else
+    +@@ diffcore-pickaxe.c: void diffcore_pickaxe(struct diff_options *o)
+    + 			 * t4209-log-pickaxe.sh.
+    + 			 */
+    + 			BUG("unreachable");
+    +-	} else if (opts & DIFF_PICKAXE_KIND_S) {
+    +-		if (o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE &&
+    +-		    has_non_ascii(needle)) {
+    +-			struct strbuf sb = STRBUF_INIT;
+    +-			int cflags = REG_NEWLINE | REG_ICASE;
+    +-
+    +-			basic_regex_quote_buf(&sb, needle);
+    +-			regcomp_or_die(&regex, sb.buf, cflags);
+    +-			strbuf_release(&sb);
+    +-			regexp = &regex;
+    +-		} else {
+    +-			kws = kwsalloc(o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE
+    +-				       ? tolower_trans_tbl : NULL);
+    +-			kwsincr(kws, needle, strlen(needle));
+    +-			kwsprep(kws);
+    +-		}
+    +-		fn = has_changes;
+    + 	} else if (opts & DIFF_PICKAXE_KIND_OBJFIND) {
+    + 		fn = NULL;
+    + 	} else {
+    + 		BUG("unknown pickaxe_opts flag");
+    + 	}
+      
+    -+#define GREP_OPT_INIT { \
+    -+	.relative = 1, \
+    -+	.pathname = 1, \
+    -+	.max_depth = -1, \
+    -+	.pattern_type_option = GREP_PATTERN_TYPE_UNSPECIFIED, \
+    -+	.colors = { \
+    -+		[GREP_COLOR_CONTEXT] = "", \
+    -+		[GREP_COLOR_FILENAME] = GIT_COLOR_MAGENTA, \
+    -+		[GREP_COLOR_FUNCTION] = "", \
+    -+		[GREP_COLOR_LINENO] = GIT_COLOR_GREEN, \
+    -+		[GREP_COLOR_COLUMNNO] = GIT_COLOR_GREEN, \
+    -+		[GREP_COLOR_MATCH_CONTEXT] = GIT_COLOR_BOLD_RED, \
+    -+		[GREP_COLOR_MATCH_SELECTED] = GIT_COLOR_BOLD_RED, \
+    -+		[GREP_COLOR_SELECTED] = "", \
+    -+		[GREP_COLOR_SEP] = GIT_COLOR_CYAN, \
+    -+	}, \
+    -+	.only_matching = 0, \
+    -+	.color = -1, \
+    -+	.output = std_output, \
+    -+}
+    +-	pickaxe(&diff_queued_diff, o, regexp, kws, fn);
+    ++	pickaxe(&diff_queued_diff, o, &opt, fn);
+     +
+    - int grep_config(const char *var, const char *value, void *);
+    - void grep_init(struct grep_opt *, struct repository *repo);
+    - void grep_commit_pattern_type(enum grep_pattern_type, struct grep_opt *opt);
+    ++	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND)
+    ++		free_grep_patterns(&opt);
+    + 
+    +-	if (regexp)
+    +-		regfree(regexp);
+    +-	if (kws)
+    +-		kwsfree(kws);
+    + 	return;
+    + }
+ -:  ----------- >  3:  a9a3c260d0a Remove unused kwset.[ch]
+ -:  ----------- >  4:  51ab7dcf4d5 diffcore-pickaxe: add --pickaxe-patch for use with -G
+ 2:  ac397cc6a18 !  5:  847d7d04524 log tests: check if grep_config() is called by "log"-like cmds
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    log tests: check if grep_config() is called by "log"-like cmds
+    +    wip reg_newline etc. test
+     
+    -    Extend the tests added in my 9df46763ef1 (log: add exhaustive tests
+    -    for pattern style options & config, 2017-05-20) to check not only
+    -    whether "git log" handles "grep.patternType", but also "git show"
+    -    etc.
+    -
+    -    It's sufficient to check whether we match a "fixed" or a "basic" regex
+    -    here to see if these codepaths correctly invoked grep_config(). We
+    -    don't need to check the details of their regular expression matching
+    -    as the "log" test does.
+    -
+    -    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    + ## grep.c ##
+    +@@ grep.c: static void compile_fixed_regexp(struct grep_pat *p, struct grep_opt *opt)
+    + static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+    + {
+    + 	int err;
+    +-	int regflags = 0; //REG_NEWLINE;
+    ++	int regflags = 0;
+    + 
+    + 	if (opt->pattern_type_option == GREP_PATTERN_TYPE_UNSPECIFIED)
+    + 		opt->pattern_type_option = (opt->extended_regexp_option
+     
+    - ## t/t4202-log.sh ##
+    -@@ t/t4202-log.sh: test_expect_success !FAIL_PREREQS 'log with various grep.patternType configurati
+    - 	)
+    + ## t/t4209-log-pickaxe.sh ##
+    +@@ t/t4209-log-pickaxe.sh: test_expect_success 'log -S --no-textconv (missing textconv tool)' '
+    + test_expect_success 'setup log -[GS] plain & regex' '
+    + 	test_create_repo GS-plain &&
+    + 	test_commit -C GS-plain --append A data.txt "a" &&
+    +-	test_commit -C GS-plain --append B data.txt "a a" &&
+    ++	test_commit -C GS-plain --append B data.txt "aa" &&
+    + 	test_commit -C GS-plain --append C data.txt "b" &&
+    + 	test_commit -C GS-plain --append D data.txt "[b]" &&
+    + 	test_commit -C GS-plain E data.txt "" &&
+    +@@ t/t4209-log-pickaxe.sh: test_expect_success 'setup log -[GS] plain & regex' '
+    + 	git -C GS-plain log --grep="[ABE]" >A-to-B-then-E-log &&
+    + 	git -C GS-plain log --grep="[CDE]" >C-to-D-then-E-log &&
+    + 	git -C GS-plain log --grep="[DE]" >D-then-E-log &&
+    ++	git -C GS-plain log --grep="[AE]" >A-then-E-log &&
+    + 	git -C GS-plain log >full-log
+      '
+      
+    -+for cmd in show whatchanged reflog format-patch
+    -+do
+    -+	case "$cmd" in
+    -+	format-patch) myarg="HEAD~.." ;;
+    -+	*) myarg= ;;
+    -+	esac
+    -+
+    -+	test_expect_success "$cmd: understands grep.patternType, like 'log'" '
+    -+		git init "pattern-type-$cmd" &&
+    -+		(
+    -+			cd "pattern-type-$cmd" &&
+    -+			test_commit 1 file A &&
+    -+			test_commit "(1|2)" file B 2 &&
+    +@@ t/t4209-log-pickaxe.sh: test_expect_success 'log -G trims diff new/old [-+]' '
+    + 	git -C GS-plain log -G"[+-]a" >log &&
+    + 	test_must_be_empty log &&
+    + 	git -C GS-plain log -G"^a" >log &&
+    +-	test_cmp log A-to-B-then-E-log
+    ++	test_cmp A-to-B-then-E-log log
+    ++'
+     +
+    -+			git -c grep.patternType=fixed $cmd --grep="..." $myarg >actual &&
+    -+			test_must_be_empty actual &&
+    -+
+    -+			git -c grep.patternType=basic $cmd --grep="..." $myarg >actual &&
+    -+			test_file_not_empty actual
+    -+		)
+    -+	'
+    -+done
+    -+test_done
+    -+
+    - test_expect_success 'log --author' '
+    - 	cat >expect <<-\EOF &&
+    - 	Author: <BOLD;RED>A U<RESET> Thor <author@example.com>
+    ++test_expect_success 'log -S --pickaxe-regex uses REG_NOTBOL for subsequent matches' '
+    ++	git -C GS-plain log -S"^a" --pickaxe-regex >log &&
+    ++	test_cmp A-then-E-log log
+    + '
+    + 
+    + test_expect_success 'log -S<pat> is not a regex, but -S<pat> --pickaxe-regex is' '
+ 4:  c6ada96298a !  6:  9647deb2b90 built-ins: trust the "prefix" from run_builtin()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    built-ins: trust the "prefix" from run_builtin()
+    -
+    -    Change code in "builtin/grep.c" and "builtin/ls-tree.c" to trust the
+    -    "prefix" passed from "run_builtin()". The "prefix" we get from setup.c
+    -    is either going to be NULL or a string of length >0, never "".
+    -
+    -    So we can drop the "prefix && *prefix" checks added for
+    -    "builtin/grep.c" in 0d042fecf2f (git-grep: show pathnames relative to
+    -    the current directory, 2006-08-11), and for "builtin/ls-tree.c" in
+    -    a69dd585fca (ls-tree: chomp leading directories when run from a
+    -    subdirectory, 2005-12-23).
+    -
+    -    As seen in code in revision.c that was added in cd676a51367 (diff
+    -    --relative: output paths as relative to the current subdirectory,
+    -    2008-02-12) we already have existing code that does away with this
+    -    assertion.
+    -
+    -    This makes it easier to reason about a subsequent change to the
+    -    "prefix_length" code in grep.c in a subsequent commit, and since we're
+    -    going to the trouble of doing that let's leave behind an assert() to
+    -    promise this to any future callers.
+    -
+    -    For "builtin/grep.c" it would be painful to pass the "prefix" down the
+    -    callchain of:
+    -
+    -        cmd_grep -> grep_tree -> grep_submodule -> grep_cache -> grep_oid ->
+    -        grep_source_name
+    -
+    -    So for the code that needs it in grep_source_name() let's add a
+    -    "grep_prefix" variable similar to the existing "ls_tree_prefix".
+    -
+    -    While at it let's move the code in cmd_ls_tree() around so that we
+    -    assign to the "ls_tree_prefix" right after declaring the variables,
+    -    and stop assigning to "prefix". We only subsequently used that
+    -    variable later in the function after clobbering it. Let's just use our
+    -    own "grep_prefix" instead.
+    -
+    -    Let's also add an assert() in git.c, so that we'll make this promise
+    -    about the "prefix" to any current and future callers, as well as to
+    -    any readers of the code.
+    -
+    -    Code history:
+    -
+    -     * The strlen() in "grep.c" hasn't been used since 493b7a08d80 (grep:
+    -       accept relative paths outside current working directory, 2009-09-05).
+    -
+    -       When that code was added in 0d042fecf2f (git-grep: show pathnames
+    -       relative to the current directory, 2006-08-11) we used the length.
+    -
+    -       But since 493b7a08d80 we haven't used it for anything except a
+    -       boolean check that we could have done on the "prefix" member
+    -       itself.
+    -
+    -    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    -
+    - ## builtin/grep.c ##
+    +    only compile pattern once: TODO, free it
+    +
+    +    That's more like it:
+    +
+    +    GIT_TEST_LONG= GIT_PERF_REPEAT_COUNT=10 GIT_PERF_MAKE_OPTS='-j8 USE_LIBPCRE=1 CFLAGS=-O3 LIBPCREDIR=/home/avar/g/pcre2/inst' ./run origin/next HEAD -- p4209-pickaxe.sh
+    +    Test                                                                      origin/next       HEAD
+    +    ------------------------------------------------------------------------------------------------------------------
+    +    4209.1: git log -S'int main' <limit-rev>..                                0.38(0.36+0.01)   0.37(0.33+0.04) -2.6%
+    +    4209.2: git log -S'æ' <limit-rev>..                                       0.51(0.47+0.04)   0.32(0.27+0.05) -37.3%
+    +    4209.3: git log --pickaxe-regex -S'(int|void|null)' <limit-rev>..         0.72(0.68+0.03)   0.57(0.54+0.03) -20.8%
+    +    4209.4: git log --pickaxe-regex -S'if *\([^ ]+ & ' <limit-rev>..          0.60(0.55+0.02)   0.39(0.34+0.05) -35.0%
+    +    4209.5: git log --pickaxe-regex -S'[àáâãäåæñøùúûüýþ]' <limit-rev>..       0.43(0.40+0.03)   0.50(0.44+0.06) +16.3%
+    +    4209.6: git log -G'(int|void|null)' <limit-rev>..                         0.64(0.55+0.09)   0.63(0.56+0.05) -1.6%
+    +    4209.7: git log -G'if *\([^ ]+ & ' <limit-rev>..                          0.64(0.59+0.05)   0.63(0.56+0.06) -1.6%
+    +    4209.8: git log -G'[àáâãäåæñøùúûüýþ]' <limit-rev>..                       0.63(0.54+0.08)   0.62(0.55+0.06) -1.6%
+    +    4209.9: git log -i -S'int main' <limit-rev>..                             0.39(0.35+0.03)   0.38(0.35+0.02) -2.6%
+    +    4209.10: git log -i -S'æ' <limit-rev>..                                   0.39(0.33+0.06)   0.32(0.28+0.04) -17.9%
+    +    4209.11: git log -i --pickaxe-regex -S'(int|void|null)' <limit-rev>..     0.90(0.84+0.05)   0.58(0.53+0.04) -35.6%
+    +    4209.12: git log -i --pickaxe-regex -S'if *\([^ ]+ & ' <limit-rev>..      0.71(0.64+0.06)   0.40(0.37+0.03) -43.7%
+    +    4209.13: git log -i --pickaxe-regex -S'[àáâãäåæñøùúûüýþ]' <limit-rev>..   0.43(0.40+0.03)   0.50(0.46+0.04) +16.3%
+    +    4209.14: git log -i -G'(int|void|null)' <limit-rev>..                     0.64(0.57+0.06)   0.62(0.56+0.05) -3.1%
+    +    4209.15: git log -i -G'if *\([^ ]+ & ' <limit-rev>..                      0.65(0.59+0.06)   0.63(0.54+0.08) -3.1%
+    +    4209.16: git log -i -G'[àáâãäåæñøùúûüýþ]' <limit-rev>..                   0.63(0.55+0.08)   0.62(0.56+0.05) -1.6%
+    +
+    + ## diff.h ##
+     @@
+    - #include "object-store.h"
+    - #include "packfile.h"
+    + #include "pathspec.h"
+    + #include "object.h"
+    + #include "oidset.h"
+    ++#include "xdiff-interface.h"
+    ++#include "grep.h"
+      
+    -+static const char *grep_prefix;
+    -+
+    - static char const * const grep_usage[] = {
+    - 	N_("git grep [<options>] [-e] <pattern> [<rev>...] [[--] <path>...]"),
+    - 	NULL
+    -@@ builtin/grep.c: static void grep_source_name(struct grep_opt *opt, const char *filename,
+    - 	strbuf_reset(out);
+    + /**
+    +  * The diff API is for programs that compare two sets of files (e.g. two trees,
+    +@@ diff.h: enum diff_submodule_format {
+    + 	DIFF_SUBMODULE_INLINE_DIFF
+    + };
+      
+    - 	if (opt->null_following_name) {
+    --		if (opt->relative && opt->prefix_length) {
+    -+		if (opt->relative && grep_prefix) {
+    - 			struct strbuf rel_buf = STRBUF_INIT;
+    - 			const char *rel_name =
+    - 				relative_path(filename + tree_name_len,
+    --					      opt->prefix, &rel_buf);
+    -+					      grep_prefix, &rel_buf);
+    ++typedef int (*pickaxe_fn)(mmfile_t *one, mmfile_t *two,
+    ++			  struct diff_options *o,
+    ++			  struct grep_opt *grep_filter);
+    ++
+    + /**
+    +  * the set of options the calling program wants to affect the operation of
+    +  * diffcore library with.
+    +@@ diff.h: struct diff_options {
+    + 	 */
+    + 	const char *pickaxe;
+    + 	unsigned pickaxe_opts;
+    ++	int pickaxed_compiled;
+    ++	pickaxe_fn pickaxe_fn;
+    ++	struct grep_opt pickaxe_grep_opt;
+      
+    - 			if (tree_name_len)
+    - 				strbuf_add(out, filename, tree_name_len);
+    -@@ builtin/grep.c: static void grep_source_name(struct grep_opt *opt, const char *filename,
+    - 		return;
+    - 	}
+    + 	/* -I<regex> */
+    + 	regex_t **ignore_regex;
+    +
+    + ## diffcore-pickaxe.c ##
+    +@@
+    + #include "xdiff-interface.h"
+    + #include "grep.h"
+      
+    --	if (opt->relative && opt->prefix_length)
+    --		quote_path(filename + tree_name_len, opt->prefix, out, 0);
+    -+	if (opt->relative && grep_prefix)
+    -+		quote_path(filename + tree_name_len, grep_prefix, out, 0);
+    - 	else
+    - 		quote_c_style(filename + tree_name_len, out, NULL, 0);
+    +-typedef int (*pickaxe_fn)(mmfile_t *one, mmfile_t *two,
+    +-			  struct diff_options *o,
+    +-			  struct grep_opt *grep_filter);
+    +-
+    + struct diffgrep_cb {
+    + 	struct grep_opt	*grep_filter;
+    + 	int hit;
+    +@@ diffcore-pickaxe.c: static void pickaxe(struct diff_queue_struct *q, struct diff_options *o,
+    + 	*q = outq;
+    + }
+      
+    -@@ builtin/grep.c: int cmd_grep(int argc, const char **argv, const char *prefix)
+    - 			   PARSE_OPT_NOCOMPLETE),
+    - 		OPT_END()
+    - 	};
+    -+	grep_prefix = prefix;
+    +-void diffcore_pickaxe(struct diff_options *o)
+    ++static void compile_pickaxe(struct diff_options *o)
+    + {
+    + 	const char *needle = o->pickaxe;
+    + 	int opts = o->pickaxe_opts;
+    +-	struct grep_opt opt;
+    + 	pickaxe_fn fn;
+      
+    - 	git_config(grep_cmd_config, NULL);
+    --	grep_init(&opt, the_repository, prefix);
+    -+	grep_init(&opt, the_repository);
+    ++	assert(!o->pickaxed_compiled);
+    ++	o->pickaxed_compiled = 1;
+    ++
+    + 	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND &&
+    + 	    (!needle || !*needle))
+    + 		BUG("should have needle under -G or -S");
+    + 	if (opts & (DIFF_PICKAXE_REGEX | DIFF_PICKAXE_KIND_GS_MASK)) {
+    +-		grep_init(&opt, the_repository, NULL);
+    ++		grep_init(&o->pickaxe_grep_opt, the_repository, NULL);
+    + #ifdef USE_LIBPCRE2
+    +-		grep_commit_pattern_type(GREP_PATTERN_TYPE_PCRE, &opt);
+    ++		grep_commit_pattern_type(GREP_PATTERN_TYPE_PCRE, &o->pickaxe_grep_opt);
+    + #else
+    +-		grep_commit_pattern_type(GREP_PATTERN_TYPE_ERE, &opt);
+    ++		grep_commit_pattern_type(GREP_PATTERN_TYPE_ERE, &o->pickaxe_grep_opt);
+    + #endif
+      
+    - 	/*
+    - 	 * If there is no -- then the paths must exist in the working
+    -
+    - ## builtin/ls-tree.c ##
+    -@@ builtin/ls-tree.c: int cmd_ls_tree(int argc, const char **argv, const char *prefix)
+    + 		if (o->pickaxe_opts & DIFF_PICKAXE_IGNORE_CASE)
+    +-			opt.ignore_case = 1;
+    ++			o->pickaxe_grep_opt.ignore_case = 1;
+    + 		if (opts & DIFF_PICKAXE_KIND_S &&
+    + 		    !(opts & DIFF_PICKAXE_REGEX))
+    +-			opt.fixed = 1;
+    ++			o->pickaxe_grep_opt.fixed = 1;
+      
+    - 	git_config(git_default_config, NULL);
+    - 	ls_tree_prefix = prefix;
+    --	if (prefix && *prefix)
+    -+	if (prefix)
+    - 		chomp_prefix = strlen(prefix);
+    +-		append_grep_pattern(&opt, needle, "diffcore-pickaxe", 0, GREP_PATTERN);
+    +-		compile_grep_patterns(&opt);
+    ++		append_grep_pattern(&o->pickaxe_grep_opt, needle, "diffcore-pickaxe", 0, GREP_PATTERN);
+    ++		fprintf(stderr, "compiling for %s\n", needle);
+    ++		compile_grep_patterns(&o->pickaxe_grep_opt);
+      
+    - 	argc = parse_options(argc, argv, prefix, ls_tree_options,
+    -
+    - ## git.c ##
+    -@@ git.c: static int run_builtin(struct cmd_struct *p, int argc, const char **argv)
+    + 		if (opts & DIFF_PICKAXE_KIND_G)
+    + 			fn = diff_grep;
+    +@@ diffcore-pickaxe.c: void diffcore_pickaxe(struct diff_options *o)
+    + 			 * t4209-log-pickaxe.sh.
+    + 			 */
+    + 			BUG("unreachable");
+    ++
+    ++		o->pickaxe_fn = fn;
+    + 	} else if (opts & DIFF_PICKAXE_KIND_OBJFIND) {
+    + 		fn = NULL;
+      	} else {
+    - 		prefix = NULL;
+    + 		BUG("unknown pickaxe_opts flag");
+      	}
+    -+	assert(!prefix || *prefix);
+    - 	precompose_argv_prefix(argc, argv, NULL);
+    - 	if (use_pager == -1 && run_setup &&
+    - 		!(p->option & DELAY_PAGER_CONFIG))
+    -
+    - ## grep.c ##
+    -@@ grep.c: int grep_config(const char *var, const char *value, void *cb)
+    -  * default values from the template we read the configuration
+    -  * information in an earlier call to git_config(grep_config).
+    -  */
+    --void grep_init(struct grep_opt *opt, struct repository *repo, const char *prefix)
+    -+void grep_init(struct grep_opt *opt, struct repository *repo)
+    - {
+    - 	*opt = grep_defaults;
+    ++}
+      
+    - 	opt->repo = repo;
+    --	opt->prefix = prefix;
+    --	opt->prefix_length = (prefix && *prefix) ? strlen(prefix) : 0;
+    - 	opt->pattern_tail = &opt->pattern_list;
+    - 	opt->header_tail = &opt->header_list;
+    - }
+    -
+    - ## grep.h ##
+    -@@ grep.h: struct grep_opt {
+    - 	 */
+    - 	struct repository *repo;
+    - 
+    --	const char *prefix;
+    --	int prefix_length;
+    - 	int linenum;
+    - 	int columnnum;
+    - 	int invert;
+    -@@ grep.h: struct grep_opt {
+    - };
+    +-	pickaxe(&diff_queued_diff, o, &opt, fn);
+    ++void diffcore_pickaxe(struct diff_options *o)
+    ++{
+    ++	if (!o->pickaxed_compiled)
+    ++		compile_pickaxe(o);
+    ++	pickaxe(&diff_queued_diff, o, &o->pickaxe_grep_opt, o->pickaxe_fn);
+      
+    - int grep_config(const char *var, const char *value, void *);
+    --void grep_init(struct grep_opt *, struct repository *repo, const char *prefix);
+    -+void grep_init(struct grep_opt *, struct repository *repo);
+    - void grep_commit_pattern_type(enum grep_pattern_type, struct grep_opt *opt);
+    +-	if (opts & ~DIFF_PICKAXE_KIND_OBJFIND)
+    +-		free_grep_patterns(&opt);
+    ++	/*if (opts & ~DIFF_PICKAXE_KIND_OBJFIND)
+    ++		free_grep_patterns(&o->pickaxe_grep_opt);*/
+      
+    - void append_grep_pat(struct grep_opt *opt, const char *pat, size_t patlen, const char *origin, int no, enum grep_pat_token t);
+    -
+    - ## revision.c ##
+    -@@ revision.c: void repo_init_revisions(struct repository *r,
+    - 	revs->commit_format = CMIT_FMT_DEFAULT;
+    - 	revs->expand_tabs_in_log_default = 8;
+    - 
+    --	grep_init(&revs->grep_filter, revs->repo, prefix);
+    -+	grep_init(&revs->grep_filter, revs->repo);
+    - 	revs->grep_filter.status_only = 1;
+    - 
+    - 	repo_diff_setup(revs->repo, &revs->diffopt);
+    + 	return;
+    + }
+ 8:  df8ba5aba68 !  7:  d5bc4ad53a2 grep.c: do "if (bool && memchr())" not "if (memchr() && bool)"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep.c: do "if (bool && memchr())" not "if (memchr() && bool)"
+    +    Revert "wip reg_newline etc. test"
+     
+    -    Change code in compile_regexp() to check the cheaper boolean
+    -    "!opt->pcre2" condition before the "memchr()" search.
+    -
+    -    This doesn't noticeably optimize anything, but makes the code more
+    -    obvious and conventional. The line wrapping being added here also
+    -    makes a subsequent commit smaller.
+    -
+    -    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +    This reverts commit 3d49287f57d1c02241b52a41c0e9b143cabb590e.
+     
+      ## grep.c ##
+    -@@ grep.c: static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+    - 	p->ignore_case = opt->ignore_case;
+    - 	p->fixed = opt->fixed;
+    +@@ grep.c: static void compile_fixed_regexp(struct grep_pat *p, struct grep_opt *opt)
+    + static void compile_regexp(struct grep_pat *p, struct grep_opt *opt)
+    + {
+    + 	int err;
+    +-	int regflags = 0;
+    ++	int regflags = 0;//REG_NEWLINE
+    + 
+    + 	if (opt->pattern_type_option == GREP_PATTERN_TYPE_UNSPECIFIED)
+    + 		opt->pattern_type_option = (opt->extended_regexp_option
+    +
+    + ## t/t4209-log-pickaxe.sh ##
+    +@@ t/t4209-log-pickaxe.sh: test_expect_success 'log -S --no-textconv (missing textconv tool)' '
+    + test_expect_success 'setup log -[GS] plain & regex' '
+    + 	test_create_repo GS-plain &&
+    + 	test_commit -C GS-plain --append A data.txt "a" &&
+    +-	test_commit -C GS-plain --append B data.txt "aa" &&
+    ++	test_commit -C GS-plain --append B data.txt "a a" &&
+    + 	test_commit -C GS-plain --append C data.txt "b" &&
+    + 	test_commit -C GS-plain --append D data.txt "[b]" &&
+    + 	test_commit -C GS-plain E data.txt "" &&
+    +@@ t/t4209-log-pickaxe.sh: test_expect_success 'setup log -[GS] plain & regex' '
+    + 	git -C GS-plain log --grep="[ABE]" >A-to-B-then-E-log &&
+    + 	git -C GS-plain log --grep="[CDE]" >C-to-D-then-E-log &&
+    + 	git -C GS-plain log --grep="[DE]" >D-then-E-log &&
+    +-	git -C GS-plain log --grep="[AE]" >A-then-E-log &&
+    + 	git -C GS-plain log >full-log
+    + '
+      
+    --	if (memchr(p->pattern, 0, p->patternlen) && !opt->pcre2)
+    -+	if (!opt->pcre2 &&
+    -+	    memchr(p->pattern, 0, p->patternlen))
+    - 		die(_("given pattern contains NULL byte (via -f <file>). This is only supported with -P under PCRE v2"));
+    +@@ t/t4209-log-pickaxe.sh: test_expect_success 'log -G trims diff new/old [-+]' '
+    + 	git -C GS-plain log -G"[+-]a" >log &&
+    + 	test_must_be_empty log &&
+    + 	git -C GS-plain log -G"^a" >log &&
+    +-	test_cmp A-to-B-then-E-log log
+    +-'
+    +-
+    +-test_expect_success 'log -S --pickaxe-regex uses REG_NOTBOL for subsequent matches' '
+    +-	git -C GS-plain log -S"^a" --pickaxe-regex >log &&
+    +-	test_cmp A-then-E-log log
+    ++	test_cmp log A-to-B-then-E-log
+    + '
+      
+    - 	p->is_fixed = is_fixed(p->pattern, p->patternlen);
+    + test_expect_success 'log -S<pat> is not a regex, but -S<pat> --pickaxe-regex is' '
+ -:  ----------- >  8:  10e58c76f75 free stuff, is the objfind a bug?
+ 5:  1f09de53e07 !  9:  5d5ecbd0ba2 grep.c: don't pass along NULL callback value
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep.c: don't pass along NULL callback value
+    +    better?
+     
+    -    Change grep_cmd_config() to stop passing around the always-NULL "cb"
+    -    value. When this code was added in 7e8f59d577e (grep: color patterns
+    -    in output, 2009-03-07) it was non-NULL, but when that changed in
+    -    15fabd1bbd4 (builtin/grep.c: make configuration callback more
+    -    reusable, 2012-10-09) this code was left behind.
+    -
+    -    In a subsequent change I'll start using the "cb" value, this will make
+    -    it clear which functions we call need it, and which don't.
+    -
+    -    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    -
+    - ## builtin/grep.c ##
+    -@@ builtin/grep.c: static int wait_all(void)
+    + ## diff.c ##
+    +@@ diff.c: static void diff_free_ignore_regex(struct diff_options *options)
+      
+    - static int grep_cmd_config(const char *var, const char *value, void *cb)
+    + static void diff_free_pickaxe(struct diff_options *options)
+      {
+    --	int st = grep_config(var, value, cb);
+    --	if (git_color_default_config(var, value, cb) < 0)
+    -+	int st = grep_config(var, value, NULL);
+    -+	if (git_color_default_config(var, value, NULL) < 0)
+    - 		st = -1;
+    +-	free_grep_patterns(&options->pickaxe_grep_opt);
+    ++	if (options->pickaxe_opts & DIFF_PICKAXE_KINDS_MASK)
+    ++		free_grep_patterns(&options->pickaxe_grep_opt);
+    + }
+      
+    - 	if (!strcmp(var, "grep.threads")) {
+    + void diff_free(struct diff_options *options)
+ -:  ----------- > 10:  39ce7349fc3 fixup earlier, ./t7810-grep.sh (and maybe ./t4014-format-patch.sh?) fails without this
+ 3:  3464c76cfd7 ! 11:  006242a89ab grep tests: add missing "grep.patternType" config tests
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    grep tests: add missing "grep.patternType" config tests
+    +    remove ad-hoc debug
+     
+    -    Extend the grep tests to assert that setting
+    -    "grep.patternType=extended" followed by "grep.patternType=default"
+    -    will behave as if "--basic-regexp" was provided, and not as
+    -    "--extended-regexp". In a subsequent commit we'll need to treat
+    -    "grep.patternType=default" as a special-case, but let's make sure we
+    -    ignore it if it's being set to "default" following an earlier
+    -    non-"default" "grep.patternType" setting.
+    -
+    -    Let's also test what happens when we have a sequence of "extended"
+    -    followed by "default" and "fixed". In that case the "fixed" should
+    -    prevail, as well as tests to check that a "grep.extendedRegexp=true"
+    -    followed by a "grep.extendedRegexp=false" behaves as though
+    -    "grep.extendedRegexp" wasn't provided.
+    -
+    -    See [1] for the source of some of these tests, and their
+    -    initial (pseudocode) implementation, and [2] for a later discussion
+    -    about a breakage due to missing testing (which had been noted in [1]
+    -    all along).
+    -
+    -    1. https://lore.kernel.org/git/xmqqv8zf6j86.fsf@gitster.g/
+    -    2. https://lore.kernel.org/git/xmqqpmoczwtu.fsf@gitster.g/
+    -
+    -    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    -
+    - ## t/t7810-grep.sh ##
+    -@@ t/t7810-grep.sh: do
+    - 		test_cmp expected actual
+    - 	'
+    + ## diffcore-pickaxe.c ##
+    +@@ diffcore-pickaxe.c: static void compile_pickaxe(struct diff_options *o)
+    + 			o->pickaxe_grep_opt.fixed = 1;
+      
+    -+	test_expect_success "grep $L with grep.extendedRegexp is last-one-wins" '
+    -+		echo "${HC}ab:a+bc" >expected &&
+    -+		git \
+    -+			-c grep.extendedRegexp=true \
+    -+			-c grep.patternType=basic \
+    -+			-c grep.extendedRegexp=false \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    -+	test_expect_success "grep $L with grep.extendedRegexp is last-one-wins & defers to grep.patternType" '
+    -+		echo "${HC}ab:abc" >expected &&
+    -+		git \
+    -+			-c grep.extendedRegexp=true \
+    -+			-c grep.patternType=extended \
+    -+			-c grep.extendedRegexp=false \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    -+	test_expect_success "grep $L with grep.extendedRegexp and grep.patternType are both last-one-wins independently (ERE)" '
+    -+		echo "${HC}ab:abc" >expected &&
+    -+		git \
+    -+			-c grep.patternType=fixed \
+    -+			-c grep.extendedRegexp=true \
+    -+			-c grep.patternType=default \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    -+	test_expect_success "grep $L with grep.extendedRegexp and grep.patternType are both last-one-wins independently (ERE)" '
+    -+		echo "${HC}ab:abc" >expected &&
+    -+		git \
+    -+			-c grep.extendedRegexp=false \
+    -+			-c grep.patternType=default \
+    -+			-c grep.extendedRegexp=true \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    -+	test_expect_success "grep $L with grep.extendedRegexp and grep.patternType are both last-one-wins independently (BRE)" '
+    -+		echo "${HC}ab:a+bc" >expected &&
+    -+		git \
+    -+			-c grep.extendedRegexp=true \
+    -+			-c grep.extendedRegexp=false \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    -+	test_expect_success "grep $L with grep.extendedRegexp and grep.patternType are both last-one-wins independently (BRE)" '
+    -+		echo "${HC}ab:abc" >expected &&
+    -+		git \
+    -+			-c grep.extendedRegexp=false \
+    -+			-c grep.extendedRegexp=true \
+    -+			-c grep.patternType=default \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    -+	test_expect_success "grep $L with grep.extendedRegexp and grep.patternType are both last-one-wins independently (BRE)" '
+    -+		echo "${HC}ab:a+bc" >expected &&
+    -+		git \
+    -+			-c grep.patternType=default \
+    -+			-c grep.extendedRegexp=true \
+    -+			-c grep.patternType=basic \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+	test_expect_success "grep $L with grep.patternType=extended and grep.patternType=default" '
+    -+		echo "${HC}ab:a+bc" >expected &&
+    -+		git \
+    -+			-c grep.patternType=extended \
+    -+			-c grep.patternType=default \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    -+	test_expect_success "grep $L with grep.patternType=[extended -> default -> fixed]" '
+    -+		echo "${HC}ab:a+b*c" >expected &&
+    -+		git \
+    -+			-c grep.patternType=extended \
+    -+			-c grep.patternType=default \
+    -+			-c grep.patternType=fixed \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    - 	test_expect_success "grep $L with grep.patternType=extended and grep.extendedRegexp=false" '
+    - 		echo "${HC}ab:abc" >expected &&
+    - 		git \
+    -@@ t/t7810-grep.sh: do
+    - 		test_cmp expected actual
+    - 	'
+    + 		append_grep_pattern(&o->pickaxe_grep_opt, needle, "diffcore-pickaxe", 0, GREP_PATTERN);
+    +-		fprintf(stderr, "compiling for %s\n", needle);
+    + 		compile_grep_patterns(&o->pickaxe_grep_opt);
+      
+    -+	test_expect_success "grep $L with grep.extendedRegexp=false and grep.patternType=default" '
+    -+		echo "${HC}ab:abc" >expected &&
+    -+		git \
+    -+			-c grep.extendedRegexp=false \
+    -+			-c grep.patternType=extended \
+    -+			grep "a+b*c" $H ab >actual &&
+    -+		test_cmp expected actual
+    -+	'
+    -+
+    - 	test_expect_success "grep $L with grep.extendedRegexp=true and grep.patternType=basic" '
+    - 		echo "${HC}ab:a+bc" >expected &&
+    - 		git \
+    + 		if (opts & DIFF_PICKAXE_KIND_G)
+ 7:  6446b4f0f33 <  -:  ----------- grep.h: make "grep_opt.pattern_type_option" use its enum
+ -:  ----------- > 12:  f44714fe59e fixup for being on top of avar/drop-grep-prefix-length now
+-- 
+2.35.1.1027.g942e091e858
+
