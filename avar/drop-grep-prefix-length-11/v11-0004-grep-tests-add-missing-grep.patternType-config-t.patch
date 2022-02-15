@@ -1,0 +1,108 @@
+From a9286d7353fb71649095d9cf4a609a437f9edfe9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v11-04.10-a9286d7353f-20220215T235454Z-avarab@gmail.com>
+In-Reply-To: <cover-v11-00.10-00000000000-20220215T235454Z-avarab@gmail.com>
+References: <cover-v10-0.9-00000000000-20220204T211534Z-avarab@gmail.com>
+	<cover-v11-00.10-00000000000-20220215T235454Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 26 Nov 2021 12:53:01 +0100
+Subject: [PATCH v11 04/10] grep tests: add missing "grep.patternType" config
+ tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the grep tests to assert that setting
+"grep.patternType=extended" followed by "grep.patternType=default"
+will behave as if "--basic-regexp" was provided, and not as
+"--extended-regexp". In a subsequent commit we'll need to treat
+"grep.patternType=default" as a special-case, but let's make sure we
+ignore it if it's being set to "default" following an earlier
+non-"default" "grep.patternType" setting.
+
+Let's also test what happens when we have a sequence of "extended"
+followed by "default" and "fixed". In that case the "fixed" should
+prevail, as well as tests to check that a "grep.extendedRegexp=true"
+followed by a "grep.extendedRegexp=false" behaves as though
+"grep.extendedRegexp" wasn't provided.
+
+See [1] for the source of some of these tests, and their
+initial (pseudocode) implementation, and [2] for a later discussion
+about a breakage due to missing testing (which had been noted in [1]
+all along).
+
+1. https://lore.kernel.org/git/xmqqv8zf6j86.fsf@gitster.g/
+2. https://lore.kernel.org/git/xmqqpmoczwtu.fsf@gitster.g/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Junio C Hamano <gitster@pobox.com>
+---
+ t/t7810-grep.sh | 52 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index 83b8f9f3421..f92a7eba56b 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -461,6 +461,58 @@ do
+ 		-c grep.extendedRegexp=true \
+ 		-c grep.patternType=basic
+ 
++	# grep.extendedRegexp is last-one-wins
++	test_pattern_type "$H" "$HC" "$L" BRE \
++		-c grep.extendedRegexp=true \
++		-c grep.extendedRegexp=false
++
++	# grep.patternType=basic pays no attention to grep.extendedRegexp
++	test_pattern_type "$H" "$HC" "$L" BRE \
++		-c grep.extendedRegexp=true \
++		-c grep.patternType=basic \
++		-c grep.extendedRegexp=false
++
++	# grep.patternType=extended pays no attention to grep.extendedRegexp
++	test_pattern_type "$H" "$HC" "$L" ERE \
++		-c grep.extendedRegexp=true \
++		-c grep.patternType=extended \
++		-c grep.extendedRegexp=false
++
++	# grep.extendedRegexp is used with a last-one-wins grep.patternType=default
++	test_pattern_type "$H" "$HC" "$L" ERE \
++		-c grep.patternType=fixed \
++		-c grep.extendedRegexp=true \
++		-c grep.patternType=default
++
++	# grep.extendedRegexp is used with earlier grep.patternType=default
++	test_pattern_type "$H" "$HC" "$L" ERE \
++		-c grep.extendedRegexp=false \
++		-c grep.patternType=default \
++		-c grep.extendedRegexp=true
++
++	# grep.extendedRegexp is used with a last-one-loses grep.patternType=default
++	test_pattern_type "$H" "$HC" "$L" ERE \
++		-c grep.extendedRegexp=false \
++		-c grep.extendedRegexp=true \
++		-c grep.patternType=default
++
++	# grep.extendedRegexp and grep.patternType are both last-one-wins independently
++	test_pattern_type "$H" "$HC" "$L" BRE \
++		-c grep.patternType=default \
++		-c grep.extendedRegexp=true \
++		-c grep.patternType=basic
++
++	# grep.patternType=extended and grep.patternType=default
++	test_pattern_type "$H" "$HC" "$L" BRE \
++		-c grep.patternType=extended \
++		-c grep.patternType=default
++
++	# grep.patternType=[extended -> default -> fixed] (BRE)" '
++	test_pattern_type "$H" "$HC" "$L" FIX \
++		-c grep.patternType=extended \
++		-c grep.patternType=default \
++		-c grep.patternType=fixed
++
+ 	test_expect_success "grep --count $L" '
+ 		echo ${HC}ab:3 >expected &&
+ 		git grep --count -e b $H -- ab >actual &&
+-- 
+2.35.1.1027.g942e091e858
+
