@@ -1,0 +1,92 @@
+From 764147e90e13c4a245215ed3bac5745fc6a5a102 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-3.5-764147e90e1-20220216T081203Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.5-00000000000-20220216T081203Z-avarab@gmail.com>
+References: <cover-v2-0.5-00000000000-20220204T235143Z-avarab@gmail.com>
+	<cover-v3-0.5-00000000000-20220216T081203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 30 Nov 2021 10:54:59 +0100
+Subject: [PATCH v3 3/5] date API: provide and use a DATE_MODE_INIT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Provide and use a DATE_MODE_INIT macro. Most of the users of struct
+date_mode" use it via pretty.h's "struct pretty_print_context" which
+doesn't have an initialization macro, so we're still bound to being
+initialized to "{ 0 }" by default.
+
+But we can change the couple of callers that directly declared a
+variable on the stack to instead use the initializer, and thus do away
+with the "mode.local = 0" added in add00ba2de9 (date: make "local"
+orthogonal to date format, 2015-09-03).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ date.c               | 3 +--
+ date.h               | 4 ++++
+ ref-filter.c         | 2 +-
+ t/helper/test-date.c | 2 +-
+ 4 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/date.c b/date.c
+index 863b07e9e63..54c709e4a08 100644
+--- a/date.c
++++ b/date.c
+@@ -206,11 +206,10 @@ void show_date_relative(timestamp_t time, struct strbuf *timebuf)
+ 
+ struct date_mode *date_mode_from_type(enum date_mode_type type)
+ {
+-	static struct date_mode mode;
++	static struct date_mode mode = DATE_MODE_INIT;
+ 	if (type == DATE_STRFTIME)
+ 		BUG("cannot create anonymous strftime date_mode struct");
+ 	mode.type = type;
+-	mode.local = 0;
+ 	return &mode;
+ }
+ 
+diff --git a/date.h b/date.h
+index 5db9ec8dd29..c3a00d08ed6 100644
+--- a/date.h
++++ b/date.h
+@@ -20,6 +20,10 @@ struct date_mode {
+ 	int local;
+ };
+ 
++#define DATE_MODE_INIT { \
++	.type = DATE_NORMAL, \
++}
++
+ /*
+  * Convenience helper for passing a constant type, like:
+  *
+diff --git a/ref-filter.c b/ref-filter.c
+index f7a2f17bfd9..3399bde932f 100644
+--- a/ref-filter.c
++++ b/ref-filter.c
+@@ -1251,7 +1251,7 @@ static void grab_date(const char *buf, struct atom_value *v, const char *atomnam
+ 	char *zone;
+ 	timestamp_t timestamp;
+ 	long tz;
+-	struct date_mode date_mode = { DATE_NORMAL };
++	struct date_mode date_mode = DATE_MODE_INIT;
+ 	const char *formatp;
+ 
+ 	/*
+diff --git a/t/helper/test-date.c b/t/helper/test-date.c
+index ded3d059f56..111071e1dd1 100644
+--- a/t/helper/test-date.c
++++ b/t/helper/test-date.c
+@@ -35,7 +35,7 @@ static void show_human_dates(const char **argv)
+ 
+ static void show_dates(const char **argv, const char *format)
+ {
+-	struct date_mode mode;
++	struct date_mode mode = DATE_MODE_INIT;
+ 
+ 	parse_date_format(format, &mode);
+ 	for (; *argv; argv++) {
+-- 
+2.35.1.1028.g2d2d4be19de
+

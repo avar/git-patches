@@ -1,0 +1,135 @@
+From b1ee9a30913cb5cb440515c8984217815af09e73 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-5.5-b1ee9a30913-20220216T081203Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.5-00000000000-20220216T081203Z-avarab@gmail.com>
+References: <cover-v2-0.5-00000000000-20220204T235143Z-avarab@gmail.com>
+	<cover-v3-0.5-00000000000-20220216T081203Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 30 Nov 2021 11:48:48 +0100
+Subject: [PATCH v3 5/5] date API: add and use a date_mode_release()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in the parse_date_format() function by providing a
+new date_mode_release() companion function.
+
+By using this in "t/helper/test-date.c" we can mark the
+"t0006-date.sh" test as passing when git is compiled with
+SANITIZE=leak, and whitelist it to run under
+"GIT_TEST_PASSING_SANITIZE_LEAK=true" by adding
+"TEST_PASSES_SANITIZE_LEAK=true" to the test itself.
+
+The other tests that expose this memory leak (i.e. take the
+"mode->type == DATE_STRFTIME" branch in parse_date_format()) are
+"t6300-for-each-ref.sh" and "t7004-tag.sh". The former is due to an
+easily fixed leak in "ref-filter.c", and brings the failures in
+"t6300-for-each-ref.sh" down from 51 to 48.
+
+Fixing the remaining leaks will have to wait until there's a
+release_revisions() in "revision.c", as they have to do with leaks via
+"struct rev_info".
+
+There is also a leak in "builtin/blame.c" due to its call to
+parse_date_format() to parse the "blame.date" configuration. However
+as it declares a file-level "static struct date_mode blame_date_mode"
+to track the data, LSAN will not report it as a leak. It's possible to
+get valgrind(1) to complain about it with e.g.:
+
+    valgrind --leak-check=full --show-leak-kinds=all ./git -P -c blame.date=format:%Y blame README.md
+
+But let's focus on things LSAN complains about, and are thus
+observable with "TEST_PASSES_SANITIZE_LEAK=true". We should get to
+fixing memory leaks in "builtin/blame.c", but as doing so would
+require some re-arrangement of cmd_blame() let's leave it for some
+other time.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ date.c               | 5 +++++
+ date.h               | 9 ++++++++-
+ ref-filter.c         | 1 +
+ t/helper/test-date.c | 2 ++
+ t/t0006-date.sh      | 2 ++
+ 5 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/date.c b/date.c
+index 54c709e4a08..68a260c214d 100644
+--- a/date.c
++++ b/date.c
+@@ -993,6 +993,11 @@ void parse_date_format(const char *format, struct date_mode *mode)
+ 		die("unknown date format %s", format);
+ }
+ 
++void date_mode_release(struct date_mode *mode)
++{
++	free((char *)mode->strftime_fmt);
++}
++
+ void datestamp(struct strbuf *out)
+ {
+ 	time_t now;
+diff --git a/date.h b/date.h
+index bbd6a6477b5..5d4eaba0a90 100644
+--- a/date.h
++++ b/date.h
+@@ -50,10 +50,17 @@ const char *show_date(timestamp_t time, int timezone, const struct date_mode *mo
+  *
+  * When the "date_mode_type" is DATE_STRFTIME the "strftime_fmt"
+  * member of "struct date_mode" will be a malloc()'d format string to
+- * be used with strbuf_addftime().
++ * be used with strbuf_addftime(), in which case you'll need to call
++ * date_mode_release() later.
+  */
+ void parse_date_format(const char *format, struct date_mode *mode);
+ 
++/**
++ * Release a "struct date_mode", currently only required if
++ * parse_date_format() has parsed a "DATE_STRFTIME" format.
++ */
++void date_mode_release(struct date_mode *mode);
++
+ void show_date_relative(timestamp_t time, struct strbuf *timebuf);
+ int parse_date(const char *date, struct strbuf *out);
+ int parse_date_basic(const char *date, timestamp_t *timestamp, int *offset);
+diff --git a/ref-filter.c b/ref-filter.c
+index 3399bde932f..7838bd22b8d 100644
+--- a/ref-filter.c
++++ b/ref-filter.c
+@@ -1276,6 +1276,7 @@ static void grab_date(const char *buf, struct atom_value *v, const char *atomnam
+ 		goto bad;
+ 	v->s = xstrdup(show_date(timestamp, tz, &date_mode));
+ 	v->value = timestamp;
++	date_mode_release(&date_mode);
+ 	return;
+  bad:
+ 	v->s = xstrdup("");
+diff --git a/t/helper/test-date.c b/t/helper/test-date.c
+index 111071e1dd1..45951b1df87 100644
+--- a/t/helper/test-date.c
++++ b/t/helper/test-date.c
+@@ -54,6 +54,8 @@ static void show_dates(const char **argv, const char *format)
+ 
+ 		printf("%s -> %s\n", *argv, show_date(t, tz, &mode));
+ 	}
++
++	date_mode_release(&mode);
+ }
+ 
+ static void parse_dates(const char **argv)
+diff --git a/t/t0006-date.sh b/t/t0006-date.sh
+index 794186961ee..2490162071e 100755
+--- a/t/t0006-date.sh
++++ b/t/t0006-date.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='test date parsing and printing'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ # arbitrary reference time: 2009-08-30 19:20:00
+-- 
+2.35.1.1028.g2d2d4be19de
+
