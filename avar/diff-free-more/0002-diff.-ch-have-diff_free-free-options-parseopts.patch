@@ -1,0 +1,56 @@
+From 7f32006241906f65e18ef43d4d236aa39daa61a5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-7f320062419-20220216T084507Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20220216T084507Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220216T084507Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 30 Sep 2021 21:20:48 +0200
+Subject: [PATCH 2/2] diff.[ch]: have diff_free() free options->parseopts
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "struct option" added in 4a288478394 (diff.c: prepare to use
+parse_options() for parsing, 2019-01-27) would be free'd in the case
+of diff_setup_done() being called.
+
+But not all codepaths that allocate it reach that,
+e.g. "t6427-diff3-conflict-markers.sh" will now free memory that it
+didn't free before. By using FREE_AND_NULL() here (which
+diff_setup_done() also does) we ensure that we free the memory, and
+that we won't have double-free's.
+
+Before this running:
+
+    ./t6427-diff3-conflict-markers.sh -vixd --run=7
+
+Would report:
+
+    SUMMARY: LeakSanitizer: 7823 byte(s) leaked in 6 allocation(s).
+
+But now we'll report:
+
+    SUMMARY: LeakSanitizer: 703 byte(s) leaked in 5 allocation(s).
+
+I.e. the largest leak in that particular test has now been addressed.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/diff.c b/diff.c
+index 0aef3db6e10..fb8bc8aadbf 100644
+--- a/diff.c
++++ b/diff.c
+@@ -6346,6 +6346,7 @@ void diff_free(struct diff_options *options)
+ 	diff_free_file(options);
+ 	diff_free_ignore_regex(options);
+ 	clear_pathspec(&options->pathspec);
++	FREE_AND_NULL(options->parseopts);
+ }
+ 
+ void diff_flush(struct diff_options *options)
+-- 
+2.35.1.1028.g2d2d4be19de
+

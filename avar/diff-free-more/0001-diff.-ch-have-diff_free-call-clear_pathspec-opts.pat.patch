@@ -1,0 +1,142 @@
+From 1c6c7f0f52f07ac7fc14bde3621c5839b598694c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.2-1c6c7f0f52f-20220216T084507Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20220216T084507Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220216T084507Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 30 Sep 2021 17:04:31 +0200
+Subject: [PATCH 1/2] diff.[ch]: have diff_free() call
+ clear_pathspec(opts.pathspec)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Have the diff_free() function call clear_pathspec(). Since the
+diff_flush() function calls this all its callers can be simplified to
+rely on it instead.
+
+When I added the diff_free() function in e900d494dcf (diff: add an API
+for deferred freeing, 2021-02-11) I simply missed this, or wasn't
+interested in it. Let's consolidate this now. This means that any
+future callers (and I've got revision.c in mind) that embed a "struct
+diff_options" can simply call diff_free() instead of needing know that
+it has an embedded pathspec.
+
+This does fix a bunch of leaks, but I can't mark any test here as
+passing under the SANITIZE=leak testing mode because in
+886e1084d78 (builtin/: add UNLEAKs, 2017-10-01) an UNLEAK(rev) was
+added, which plasters over the memory
+leak. E.g. "t4011-diff-symlink.sh" would report fewer leaks with this
+fix, but because of the UNLEAK() reports none.
+
+I'll eventually loop around to removing that UNLEAK(rev) annotation as
+I'll fix deeper issues with the revisions API leaking. This is one
+small step on the way there, a new freeing function in revisions.c
+will want to call this diff_free().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ add-interactive.c | 6 +++---
+ blame.c           | 3 ---
+ builtin/reset.c   | 1 -
+ diff.c            | 1 +
+ notes-merge.c     | 2 --
+ 5 files changed, 4 insertions(+), 9 deletions(-)
+
+diff --git a/add-interactive.c b/add-interactive.c
+index 6498ae196f1..e1ab39cce30 100644
+--- a/add-interactive.c
++++ b/add-interactive.c
+@@ -797,14 +797,14 @@ static int run_revert(struct add_i_state *s, const struct pathspec *ps,
+ 	diffopt.flags.override_submodule_config = 1;
+ 	diffopt.repo = s->r;
+ 
+-	if (do_diff_cache(&oid, &diffopt))
++	if (do_diff_cache(&oid, &diffopt)) {
++		diff_free(&diffopt);
+ 		res = -1;
+-	else {
++	} else {
+ 		diffcore_std(&diffopt);
+ 		diff_flush(&diffopt);
+ 	}
+ 	free(paths);
+-	clear_pathspec(&diffopt.pathspec);
+ 
+ 	if (!res && write_locked_index(s->r->index, &index_lock,
+ 				       COMMIT_LOCK) < 0)
+diff --git a/blame.c b/blame.c
+index 206c295660f..401990726e7 100644
+--- a/blame.c
++++ b/blame.c
+@@ -1403,7 +1403,6 @@ static struct blame_origin *find_origin(struct repository *r,
+ 		}
+ 	}
+ 	diff_flush(&diff_opts);
+-	clear_pathspec(&diff_opts.pathspec);
+ 	return porigin;
+ }
+ 
+@@ -1447,7 +1446,6 @@ static struct blame_origin *find_rename(struct repository *r,
+ 		}
+ 	}
+ 	diff_flush(&diff_opts);
+-	clear_pathspec(&diff_opts.pathspec);
+ 	return porigin;
+ }
+ 
+@@ -2328,7 +2326,6 @@ static void find_copy_in_parent(struct blame_scoreboard *sb,
+ 	} while (unblamed);
+ 	target->suspects = reverse_blame(leftover, NULL);
+ 	diff_flush(&diff_opts);
+-	clear_pathspec(&diff_opts.pathspec);
+ }
+ 
+ /*
+diff --git a/builtin/reset.c b/builtin/reset.c
+index b97745ee94e..24968dd6282 100644
+--- a/builtin/reset.c
++++ b/builtin/reset.c
+@@ -274,7 +274,6 @@ static int read_from_tree(const struct pathspec *pathspec,
+ 		return 1;
+ 	diffcore_std(&opt);
+ 	diff_flush(&opt);
+-	clear_pathspec(&opt.pathspec);
+ 
+ 	return 0;
+ }
+diff --git a/diff.c b/diff.c
+index c862771a589..0aef3db6e10 100644
+--- a/diff.c
++++ b/diff.c
+@@ -6345,6 +6345,7 @@ void diff_free(struct diff_options *options)
+ 
+ 	diff_free_file(options);
+ 	diff_free_ignore_regex(options);
++	clear_pathspec(&options->pathspec);
+ }
+ 
+ void diff_flush(struct diff_options *options)
+diff --git a/notes-merge.c b/notes-merge.c
+index b4a3a903e86..7ba40cfb080 100644
+--- a/notes-merge.c
++++ b/notes-merge.c
+@@ -175,7 +175,6 @@ static struct notes_merge_pair *diff_tree_remote(struct notes_merge_options *o,
+ 		       oid_to_hex(&mp->remote));
+ 	}
+ 	diff_flush(&opt);
+-	clear_pathspec(&opt.pathspec);
+ 
+ 	*num_changes = len;
+ 	return changes;
+@@ -261,7 +260,6 @@ static void diff_tree_local(struct notes_merge_options *o,
+ 		       oid_to_hex(&mp->local));
+ 	}
+ 	diff_flush(&opt);
+-	clear_pathspec(&opt.pathspec);
+ }
+ 
+ static void check_notes_merge_worktree(struct notes_merge_options *o)
+-- 
+2.35.1.1028.g2d2d4be19de
+
