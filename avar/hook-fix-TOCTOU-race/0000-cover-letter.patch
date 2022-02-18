@@ -1,0 +1,194 @@
+From d01d088073b5f94ab927203ba86aef712892b505 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-0.2-00000000000-20220218T203740Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 18 Feb 2022 21:37:40 +0100
+Subject: [PATCH 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  merge: don't run post-hook logic on --no-verify
+  hooks: fix a TOCTOU in "did we run a hook?" heuristic
+
+ builtin/commit.c       | 18 +++++++++++-------
+ builtin/merge.c        | 28 +++++++++++++++++-----------
+ builtin/receive-pack.c |  8 +++++---
+ commit.c               |  2 +-
+ commit.h               |  3 ++-
+ hook.c                 |  7 +++++++
+ hook.h                 |  9 +++++++++
+ sequencer.c            |  4 ++--
+ 8 files changed, 54 insertions(+), 25 deletions(-)
+
+Range-diff:
+-:  ----------- > 1:  9b5144daee6 merge: don't run post-hook logic on --no-verify
+1:  fe056098534 ! 2:  d01d088073b hooks: fix a TOCTOU in "did we run a hook?" heuristic
+    @@ builtin/commit.c: static int prepare_to_commit(const char *index_file, const cha
+      	int clean_message_contents = (cleanup_mode != COMMIT_MSG_CLEANUP_NONE);
+      	int old_display_comment_prefix;
+      	int merge_contains_scissors = 0;
+    -+	int invoked_hook = 0;
+    ++	int invoked_hook;
+      
+      	/* This checks and barfs if author is badly specified */
+      	determine_author_info(author_ident);
+    @@ builtin/commit.c: int cmd_commit(int argc, const char **argv, const char *prefix
+     
+      ## builtin/merge.c ##
+     @@ builtin/merge.c: static void prepare_to_commit(struct commit_list *remoteheads)
+    - {
+    - 	struct strbuf msg = STRBUF_INIT;
+      	const char *index_file = get_index_file();
+    -+	int invoked_hook = 0;
+      
+    --	if (!no_verify && run_commit_hook(0 < option_edit, index_file, "pre-merge-commit", NULL))
+    -+	if (!no_verify && run_commit_hook(0 < option_edit, index_file,
+    -+					  &invoked_hook, "pre-merge-commit",
+    -+					  NULL))
+    - 		abort_commit(remoteheads, NULL);
+    - 	/*
+    --	 * Re-read the index as pre-merge-commit hook could have updated it,
+    --	 * and write it out as a tree.  We must do this before we invoke
+    -+	 * Re-read the index as the pre-merge-commit hook was invoked
+    -+	 * and could have updated it. We must do this before we invoke
+    - 	 * the editor and after we invoke run_status above.
+    - 	 */
+    --	if (hook_exists("pre-merge-commit"))
+    -+	if (invoked_hook)
+    - 		discard_cache();
+    + 	if (!no_verify) {
+    +-		if (run_commit_hook(0 < option_edit, index_file,
+    ++		int invoked_hook;
+    ++
+    ++		if (run_commit_hook(0 < option_edit, index_file, &invoked_hook,
+    + 				    "pre-merge-commit", NULL))
+    + 			abort_commit(remoteheads, NULL);
+    + 		/*
+    +@@ builtin/merge.c: static void prepare_to_commit(struct commit_list *remoteheads)
+    + 		 * and write it out as a tree.  We must do this before we invoke
+    + 		 * the editor and after we invoke run_status above.
+    + 		 */
+    +-		if (hook_exists("pre-merge-commit"))
+    ++		if (invoked_hook)
+    + 			discard_cache();
+    + 	}
+      	read_cache_from(index_file);
+    - 	strbuf_addbuf(&msg, &merge_msg);
+     @@ builtin/merge.c: static void prepare_to_commit(struct commit_list *remoteheads)
+      		append_signoff(&msg, ignore_non_trailer(msg.buf, msg.len), 0);
+      	write_merge_heads(remoteheads);
+    @@ builtin/receive-pack.c: static const char *push_to_deploy(unsigned char *sha1,
+      	strvec_pushv(&opt.env, env->v);
+     @@ builtin/receive-pack.c: static const char *update_worktree(unsigned char *sha1, const struct worktree *w
+      {
+    - 	const char *retval, *work_tree, *git_dir = NULL;
+    + 	const char *retval, *git_dir;
+      	struct strvec env = STRVEC_INIT;
+    -+	int invoked_hook = 0;
+    ++	int invoked_hook;
+      
+    - 	if (worktree && worktree->path)
+    - 		work_tree = worktree->path;
+    + 	if (!worktree || !worktree->path)
+    + 		BUG("worktree->path must be non-NULL");
+     @@ builtin/receive-pack.c: static const char *update_worktree(unsigned char *sha1, const struct worktree *w
+      
+      	strvec_pushf(&env, "GIT_DIR=%s", absolute_path(git_dir));
+      
+     -	if (!hook_exists(push_to_checkout_hook))
+    -+	retval = push_to_checkout(sha1, &invoked_hook, &env, work_tree);
+    ++	retval = push_to_checkout(sha1, &invoked_hook, &env, worktree->path);
+     +	if (!invoked_hook)
+    - 		retval = push_to_deploy(sha1, &env, work_tree);
+    + 		retval = push_to_deploy(sha1, &env, worktree->path);
+     -	else
+    --		retval = push_to_checkout(sha1, &env, work_tree);
+    +-		retval = push_to_checkout(sha1, &env, worktree->path);
+      
+      	strvec_clear(&env);
+      	return retval;
+    @@ commit.c: size_t ignore_non_trailer(const char *buf, size_t len)
+      }
+      
+      int run_commit_hook(int editor_is_used, const char *index_file,
+    -+		    int *invoked_hook,
+    - 		    const char *name, ...)
+    +-		    const char *name, ...)
+    ++		    int *invoked_hook, const char *name, ...)
+      {
+      	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
+    + 	va_list args;
+     
+      ## commit.h ##
+     @@ commit.h: int compare_commits_by_commit_date(const void *a_, const void *b_, void *unused)
+    @@ commit.h: int compare_commits_by_commit_date(const void *a_, const void *b_, voi
+     
+      ## hook.c ##
+     @@ hook.c: static int notify_hook_finished(int result,
+    + 				void *pp_task_cb)
+    + {
+    + 	struct hook_cb_data *hook_cb = pp_cb;
+    ++	struct run_hooks_opt *opt = hook_cb->options;
+      
+      	hook_cb->rc |= result;
+      
+    -+	if (hook_cb->invoked_hook)
+    -+		*hook_cb->invoked_hook = 1;
+    ++	if (opt->invoked_hook)
+    ++		*opt->invoked_hook = 1;
+     +
+      	return 0;
+      }
+      
+    -@@ hook.c: int run_hooks(const char *hook_name, const char *hook_path,
+    - 		.rc = 0,
+    - 		.hook_name = hook_name,
+    - 		.options = options,
+    -+		.invoked_hook = options->invoked_hook,
+    - 	};
+    - 	int jobs = 1;
+    +@@ hook.c: int run_hooks_opt(const char *hook_name, struct run_hooks_opt *options)
+    + 	if (!options)
+    + 		BUG("a struct run_hooks_opt must be provided to run_hooks");
+    + 
+    ++	if (options->invoked_hook)
+    ++		*options->invoked_hook = 0;
+    ++
+    + 	if (!hook_path && !options->error_if_missing)
+    + 		goto cleanup;
+      
+     
+      ## hook.h ##
+     @@ hook.h: struct run_hooks_opt
+    - 	 * for an example.
+    + 	 * translates to "struct child_process"'s "dir" member.
+      	 */
+    - 	consume_sideband_fn consume_sideband;
+    + 	const char *dir;
+     +
+    -+	/*
+    ++	/**
+     +	 * A pointer which if provided will be set to 1 or 0 depending
+     +	 * on if a hook was invoked (i.e. existed), regardless of
+     +	 * whether or not that was successful. Used for avoiding
+    @@ hook.h: struct run_hooks_opt
+      };
+      
+      #define RUN_HOOKS_OPT_INIT { \
+    -@@ hook.h: struct hook_cb_data {
+    - 	const char *hook_name;
+    - 	struct hook *run_me;
+    - 	struct run_hooks_opt *options;
+    -+	int *invoked_hook;
+    - };
+    - 
+    - /**
+     
+      ## sequencer.c ##
+     @@ sequencer.c: static int run_prepare_commit_msg_hook(struct repository *r,
+-- 
+2.35.1.1031.g277d4562d2e
+
