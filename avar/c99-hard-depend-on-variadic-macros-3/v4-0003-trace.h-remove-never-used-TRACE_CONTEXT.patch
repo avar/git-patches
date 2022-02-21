@@ -1,0 +1,123 @@
+From 27ea260bbea7fc1b4e7ea4d7a8cb0bfed6e6f189 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-3.3-27ea260bbea-20220221T160236Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.3-00000000000-20220221T160236Z-avarab@gmail.com>
+References: <cover-v3-0.3-00000000000-20220219T103752Z-avarab@gmail.com>
+	<cover-v4-0.3-00000000000-20220221T160236Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 19 Feb 2022 11:04:05 +0100
+Subject: [PATCH v4 3/3] trace.h: remove never-used TRACE_CONTEXT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The definition of "TRACE_CONTEXT" as "__FILE__" added in
+e05bed960d3 (trace: add 'file:line' to all trace output, 2014-07-12)
+appeared between v6[1] and v7[2] of the series that added it.
+
+It does not appear to have been something anybody asked for, and
+doesn't seem to have been used by anyone since then to override it to
+something other than the default __FILE__.
+
+When trace2 was added in ee4512ed481 (trace2: create new combined
+trace facility, 2019-02-22) it added no such "configuration", and
+we're unlikely to ever want to configure this through these means.
+
+I.e. I have considered (and probably will) make the usage.c macros
+support optional __FUNCTION__ at some point, that would need to have
+them passed as "mandatory" parameters (which might default to NULL) to
+the underlying function, for the reasons explained in the comment
+being removed here.
+
+So let's just remove this indirection in favor of using __FILE__
+directly.
+
+1. https://lore.kernel.org/git/53A4A2CD.8010003@gmail.com/
+2. https://lore.kernel.org/git/53B33DED.3030809@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ trace.h | 25 ++++++-------------------
+ 1 file changed, 6 insertions(+), 19 deletions(-)
+
+diff --git a/trace.h b/trace.h
+index 4e771f86ac2..5b52c1e23fd 100644
+--- a/trace.h
++++ b/trace.h
+@@ -126,19 +126,6 @@ void trace_command_performance(const char **argv);
+ void trace_verbatim(struct trace_key *key, const void *buf, unsigned len);
+ uint64_t trace_performance_enter(void);
+ 
+-/*
+- * TRACE_CONTEXT may be set to __FUNCTION__ if the compiler supports it. The
+- * default is __FILE__, as it is consistent with assert(), and static function
+- * names are not necessarily unique.
+- *
+- * __FILE__ ":" __FUNCTION__ doesn't work with GNUC, as __FILE__ is supplied
+- * by the preprocessor as a string literal, and __FUNCTION__ is filled in by
+- * the compiler as a string constant.
+- */
+-#ifndef TRACE_CONTEXT
+-# define TRACE_CONTEXT __FILE__
+-#endif
+-
+ /**
+  * Macros to add the file:line of the calling code, instead of that of
+  * the trace function itself.
+@@ -171,7 +158,7 @@ uint64_t trace_performance_enter(void);
+ #define trace_printf_key(key, ...)					    \
+ 	do {								    \
+ 		if (trace_pass_fl(key))					    \
+-			trace_printf_key_fl(TRACE_CONTEXT, __LINE__, key,   \
++			trace_printf_key_fl(__FILE__, __LINE__, key,	    \
+ 					    __VA_ARGS__);		    \
+ 	} while (0)
+ 
+@@ -183,7 +170,7 @@ uint64_t trace_performance_enter(void);
+ #define trace_argv_printf(argv, ...)					    \
+ 	do {								    \
+ 		if (trace_pass_fl(&trace_default_key))			    \
+-			trace_argv_printf_fl(TRACE_CONTEXT, __LINE__,	    \
++			trace_argv_printf_fl(__FILE__, __LINE__,	    \
+ 					    argv, __VA_ARGS__);		    \
+ 	} while (0)
+ 
+@@ -196,7 +183,7 @@ uint64_t trace_performance_enter(void);
+ #define trace_strbuf(key, data)						    \
+ 	do {								    \
+ 		if (trace_pass_fl(key))					    \
+-			trace_strbuf_fl(TRACE_CONTEXT, __LINE__, key, data);\
++			trace_strbuf_fl(__FILE__, __LINE__, key, data);	    \
+ 	} while (0)
+ 
+ /**
+@@ -220,7 +207,7 @@ uint64_t trace_performance_enter(void);
+ #define trace_performance(nanos, ...)					    \
+ 	do {								    \
+ 		if (trace_pass_fl(&trace_perf_key))			    \
+-			trace_performance_fl(TRACE_CONTEXT, __LINE__, nanos,\
++			trace_performance_fl(__FILE__, __LINE__, nanos,	    \
+ 					     __VA_ARGS__);		    \
+ 	} while (0)
+ 
+@@ -239,7 +226,7 @@ uint64_t trace_performance_enter(void);
+ #define trace_performance_since(start, ...)				    \
+ 	do {								    \
+ 		if (trace_pass_fl(&trace_perf_key))			    \
+-			trace_performance_fl(TRACE_CONTEXT, __LINE__,       \
++			trace_performance_fl(__FILE__, __LINE__,	    \
+ 					     getnanotime() - (start),	    \
+ 					     __VA_ARGS__);		    \
+ 	} while (0)
+@@ -250,7 +237,7 @@ uint64_t trace_performance_enter(void);
+ #define trace_performance_leave(...)					    \
+ 	do {								    \
+ 		if (trace_pass_fl(&trace_perf_key))			    \
+-			trace_performance_leave_fl(TRACE_CONTEXT, __LINE__, \
++			trace_performance_leave_fl(__FILE__, __LINE__,	    \
+ 						   getnanotime(),	    \
+ 						   __VA_ARGS__);	    \
+ 	} while (0)
+-- 
+2.35.1.1132.ga1fe46f8690
+
