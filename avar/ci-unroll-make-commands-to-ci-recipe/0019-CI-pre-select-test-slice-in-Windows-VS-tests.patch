@@ -1,7 +1,7 @@
-From 1af04ec86003677db83f172d8bc5bc6fdf8247e3 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-19.25-1af04ec8600-20220221T122605Z-avarab@gmail.com>
-In-Reply-To: <cover-00.25-00000000000-20220221T122605Z-avarab@gmail.com>
-References: <cover-00.25-00000000000-20220221T122605Z-avarab@gmail.com>
+From e9c6c4dd2933994e1b6631a6f835fed5ccf5406f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-19.25-e9c6c4dd293-20220221T143936Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20220221T143936Z-avarab@gmail.com>
+References: <cover-00.25-00000000000-20220221T143936Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Wed, 26 Jan 2022 02:09:03 +0100
@@ -18,68 +18,67 @@ Let's change the "test slice" tests added in b819f1d2cec (ci:
 parallelize testing on Windows, 2019-01-29) to do the same. These
 tests select 10% of the tests to run in 10 "test slices". Now we'll
 select those in a step that immediately precedes the testing step, and
-then simply invoke "make -C t".
+then simply invoke "make -C t -e".
 
 This has the advantage that the tests to be run are now listed in the
 standard "Run" drop-down at the start of the "test" step.
 
-The tests are being added to "GIT_PROVE_OPTS" rather than "T" because
-we support the former coming from the environment. We could also make
-$(T) in t/Makefile be a "?=" assigned variable, but this way works,
-and is clearer since we'll also get "--timer --jobs 10" at the start
-before the list of test names to run.
+Since the "T" variable in "t/Makefile" doesn't normally accept
+overrides from the environment we need to invoke "make" with the "-e"
+option (a.k.a. "--environment-overrides"). We could also make $(T) in
+t/Makefile be a "?=" assigned variable, but this way works, and is
+arguably clearer as it's more obvious that we're injecting a special
+list of tests that override the normal behavior of that Makefile.
 
-We cannot run "make test" here, because of how the Windows CI builds
-git, i.e. either via CMake or some option that would cause "make test"
-to recompile git itself. Instead we run "make -C t".
-
-Since the command itself is now short and easily understandable, let's
-remove the "test" label from these. It'll help more to reproduce it to
-immediately know that it invokes "make -C t", which will now be
-visible in the title of the step.
+Note that we cannot run the top-level "make test" here, because of how
+the Windows CI builds git, i.e. either via CMake or some option that
+would cause "make test" to recompile git itself. Instead we run "make
+-C t [...]".
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- .github/workflows/main.yml                     | 10 ++++++----
+ .github/workflows/main.yml                     | 10 ++++++++--
  ci/{run-test-slice.sh => select-test-slice.sh} |  4 ++--
- 2 files changed, 8 insertions(+), 6 deletions(-)
- rename ci/{run-test-slice.sh => select-test-slice.sh} (51%)
+ 2 files changed, 10 insertions(+), 4 deletions(-)
+ rename ci/{run-test-slice.sh => select-test-slice.sh} (57%)
 
 diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
-index fe37e0f1b36..2ec6e8d1edf 100644
+index fe37e0f1b36..1e13718b989 100644
 --- a/.github/workflows/main.yml
 +++ b/.github/workflows/main.yml
-@@ -124,9 +124,10 @@ jobs:
+@@ -124,9 +124,12 @@ jobs:
      - uses: git-for-windows/setup-git-for-windows-sdk@v1
      - run: ci/lib.sh
        shell: bash
--    - name: test
-+    - run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
++    - name: select tests
++      run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
 +      shell: bash
-+    - run: . /etc/profile && make -C t
+     - name: test
        shell: bash
 -      run: . /etc/profile && ci/run-test-slice.sh ${{matrix.nr}} 10
++      run: . /etc/profile && make -C t -e
      - name: ci/print-test-failures.sh
        if: failure()
        shell: bash
-@@ -210,9 +211,10 @@ jobs:
+@@ -210,9 +213,12 @@ jobs:
        run: tar xf artifacts.tar.gz && tar xf tracked.tar.gz
      - run: ci/lib.sh
        shell: bash
--    - name: test
-+    - run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
++    - name: select tests
++      run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
 +      shell: bash
-+    - run: . /etc/profile && make -C t
+     - name: test
        shell: bash
 -      run: . /etc/profile && ci/run-test-slice.sh ${{matrix.nr}} 10
++      run: . /etc/profile && make -C t -e
      - name: ci/print-test-failures.sh
        if: failure()
        shell: bash
 diff --git a/ci/run-test-slice.sh b/ci/select-test-slice.sh
-similarity index 51%
+similarity index 57%
 rename from ci/run-test-slice.sh
 rename to ci/select-test-slice.sh
-index 1de6a18ca47..efe7ed7f42a 100755
+index 1de6a18ca47..ec602f8a053 100755
 --- a/ci/run-test-slice.sh
 +++ b/ci/select-test-slice.sh
 @@ -1,10 +1,10 @@
@@ -94,7 +93,7 @@ index 1de6a18ca47..efe7ed7f42a 100755
  tests=$(echo $(cd t && ./helper/test-tool path-utils slice-tests "$1" "$2" \
  	t[0-9]*.sh))
 -make --quiet -C t T="$tests"
-+echo GIT_PROVE_OPTS="$GIT_PROVE_OPTS $tests" >>$GITHUB_ENV
++echo T="$tests" >>$GITHUB_ENV
 -- 
 2.35.1.1132.ga1fe46f8690
 
