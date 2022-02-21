@@ -1,0 +1,133 @@
+From 992ee6580ac8ba39044f6316a1b16eec944596ae Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-7.9-992ee6580ac-20220221T193345Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20220221T193345Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20211228T153456Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20220221T193345Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 22 Dec 2021 03:03:32 +0100
+Subject: [PATCH v2 7/9] help: error if [-a|-g|-c] and [-i|-m|-w] are combined
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add more sanity checking to "git help" usage by erroring out if these
+man viewer options are combined with incompatible command-modes that
+will never use these documentation viewers.
+
+This continues the work started in d35d03cf93e (help: simplify by
+moving to OPT_CMDMODE(), 2021-09-22) of adding more sanity checking to
+"git help". Doing this allows us to clarify the "SYNOPSIS" in the
+documentation, and the "git help -h" output.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/help.c  | 41 +++++++++++++++++++++++++++++++++++------
+ t/t0012-help.sh | 10 ++++++++++
+ 2 files changed, 45 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/help.c b/builtin/help.c
+index b682446bbf5..1fc45adfcc7 100644
+--- a/builtin/help.c
++++ b/builtin/help.c
+@@ -574,12 +574,40 @@ static const char *check_git_cmd(const char* cmd)
+ 	return cmd;
+ }
+ 
+-static void opt_mode_usage(int argc, const char *opt_mode)
++static void no_help_format(const char *opt_mode, enum help_format fmt)
++{
++	const char *opt_fmt;
++
++	switch (fmt) {
++	case HELP_FORMAT_NONE:
++		return;
++	case HELP_FORMAT_MAN:
++		opt_fmt = "--man";
++		break;
++	case HELP_FORMAT_INFO:
++		opt_fmt = "--info";
++		break;
++	case HELP_FORMAT_WEB:
++		opt_fmt = "--web";
++		break;
++	default:
++		BUG("unreachable");
++	}
++
++	usage_msg_optf(_("options '%s' and '%s' cannot be used together"),
++		       builtin_help_usage, builtin_help_options, opt_mode,
++		       opt_fmt);
++}
++
++static void opt_mode_usage(int argc, const char *opt_mode,
++			   enum help_format fmt)
+ {
+ 	if (argc)
+ 		usage_msg_optf(_("the '%s' option doesn't take any non-option arguments"),
+ 			       builtin_help_usage, builtin_help_options,
+ 			       opt_mode);
++
++	no_help_format(opt_mode, fmt);
+ }
+ 
+ int cmd_help(int argc, const char **argv, const char *prefix)
+@@ -594,7 +622,7 @@ int cmd_help(int argc, const char **argv, const char *prefix)
+ 
+ 	switch (cmd_mode) {
+ 	case HELP_ACTION_ALL:
+-		opt_mode_usage(argc, "--all");
++		opt_mode_usage(argc, "--all", help_format);
+ 		if (verbose) {
+ 			setup_pager();
+ 			list_all_cmds_help();
+@@ -606,20 +634,21 @@ int cmd_help(int argc, const char **argv, const char *prefix)
+ 		printf("%s\n", _(git_more_info_string));
+ 		break;
+ 	case HELP_ACTION_GUIDES:
+-		opt_mode_usage(argc, "--guides");
++		opt_mode_usage(argc, "--guides", help_format);
+ 		list_guides_help();
+ 		printf("%s\n", _(git_more_info_string));
+ 		return 0;
+ 	case HELP_ACTION_CONFIG_FOR_COMPLETION:
+-		opt_mode_usage(argc, "--config-for-completion");
++		opt_mode_usage(argc, "--config-for-completion", help_format);
+ 		list_config_help(SHOW_CONFIG_VARS);
+ 		return 0;
+ 	case HELP_ACTION_CONFIG_SECTIONS_FOR_COMPLETION:
+-		opt_mode_usage(argc, "--config-sections-for-completion");
++		opt_mode_usage(argc, "--config-sections-for-completion",
++			       help_format);
+ 		list_config_help(SHOW_CONFIG_SECTIONS);
+ 		return 0;
+ 	case HELP_ACTION_CONFIG:
+-		opt_mode_usage(argc, "--config");
++		opt_mode_usage(argc, "--config", help_format);
+ 		setup_pager();
+ 		list_config_help(SHOW_CONFIG_HUMAN);
+ 		printf("\n%s\n", _("'git help config' for more information"));
+diff --git a/t/t0012-help.sh b/t/t0012-help.sh
+index c87730aa920..f12783fd153 100755
+--- a/t/t0012-help.sh
++++ b/t/t0012-help.sh
+@@ -49,6 +49,16 @@ test_expect_success 'invalid usage' '
+ 	test_expect_code 129 git help --config-sections-for-completion add
+ '
+ 
++for opt in '-a' '-g' '-c' '--config-for-completion' '--config-sections-for-completion'
++do
++	test_expect_success "invalid usage of '$opt' with [-i|-m|-w]" '
++		git help $opt &&
++		test_expect_code 129 git help $opt -i &&
++		test_expect_code 129 git help $opt -m &&
++		test_expect_code 129 git help $opt -w
++	'
++done
++
+ test_expect_success "works for commands and guides by default" '
+ 	configure_help &&
+ 	git help status &&
+-- 
+2.35.1.1132.ga1fe46f8690
+

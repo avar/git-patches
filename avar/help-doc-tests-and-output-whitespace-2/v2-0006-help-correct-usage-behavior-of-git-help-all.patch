@@ -1,0 +1,96 @@
+From 868e8a6cf83439d2b86fa1eca83b2f3d78cb8e86 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-6.9-868e8a6cf83-20220221T193345Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20220221T193345Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20211228T153456Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20220221T193345Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 19 Feb 2022 12:55:53 +0100
+Subject: [PATCH v2 6/9] help: correct usage & behavior of "git help --all"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Do the same for the "--all" option that I did for "--guides" in
+9856ea6785c (help: correct usage & behavior of "git help --guides",
+2021-09-22). I.e. we've documented it as ignoring non-option
+arguments, let's have it error out instead.
+
+As with other changes made in 62f035aee3f (Merge branch
+'ab/help-config-vars', 2021-10-13) this is technically a change in
+behavior, but in practice it's just a bug fix. We were ignoring this
+before, but by erroring we can simplify our documentation and
+synopsis, as well as avoid user confusion as they wonder what the
+difference between e.g. "git help --all" and "git help --all status"
+is (there wasn't any difference).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-help.txt | 5 ++---
+ builtin/help.c             | 5 +++--
+ t/t0012-help.sh            | 3 +++
+ 3 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/git-help.txt b/Documentation/git-help.txt
+index cf1d53e9499..d07590c8ff7 100644
+--- a/Documentation/git-help.txt
++++ b/Documentation/git-help.txt
+@@ -9,7 +9,7 @@ SYNOPSIS
+ --------
+ [verse]
+ 'git help' [-a|--all] [--[no-]verbose]
+-	   [[-i|--info] [-m|--man] [-w|--web]] [<command>|<guide>]
++'git help' [[-i|--info] [-m|--man] [-w|--web]] [<command>|<guide>]
+ 'git help' [-g|--guides]
+ 'git help' [-c|--config]
+ 
+@@ -46,8 +46,7 @@ OPTIONS
+ -------
+ -a::
+ --all::
+-	Prints all the available commands on the standard output. This
+-	option overrides any given command or guide name.
++	Prints all the available commands on the standard output.
+ 
+ --verbose::
+ 	When used with `--all` print description for all recognized
+diff --git a/builtin/help.c b/builtin/help.c
+index 1c1581ef850..b682446bbf5 100644
+--- a/builtin/help.c
++++ b/builtin/help.c
+@@ -75,8 +75,8 @@ static struct option builtin_help_options[] = {
+ };
+ 
+ static const char * const builtin_help_usage[] = {
+-	N_("git help [-a|--all] [--[no-]verbose]]\n"
+-	   "         [[-i|--info] [-m|--man] [-w|--web]] [<command>]"),
++	N_("git help [-a|--all] [--[no-]verbose]]"),
++	N_("git help [[-i|--info] [-m|--man] [-w|--web]] [<command>]"),
+ 	N_("git help [-g|--guides]"),
+ 	N_("git help [-c|--config]"),
+ 	NULL
+@@ -594,6 +594,7 @@ int cmd_help(int argc, const char **argv, const char *prefix)
+ 
+ 	switch (cmd_mode) {
+ 	case HELP_ACTION_ALL:
++		opt_mode_usage(argc, "--all");
+ 		if (verbose) {
+ 			setup_pager();
+ 			list_all_cmds_help();
+diff --git a/t/t0012-help.sh b/t/t0012-help.sh
+index 9ac3f5d3c4b..c87730aa920 100755
+--- a/t/t0012-help.sh
++++ b/t/t0012-help.sh
+@@ -35,6 +35,9 @@ test_expect_success 'basic help commands' '
+ '
+ 
+ test_expect_success 'invalid usage' '
++	test_expect_code 129 git help -a add &&
++	test_expect_code 129 git help --all add &&
++
+ 	test_expect_code 129 git help -g add &&
+ 	test_expect_code 129 git help -a -c &&
+ 
+-- 
+2.35.1.1132.ga1fe46f8690
+

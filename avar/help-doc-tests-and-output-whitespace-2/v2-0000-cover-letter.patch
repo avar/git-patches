@@ -1,0 +1,222 @@
+From 08dc693dc3e5d2622d6fd2ee820c3fde2ca0b480 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.9-00000000000-20220221T193345Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20211228T153456Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20211228T153456Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 21 Feb 2022 20:33:45 +0100
+Subject: [PATCH v2 0/9] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (9):
+  help doc: add missing "]" to "[-a|--all]"
+  help.c: use puts() instead of printf{,_ln}() for consistency
+  help tests: test "git" and "git help [-a|-g] spacing
+  help.c: split up list_all_cmds_help() function
+  help: note the option name on option incompatibility
+  help: correct usage & behavior of "git help --all"
+  help: error if [-a|-g|-c] and [-i|-m|-w] are combined
+  help: add --no-[external-commands|aliases] for use with --all
+  help: don't print "\n" before single-section output
+
+ Documentation/git-help.txt | 15 ++++--
+ builtin/help.c             | 63 +++++++++++++++++++++----
+ help.c                     | 37 +++++++++++----
+ help.h                     |  2 +-
+ t/t0012-help.sh            | 94 ++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 187 insertions(+), 24 deletions(-)
+
+Range-diff against v1:
+ 1:  652dae26bf4 =  1:  c4b66c36c17 help doc: add missing "]" to "[-a|--all]"
+ 2:  f84662469a3 =  2:  124643c4b35 help.c: use puts() instead of printf{,_ln}() for consistency
+ 3:  3956937cf3b !  3:  3e39116f197 help tests: test "git" and "git help [-a|-g] spacing
+    @@ t/t0012-help.sh: test_expect_success 'git help --config-sections-for-completion'
+     +'
+     +
+      test_expect_success 'generate builtin list' '
+    + 	mkdir -p sub &&
+      	git --list-cmds=builtins >builtins
+    - '
+ 4:  f040dd549b4 =  4:  f9c4d5e2d28 help.c: split up list_all_cmds_help() function
+ -:  ----------- >  5:  e5c49089106 help: note the option name on option incompatibility
+ -:  ----------- >  6:  868e8a6cf83 help: correct usage & behavior of "git help --all"
+ 5:  12ff152bd57 !  7:  992ee6580ac help: error if [-a|-g|-c] and [-i|-m|-w] are combined
+    @@ Commit message
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## Documentation/git-help.txt ##
+    -@@ Documentation/git-help.txt: SYNOPSIS
+    - --------
+    - [verse]
+    - 'git help' [-a|--all] [--[no-]verbose]
+    --	   [[-i|--info] [-m|--man] [-w|--web]] [<command>|<guide>]
+    -+'git help' [[-i|--info] [-m|--man] [-w|--web]] [<command>|<guide>]
+    - 'git help' [-g|--guides]
+    - 'git help' [-c|--config]
+    - 
+    -
+      ## builtin/help.c ##
+    -@@ builtin/help.c: static struct option builtin_help_options[] = {
+    - };
+    - 
+    - static const char * const builtin_help_usage[] = {
+    --	N_("git help [-a|--all] [--[no-]verbose]]\n"
+    --	   "         [[-i|--info] [-m|--man] [-w|--web]] [<command>]"),
+    -+	N_("git help [-a|--all] [--[no-]verbose]]"),
+    -+	N_("git help [[-i|--info] [-m|--man] [-w|--web]] [<command>]"),
+    - 	N_("git help [-g|--guides]"),
+    - 	N_("git help [-c|--config]"),
+    - 	NULL
+    -@@ builtin/help.c: static void no_extra_argc(int argc)
+    - 			      builtin_help_usage, builtin_help_options);
+    +@@ builtin/help.c: static const char *check_git_cmd(const char* cmd)
+    + 	return cmd;
+      }
+      
+    -+static void no_format(void)
+    +-static void opt_mode_usage(int argc, const char *opt_mode)
+    ++static void no_help_format(const char *opt_mode, enum help_format fmt)
+     +{
+    -+	if (help_format != HELP_FORMAT_NONE)
+    -+		usage_msg_opt(_("[-a|--all] cannot be combined with [[-i|--info] [-m|--man] [-w|--web]]"),
+    -+			      builtin_help_usage, builtin_help_options);
+    ++	const char *opt_fmt;
+    ++
+    ++	switch (fmt) {
+    ++	case HELP_FORMAT_NONE:
+    ++		return;
+    ++	case HELP_FORMAT_MAN:
+    ++		opt_fmt = "--man";
+    ++		break;
+    ++	case HELP_FORMAT_INFO:
+    ++		opt_fmt = "--info";
+    ++		break;
+    ++	case HELP_FORMAT_WEB:
+    ++		opt_fmt = "--web";
+    ++		break;
+    ++	default:
+    ++		BUG("unreachable");
+    ++	}
+    ++
+    ++	usage_msg_optf(_("options '%s' and '%s' cannot be used together"),
+    ++		       builtin_help_usage, builtin_help_options, opt_mode,
+    ++		       opt_fmt);
+     +}
+     +
+    - int cmd_help(int argc, const char **argv, const char *prefix)
+    ++static void opt_mode_usage(int argc, const char *opt_mode,
+    ++			   enum help_format fmt)
+      {
+    - 	int nongit;
+    + 	if (argc)
+    + 		usage_msg_optf(_("the '%s' option doesn't take any non-option arguments"),
+    + 			       builtin_help_usage, builtin_help_options,
+    + 			       opt_mode);
+    ++
+    ++	no_help_format(opt_mode, fmt);
+    + }
+    + 
+    + int cmd_help(int argc, const char **argv, const char *prefix)
+     @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+      
+      	switch (cmd_mode) {
+      	case HELP_ACTION_ALL:
+    -+		no_format();
+    +-		opt_mode_usage(argc, "--all");
+    ++		opt_mode_usage(argc, "--all", help_format);
+      		if (verbose) {
+      			setup_pager();
+      			list_all_cmds_help();
+     @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+    + 		printf("%s\n", _(git_more_info_string));
+      		break;
+      	case HELP_ACTION_GUIDES:
+    - 		no_extra_argc(argc);
+    -+		no_format();
+    -+
+    +-		opt_mode_usage(argc, "--guides");
+    ++		opt_mode_usage(argc, "--guides", help_format);
+      		list_guides_help();
+      		printf("%s\n", _(git_more_info_string));
+      		return 0;
+      	case HELP_ACTION_CONFIG_FOR_COMPLETION:
+    - 		no_extra_argc(argc);
+    -+		no_format();
+    -+
+    +-		opt_mode_usage(argc, "--config-for-completion");
+    ++		opt_mode_usage(argc, "--config-for-completion", help_format);
+      		list_config_help(SHOW_CONFIG_VARS);
+      		return 0;
+      	case HELP_ACTION_CONFIG_SECTIONS_FOR_COMPLETION:
+    - 		no_extra_argc(argc);
+    -+		no_format();
+    -+
+    +-		opt_mode_usage(argc, "--config-sections-for-completion");
+    ++		opt_mode_usage(argc, "--config-sections-for-completion",
+    ++			       help_format);
+      		list_config_help(SHOW_CONFIG_SECTIONS);
+      		return 0;
+      	case HELP_ACTION_CONFIG:
+    - 		no_extra_argc(argc);
+    -+		no_format();
+    -+
+    +-		opt_mode_usage(argc, "--config");
+    ++		opt_mode_usage(argc, "--config", help_format);
+      		setup_pager();
+      		list_config_help(SHOW_CONFIG_HUMAN);
+      		printf("\n%s\n", _("'git help config' for more information"));
+ 6:  a5ef9f69530 !  8:  c81c0cbbcdb help: add --no-[external-commands|aliases] for use with --all
+    @@ Documentation/git-help.txt: git-help - Display help information about Git
+      --------
+      [verse]
+     -'git help' [-a|--all] [--[no-]verbose]
+    -+'git help' [-a|--all] [--[no-]verbose] [--[no-](external-commands|aliases)]
+    ++'git help' [-a|--all] [--[no-]verbose] [--[no-]external-commands] [--[no-]aliases]
+      'git help' [[-i|--info] [-m|--man] [-w|--web]] [<command>|<guide>]
+      'git help' [-g|--guides]
+      'git help' [-c|--config]
+     @@ Documentation/git-help.txt: OPTIONS
+    - 	Prints all the available commands on the standard output. This
+    - 	option overrides any given command or guide name.
+    + --all::
+    + 	Prints all the available commands on the standard output.
+      
+     +--no-external-commands::
+     +	When used with `--all`, exclude the listing of external "git-*"
+    @@ builtin/help.c: static const char *html_path;
+      	OPT_CMDMODE('a', "all", &cmd_mode, N_("print all available commands"),
+      		    HELP_ACTION_ALL),
+     +	OPT_BOOL(0, "external-commands", &show_external_commands,
+    -+		 N_("show external commands in --all?")),
+    -+	OPT_BOOL(0, "aliases", &show_aliases, N_("show aliases in --all?")),
+    ++		 N_("show external commands in --all")),
+    ++	OPT_BOOL(0, "aliases", &show_aliases, N_("show aliases in --all")),
+      	OPT_HIDDEN_BOOL(0, "exclude-guides", &exclude_guides, N_("exclude guides")),
+      	OPT_SET_INT('m', "man", &help_format, N_("show man page"), HELP_FORMAT_MAN),
+      	OPT_SET_INT('w', "web", &help_format, N_("show manual in web browser"),
+    @@ builtin/help.c: static struct option builtin_help_options[] = {
+      
+      static const char * const builtin_help_usage[] = {
+     -	N_("git help [-a|--all] [--[no-]verbose]]"),
+    -+	N_("git help [-a|--all] [--[no-]verbose]] [--[no-](external-commands|aliases)]"),
+    ++	N_("git help [-a|--all] [--[no-]verbose]] [--[no-]external-commands] [--[no-]aliases]"),
+      	N_("git help [[-i|--info] [-m|--man] [-w|--web]] [<command>]"),
+      	N_("git help [-g|--guides]"),
+      	N_("git help [-c|--config]"),
+    @@ builtin/help.c: int cmd_help(int argc, const char **argv, const char *prefix)
+     +
+      	switch (cmd_mode) {
+      	case HELP_ACTION_ALL:
+    - 		no_format();
+    + 		opt_mode_usage(argc, "--all", help_format);
+      		if (verbose) {
+      			setup_pager();
+     -			list_all_cmds_help();
+ 7:  08fd12fe7b4 =  9:  08dc693dc3e help: don't print "\n" before single-section output
+-- 
+2.35.1.1132.ga1fe46f8690
+
