@@ -1,0 +1,136 @@
+From 868613a5b06760fd60632f1ccb14fa43f214478d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-16.25-868613a5b06-20220221T120129Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20220221T120129Z-avarab@gmail.com>
+References: <cover-00.25-00000000000-20220221T120129Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 Jan 2022 20:25:16 +0100
+Subject: [PATCH 16/25] CI: combine ci/install{,-docker}-dependencies.sh
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Combine the "ci/install-dependencies.sh" and
+"ci/install-docker-dependencies.sh" into one script. The "case"
+statement in the latter only cared about "$jobname", and can be folded
+into the same "case" statement in the former.
+
+The reason they split up is historical, and because the
+"ci/install-dependencies.sh" used "ci/lib.sh", which requires
+"bash". At least one of the docker containers doesn't have "bash". To
+make the existing code POSIX-compatible we need to replace pushd/popd
+with a sub-shell, but no other changes were needed.
+
+This also fixes issue in "ci/install-docker-dependencies.sh" where
+we'd hide errors due to not using "set -e". Now that we include
+"ci/lib.sh" we won't have that potential issue.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml        |  2 +-
+ ci/install-dependencies.sh        | 27 ++++++++++++++++++++++-----
+ ci/install-docker-dependencies.sh | 22 ----------------------
+ 3 files changed, 23 insertions(+), 28 deletions(-)
+ delete mode 100755 ci/install-docker-dependencies.sh
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 92b914f16fd..3fd3e4f873c 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -311,7 +311,7 @@ jobs:
+     container: ${{matrix.vector.image}}
+     steps:
+     - uses: actions/checkout@v1
+-    - run: ci/install-docker-dependencies.sh
++    - run: ci/install-dependencies.sh
+     - run: ci/lib.sh
+     - run: make
+     - run: make test
+diff --git a/ci/install-dependencies.sh b/ci/install-dependencies.sh
+index 01006379fd0..9388289d0ed 100755
+--- a/ci/install-dependencies.sh
++++ b/ci/install-dependencies.sh
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env bash
++#!/bin/sh
+ #
+ # Install dependencies required to build and test Git on Linux and macOS
+ #
+@@ -34,18 +34,20 @@ ubuntu-latest)
+ 	sudo apt-get -q -y install language-pack-is libsvn-perl apache2 \
+ 		$UBUNTU_COMMON_PKGS $CC_PACKAGE
+ 	mkdir --parents "$P4_PATH"
+-	pushd "$P4_PATH"
++	(
++		cd "$P4_PATH"
+ 		wget --quiet "$P4WHENCE/bin.linux26x86_64/p4d"
+ 		wget --quiet "$P4WHENCE/bin.linux26x86_64/p4"
+ 		chmod u+x p4d
+ 		chmod u+x p4
+-	popd
++	)
+ 	mkdir --parents "$GIT_LFS_PATH"
+-	pushd "$GIT_LFS_PATH"
++	(
++		cd "$GIT_LFS_PATH"
+ 		wget --quiet "$LFSWHENCE/git-lfs-linux-amd64-$LINUX_GIT_LFS_VERSION.tar.gz"
+ 		tar --extract --gunzip --file "git-lfs-linux-amd64-$LINUX_GIT_LFS_VERSION.tar.gz"
+ 		cp git-lfs-$LINUX_GIT_LFS_VERSION/git-lfs .
+-	popd
++	)
+ 	;;
+ macos-latest)
+ 	export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+@@ -90,6 +92,21 @@ linux-gcc-default)
+ 	sudo apt-get -q update
+ 	sudo apt-get -q -y install $UBUNTU_COMMON_PKGS
+ 	;;
++linux32)
++	linux32 --32bit i386 sh -c '
++		apt update >/dev/null &&
++		apt install -y build-essential libcurl4-openssl-dev \
++			libssl-dev libexpat-dev gettext python >/dev/null
++	'
++	;;
++linux-musl)
++	apk add --update build-base curl-dev openssl-dev expat-dev gettext \
++		pcre2-dev python3 musl-libintl perl-utils ncurses >/dev/null
++	;;
++pedantic)
++	dnf -yq update >/dev/null &&
++	dnf -yq install make gcc findutils diffutils perl python3 gettext zlib-devel expat-devel openssl-devel curl-devel pcre2-devel >/dev/null
++	;;
+ esac
+ 
+ if type p4d >/dev/null && type p4 >/dev/null
+diff --git a/ci/install-docker-dependencies.sh b/ci/install-docker-dependencies.sh
+deleted file mode 100755
+index 78b7e326da6..00000000000
+--- a/ci/install-docker-dependencies.sh
++++ /dev/null
+@@ -1,22 +0,0 @@
+-#!/bin/sh
+-#
+-# Install dependencies required to build and test Git inside container
+-#
+-
+-case "$jobname" in
+-linux32)
+-	linux32 --32bit i386 sh -c '
+-		apt update >/dev/null &&
+-		apt install -y build-essential libcurl4-openssl-dev \
+-			libssl-dev libexpat-dev gettext python >/dev/null
+-	'
+-	;;
+-linux-musl)
+-	apk add --update build-base curl-dev openssl-dev expat-dev gettext \
+-		pcre2-dev python3 musl-libintl perl-utils ncurses >/dev/null
+-	;;
+-pedantic)
+-	dnf -yq update >/dev/null &&
+-	dnf -yq install make gcc findutils diffutils perl python3 gettext zlib-devel expat-devel openssl-devel curl-devel pcre2-devel >/dev/null
+-	;;
+-esac
+-- 
+2.35.1.1132.ga1fe46f8690
+

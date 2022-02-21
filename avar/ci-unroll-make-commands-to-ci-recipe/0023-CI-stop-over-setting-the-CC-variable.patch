@@ -1,0 +1,151 @@
+From 40730efa14f3fb2616baef66954e38348fe2dd00 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-23.25-40730efa14f-20220221T120129Z-avarab@gmail.com>
+In-Reply-To: <cover-00.25-00000000000-20220221T120129Z-avarab@gmail.com>
+References: <cover-00.25-00000000000-20220221T120129Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 4 Feb 2022 01:40:05 +0100
+Subject: [PATCH 23/25] CI: stop over-setting the $CC variable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As detailed in 2c8921db2b8 (travis-ci: build with the right compiler,
+2019-01-17) the reason we started using $CC in $MAKEFLAGS as opposed
+to setting it in the environment was due to Travis CI clobbering $CC
+in the environment.
+
+We don't need to set it unconditionally to accomplish that, but rather
+just have it set for those jobs that need them. E.g. the "win+VS
+build" job confusingly has CC=gcc set, even though it builds with
+MSVC.
+
+This partially reverts my 707d2f2fe86 (CI: use "$runs_on_pool", not
+"$jobname" to select packages & config, 2021-11-23), i.e. we're now
+aiming to only set those variables specific jobs need.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml | 13 -------------
+ ci/lib.sh                  | 26 ++++++++++++++++++++++----
+ 2 files changed, 22 insertions(+), 17 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index c781de0bed2..0e6a8cb3951 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -234,37 +234,24 @@ jobs:
+       matrix:
+         vector:
+           - jobname: linux-clang
+-            cc: clang
+             pool: ubuntu-latest
+           - jobname: linux-sha256
+-            cc: clang
+             os: ubuntu
+             pool: ubuntu-latest
+           - jobname: linux-gcc
+-            cc: gcc
+-            cc_package: gcc-8
+             pool: ubuntu-latest
+           - jobname: linux-TEST-vars
+-            cc: gcc
+             os: ubuntu
+-            cc_package: gcc-8
+             pool: ubuntu-latest
+           - jobname: osx-clang
+-            cc: clang
+             pool: macos-latest
+           - jobname: osx-gcc
+-            cc: gcc
+-            cc_package: gcc-9
+             pool: macos-latest
+           - jobname: linux-gcc-default
+-            cc: gcc
+             pool: ubuntu-latest
+           - jobname: linux-leaks
+-            cc: gcc
+             pool: ubuntu-latest
+     env:
+-      CC: ${{matrix.vector.cc}}
+-      CC_PACKAGE: ${{matrix.vector.cc_package}}
+       jobname: ${{matrix.vector.jobname}}
+       runs_on_pool: ${{matrix.vector.pool}}
+     runs-on: ${{matrix.vector.pool}}
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 475e9f63a74..7064a17cfeb 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -52,7 +52,9 @@ setenv () {
+ 	fi
+ }
+ 
+-# Clear MAKEFLAGS that may come from the outside world.
++# Clear variables that may come from the outside world.
++CC=
++CC_PACKAGE=
+ MAKEFLAGS=
+ 
+ # Common make and cmake build options
+@@ -64,8 +66,6 @@ MAKEFLAGS="DEVELOPER=$DEVELOPER SKIP_DASHED_BUILT_INS=$SKIP_DASHED_BUILT_INS"
+ 
+ case "$CI_TYPE" in
+ github-actions)
+-	CC="${CC:-gcc}"
+-
+ 	setenv --test GIT_PROVE_OPTS "--timer --jobs 10"
+ 	GIT_TEST_OPTS="--verbose-log -x"
+ 	MAKEFLAGS="$MAKEFLAGS --jobs=10"
+@@ -135,9 +135,16 @@ vs-test)
+ 	setenv --test NO_SVN_TESTS YesPlease
+ 	;;
+ linux-gcc)
++	CC=gcc
++	CC_PACKAGE=gcc-8
+ 	setenv --test GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME main
+ 	;;
++linux-gcc-default)
++	CC=gcc
++	;;
+ linux-TEST-vars)
++	CC=gcc
++	CC_PACKAGE=gcc-8
+ 	setenv --test GIT_TEST_SPLIT_INDEX yes
+ 	setenv --test GIT_TEST_MERGE_ALGORITHM recursive
+ 	setenv --test GIT_TEST_FULL_IN_PACK_ARRAY true
+@@ -152,10 +159,19 @@ linux-TEST-vars)
+ 	setenv --test GIT_TEST_WRITE_REV_INDEX 1
+ 	setenv --test GIT_TEST_CHECKOUT_WORKERS 2
+ 	;;
++osx-gcc)
++	CC=gcc
++	CC_PACKAGE=gcc-9
++	;;
++osx-clang)
++	CC=clang
++	;;
+ linux-clang)
++	CC=clang
+ 	setenv --test GIT_TEST_DEFAULT_HASH sha1
+ 	;;
+ linux-sha256)
++	CC=clang
+ 	setenv --test GIT_TEST_DEFAULT_HASH sha256
+ 	;;
+ pedantic)
+@@ -173,9 +189,11 @@ linux-musl)
+ 	MAKEFLAGS="$MAKEFLAGS GIT_TEST_UTF8_LOCALE=C.UTF-8"
+ 	;;
+ linux-leaks)
++	CC=gcc
+ 	setenv --build SANITIZE leak
+ 	setenv --test GIT_TEST_PASSING_SANITIZE_LEAK true
+ 	;;
+ esac
+ 
+-setenv --all MAKEFLAGS "$MAKEFLAGS CC=${CC:-cc}"
++MAKEFLAGS="$MAKEFLAGS${CC:+ CC=$CC}"
++setenv --all MAKEFLAGS "$MAKEFLAGS"
+-- 
+2.35.1.1132.ga1fe46f8690
+
