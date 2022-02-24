@@ -1,0 +1,88 @@
+From 3e3aba67a19e86ae3b3fab3eb28629c1aa46066b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-08.12-3e3aba67a19-20220224T092601Z-avarab@gmail.com>
+In-Reply-To: <patch-01.12-e4a7054bef4-20220224T092601Z-avarab@gmail.com>
+References: <patch-01.12-e4a7054bef4-20220224T092601Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 19 Feb 2022 21:24:30 +0100
+Subject: [PATCH 08/12] userdiff.c: use designated initializers for "struct
+ userdiff_driver"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "struct userdiff_driver" assignmentns to use designated
+initializers, but let's keep the PATTERNS() and IPATTERN() convenience
+macros to avoid churn, but have them defined in terms of designated
+initializers.
+
+For the "driver_true" and "driver_false" let's have the compiler
+implicitly initialize most of the fields, but let's leave a redundant
+".binary = 0" for "driver_true" to make it obvious that it's the
+opposite of the the ".binary = 1" for "driver_false".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ userdiff.c | 36 ++++++++++++++++++++++--------------
+ 1 file changed, 22 insertions(+), 14 deletions(-)
+
+diff --git a/userdiff.c b/userdiff.c
+index 8578cb0d12e..2d9eb99bf28 100644
+--- a/userdiff.c
++++ b/userdiff.c
+@@ -7,12 +7,24 @@ static struct userdiff_driver *drivers;
+ static int ndrivers;
+ static int drivers_alloc;
+ 
+-#define PATTERNS(name, pattern, word_regex)			\
+-	{ name, NULL, -1, { pattern, REG_EXTENDED },		\
+-	  word_regex "|[^[:space:]]|[\xc0-\xff][\x80-\xbf]+" }
+-#define IPATTERN(name, pattern, word_regex)			\
+-	{ name, NULL, -1, { pattern, REG_EXTENDED | REG_ICASE }, \
+-	  word_regex "|[^[:space:]]|[\xc0-\xff][\x80-\xbf]+" }
++#define PATTERNS(lang, rx, wrx) { \
++	.name = lang, \
++	.binary = -1, \
++	.funcname = { \
++		.pattern = rx, \
++		.cflags = REG_EXTENDED, \
++	}, \
++	.word_regex = wrx "|[^[:space:]]|[\xc0-\xff][\x80-\xbf]+", \
++}
++#define IPATTERN(lang, rx, wrx) { \
++	.name = lang, \
++	.binary = -1, \
++	.funcname = { \
++		.pattern = rx, \
++		.cflags = REG_EXTENDED | REG_ICASE, \
++	}, \
++	.word_regex = wrx "|[^[:space:]]|[\xc0-\xff][\x80-\xbf]+", \
++}
+ 
+ /*
+  * Built-in drivers for various languages, sorted by their names
+@@ -275,17 +287,13 @@ PATTERNS("tex", "^(\\\\((sub)*section|chapter|part)\\*{0,1}\\{.*)$",
+ #undef IPATTERN
+ 
+ static struct userdiff_driver driver_true = {
+-	"diff=true",
+-	NULL,
+-	0,
+-	{ NULL, 0 }
++	.name = "diff=true",
++	.binary = 0,
+ };
+ 
+ static struct userdiff_driver driver_false = {
+-	"!diff",
+-	NULL,
+-	1,
+-	{ NULL, 0 }
++	.name = "!diff",
++	.binary = 1,
+ };
+ 
+ struct find_by_namelen_data {
+-- 
+2.35.1.1157.g524e2d5a0db
+
