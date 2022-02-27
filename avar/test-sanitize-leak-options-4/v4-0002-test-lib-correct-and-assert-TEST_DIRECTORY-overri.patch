@@ -1,0 +1,90 @@
+From 97586ad4541a93f2120aee0bdc118485a720bcd8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-2.4-97586ad4541-20220227T102256Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.4-00000000000-20220227T102256Z-avarab@gmail.com>
+References: <cover-v3-0.4-00000000000-20220221T155656Z-avarab@gmail.com>
+	<cover-v4-0.4-00000000000-20220227T102256Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 19 Feb 2022 12:16:25 +0100
+Subject: [PATCH v4 2/4] test-lib: correct and assert TEST_DIRECTORY overriding
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Correct a misleading comment added by me in 62f539043c7 (test-lib:
+Allow overriding of TEST_DIRECTORY, 2010-08-19), and add an assertion
+that TEST_DIRECTORY cannot point to any directory except the "t"
+directory in the top-level of git.git.
+
+This assertion is in effect not new, since we'd already die if that
+wasn't the case[1], but it and the updated commentary help to make
+that clearer.
+
+The existing comments were also on the wrong arms of the
+"if". I.e. the "allow tests to override this" was on the "test -z"
+arm. That came about due to a combination of 62f539043c7 and
+85176d72513 (test-lib.sh: convert $TEST_DIRECTORY to an absolute path,
+2013-11-17).
+
+Those earlier comments could be read as allowing the "$TEST_DIRECTORY"
+to be some path outside of t/. As explained in the updated comment
+that's impossible, rather it was meant for *tests* that ran outside of
+t/, i.e. the "t0000-basic.sh" tests that use "lib-subtest.sh".
+
+Those tests have a different working directory, but they set the
+"TEST_DIRECTORY" to the same path for bootstrapping. The comments now
+reflect that, and further comment on why we have a hard dependency on
+this.
+
+1. https://lore.kernel.org/git/220222.86o82z8als.gmgdl@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh | 22 +++++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 55f263a02d3..48ee3b16ecd 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -19,13 +19,20 @@
+ # t/ subdirectory and are run in 'trash directory' subdirectory.
+ if test -z "$TEST_DIRECTORY"
+ then
+-	# We allow tests to override this, in case they want to run tests
+-	# outside of t/, e.g. for running tests on the test library
+-	# itself.
+-	TEST_DIRECTORY=$(pwd)
+-else
+ 	# ensure that TEST_DIRECTORY is an absolute path so that it
+ 	# is valid even if the current working directory is changed
++	TEST_DIRECTORY=$(pwd)
++else
++	# The TEST_DIRECTORY will always be the path to the "t"
++	# directory in the git.git checkout. This is overridden by
++	# e.g. t/lib-subtest.sh, but only because its $(pwd) is
++	# different. Those tests still set "$TEST_DIRECTORY" to the
++	# same path.
++	#
++	# See use of "$GIT_BUILD_DIR" and "$TEST_DIRECTORY" below for
++	# hard assumptions about "$GIT_BUILD_DIR/t" existing and being
++	# the "$TEST_DIRECTORY", and e.g. "$TEST_DIRECTORY/helper"
++	# needing to exist.
+ 	TEST_DIRECTORY=$(cd "$TEST_DIRECTORY" && pwd) || exit 1
+ fi
+ if test -z "$TEST_OUTPUT_DIRECTORY"
+@@ -35,6 +42,11 @@ then
+ 	TEST_OUTPUT_DIRECTORY=$TEST_DIRECTORY
+ fi
+ GIT_BUILD_DIR="$TEST_DIRECTORY"/..
++if test "$TEST_DIRECTORY" = "${TEST_DIRECTORY%/t}"
++then
++	echo "PANIC: Running in a $TEST_DIRECTORY that doesn't end in '/t'?" >&2
++	exit 1
++fi
+ 
+ # Prepend a string to a VAR using an arbitrary ":" delimiter, not
+ # adding the delimiter if VAR or VALUE is empty. I.e. a generalized:
+-- 
+2.35.1.1188.g137d9ee5e75
+
