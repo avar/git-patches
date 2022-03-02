@@ -1,0 +1,66 @@
+From 1da2efc9886a397ca9ab88e2d53374fdf8576e37 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-04.10-1da2efc9886-20220302T130523Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20220302T130523Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220302T130523Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 13 Feb 2022 16:19:49 +0100
+Subject: [PATCH 04/10] bugreport tests: tighten up "git bugreport -s hooks"
+ test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend a test added in 788a776069b (bugreport: collect list of
+populated hooks, 2020-05-07) to make more sense. As noted in a
+preceding commit our .git/hooks directory already contains *.sample
+hooks, so we have no need to clobber the prepare-commit-msg.sample
+hook in particular.
+
+Instead we should assert that those *.sample hooks are not included in
+the output, and for good measure let's add a new "unknown-hook", to
+check that we only look through our own known hooks. See
+cfe853e66be (hook-list.h: add a generated list of hooks, like
+config-list.h, 2021-09-26) for how we generate that data.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0091-bugreport.sh | 20 ++++++++++----------
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/t/t0091-bugreport.sh b/t/t0091-bugreport.sh
+index eeedbfa9193..3025e685aaa 100755
+--- a/t/t0091-bugreport.sh
++++ b/t/t0091-bugreport.sh
+@@ -60,18 +60,18 @@ test_expect_success 'can create leading directories outside of a git dir' '
+ 
+ test_expect_success 'indicates populated hooks' '
+ 	test_when_finished rm git-bugreport-hooks.txt &&
+-	test_when_finished rm -fr .git/hooks &&
+-	rm -fr .git/hooks &&
+-	mkdir .git/hooks &&
+-	for hook in applypatch-msg prepare-commit-msg.sample
+-	do
+-		write_script ".git/hooks/$hook" <<-EOF || return 1
+-		echo "hook $hook exists"
+-		EOF
+-	done &&
++
++	write_script .git/hooks/applypatch-msg <<-\EOF &&
++	true
++	EOF
++	write_script .git/hooks/unknown-hook <<-\EOF &&
++	true
++	EOF
+ 	git bugreport -s hooks &&
++
+ 	grep applypatch-msg git-bugreport-hooks.txt &&
+-	! grep prepare-commit-msg git-bugreport-hooks.txt
++	! grep unknown-hook git-bugreport-hooks.txt &&
++	! grep -F .sample git-bugreport-hooks.txt
+ '
+ 
+ test_done
+-- 
+2.35.1.1228.g56895c6ee86
+
