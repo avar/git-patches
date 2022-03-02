@@ -1,0 +1,54 @@
+From 122fdf7bb411fde6677a5a07c18a9f31383566ef Mon Sep 17 00:00:00 2001
+Message-Id: <patch-08.14-122fdf7bb41-20220302T170718Z-avarab@gmail.com>
+In-Reply-To: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+References: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Mar 2022 12:04:54 +0100
+Subject: [PATCH 08/14] submodule--helper: fix trivial leak in module_add()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in code added in a6226fd772b (submodule--helper:
+convert the bulk of cmd_add() to C, 2021-08-10). If "realrepo" isn't a
+copy of the "repo" member we should free() it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index eeacefcc383..13b4841327d 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -3309,6 +3309,7 @@ static int module_add(int argc, const char **argv, const char *prefix)
+ {
+ 	int force = 0, quiet = 0, progress = 0, dissociate = 0;
+ 	struct add_data add_data = ADD_DATA_INIT;
++	char *to_free = NULL;
+ 
+ 	struct option options[] = {
+ 		OPT_STRING('b', "branch", &add_data.branch, N_("branch"),
+@@ -3360,7 +3361,8 @@ static int module_add(int argc, const char **argv, const char *prefix)
+ 			      "of the working tree"));
+ 
+ 		/* dereference source url relative to parent's url */
+-		add_data.realrepo = resolve_relative_url(add_data.repo, NULL, 1);
++		to_free = resolve_relative_url(add_data.repo, NULL, 1);
++		add_data.realrepo = to_free;
+ 	} else if (is_dir_sep(add_data.repo[0]) || strchr(add_data.repo, ':')) {
+ 		add_data.realrepo = add_data.repo;
+ 	} else {
+@@ -3413,6 +3415,7 @@ static int module_add(int argc, const char **argv, const char *prefix)
+ 	}
+ 	configure_added_submodule(&add_data);
+ 	free(add_data.sm_path);
++	free(to_free);
+ 
+ 	return 0;
+ }
+-- 
+2.35.1.1228.g56895c6ee86
+

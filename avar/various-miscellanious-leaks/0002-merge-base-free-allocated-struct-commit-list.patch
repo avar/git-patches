@@ -1,0 +1,49 @@
+From 4c28f056ec26d11c21d89bf5b62ac3cdc8eb349e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.14-4c28f056ec2-20220302T170718Z-avarab@gmail.com>
+In-Reply-To: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+References: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 31 Aug 2021 13:14:54 +0200
+Subject: [PATCH 02/14] merge-base: free() allocated "struct commit **" list
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in 53eda89b2fe (merge-base: teach "git merge-base"
+to drive underlying merge_bases_many(), 2008-07-30) by calling free()
+on the "struct commit **" list used by "git merge-base".
+
+This gets e.g. "t6010-merge-base.sh" closer to passing under
+SANITIZE=leak, it failed 8 tests before when compiled with that
+option, and now fails only 5 tests.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/merge-base.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/merge-base.c b/builtin/merge-base.c
+index 26b84980dbd..a11f8c6e4bb 100644
+--- a/builtin/merge-base.c
++++ b/builtin/merge-base.c
+@@ -138,6 +138,7 @@ int cmd_merge_base(int argc, const char **argv, const char *prefix)
+ 	int rev_nr = 0;
+ 	int show_all = 0;
+ 	int cmdmode = 0;
++	int ret;
+ 
+ 	struct option options[] = {
+ 		OPT_BOOL('a', "all", &show_all, N_("output all common ancestors")),
+@@ -186,5 +187,7 @@ int cmd_merge_base(int argc, const char **argv, const char *prefix)
+ 	ALLOC_ARRAY(rev, argc);
+ 	while (argc-- > 0)
+ 		rev[rev_nr++] = get_commit_reference(*argv++);
+-	return show_merge_base(rev, rev_nr, show_all);
++	ret = show_merge_base(rev, rev_nr, show_all);
++	free(rev);
++	return ret;
+ }
+-- 
+2.35.1.1228.g56895c6ee86
+
