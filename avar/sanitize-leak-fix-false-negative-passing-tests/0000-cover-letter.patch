@@ -2,12 +2,44 @@ From 4ee216711cfa5fadc33ef81466f9d633548bc1bd Mon Sep 17 00:00:00 2001
 Message-Id: <cover-00.15-00000000000-20220302T171755Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Wed, 2 Mar 2022 18:17:55 +0100
-Subject: [PATCH 00/15] *** SUBJECT HERE ***
+Subject: [PATCH 00/15] tests: don't ignore "git" exit codes
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series fixes issues where we ignored the exit code of "git" due
+to it being on the LHS of a pipe, or because we interpolated its
+output with $() in a "test" construct, or had missing &&- chains in
+helper functions etc.
+
+This series is not made by string-replacing things in our test suite,
+if it was it would be much larger. These are all tests I've seen real
+hide real failures under SANITIZE=leak, either on current "master", or
+in combination with various local leak fixes I've got unsubmitted.
+
+In cases where I was starting to fix a pattern in a file I'd fix the
+rest of the file if it was easy, but otherwise these are all cases
+where I ran SANITIZE=leak, had a test pass, but having ASAN_OPTIONS
+log to a file revealed that we had memory leaks within that test.
+
+As an aside we still have various potential issues with hidden
+segfaults etc. in the test suite after this that are tricked to solve,
+because:
+
+ * Our tests will (mostly) catch segfaults and abort(), but if we
+   invoke a command that invokes another command it needs to ferry the
+   exit code up to us.
+
+ * run-command.c notably does not do that, so for e.g. "git push"
+   tests where we expect a failure and an underlying "git" command
+   fails we won't ferry up the segfault or abort exit code.
+
+ * We have gitweb.perl and some other perl code ignoring return values
+   from close(), i.e. ignoring exit codes from "git rev-parse" et al.
+
+ * We have in-tree shellscripts like "git-merge-one-file.sh" invoking
+   git commands, and if they fail returning "1", not ferrying up the
+   segfault or abort() exit code.
 
 Ævar Arnfjörð Bjarmason (15):
   tests: change some 'test $(git) = "x"' to test_cmp
