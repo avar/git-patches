@@ -1,0 +1,66 @@
+From 66004e2472c2c387bbc10ef8b6c7da0c9e9ad353 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-15.15-66004e2472c-20220302T171423Z-avarab@gmail.com>
+In-Reply-To: <cover-00.15-00000000000-20220302T171423Z-avarab@gmail.com>
+References: <cover-00.15-00000000000-20220302T171423Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Mar 2022 10:14:34 +0100
+Subject: [PATCH 15/15] rev-list simplify tests: don't ignore "git" exit code
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change a fragile test pattern introduced in 65347030590 (Topo-sort
+before --simplify-merges, 2008-08-03) to check the exit code of both
+"git name-rev" and "git log".
+
+This test as a whole would fail under SANITIZE=leak, but we'd pass
+several "failing" tests due to hiding these exit codes before we'd
+spot git dying with abort(). Now we'll instead spot all of the
+failures.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6012-rev-list-simplify.sh | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/t/t6012-rev-list-simplify.sh b/t/t6012-rev-list-simplify.sh
+index 63fcccec32e..de1e87f1621 100755
+--- a/t/t6012-rev-list-simplify.sh
++++ b/t/t6012-rev-list-simplify.sh
+@@ -12,7 +12,9 @@ note () {
+ }
+ 
+ unnote () {
+-	git name-rev --tags --annotate-stdin | sed -e "s|$OID_REGEX (tags/\([^)]*\)) |\1 |g"
++	test_when_finished "rm -f tmp" &&
++	git name-rev --tags --annotate-stdin >tmp &&
++	sed -e "s|$OID_REGEX (tags/\([^)]*\)) |\1 |g" <tmp
+ }
+ 
+ #
+@@ -111,8 +113,8 @@ check_outcome () {
+ 	shift &&
+ 	param="$*" &&
+ 	test_expect_$outcome "log $param" '
+-		git log --pretty="$FMT" --parents $param |
+-		unnote >actual &&
++		git log --pretty="$FMT" --parents $param >out &&
++		unnote >actual <out &&
+ 		sed -e "s/^.*	\([^ ]*\) .*/\1/" >check <actual &&
+ 		test_cmp expect check
+ 	'
+@@ -151,8 +153,8 @@ check_result 'L K I H G B' --exclude-first-parent-only --first-parent L ^F
+ check_result 'E C B A' --full-history E -- lost
+ test_expect_success 'full history simplification without parent' '
+ 	printf "%s\n" E C B A >expect &&
+-	git log --pretty="$FMT" --full-history E -- lost |
+-	unnote >actual &&
++	git log --pretty="$FMT" --full-history E -- lost >out &&
++	unnote >actual <out &&
+ 	sed -e "s/^.*	\([^ ]*\) .*/\1/" >check <actual &&
+ 	test_cmp expect check
+ '
+-- 
+2.35.1.1228.g56895c6ee86
+

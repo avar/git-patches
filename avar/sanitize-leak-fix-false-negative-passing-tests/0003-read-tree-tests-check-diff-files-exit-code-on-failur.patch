@@ -1,0 +1,92 @@
+From 008b5ae57c5092962c87176768592f1cf62ecd13 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.15-008b5ae57c5-20220302T171423Z-avarab@gmail.com>
+In-Reply-To: <cover-00.15-00000000000-20220302T171423Z-avarab@gmail.com>
+References: <cover-00.15-00000000000-20220302T171423Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 25 Feb 2022 10:29:50 +0100
+Subject: [PATCH 03/15] read-tree tests: check "diff-files" exit code on
+ failure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix an issue with the exit code of "diff-files" being ignored, which
+has been ignored ever since these tests were originally added in
+c859600954d ([PATCH] read-tree: save more user hassles during
+fast-forward., 2005-06-07).
+
+Since the exit code was ignored we'd hide errors here under
+SANITIZE=leak, which resulted in me mistakenly marking these tests as
+passing under SANITIZE=leak in e5a917fcf42 (unpack-trees: don't leak
+memory in verify_clean_subdirectory(), 2021-10-07) and
+4ea08416b8e (leak tests: mark a read-tree test as passing
+SANITIZE=leak, 2021-10-31).
+
+As it would be non-trivial to fix these tests (the leak is in
+revision.c) let's un-mark them as passing under SANITIZE=leak in
+addition to fixing the issue of ignoring the exit code.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1001-read-tree-m-2way.sh   | 6 +++---
+ t/t1002-read-tree-m-u-2way.sh | 6 +++---
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/t/t1001-read-tree-m-2way.sh b/t/t1001-read-tree-m-2way.sh
+index d1115528cb9..0710b1fb1e9 100755
+--- a/t/t1001-read-tree-m-2way.sh
++++ b/t/t1001-read-tree-m-2way.sh
+@@ -21,7 +21,6 @@ In the test, these paths are used:
+ 	yomin   - not in H or M
+ '
+ 
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ . "$TEST_DIRECTORY"/lib-read-tree.sh
+ 
+@@ -38,11 +37,12 @@ compare_change () {
+ }
+ 
+ check_cache_at () {
+-	clean_if_empty=$(git diff-files -- "$1")
++	git diff-files -- "$1" >out &&
++	clean_if_empty=$(cat out) &&
+ 	case "$clean_if_empty" in
+ 	'')  echo "$1: clean" ;;
+ 	?*)  echo "$1: dirty" ;;
+-	esac
++	esac &&
+ 	case "$2,$clean_if_empty" in
+ 	clean,)		:     ;;
+ 	clean,?*)	false ;;
+diff --git a/t/t1002-read-tree-m-u-2way.sh b/t/t1002-read-tree-m-u-2way.sh
+index ca5c5510c73..46cbd5514a6 100755
+--- a/t/t1002-read-tree-m-u-2way.sh
++++ b/t/t1002-read-tree-m-u-2way.sh
+@@ -9,7 +9,6 @@ This is identical to t1001, but uses -u to update the work tree as well.
+ 
+ '
+ 
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ . "$TEST_DIRECTORY"/lib-read-tree.sh
+ 
+@@ -23,11 +22,12 @@ compare_change () {
+ }
+ 
+ check_cache_at () {
+-	clean_if_empty=$(git diff-files -- "$1")
++	git diff-files -- "$1" >out &&
++	clean_if_empty=$(cat out) &&
+ 	case "$clean_if_empty" in
+ 	'')  echo "$1: clean" ;;
+ 	?*)  echo "$1: dirty" ;;
+-	esac
++	esac &&
+ 	case "$2,$clean_if_empty" in
+ 	clean,)		:     ;;
+ 	clean,?*)	false ;;
+-- 
+2.35.1.1228.g56895c6ee86
+

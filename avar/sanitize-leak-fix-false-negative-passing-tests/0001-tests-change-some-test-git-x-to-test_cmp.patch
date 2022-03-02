@@ -1,0 +1,239 @@
+From 78b9c52551f3606718a396650042a9ac6b9aa066 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.15-78b9c52551f-20220302T171423Z-avarab@gmail.com>
+In-Reply-To: <cover-00.15-00000000000-20220302T171423Z-avarab@gmail.com>
+References: <cover-00.15-00000000000-20220302T171423Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 17 Feb 2022 17:53:41 +0100
+Subject: [PATCH 01/15] tests: change some 'test $(git) = "x"' to test_cmp
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change some of the patterns in the test suite where we were hiding the
+exit code from "git" by invoking it in a sub-shell within a "test"
+expression to use temporary files and test_cmp instead.
+
+These are not all the occurrences of this anti-pattern, but these in
+particular hid issues where LSAN was dying, and I'd thus marked these
+tests as passing under the linux-leaks CI job in past commits with
+"TEST_PASSES_SANITIZE_LEAK=true". Let's deal with that by either
+removing that marking, or skipping specific tests under
+!SANITIZE_LEAK.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0002-gitfile.sh    |  6 ++++--
+ t/t2200-add-update.sh | 33 +++++++++++++++++++++------------
+ t/t4128-apply-root.sh | 33 ++++++++++++++++++++-------------
+ t/t7103-reset-bare.sh |  7 +++++--
+ 4 files changed, 50 insertions(+), 29 deletions(-)
+
+diff --git a/t/t0002-gitfile.sh b/t/t0002-gitfile.sh
+index 76052cb5620..f6356db183b 100755
+--- a/t/t0002-gitfile.sh
++++ b/t/t0002-gitfile.sh
+@@ -65,9 +65,11 @@ test_expect_success 'check commit-tree' '
+ 	test_path_is_file "$REAL/objects/$(objpath $SHA)"
+ '
+ 
+-test_expect_success 'check rev-list' '
++test_expect_success !SANITIZE_LEAK 'check rev-list' '
+ 	git update-ref "HEAD" "$SHA" &&
+-	test "$SHA" = "$(git rev-list HEAD)"
++	git rev-list HEAD >actual &&
++	echo $SHA >expected &&
++	test_cmp expected actual
+ '
+ 
+ test_expect_success 'setup_git_dir twice in subdir' '
+diff --git a/t/t2200-add-update.sh b/t/t2200-add-update.sh
+index acd3650d3c0..0c38f8e3569 100755
+--- a/t/t2200-add-update.sh
++++ b/t/t2200-add-update.sh
+@@ -14,7 +14,6 @@ only the updates to dir/sub.
+ Also tested are "git add -u" without limiting, and "git add -u"
+ without contents changes, and other conditions'
+ 
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+@@ -41,20 +40,28 @@ test_expect_success update '
+ '
+ 
+ test_expect_success 'update noticed a removal' '
+-	test "$(git ls-files dir1/sub1)" = ""
++	git ls-files dir1/sub1 >out &&
++	test_must_be_empty out
+ '
+ 
+ test_expect_success 'update touched correct path' '
+-	test "$(git diff-files --name-status dir2/sub3)" = ""
++	git diff-files --name-status dir2/sub3 >out &&
++	test_must_be_empty out
+ '
+ 
+ test_expect_success 'update did not touch other tracked files' '
+-	test "$(git diff-files --name-status check)" = "M	check" &&
+-	test "$(git diff-files --name-status top)" = "M	top"
++	echo "M	check" >expect &&
++	git diff-files --name-status check >actual &&
++	test_cmp expect actual &&
++
++	echo "M	top" >expect &&
++	git diff-files --name-status top >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'update did not touch untracked files' '
+-	test "$(git ls-files dir2/other)" = ""
++	git ls-files dir2/other >out &&
++	test_must_be_empty out
+ '
+ 
+ test_expect_success 'cache tree has not been corrupted' '
+@@ -76,9 +83,8 @@ test_expect_success 'update from a subdirectory' '
+ '
+ 
+ test_expect_success 'change gets noticed' '
+-
+-	test "$(git diff-files --name-status dir1)" = ""
+-
++	git diff-files --name-status dir1 >out &&
++	test_must_be_empty out
+ '
+ 
+ test_expect_success 'non-qualified update in subdir updates from the root' '
+@@ -103,7 +109,8 @@ test_expect_success 'replace a file with a symlink' '
+ test_expect_success 'add everything changed' '
+ 
+ 	git add -u &&
+-	test -z "$(git diff-files)"
++	git diff-files >out &&
++	test_must_be_empty out
+ 
+ '
+ 
+@@ -111,7 +118,8 @@ test_expect_success 'touch and then add -u' '
+ 
+ 	touch check &&
+ 	git add -u &&
+-	test -z "$(git diff-files)"
++	git diff-files >out &&
++	test_must_be_empty out
+ 
+ '
+ 
+@@ -119,7 +127,8 @@ test_expect_success 'touch and then add explicitly' '
+ 
+ 	touch check &&
+ 	git add check &&
+-	test -z "$(git diff-files)"
++	git diff-files >out &&
++	test_must_be_empty out
+ 
+ '
+ 
+diff --git a/t/t4128-apply-root.sh b/t/t4128-apply-root.sh
+index cb3181e8b71..ba89a2f2d73 100755
+--- a/t/t4128-apply-root.sh
++++ b/t/t4128-apply-root.sh
+@@ -2,8 +2,6 @@
+ 
+ test_description='apply same filename'
+ 
+-
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+@@ -26,10 +24,11 @@ diff a/bla/blub/dir/file b/bla/blub/dir/file
+ EOF
+ 
+ test_expect_success 'apply --directory -p (1)' '
+-
+ 	git apply --directory=some/sub -p3 --index patch &&
+-	test Bello = $(git show :some/sub/dir/file) &&
+-	test Bello = $(cat some/sub/dir/file)
++	echo Bello >expect &&
++	git show :some/sub/dir/file >actual &&
++	test_cmp expect actual &&
++	test_cmp expect some/sub/dir/file
+ 
+ '
+ 
+@@ -37,8 +36,10 @@ test_expect_success 'apply --directory -p (2) ' '
+ 
+ 	git reset --hard initial &&
+ 	git apply --directory=some/sub/ -p3 --index patch &&
+-	test Bello = $(git show :some/sub/dir/file) &&
+-	test Bello = $(cat some/sub/dir/file)
++	echo Bello >expect &&
++	git show :some/sub/dir/file >actual &&
++	test_cmp expect actual &&
++	test_cmp expect some/sub/dir/file
+ 
+ '
+ 
+@@ -55,8 +56,10 @@ EOF
+ test_expect_success 'apply --directory (new file)' '
+ 	git reset --hard initial &&
+ 	git apply --directory=some/sub/dir/ --index patch &&
+-	test content = $(git show :some/sub/dir/newfile) &&
+-	test content = $(cat some/sub/dir/newfile)
++	echo content >expect &&
++	git show :some/sub/dir/newfile >actual &&
++	test_cmp expect actual &&
++	test_cmp expect some/sub/dir/newfile
+ '
+ 
+ cat > patch << EOF
+@@ -72,8 +75,10 @@ EOF
+ test_expect_success 'apply --directory -p (new file)' '
+ 	git reset --hard initial &&
+ 	git apply -p2 --directory=some/sub/dir/ --index patch &&
+-	test content = $(git show :some/sub/dir/newfile2) &&
+-	test content = $(cat some/sub/dir/newfile2)
++	echo content >expect &&
++	git show :some/sub/dir/newfile2 >actual &&
++	test_cmp expect actual &&
++	test_cmp expect some/sub/dir/newfile2
+ '
+ 
+ cat > patch << EOF
+@@ -107,8 +112,10 @@ EOF
+ test_expect_success 'apply --directory (quoted filename)' '
+ 	git reset --hard initial &&
+ 	git apply --directory=some/sub/dir/ --index patch &&
+-	test content = $(git show :some/sub/dir/quotefile) &&
+-	test content = $(cat some/sub/dir/quotefile)
++	echo content >expect &&
++	git show :some/sub/dir/quotefile >actual &&
++	test_cmp expect actual &&
++	test_cmp expect some/sub/dir/quotefile
+ '
+ 
+ test_done
+diff --git a/t/t7103-reset-bare.sh b/t/t7103-reset-bare.sh
+index 0de83e36199..a60153f9f32 100755
+--- a/t/t7103-reset-bare.sh
++++ b/t/t7103-reset-bare.sh
+@@ -63,9 +63,12 @@ test_expect_success '"mixed" reset is not allowed in bare' '
+ 	test_must_fail git reset --mixed HEAD^
+ '
+ 
+-test_expect_success '"soft" reset is allowed in bare' '
++test_expect_success !SANITIZE_LEAK '"soft" reset is allowed in bare' '
+ 	git reset --soft HEAD^ &&
+-	test "$(git show --pretty=format:%s | head -n 1)" = "one"
++	git show --pretty=format:%s >out &&
++	echo one >expect &&
++	head -n 1 out >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_done
+-- 
+2.35.1.1228.g56895c6ee86
+
