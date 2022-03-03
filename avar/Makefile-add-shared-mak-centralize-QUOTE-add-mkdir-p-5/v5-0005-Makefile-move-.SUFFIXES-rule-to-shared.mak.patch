@@ -1,0 +1,85 @@
+From 18e0a6985f153812e000a8e5b68ccf1da48f8e84 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-5.8-18e0a6985f1-20220303T155844Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.8-00000000000-20220303T155844Z-avarab@gmail.com>
+References: <cover-v3-0.4-00000000000-20220221T155656Z-avarab@gmail.com>
+	<cover-v5-0.8-00000000000-20220303T155844Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 7 Nov 2021 03:13:47 +0100
+Subject: [PATCH v5 5/8] Makefile: move ".SUFFIXES" rule to shared.mak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This was added in 30248886ce8 (Makefile: disable default implicit
+rules, 2010-01-26), let's move it to the top of "shared.mak" so it'll
+apply to all our Makefiles.
+
+This doesn't benefit the main Makefile at all, since it already had
+the rule, but since we're including shared.mak in other Makefiles
+starts to benefit them. E.g. running the 'man" target is now faster:
+
+    $ git -c hyperfine.hook.setup= hyperfine -L rev HEAD~1,HEAD~0 -s 'make -C Documentation man' 'make -C Documentation -j1 man'
+    Benchmark 1: make -C Documentation -j1 man' in 'HEAD~1
+      Time (mean ± σ):     121.7 ms ±   8.8 ms    [User: 105.8 ms, System: 18.6 ms]
+      Range (min … max):   112.8 ms … 148.4 ms    26 runs
+
+    Benchmark 2: make -C Documentation -j1 man' in 'HEAD~0
+      Time (mean ± σ):      97.5 ms ±   8.0 ms    [User: 80.1 ms, System: 20.1 ms]
+      Range (min … max):    89.8 ms … 111.8 ms    32 runs
+
+    Summary
+      'make -C Documentation -j1 man' in 'HEAD~0' ran
+        1.25 ± 0.14 times faster than 'make -C Documentation -j1 man' in 'HEAD~1'
+
+The reason for that can be seen when comparing that run with
+"--debug=a". Without this change making a target like "git-status.1"
+will cause "make" to consider not only "git-status.txt", but
+"git-status.txt.o", as well as numerous other implicit suffixes such
+as ".c", ".cc", ".cpp" etc. See [1] for a more detailed before/after
+example.
+
+So this is causing us to omit a bunch of work we didn't need to
+do. For making "git-status.1" the "--debug=a" output is reduced from
+~140k lines to ~6k.
+
+1. https://lore.kernel.org/git/220222.86bkyz875k.gmgdl@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile   | 2 --
+ shared.mak | 5 +++++
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 1ac924bd844..ce362720947 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2580,8 +2580,6 @@ ASM_SRC := $(wildcard $(OBJECTS:o=S))
+ ASM_OBJ := $(ASM_SRC:S=o)
+ C_OBJ := $(filter-out $(ASM_OBJ),$(OBJECTS))
+ 
+-.SUFFIXES:
+-
+ $(C_OBJ): %.o: %.c GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
+ 	$(QUIET_CC)$(CC) -o $*.o -c $(dep_args) $(compdb_args) $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) $<
+ $(ASM_OBJ): %.o: %.S GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
+diff --git a/shared.mak b/shared.mak
+index 29f0e69ecb9..1dda948df09 100644
+--- a/shared.mak
++++ b/shared.mak
+@@ -9,6 +9,11 @@
+ %:: s.%
+ %:: SCCS/s.%
+ 
++## Likewise delete default $(SUFFIXES). See:
++##
++##     info make --index-search=.SUFFIXES
++.SUFFIXES:
++
+ ### Flags affecting all rules
+ 
+ # A GNU make extension since gmake 3.72 (released in late 1994) to
+-- 
+2.35.1.1230.ga6e6579e98c
+

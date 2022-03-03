@@ -1,0 +1,451 @@
+From e6a93cae81d32689c216d98ad285d1897b46cb5e Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v5-0.8-00000000000-20220303T155844Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.4-00000000000-20220221T155656Z-avarab@gmail.com>
+References: <cover-v3-0.4-00000000000-20220221T155656Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 3 Mar 2022 16:58:44 +0100
+Subject: [PATCH v5 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (8):
+  scalar Makefile: use "The default target of..." pattern
+  Makefiles: add "shared.mak", move ".DELETE_ON_ERROR" to it
+  Makefile: disable GNU make built-in wildcard rules
+  Makefile: define $(LIB_H) in terms of $(FIND_SOURCE_FILES)
+  Makefile: move ".SUFFIXES" rule to shared.mak
+  Makefile: move $(comma), $(empty) and $(space) to shared.mak
+  Makefile: add "$(QUIET)" boilerplate to shared.mak
+  Makefiles: add and use wildcard "mkdir -p" template
+
+ Documentation/Makefile    |  63 ++------------------
+ Makefile                  | 118 ++++++++++++--------------------------
+ config.mak.uname          |   1 -
+ contrib/scalar/Makefile   |  20 ++-----
+ contrib/scalar/t/Makefile |   3 +
+ shared.mak                | 103 +++++++++++++++++++++++++++++++++
+ t/Makefile                |   3 +
+ t/interop/Makefile        |   3 +
+ t/perf/Makefile           |   3 +
+ templates/Makefile        |   8 +--
+ 10 files changed, 165 insertions(+), 160 deletions(-)
+ create mode 100644 shared.mak
+
+Range-diff against v4:
+4:  fa4946ce7ef ! 1:  7547bf3e481 test-lib: add "fast_unwind_on_malloc=0" to LSAN_OPTIONS
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib: add "fast_unwind_on_malloc=0" to LSAN_OPTIONS
+    +    scalar Makefile: use "The default target of..." pattern
+     
+    -    Add "fast_unwind_on_malloc=0" to LSAN_OPTIONS to get more meaningful
+    -    stack traces from LSAN. This isn't required under ASAN which will emit
+    -    traces such as this one for a leak in "t/t0006-date.sh":
+    +    Make the "contrib/scalar/Makefile" be stylistically consistent with
+    +    the top-level "Makefile" in first declaring "all" to be the default
+    +    rule, followed by including other Makefile snippets.
+     
+    -        $ ASAN_OPTIONS=detect_leaks=1 ./t0006-date.sh -vixd
+    -        [...]
+    -        Direct leak of 3 byte(s) in 1 object(s) allocated from:
+    -            #0 0x488b94 in strdup (t/helper/test-tool+0x488b94)
+    -            #1 0x9444a4 in xstrdup wrapper.c:29:14
+    -            #2 0x5995fa in parse_date_format date.c:991:24
+    -            #3 0x4d2056 in show_dates t/helper/test-date.c:39:2
+    -            #4 0x4d174a in cmd__date t/helper/test-date.c:116:3
+    -            #5 0x4cce89 in cmd_main t/helper/test-tool.c:127:11
+    -            #6 0x4cd1e3 in main common-main.c:52:11
+    -            #7 0x7fef3c695e49 in __libc_start_main csu/../csu/libc-start.c:314:16
+    -            #8 0x422b09 in _start (t/helper/test-tool+0x422b09)
+    -
+    -        SUMMARY: AddressSanitizer: 3 byte(s) leaked in 1 allocation(s).
+    -        Aborted
+    -
+    -    Whereas LSAN would emit this instead:
+    -
+    -        $ ./t0006-date.sh -vixd
+    -        [...]
+    -        Direct leak of 3 byte(s) in 1 object(s) allocated from:
+    -            #0 0x4323b8 in malloc (t/helper/test-tool+0x4323b8)
+    -            #1 0x7f2be1d614aa in strdup string/strdup.c:42:15
+    -
+    -        SUMMARY: LeakSanitizer: 3 byte(s) leaked in 1 allocation(s).
+    -        Aborted
+    -
+    -    Now we'll instead git this sensible stack trace under
+    -    LSAN. I.e. almost the same one (but starting with "malloc", as is
+    -    usual for LSAN) as under ASAN:
+    -
+    -        Direct leak of 3 byte(s) in 1 object(s) allocated from:
+    -            #0 0x4323b8 in malloc (t/helper/test-tool+0x4323b8)
+    -            #1 0x7f012af5c4aa in strdup string/strdup.c:42:15
+    -            #2 0x5cb164 in xstrdup wrapper.c:29:14
+    -            #3 0x495ee9 in parse_date_format date.c:991:24
+    -            #4 0x453aac in show_dates t/helper/test-date.c:39:2
+    -            #5 0x453782 in cmd__date t/helper/test-date.c:116:3
+    -            #6 0x451d95 in cmd_main t/helper/test-tool.c:127:11
+    -            #7 0x451f1e in main common-main.c:52:11
+    -            #8 0x7f012aef5e49 in __libc_start_main csu/../csu/libc-start.c:314:16
+    -            #9 0x42e0a9 in _start (t/helper/test-tool+0x42e0a9)
+    -
+    -        SUMMARY: LeakSanitizer: 3 byte(s) leaked in 1 allocation(s).
+    -        Aborted
+    -
+    -    As the option name suggests this does make things slower, e.g. for
+    -    t0001-init.sh we're around 10% slower:
+    -
+    -        $ hyperfine -L v 0,1 'LSAN_OPTIONS=fast_unwind_on_malloc={v} make T=t0001-init.sh' -r 3
+    -        Benchmark 1: LSAN_OPTIONS=fast_unwind_on_malloc=0 make T=t0001-init.sh
+    -          Time (mean ± σ):      2.135 s ±  0.015 s    [User: 1.951 s, System: 0.554 s]
+    -          Range (min … max):    2.122 s …  2.152 s    3 runs
+    -
+    -        Benchmark 2: LSAN_OPTIONS=fast_unwind_on_malloc=1 make T=t0001-init.sh
+    -          Time (mean ± σ):      1.981 s ±  0.055 s    [User: 1.769 s, System: 0.488 s]
+    -          Range (min … max):    1.941 s …  2.044 s    3 runs
+    -
+    -        Summary
+    -          'LSAN_OPTIONS=fast_unwind_on_malloc=1 make T=t0001-init.sh' ran
+    -            1.08 ± 0.03 times faster than 'LSAN_OPTIONS=fast_unwind_on_malloc=0 make T=t0001-init.sh'
+    -
+    -    I think that's more than worth it to get the more meaningful stack
+    -    traces, we can always provide LSAN_OPTIONS=fast_unwind_on_malloc=0 for
+    -    one-off "fast" runs.
+    +    This adjusts code added in 0a43fb22026 (scalar: create a rudimentary
+    +    executable, 2021-12-03), it further ensures that when we add another
+    +    "include" file in a subsequent commit that the included file won't be
+    +    the one to define our default target.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: prepend_var ASAN_OPTIONS : detect_leaks=0
+    - export ASAN_OPTIONS
+    + ## contrib/scalar/Makefile ##
+    +@@
+    ++# The default target of this Makefile is...
+    ++all::
+    ++
+    ++include ../../config.mak.uname
+    ++-include ../../config.mak.autogen
+    ++-include ../../config.mak
+    ++
+    + QUIET_SUBDIR0  = +$(MAKE) -C # space to separate -C and subdir
+    + QUIET_SUBDIR1  =
+    + 
+    +@@ contrib/scalar/Makefile: else
+    + endif
+    + endif
+      
+    - prepend_var LSAN_OPTIONS : $GIT_SAN_OPTIONS
+    -+prepend_var LSAN_OPTIONS : fast_unwind_on_malloc=0
+    - export LSAN_OPTIONS
+    +-all:
+    +-
+    +-include ../../config.mak.uname
+    +--include ../../config.mak.autogen
+    +--include ../../config.mak
+    +-
+    + TARGETS = scalar$(X) scalar.o
+    + GITLIBS = ../../common-main.o ../../libgit.a ../../xdiff/lib.a
+      
+    - if test ! -f "$GIT_BUILD_DIR"/GIT-BUILD-OPTIONS
+-:  ----------- > 2:  91795eccc32 Makefiles: add "shared.mak", move ".DELETE_ON_ERROR" to it
+2:  97586ad4541 ! 3:  9f42f40b518 test-lib: correct and assert TEST_DIRECTORY overriding
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib: correct and assert TEST_DIRECTORY overriding
+    +    Makefile: disable GNU make built-in wildcard rules
+     
+    -    Correct a misleading comment added by me in 62f539043c7 (test-lib:
+    -    Allow overriding of TEST_DIRECTORY, 2010-08-19), and add an assertion
+    -    that TEST_DIRECTORY cannot point to any directory except the "t"
+    -    directory in the top-level of git.git.
+    +    Override built-in rules of GNU make that use a wildcard target. This
+    +    can speeds things up significantly as we don't need to stat() so many
+    +    files. GNU make does that by default to see if it can retrieve their
+    +    contents from RCS or SCCS. See [1] for an old mailing list discussion
+    +    about how to disable these.
+     
+    -    This assertion is in effect not new, since we'd already die if that
+    -    wasn't the case[1], but it and the updated commentary help to make
+    -    that clearer.
+    +    The speed-up may vary. I've seen 1-10% depending on the speed of the
+    +    local disk, caches, -jN etc. Running:
+     
+    -    The existing comments were also on the wrong arms of the
+    -    "if". I.e. the "allow tests to override this" was on the "test -z"
+    -    arm. That came about due to a combination of 62f539043c7 and
+    -    85176d72513 (test-lib.sh: convert $TEST_DIRECTORY to an absolute path,
+    -    2013-11-17).
+    +        strace -f -c -S calls make -j1 NO_TCLTK=Y
+     
+    -    Those earlier comments could be read as allowing the "$TEST_DIRECTORY"
+    -    to be some path outside of t/. As explained in the updated comment
+    -    that's impossible, rather it was meant for *tests* that ran outside of
+    -    t/, i.e. the "t0000-basic.sh" tests that use "lib-subtest.sh".
+    +    Shows that we reduce the number of syscalls we make, mostly in "stat"
+    +    calls.
+     
+    -    Those tests have a different working directory, but they set the
+    -    "TEST_DIRECTORY" to the same path for bootstrapping. The comments now
+    -    reflect that, and further comment on why we have a hard dependency on
+    -    this.
+    +    We could also invoke make with "-r" by setting "MAKEFLAGS = -r"
+    +    early. Doing so might make us a bit faster still. But doing so is a
+    +    much bigger hammer, since it will disable all built-in rules,
+    +    some (all?) of which can be seen with:
+     
+    -    1. https://lore.kernel.org/git/220222.86o82z8als.gmgdl@evledraar.gmail.com/
+    +        make -f/dev/null -p | grep -v -e ^# -e ^$
+    +
+    +    We may have something that relies on them, so let's go for the more
+    +    isolated optimization here that gives us most or all of the wins.
+    +
+    +    1. https://lists.gnu.org/archive/html/help-make/2002-11/msg00063.html
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/test-lib.sh ##
+    + ## shared.mak ##
+     @@
+    - # t/ subdirectory and are run in 'trash directory' subdirectory.
+    - if test -z "$TEST_DIRECTORY"
+    - then
+    --	# We allow tests to override this, in case they want to run tests
+    --	# outside of t/, e.g. for running tests on the test library
+    --	# itself.
+    --	TEST_DIRECTORY=$(pwd)
+    --else
+    - 	# ensure that TEST_DIRECTORY is an absolute path so that it
+    - 	# is valid even if the current working directory is changed
+    -+	TEST_DIRECTORY=$(pwd)
+    -+else
+    -+	# The TEST_DIRECTORY will always be the path to the "t"
+    -+	# directory in the git.git checkout. This is overridden by
+    -+	# e.g. t/lib-subtest.sh, but only because its $(pwd) is
+    -+	# different. Those tests still set "$TEST_DIRECTORY" to the
+    -+	# same path.
+    -+	#
+    -+	# See use of "$GIT_BUILD_DIR" and "$TEST_DIRECTORY" below for
+    -+	# hard assumptions about "$GIT_BUILD_DIR/t" existing and being
+    -+	# the "$TEST_DIRECTORY", and e.g. "$TEST_DIRECTORY/helper"
+    -+	# needing to exist.
+    - 	TEST_DIRECTORY=$(cd "$TEST_DIRECTORY" && pwd) || exit 1
+    - fi
+    - if test -z "$TEST_OUTPUT_DIRECTORY"
+    -@@ t/test-lib.sh: then
+    - 	TEST_OUTPUT_DIRECTORY=$TEST_DIRECTORY
+    - fi
+    - GIT_BUILD_DIR="$TEST_DIRECTORY"/..
+    -+if test "$TEST_DIRECTORY" = "${TEST_DIRECTORY%/t}"
+    -+then
+    -+	echo "PANIC: Running in a $TEST_DIRECTORY that doesn't end in '/t'?" >&2
+    -+	exit 1
+    -+fi
+    ++### Remove GNU make implicit rules
+    ++
+    ++## This speeds things up since we don't need to look for and stat() a
+    ++## "foo.c,v" every time a rule referring to "foo.c" is in play. See
+    ++## "make -p -f/dev/null | grep ^%::'".
+    ++%:: %,v
+    ++%:: RCS/%,v
+    ++%:: RCS/%
+    ++%:: s.%
+    ++%:: SCCS/s.%
+    ++
+    + ### Flags affecting all rules
+      
+    - # Prepend a string to a VAR using an arbitrary ":" delimiter, not
+    - # adding the delimiter if VAR or VALUE is empty. I.e. a generalized:
+    + # A GNU make extension since gmake 3.72 (released in late 1994) to
+1:  d1967ab34a5 ! 4:  034779ff7fb test-lib: add GIT_SAN_OPTIONS, inherit [AL]SAN_OPTIONS
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib: add GIT_SAN_OPTIONS, inherit [AL]SAN_OPTIONS
+    +    Makefile: define $(LIB_H) in terms of $(FIND_SOURCE_FILES)
+     
+    -    Change our ASAN_OPTIONS and LSAN_OPTIONS to set defaults for those
+    -    variables, rather than punting out entirely if we already have them in
+    -    the environment.
+    +    Combine the definitions of $(FIND_SOURCE_FILES) and $(LIB_H) to speed
+    +    up the Makefile, as these are the two main expensive $(shell) commands
+    +    that we execute unconditionally.
+     
+    -    We want to take any user-provided settings over our own, but we can do
+    -    that by prepending our defaults to the variable. The libsanitizer
+    -    options parsing has "last option wins" semantics.
+    +    When see what was in $(FOUND_SOURCE_FILES) that wasn't in $(LIB_H) via
+    +    the ad-hoc test of:
+     
+    -    It's now possible to do e.g.:
+    +        $(error $(filter-out $(LIB_H),$(filter %.h,$(ALL_SOURCE_FILES))))
+    +        $(error $(filter-out $(ALL_SOURCE_FILES),$(filter %.h,$(LIB_H))))
+     
+    -        LSAN_OPTIONS=report_objects=1 ./t0006-date.sh
+    +    We'll get, respectively:
+     
+    -    And not have the "report_objects=1" setting overwrite our sensible
+    -    default of "abort_on_error=1", but by prepending to the list we ensure
+    -    that:
+    +        Makefile:850: *** t/helper/test-tool.h.  Stop.
+    +        Makefile:850: *** .  Stop.
+     
+    -        LSAN_OPTIONS=report_objects=1:abort_on_error=0 ./t0006-date.sh
+    +    I.e. we only had a discrepancy when it came to
+    +    t/helper/test-tool.h. In terms of correctness this was broken before,
+    +    but now works:
+     
+    -    Will take the desired "abort_on_error=0" over our default.
+    +        $ make t/helper/test-tool.hco
+    +            HDR t/helper/test-tool.h
+     
+    -    See b0f4c9087e1 (t: support clang/gcc AddressSanitizer, 2014-12-08)
+    -    for the original pattern being altered here, and
+    -    85b81b35ff9 (test-lib: set LSAN_OPTIONS to abort by default,
+    -    2017-09-05) for when LSAN_OPTIONS was added in addition to the
+    -    then-existing ASAN_OPTIONS.
+    +    This speeds things up a lot:
+    +
+    +        $ git -c hyperfine.hook.setup= hyperfine -L rev HEAD~1,HEAD~0 -s 'make NO_TCLTK=Y' 'make -j1 NO_TCLTK=Y' --warmup 10 -M 10
+    +        Benchmark 1: make -j1 NO_TCLTK=Y' in 'HEAD~1
+    +          Time (mean ± σ):     159.9 ms ±   6.8 ms    [User: 137.2 ms, System: 28.0 ms]
+    +          Range (min … max):   154.6 ms … 175.9 ms    10 runs
+    +
+    +        Benchmark 2: make -j1 NO_TCLTK=Y' in 'HEAD~0
+    +          Time (mean ± σ):     100.0 ms ±   1.3 ms    [User: 84.2 ms, System: 20.2 ms]
+    +          Range (min … max):    98.8 ms … 102.8 ms    10 runs
+    +
+    +        Summary
+    +          'make -j1 NO_TCLTK=Y' in 'HEAD~0' ran
+    +            1.60 ± 0.07 times faster than 'make -j1 NO_TCLTK=Y' in 'HEAD~1'
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: then
+    - fi
+    - GIT_BUILD_DIR="$TEST_DIRECTORY"/..
+    + ## Makefile ##
+    +@@ Makefile: GENERATED_H += hook-list.h
+    + .PHONY: generated-hdrs
+    + generated-hdrs: $(GENERATED_H)
+      
+    -+# Prepend a string to a VAR using an arbitrary ":" delimiter, not
+    -+# adding the delimiter if VAR or VALUE is empty. I.e. a generalized:
+    -+#
+    -+#	VAR=$1${VAR:+${1:+$2}$VAR}
+    -+#
+    -+# Usage (using ":" as the $2 delimiter):
+    -+#
+    -+#	prepend_var VAR : VALUE
+    -+prepend_var () {
+    -+	eval "$1=$3\${$1:+${3:+$2}\$$1}"
+    -+}
+    +-LIB_H := $(sort $(patsubst ./%,%,$(shell git ls-files '*.h' ':!t/' ':!Documentation/' 2>/dev/null || \
+    ++## Exhaustive lists of our source files, either dynamically generated,
+    ++## or hardcoded.
+    ++SOURCES_CMD = ( \
+    ++	git ls-files \
+    ++		'*.[hcS]' \
+    ++		'*.sh' \
+    ++		':!*[tp][0-9][0-9][0-9][0-9]*' \
+    ++		':!contrib' \
+    ++		2>/dev/null || \
+    + 	$(FIND) . \
+    +-	-name .git -prune -o \
+    +-	-name t -prune -o \
+    +-	-name Documentation -prune -o \
+    +-	-name '*.h' -print)))
+    ++		\( -name .git -type d -prune \) \
+    ++		-o \( -name '[tp][0-9][0-9][0-9][0-9]*' -prune \) \
+    ++		-o \( -name contrib -type d -prune \) \
+    ++		-o \( -name build -type d -prune \) \
+    ++		-o \( -name 'trash*' -type d -prune \) \
+    ++		-o \( -name '*.[hcS]' -type f -print \) \
+    ++		-o \( -name '*.sh' -type f -print \) \
+    ++		| sed -e 's|^\./||' \
+    ++	)
+    ++FOUND_SOURCE_FILES := $(shell $(SOURCES_CMD))
+     +
+    -+# If [AL]SAN is in effect we want to abort so that we notice
+    -+# problems. The GIT_SAN_OPTIONS variable can be used to set common
+    -+# defaults shared between [AL]SAN_OPTIONS.
+    -+prepend_var GIT_SAN_OPTIONS : abort_on_error=1
+    ++FOUND_C_SOURCES = $(filter %.c,$(FOUND_SOURCE_FILES))
+    ++FOUND_H_SOURCES = $(filter %.h,$(FOUND_SOURCE_FILES))
+     +
+    - # If we were built with ASAN, it may complain about leaks
+    - # of program-lifetime variables. Disable it by default to lower
+    - # the noise level. This needs to happen at the start of the script,
+    - # before we even do our "did we build git yet" check (since we don't
+    - # want that one to complain to stderr).
+    --: ${ASAN_OPTIONS=detect_leaks=0:abort_on_error=1}
+    -+prepend_var ASAN_OPTIONS : $GIT_SAN_OPTIONS
+    -+prepend_var ASAN_OPTIONS : detect_leaks=0
+    - export ASAN_OPTIONS
+    ++COCCI_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES),$(FOUND_C_SOURCES))
+    ++
+    ++LIB_H = $(FOUND_H_SOURCES)
+    + 
+    + LIB_OBJS += abspath.o
+    + LIB_OBJS += add-interactive.o
+    +@@ Makefile: perl/build/man/man3/Git.3pm: perl/Git.pm
+    + 	$(QUIET_GEN)mkdir -p $(dir $@) && \
+    + 	pod2man $< $@
+      
+    --# If LSAN is in effect we _do_ want leak checking, but we still
+    --# want to abort so that we notice the problems.
+    --: ${LSAN_OPTIONS=abort_on_error=1}
+    -+prepend_var LSAN_OPTIONS : $GIT_SAN_OPTIONS
+    - export LSAN_OPTIONS
+    +-FIND_SOURCE_FILES = ( \
+    +-	git ls-files \
+    +-		'*.[hcS]' \
+    +-		'*.sh' \
+    +-		':!*[tp][0-9][0-9][0-9][0-9]*' \
+    +-		':!contrib' \
+    +-		2>/dev/null || \
+    +-	$(FIND) . \
+    +-		\( -name .git -type d -prune \) \
+    +-		-o \( -name '[tp][0-9][0-9][0-9][0-9]*' -prune \) \
+    +-		-o \( -name contrib -type d -prune \) \
+    +-		-o \( -name build -type d -prune \) \
+    +-		-o \( -name 'trash*' -type d -prune \) \
+    +-		-o \( -name '*.[hcS]' -type f -print \) \
+    +-		-o \( -name '*.sh' -type f -print \) \
+    +-		| sed -e 's|^\./||' \
+    +-	)
+    +-
+    +-FOUND_SOURCE_FILES = $(shell $(FIND_SOURCE_FILES))
+    +-
+    + $(ETAGS_TARGET): $(FOUND_SOURCE_FILES)
+    + 	$(QUIET_GEN)$(RM) $@+ && \
+    + 	echo $(FOUND_SOURCE_FILES) | xargs etags -a -o $@+ && \
+    +@@ Makefile: check: $(GENERATED_H)
+    + 		exit 1; \
+    + 	fi
+      
+    - if test ! -f "$GIT_BUILD_DIR"/GIT-BUILD-OPTIONS
+    +-FOUND_C_SOURCES = $(filter %.c,$(FOUND_SOURCE_FILES))
+    +-COCCI_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES),$(FOUND_C_SOURCES))
+    +-
+    + %.cocci.patch: %.cocci $(COCCI_SOURCES)
+    + 	$(QUIET_SPATCH) \
+    + 	if test $(SPATCH_BATCH_SIZE) = 0; then \
+3:  c25c4532c72 < -:  ----------- test-lib: make $GIT_BUILD_DIR an absolute path
+-:  ----------- > 5:  18e0a6985f1 Makefile: move ".SUFFIXES" rule to shared.mak
+-:  ----------- > 6:  422dee02ae9 Makefile: move $(comma), $(empty) and $(space) to shared.mak
+-:  ----------- > 7:  21bf1e6e01c Makefile: add "$(QUIET)" boilerplate to shared.mak
+-:  ----------- > 8:  e6a93cae81d Makefiles: add and use wildcard "mkdir -p" template
+-- 
+2.35.1.1230.ga6e6579e98c
+
