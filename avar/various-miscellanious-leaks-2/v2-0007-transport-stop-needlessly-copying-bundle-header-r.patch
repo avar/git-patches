@@ -1,0 +1,89 @@
+From b3f7753a7908023325e6c046f05ec5d6bbf206e9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-07.14-b3f7753a790-20220304T182902Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+References: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+	<cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Nov 2021 22:50:47 +0100
+Subject: [PATCH v2 07/14] transport: stop needlessly copying bundle header
+ references
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend the logic added in fddf2ebe388 (transport: teach all vtables to
+allow fetch first, 2019-08-21) and save ourselves pointless work in
+fetch_refs_from_bundle().
+
+The fetch_refs_from_bundle() caller doesn't care about the "struct
+ref *result" return value of get_refs_from_bundle(), and doesn't need
+any of the work we were doing in looping over the
+"data->header.references" in get_refs_from_bundle().
+
+So this change saves us work, and also fixes a memory leak that we had
+when called from fetch_refs_from_bundle(). The other caller of
+get_refs_from_bundle() is the "get_refs_list" member we set up for the
+"struct transport_vtable bundle_vtable". That caller does care about
+the "struct ref *result" return value.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ transport.c | 25 ++++++++++++++++---------
+ 1 file changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/transport.c b/transport.c
+index 253d6671b1f..70e9840a90e 100644
+--- a/transport.c
++++ b/transport.c
+@@ -125,16 +125,9 @@ struct bundle_transport_data {
+ 	unsigned get_refs_from_bundle_called : 1;
+ };
+ 
+-static struct ref *get_refs_from_bundle(struct transport *transport,
+-					int for_push,
+-					struct transport_ls_refs_options *transport_options)
++static void get_refs_from_bundle_inner(struct transport *transport)
+ {
+ 	struct bundle_transport_data *data = transport->data;
+-	struct ref *result = NULL;
+-	int i;
+-
+-	if (for_push)
+-		return NULL;
+ 
+ 	data->get_refs_from_bundle_called = 1;
+ 
+@@ -145,6 +138,20 @@ static struct ref *get_refs_from_bundle(struct transport *transport,
+ 		die(_("could not read bundle '%s'"), transport->url);
+ 
+ 	transport->hash_algo = data->header.hash_algo;
++}
++
++static struct ref *get_refs_from_bundle(struct transport *transport,
++					int for_push,
++					struct transport_ls_refs_options *transport_options)
++{
++	struct bundle_transport_data *data = transport->data;
++	struct ref *result = NULL;
++	int i;
++
++	if (for_push)
++		return NULL;
++
++	get_refs_from_bundle_inner(transport);
+ 
+ 	for (i = 0; i < data->header.references.nr; i++) {
+ 		struct string_list_item *e = data->header.references.items + i;
+@@ -169,7 +176,7 @@ static int fetch_refs_from_bundle(struct transport *transport,
+ 		strvec_push(&extra_index_pack_args, "-v");
+ 
+ 	if (!data->get_refs_from_bundle_called)
+-		get_refs_from_bundle(transport, 0, NULL);
++		get_refs_from_bundle_inner(transport);
+ 	ret = unbundle(the_repository, &data->header, data->fd,
+ 		       &extra_index_pack_args);
+ 	transport->hash_algo = data->header.hash_algo;
+-- 
+2.35.1.1248.gb68c9165ad8
+

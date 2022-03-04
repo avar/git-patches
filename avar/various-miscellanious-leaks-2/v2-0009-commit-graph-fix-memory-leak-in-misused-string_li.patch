@@ -1,0 +1,100 @@
+From 3fadb265d13ff5aeac436cbe74e59e7156b89b80 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-09.14-3fadb265d13-20220304T182902Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+References: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+	<cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 31 Aug 2021 13:12:33 +0200
+Subject: [PATCH v2 09/14] commit-graph: fix memory leak in misused string_list
+ API
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When this code was migrated to the string_list API in
+d88b14b3fd6 (commit-graph: use string-list API for input, 2018-06-27)
+it was made to use used both STRING_LIST_INIT_NODUP and a
+strbuf_detach() pattern.
+
+Those should not be used together if string_list_clear() is expected
+to free the memory, instead we need to either use STRING_LIST_INIT_DUP
+with a string_list_append_nodup(), or a STRING_LIST_INIT_NODUP and
+manually fiddle with the "strdup_strings" member before calling
+string_list_clear(). Let's do the former.
+
+Since "strdup_strings = 1" is set now other code might be broken by
+relying on "pack_indexes" not to duplicate it strings, but that
+doesn't happen. When we pass this down to write_commit_graph() that
+code uses the "struct string_list" without modifying it. Let's add a
+"const" to the variable to have the compiler enforce that assumption.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/commit-graph.c | 6 +++---
+ commit-graph.c         | 4 ++--
+ commit-graph.h         | 2 +-
+ 3 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/commit-graph.c b/builtin/commit-graph.c
+index 4247fbde95a..51c4040ea6c 100644
+--- a/builtin/commit-graph.c
++++ b/builtin/commit-graph.c
+@@ -192,7 +192,7 @@ static int git_commit_graph_write_config(const char *var, const char *value,
+ 
+ static int graph_write(int argc, const char **argv)
+ {
+-	struct string_list pack_indexes = STRING_LIST_INIT_NODUP;
++	struct string_list pack_indexes = STRING_LIST_INIT_DUP;
+ 	struct strbuf buf = STRBUF_INIT;
+ 	struct oidset commits = OIDSET_INIT;
+ 	struct object_directory *odb = NULL;
+@@ -273,8 +273,8 @@ static int graph_write(int argc, const char **argv)
+ 
+ 	if (opts.stdin_packs) {
+ 		while (strbuf_getline(&buf, stdin) != EOF)
+-			string_list_append(&pack_indexes,
+-					   strbuf_detach(&buf, NULL));
++			string_list_append_nodup(&pack_indexes,
++						 strbuf_detach(&buf, NULL));
+ 	} else if (opts.stdin_commits) {
+ 		oidset_init(&commits, 0);
+ 		if (opts.progress)
+diff --git a/commit-graph.c b/commit-graph.c
+index 265c010122e..d0c94600bab 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -1679,7 +1679,7 @@ int write_commit_graph_reachable(struct object_directory *odb,
+ }
+ 
+ static int fill_oids_from_packs(struct write_commit_graph_context *ctx,
+-				struct string_list *pack_indexes)
++				const struct string_list *pack_indexes)
+ {
+ 	uint32_t i;
+ 	struct strbuf progress_title = STRBUF_INIT;
+@@ -2259,7 +2259,7 @@ static void expire_commit_graphs(struct write_commit_graph_context *ctx)
+ }
+ 
+ int write_commit_graph(struct object_directory *odb,
+-		       struct string_list *pack_indexes,
++		       const struct string_list *const pack_indexes,
+ 		       struct oidset *commits,
+ 		       enum commit_graph_write_flags flags,
+ 		       const struct commit_graph_opts *opts)
+diff --git a/commit-graph.h b/commit-graph.h
+index 04a94e18302..2e3ac35237e 100644
+--- a/commit-graph.h
++++ b/commit-graph.h
+@@ -142,7 +142,7 @@ int write_commit_graph_reachable(struct object_directory *odb,
+ 				 enum commit_graph_write_flags flags,
+ 				 const struct commit_graph_opts *opts);
+ int write_commit_graph(struct object_directory *odb,
+-		       struct string_list *pack_indexes,
++		       const struct string_list *pack_indexes,
+ 		       struct oidset *commits,
+ 		       enum commit_graph_write_flags flags,
+ 		       const struct commit_graph_opts *opts);
+-- 
+2.35.1.1248.gb68c9165ad8
+

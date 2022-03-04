@@ -1,0 +1,84 @@
+From f46af9ad13f19a6cd1d7d396a96127d23a51f31e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-01.14-f46af9ad13f-20220304T182902Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+References: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+	<cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Nov 2021 23:19:05 +0100
+Subject: [PATCH v2 01/14] index-pack: fix memory leaks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix various memory leaks in "git index-pack", due to how tightly
+coupled this command is with the revision walking this doesn't make
+any new tests pass.
+
+But e.g. this now passes, and had several failures before, i.e. we
+still have failures in tests 3, 5 etc., which are being skipped here.
+
+    ./t5300-pack-object.sh --run=1-2,4,6-27,30-42
+
+It is a bit odd that we'll free "opts.anomaly", since the "opts" is a
+"struct pack_idx_option" declared in pack.h. In pack-write.c there's a
+reset_pack_idx_option(), but it only wipes the contents, but doesn't
+free() anything.
+
+Doing this here in cmd_index_pack() is correct because while the
+struct is declared in pack.h, this code in builtin/index-pack.c (in
+read_v2_anomalous_offsets()) is what allocates the "opts.anomaly", so
+we should also free it here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/index-pack.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index 3c2e6aee3cc..5fe1adb3681 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -1109,6 +1109,7 @@ static void *threaded_second_pass(void *data)
+ 			list_add(&child->list, &work_head);
+ 			base_cache_used += child->size;
+ 			prune_base_data(NULL);
++			free_base_data(child);
+ 		} else {
+ 			/*
+ 			 * This child does not have its own children. It may be
+@@ -1131,6 +1132,7 @@ static void *threaded_second_pass(void *data)
+ 
+ 				p = next_p;
+ 			}
++			FREE_AND_NULL(child);
+ 		}
+ 		work_unlock();
+ 	}
+@@ -1424,6 +1426,7 @@ static void fix_unresolved_deltas(struct hashfile *f)
+ 		 * object).
+ 		 */
+ 		append_obj_to_pack(f, d->oid.hash, data, size, type);
++		free(data);
+ 		threaded_second_pass(NULL);
+ 
+ 		display_progress(progress, nr_resolved_deltas);
+@@ -1703,6 +1706,7 @@ static void show_pack_info(int stat_only)
+ 			  i + 1,
+ 			  chain_histogram[i]);
+ 	}
++	free(chain_histogram);
+ }
+ 
+ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+@@ -1932,6 +1936,7 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 	if (do_fsck_object && fsck_finish(&fsck_options))
+ 		die(_("fsck error in pack objects"));
+ 
++	free(opts.anomaly);
+ 	free(objects);
+ 	strbuf_release(&index_name_buf);
+ 	strbuf_release(&rev_index_name_buf);
+-- 
+2.35.1.1248.gb68c9165ad8
+

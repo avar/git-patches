@@ -1,0 +1,86 @@
+From 217754edc624dcd13223429656d2d14914f9a993 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-11.14-217754edc62-20220304T182902Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+References: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+	<cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 2 Mar 2022 12:35:08 +0100
+Subject: [PATCH v2 11/14] lockfile API users: simplify and don't leak "path"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in code added in 6c622f9f0bb (commit-graph: write
+commit-graph chains, 2019-06-18). We needed to free the "lock_name" if
+we encounter errors, and the "graph_name" after we'd run unlink() on
+it.
+
+For the case of write_commit_graph_file() refactoring the code to free
+the "lock_name" after we were done using the "struct lock_file lk"
+would have made the control flow more complex. Luckily we can free the
+"lock_file" right after the hold_lock_file_for_update() call, if it
+makes use of "path" at all it'll have copied its contents to a "struct
+strbuf" of its own.
+
+While I'm at it let's fix code added in fb10ca5b543 (sparse-checkout:
+write using lockfile, 2019-11-21) in write_patterns_and_update() to
+avoid the same complexity that I thought I needed when I wrote the
+initial fix for write_commit_graph_file(). We can free the
+"sparse_filename" right after calling hold_lock_file_for_update(), we
+don't need to wait until we're exiting the function to do so.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/sparse-checkout.c | 3 +--
+ commit-graph.c            | 2 ++
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/sparse-checkout.c b/builtin/sparse-checkout.c
+index 9c338d33ea2..270ad49c2b8 100644
+--- a/builtin/sparse-checkout.c
++++ b/builtin/sparse-checkout.c
+@@ -328,11 +328,11 @@ static int write_patterns_and_update(struct pattern_list *pl)
+ 
+ 	fd = hold_lock_file_for_update(&lk, sparse_filename,
+ 				      LOCK_DIE_ON_ERROR);
++	free(sparse_filename);
+ 
+ 	result = update_working_directory(pl);
+ 	if (result) {
+ 		rollback_lock_file(&lk);
+-		free(sparse_filename);
+ 		clear_pattern_list(pl);
+ 		update_working_directory(NULL);
+ 		return result;
+@@ -348,7 +348,6 @@ static int write_patterns_and_update(struct pattern_list *pl)
+ 	fflush(fp);
+ 	commit_lock_file(&lk);
+ 
+-	free(sparse_filename);
+ 	clear_pattern_list(pl);
+ 
+ 	return 0;
+diff --git a/commit-graph.c b/commit-graph.c
+index aab0b292774..b8cde7ea27d 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -1854,6 +1854,7 @@ static int write_commit_graph_file(struct write_commit_graph_context *ctx)
+ 
+ 		hold_lock_file_for_update_mode(&lk, lock_name,
+ 					       LOCK_DIE_ON_ERROR, 0444);
++		free(lock_name);
+ 
+ 		fd = git_mkstemp_mode(ctx->graph_name, 0444);
+ 		if (fd < 0) {
+@@ -1978,6 +1979,7 @@ static int write_commit_graph_file(struct write_commit_graph_context *ctx)
+ 		} else {
+ 			char *graph_name = get_commit_graph_filename(ctx->odb);
+ 			unlink(graph_name);
++			free(graph_name);
+ 		}
+ 
+ 		ctx->commit_graph_hash_after[ctx->num_commit_graphs_after - 1] = xstrdup(hash_to_hex(file_hash));
+-- 
+2.35.1.1248.gb68c9165ad8
+

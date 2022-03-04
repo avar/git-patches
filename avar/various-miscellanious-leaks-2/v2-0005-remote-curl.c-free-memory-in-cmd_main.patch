@@ -1,0 +1,73 @@
+From f0a26db8a871a90972b9ef08441fd5363171f817 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-05.14-f0a26db8a87-20220304T182902Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+References: <cover-00.14-00000000000-20220302T170718Z-avarab@gmail.com>
+	<cover-v2-00.14-00000000000-20220304T182902Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 21 Jul 2021 12:19:51 +0200
+Subject: [PATCH v2 05/14] remote-curl.c: free memory in cmd_main()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Plug a trivial memory leak in code added in a2d725b7bdf (Use an
+external program to implement fetching with curl, 2009-08-05).
+
+To do this have the cmd_main() use a "goto cleanup" pattern, and to
+return an error of 1 unless we can fall through to the http_cleanup()
+at the end.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ remote-curl.c | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/remote-curl.c b/remote-curl.c
+index 0dabef2dd7c..ff44f41011e 100644
+--- a/remote-curl.c
++++ b/remote-curl.c
+@@ -1472,11 +1472,12 @@ int cmd_main(int argc, const char **argv)
+ {
+ 	struct strbuf buf = STRBUF_INIT;
+ 	int nongit;
++	int ret = 1;
+ 
+ 	setup_git_directory_gently(&nongit);
+ 	if (argc < 2) {
+ 		error(_("remote-curl: usage: git remote-curl <remote> [<url>]"));
+-		return 1;
++		goto cleanup;
+ 	}
+ 
+ 	options.verbosity = 1;
+@@ -1508,7 +1509,7 @@ int cmd_main(int argc, const char **argv)
+ 		if (strbuf_getline_lf(&buf, stdin) == EOF) {
+ 			if (ferror(stdin))
+ 				error(_("remote-curl: error reading command stream from git"));
+-			return 1;
++			goto cleanup;
+ 		}
+ 		if (buf.len == 0)
+ 			break;
+@@ -1556,12 +1557,15 @@ int cmd_main(int argc, const char **argv)
+ 				break;
+ 		} else {
+ 			error(_("remote-curl: unknown command '%s' from git"), buf.buf);
+-			return 1;
++			goto cleanup;
+ 		}
+ 		strbuf_reset(&buf);
+ 	} while (1);
+ 
+ 	http_cleanup();
++	ret = 0;
++cleanup:
++	strbuf_release(&buf);
+ 
+-	return 0;
++	return ret;
+ }
+-- 
+2.35.1.1248.gb68c9165ad8
+
