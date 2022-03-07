@@ -1,0 +1,68 @@
+From 8f7b01ed758c3b30339ab2800f7fa9d4c54414e0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.2-8f7b01ed758-20220307T123058Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.2-00000000000-20220307T123058Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220218T203834Z-avarab@gmail.com>
+	<cover-v2-0.2-00000000000-20220307T123058Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Feb 2022 10:21:31 +0100
+Subject: [PATCH v2 1/2] merge: don't run post-hook logic on --no-verify
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a minor bug introduced in bc40ce4de61 (merge: --no-verify to
+bypass pre-merge-commit hook, 2019-08-07), when that change made the
+--no-verify option bypass the "pre-merge-commit" hook it didn't update
+the corresponding find_hook() (later hook_exists()) condition.
+
+As can be seen in the preceding commit in 6098817fd7f (git-merge:
+honor pre-merge-commit hook, 2019-08-07) the two should go hand in
+hand. There's no point in invoking discard_cache() here if the hook
+couldn't have possibly updated the index.
+
+It's buggy that we use "hook_exist()" here, and as discussed in the
+subsequent commit it's subject to obscure race conditions that we're
+about to fix, but for now this change is a strict improvement that
+retains any caveats to do with the use of "hooks_exist()" as-is.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/merge.c | 21 ++++++++++++---------
+ 1 file changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/merge.c b/builtin/merge.c
+index a94a03384ae..b26b4c45157 100644
+--- a/builtin/merge.c
++++ b/builtin/merge.c
+@@ -845,15 +845,18 @@ static void prepare_to_commit(struct commit_list *remoteheads)
+ 	struct strbuf msg = STRBUF_INIT;
+ 	const char *index_file = get_index_file();
+ 
+-	if (!no_verify && run_commit_hook(0 < option_edit, index_file, "pre-merge-commit", NULL))
+-		abort_commit(remoteheads, NULL);
+-	/*
+-	 * Re-read the index as pre-merge-commit hook could have updated it,
+-	 * and write it out as a tree.  We must do this before we invoke
+-	 * the editor and after we invoke run_status above.
+-	 */
+-	if (hook_exists("pre-merge-commit"))
+-		discard_cache();
++	if (!no_verify) {
++		if (run_commit_hook(0 < option_edit, index_file,
++				    "pre-merge-commit", NULL))
++			abort_commit(remoteheads, NULL);
++		/*
++		 * Re-read the index as pre-merge-commit hook could have updated it,
++		 * and write it out as a tree.  We must do this before we invoke
++		 * the editor and after we invoke run_status above.
++		 */
++		if (hook_exists("pre-merge-commit"))
++			discard_cache();
++	}
+ 	read_cache_from(index_file);
+ 	strbuf_addbuf(&msg, &merge_msg);
+ 	if (squash)
+-- 
+2.35.1.1242.gfeba0eae32b
+

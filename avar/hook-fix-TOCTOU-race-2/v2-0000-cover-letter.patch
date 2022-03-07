@@ -1,0 +1,130 @@
+From a2d8ac660a8203d241df7169f0f21edf2c7cce27 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.2-00000000000-20220307T123058Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20220218T203834Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220218T203834Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 7 Mar 2022 13:30:58 +0100
+Subject: [PATCH v2 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  merge: don't run post-hook logic on --no-verify
+  hooks: fix an obscure TOCTOU "did we just run a hook?" race
+
+ builtin/commit.c       | 18 +++++++++++-------
+ builtin/merge.c        | 28 +++++++++++++++++-----------
+ builtin/receive-pack.c |  8 +++++---
+ commit.c               |  2 +-
+ commit.h               |  3 ++-
+ hook.c                 |  7 +++++++
+ hook.h                 | 12 ++++++++++++
+ sequencer.c            |  4 ++--
+ 8 files changed, 57 insertions(+), 25 deletions(-)
+
+Range-diff against v1:
+1:  9b5144daee6 ! 1:  8f7b01ed758 merge: don't run post-hook logic on --no-verify
+    @@ Commit message
+         hand. There's no point in invoking discard_cache() here if the hook
+         couldn't have possibly updated the index.
+     
+    +    It's buggy that we use "hook_exist()" here, and as discussed in the
+    +    subsequent commit it's subject to obscure race conditions that we're
+    +    about to fix, but for now this change is a strict improvement that
+    +    retains any caveats to do with the use of "hooks_exist()" as-is.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/merge.c ##
+2:  d01d088073b ! 2:  a2d8ac660a8 hooks: fix a TOCTOU in "did we run a hook?" heuristic
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    hooks: fix a TOCTOU in "did we run a hook?" heuristic
+    +    hooks: fix an obscure TOCTOU "did we just run a hook?" race
+     
+         Fix a Time-of-check to time-of-use (TOCTOU) race in code added in
+         680ee550d72 (commit: skip discarding the index if there is no
+         pre-commit hook, 2017-08-14).
+     
+    -    We can fix the race passing around information about whether or not we
+    -    ran the hook in question, instead of running hook_exists() after the
+    -    fact to check if the hook in question exists. This problem has been
+    +    This obscure race condition can occur if we e.g. ran the "pre-commit"
+    +    hook and it modified the index, but hook_exists() returns false later
+    +    on (e.g., because the hook itself went away, the directory became
+    +    unreadable, etc.). Then we won't call discard_cache() when we should
+    +    have.
+    +
+    +    The race condition itself probably doesn't matter, and users would
+    +    have been unlikely to run into it in practice. This problem has been
+         noted on-list when 680ee550d72 was discussed[1], but had not been
+    -    fixed.
+    +    fixed.n
+     
+    -    In addition to fixing this for the pre-commit hook as suggested there
+    -    I'm also fixing this for the pre-merge-commit hook. See
+    -    6098817fd7f (git-merge: honor pre-merge-commit hook, 2019-08-07) for
+    -    the introduction of its previous behavior.
+    +    This change is mainly intended to improve the readability of the code
+    +    involved, and to make reasoning about it more straightforward. It
+    +    wasn't as obvious what we were trying to do here, but by having an
+    +    "invoked_hook" it's clearer that e.g. our discard_cache() is happening
+    +    because of the earlier hook execution.
+     
+         Let's also change this for the push-to-checkout hook. Now instead of
+         checking if the hook exists and either doing a push to checkout or a
+    @@ Commit message
+         This leaves uses of hook_exists() in two places that matter. The
+         "reference-transaction" check in refs.c, see 67541597670 (refs:
+         implement reference transaction hook, 2020-06-19), and the
+    -    prepare-commit-msg hook, see 66618a50f9c (sequencer: run
+    +    "prepare-commit-msg" hook, see 66618a50f9c (sequencer: run
+         'prepare-commit-msg' hook, 2018-01-24).
+     
+         In both of those cases we're saving ourselves CPU time by not
+    @@ Commit message
+         don't have the hook. So using this "invoked_hook" pattern doesn't make
+         sense in those cases.
+     
+    -    More importantly, in those cases the worst we'll do is miss that we
+    -    "should" run the hook because a new hook appeared, whereas in the
+    -    pre-commit and pre-merge-commit cases we'll skip an important
+    -    discard_cache() on the bases of our faulty guess.
+    -
+    -    I do think none of these races really matter in practice. It would be
+    -    some one-off issue as a hook was added or removed. I did think it was
+    -    stupid that we didn't pass a "did this run?" flag instead of doing
+    -    this guessing at a distance though, so now we're not guessing anymore.
+    +    The "reference-transaction" and "prepare-commit-msg" hook also aren't
+    +    racy. In those cases we'll skip the hook runs if we race with a new
+    +    hook being added, whereas in the TOCTOU races being fixed here we were
+    +    incorrectly skipping the required post-hook logic.
+     
+         1. https://lore.kernel.org/git/20170810191613.kpmhzg4seyxy3cpq@sigill.intra.peff.net/
+     
+    @@ hook.h: struct run_hooks_opt
+     +
+     +	/**
+     +	 * A pointer which if provided will be set to 1 or 0 depending
+    -+	 * on if a hook was invoked (i.e. existed), regardless of
+    -+	 * whether or not that was successful. Used for avoiding
+    -+	 * TOCTOU races in code that would otherwise call hook_exist()
+    -+	 * after a "maybe hook run" to see if a hook was invoked.
+    ++	 * on if a hook was started, regardless of whether or not that
+    ++	 * was successful. I.e. if the underlying start_command() was
+    ++	 * successful this will be set to 1.
+    ++	 *
+    ++	 * Used for avoiding TOCTOU races in code that would otherwise
+    ++	 * call hook_exist() after a "maybe hook run" to see if a hook
+    ++	 * was invoked.
+     +	 */
+     +	int *invoked_hook;
+      };
+-- 
+2.35.1.1242.gfeba0eae32b
+
