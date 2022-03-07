@@ -1,0 +1,77 @@
+From ef2b94cc17010ee08665197b207f649a61240810 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-12.15-ef2b94cc170-20220307T123541Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.15-00000000000-20220307T123541Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220302T131859Z-avarab@gmail.com>
+	<cover-v2-00.15-00000000000-20220307T123541Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 25 Feb 2022 11:46:15 +0100
+Subject: [PATCH v2 12/15] gettext tests: don't ignore "test-tool regex" exit
+ code
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend a prerequisite check added in 5c1ebcca4d1 (grep/icase: avoid
+kwsset on literal non-ascii strings, 2016-06-25) to do invoke
+'test-tool regex' in such a way that we'll notice if it dies under
+SANITIZE=leak due to having a memory leak, as opposed to us not having
+the "ICASE" support we're checking for.
+
+Because we weren't making a distinction between the two I'd marked
+these tests as passing under SANITIZE=leak in 03d85e21951 (leak tests:
+mark remaining leak-free tests as such, 2021-12-17).
+
+Doing this is tricky. Ideally "test_lazy_prereq" would materialize as
+a "real" test that we could check the exit code of with the same
+signal matching that "test_must_fail" does.
+
+However lazy prerequisites aren't real tests, and are instead lazily
+materialized in the guts of "test_have_prereq" when we've already
+started another test.
+
+We could detect the abort() (or similar) there and pass that exit code
+down, and fail the test that caused the prerequisites to be
+materialized.
+
+But that would require extensive changes to test-lib.sh and
+test-lib-functions.sh. Let's instead simply check if the exit code of
+"test-tool regex" is zero, and if so set the prerequisites. If it's
+non-zero let's run it again with "test_must_fail". We'll thus make a
+distinction between "bad" non-zero (segv etc) and "good" (exit 1 etc.).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7812-grep-icase-non-ascii.sh | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/t/t7812-grep-icase-non-ascii.sh b/t/t7812-grep-icase-non-ascii.sh
+index ca3f24f8079..9047d665a10 100755
+--- a/t/t7812-grep-icase-non-ascii.sh
++++ b/t/t7812-grep-icase-non-ascii.sh
+@@ -11,9 +11,19 @@ test_expect_success GETTEXT_LOCALE 'setup' '
+ 	export LC_ALL
+ '
+ 
+-test_have_prereq GETTEXT_LOCALE &&
+-test-tool regex "HALLÓ" "Halló" ICASE &&
+-test_set_prereq REGEX_LOCALE
++test_expect_success GETTEXT_LOCALE 'setup REGEX_LOCALE prerequisite' '
++	# This "test-tool" invocation is identical...
++	if test-tool regex "HALLÓ" "Halló" ICASE
++	then
++		test_set_prereq REGEX_LOCALE
++	else
++
++		# ... to this one, but this way "test_must_fail" will
++		# tell a segfault or abort() from the regexec() test
++		# itself
++		test_must_fail test-tool regex "HALLÓ" "Halló" ICASE
++	fi
++'
+ 
+ test_expect_success REGEX_LOCALE 'grep literal string, no -F' '
+ 	git grep -i "TILRAUN: Halló Heimur!" &&
+-- 
+2.35.1.1242.gfeba0eae32b
+

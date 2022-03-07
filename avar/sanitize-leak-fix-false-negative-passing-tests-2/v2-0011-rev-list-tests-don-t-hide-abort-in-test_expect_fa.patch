@@ -1,0 +1,77 @@
+From 92f5674c554fcd82b9f3bdef7c8d29a95d6ccbf5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-11.15-92f5674c554-20220307T123541Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.15-00000000000-20220307T123541Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220302T131859Z-avarab@gmail.com>
+	<cover-v2-00.15-00000000000-20220307T123541Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 25 Feb 2022 11:38:50 +0100
+Subject: [PATCH v2 11/15] rev-list tests: don't hide abort() in
+ "test_expect_failure"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change a couple of uses of "test_expect_failure" to use a
+"test_expect_success" to positively assert the current behavior, and
+replace the intent of "test_expect_failure" with a "TODO" comment int
+the description.
+
+As noted in [1] the "test_expect_failure" feature is overly eager to
+accept any failure as OK, and thus by design hides segfaults, abort()
+etc. Because of that I didn't notice in dd9cede9136 (leak tests: mark
+some rev-list tests as passing with SANITIZE=leak, 2021-10-31) that
+this test leaks memory under SANITIZE=leak.
+
+I have some larger local changes to add a better
+"test_expect_failure", which would work just like
+"test_expect_success", but would allow us say "test_todo" here (and
+"success" would emit a "not ok [...] # TODO", not "ok [...]".
+
+So even though using "test_expect_success" here comes with its own
+problems[1], let's use it as a narrow change to fix the problem at
+hand here and stop conflating the current "success" with actual
+SANITIZE=leak failures.
+
+1. https://lore.kernel.org/git/87tuhmk19c.fsf@evledraar.gmail.com/
+2. https://lore.kernel.org/git/xmqq4k9kj15p.fsf@gitster.g/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6102-rev-list-unexpected-objects.sh | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/t/t6102-rev-list-unexpected-objects.sh b/t/t6102-rev-list-unexpected-objects.sh
+index 6f0902b8638..cf0195e8263 100755
+--- a/t/t6102-rev-list-unexpected-objects.sh
++++ b/t/t6102-rev-list-unexpected-objects.sh
+@@ -17,8 +17,13 @@ test_expect_success 'setup unexpected non-blob entry' '
+ 	broken_tree="$(git hash-object -w --literally -t tree broken-tree)"
+ '
+ 
+-test_expect_failure 'traverse unexpected non-blob entry (lone)' '
+-	test_must_fail git rev-list --objects $broken_tree
++test_expect_success !SANITIZE_LEAK 'TODO (should fail!): traverse unexpected non-blob entry (lone)' '
++	sed "s/Z$//" >expect <<-EOF &&
++	$broken_tree Z
++	$tree foo
++	EOF
++	git rev-list --objects $broken_tree >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'traverse unexpected non-blob entry (seen)' '
+@@ -116,8 +121,8 @@ test_expect_success 'setup unexpected non-blob tag' '
+ 	tag=$(git hash-object -w --literally -t tag broken-tag)
+ '
+ 
+-test_expect_failure 'traverse unexpected non-blob tag (lone)' '
+-	test_must_fail git rev-list --objects $tag
++test_expect_success !SANITIZE_LEAK 'TODO (should fail!): traverse unexpected non-blob tag (lone)' '
++	git rev-list --objects $tag
+ '
+ 
+ test_expect_success 'traverse unexpected non-blob tag (seen)' '
+-- 
+2.35.1.1242.gfeba0eae32b
+
