@@ -1,0 +1,264 @@
+From 6db8ab7a12114e9c2d631ca2044700af5106f00e Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.2-00000000000-20220307T152254Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20220307T113707Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220307T113707Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 7 Mar 2022 16:22:54 +0100
+Subject: [PATCH v2 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  gettext API users: don't explicitly cast ngettext()'s "n"
+  string-list API: change "nr" and "alloc" to "size_t"
+
+ builtin/index-pack.c        |  2 +-
+ builtin/merge-recursive.c   |  2 +-
+ builtin/receive-pack.c      |  9 +++++----
+ builtin/shortlog.c          | 10 +++++-----
+ bundle.c                    |  8 ++++----
+ commit-graph.c              |  6 +++---
+ mailmap.c                   |  7 ++++---
+ merge-ort.c                 |  4 ++--
+ strbuf.c                    |  4 ++--
+ string-list.h               |  3 ++-
+ t/helper/test-run-command.c |  7 ++++---
+ wt-status.c                 | 12 ++++++------
+ 12 files changed, 39 insertions(+), 35 deletions(-)
+
+Range-diff against v1:
+1:  83659fbc459 ! 1:  83fd21741ad gettext API users: correct use of casts for Q_()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    gettext API users: correct use of casts for Q_()
+    +    gettext API users: don't explicitly cast ngettext()'s "n"
+     
+    -    Change users of the inline gettext.h Q_() function to cast its
+    -    argument to "unsigned long" instead of "int" or "unsigned int".
+    +    Change a few stray users of the inline gettext.h Q_() function to stop
+    +    casting its "n" argument, the vast majority of the users of that
+    +    wrapper API use the implicit cast to "unsigned long".
+     
+         The ngettext() function (which Q_() resolves to) takes an "unsigned
+         long int", and so does our Q_() wrapper for it, see 0c9ea33b90f (i18n:
+    -    add stub Q_() wrapper for ngettext, 2011-03-09).
+    +    add stub Q_() wrapper for ngettext, 2011-03-09). The function isn't
+    +    ours, but provided by e.g. GNU libintl.
+     
+    -    In a subsequent commit we'll be making more use of this pattern of:
+    +    This amends code added in added in 7171a0b0cf5 (index-pack: correct
+    +    "len" type in unpack_data(), 2016-07-13). The cast it added for the
+    +    printf format to die() was needed, but not the cast to Q_().
+     
+    -        func(Q_(..%"PRIuMAX..., (unsigned long)x), (uintmax_t)x);
+    +    Likewise the casts in strbuf.c added in 8f354a1faed (l10n: localizable
+    +    upload progress messages, 2019-07-02) and for
+    +    builtin/merge-recursive.c in ccf7813139f (i18n: merge-recursive: mark
+    +    error messages for translation, 2016-09-15) weren't needed.
+     
+    -    By making this change we ensure that this case isn't the odd one out
+    -    in that post-image.
+    -
+    -    This:
+    -
+    -     * Corrects code added in 7171a0b0cf5 (index-pack: correct "len" type
+    -       in unpack_data(), 2016-07-13) to cast the "off_t len" to an
+    -       "unsigned long int" rather than an "unsigned int".
+    -
+    -     * Does the same for code in add-interactive.c added in several
+    -       commits starting with a8c45be939d (built-in add -i: implement the
+    -       `update` command, 2019-11-29).
+    -
+    -     * Likewise for a case in 9254bdfb4f9 (built-in add -p: implement the
+    -       'g' ("goto") command, 2019-12-13) where only the err() argument had
+    -       a cast, but not the same argument to Q_().
+    +    In the latter case the cast was copy/pasted from the argument to
+    +    warning() itself, added in b74d779bd90 (MinGW: Fix compiler warning in
+    +    merge-recursive, 2009-05-23). The cast for warning() is needed, but
+    +    not the one for ngettext()'s "n" argument.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## add-interactive.c ##
+    -@@ add-interactive.c: static int run_update(struct add_i_state *s, const struct pathspec *ps,
+    - 		res = error(_("could not write index"));
+    - 
+    - 	if (!res)
+    --		printf(Q_("updated %d path\n",
+    --			  "updated %d paths\n", count), (int)count);
+    -+		printf(Q_("updated %"PRIuMAX" path\n",
+    -+			  "updated %"PRIuMAX" paths\n", (unsigned long)count),
+    -+		       (uintmax_t)count);
+    - 
+    - 	putchar('\n');
+    - 	return res;
+    -@@ add-interactive.c: static int run_revert(struct add_i_state *s, const struct pathspec *ps,
+    - 						   NULL, NULL, NULL);
+    - 
+    - 	if (!res)
+    --		printf(Q_("reverted %d path\n",
+    --			  "reverted %d paths\n", count), (int)count);
+    -+		printf(Q_("reverted %"PRIuMAX" path\n",
+    -+			  "reverted %"PRIuMAX" paths\n", (unsigned long)count),
+    -+		       (uintmax_t)count);
+    - 
+    - finish_revert:
+    - 	putchar('\n');
+    -@@ add-interactive.c: static int run_add_untracked(struct add_i_state *s, const struct pathspec *ps,
+    - 		res = error(_("could not write index"));
+    - 
+    - 	if (!res)
+    --		printf(Q_("added %d path\n",
+    --			  "added %d paths\n", count), (int)count);
+    -+		printf(Q_("added %"PRIuMAX" path\n",
+    -+			  "added %"PRIuMAX" paths\n", (unsigned long)count),
+    -+		       (uintmax_t)count);
+    - 
+    - finish_add_untracked:
+    - 	putchar('\n');
+    -
+    - ## add-patch.c ##
+    -@@ add-patch.c: static int patch_update_file(struct add_p_state *s,
+    - 			else if (0 < response && response <= file_diff->hunk_nr)
+    - 				hunk_index = response - 1;
+    - 			else
+    --				err(s, Q_("Sorry, only %d hunk available.",
+    --					  "Sorry, only %d hunks available.",
+    --					  file_diff->hunk_nr),
+    --				    (int)file_diff->hunk_nr);
+    -+				err(s, Q_("Sorry, only %"PRIuMAX" hunk available.",
+    -+					  "Sorry, only %"PRIuMAX" hunks available.",
+    -+					  (unsigned long)file_diff->hunk_nr),
+    -+				    (uintmax_t)file_diff->hunk_nr);
+    - 		} else if (s->answer.buf[0] == '/') {
+    - 			regex_t regex;
+    - 			int ret;
+    -
+      ## builtin/index-pack.c ##
+     @@ builtin/index-pack.c: static void *unpack_data(struct object_entry *obj,
+      		if (!n)
+      			die(Q_("premature end of pack file, %"PRIuMAX" byte missing",
+      			       "premature end of pack file, %"PRIuMAX" bytes missing",
+     -			       (unsigned int)len),
+    -+			       (unsigned long)len),
+    ++			       len),
+      			    (uintmax_t)len);
+      		from += n;
+      		len -= n;
+    +
+    + ## builtin/merge-recursive.c ##
+    +@@ builtin/merge-recursive.c: int cmd_merge_recursive(int argc, const char **argv, const char *prefix)
+    + 				   "Ignoring %s.",
+    + 				   "cannot handle more than %d bases. "
+    + 				   "Ignoring %s.",
+    +-				    (int)ARRAY_SIZE(bases)-1),
+    ++				    ARRAY_SIZE(bases)-1),
+    + 				(int)ARRAY_SIZE(bases)-1, argv[i]);
+    + 	}
+    + 	if (argc - i != 3) /* "--" "<head>" "<remote>" */
+    +
+    + ## strbuf.c ##
+    +@@ strbuf.c: static void strbuf_humanise(struct strbuf *buf, off_t bytes,
+    + 		strbuf_addf(buf,
+    + 				humanise_rate == 0 ?
+    + 					/* TRANSLATORS: IEC 80000-13:2008 byte */
+    +-					Q_("%u byte", "%u bytes", (unsigned)bytes) :
+    ++					Q_("%u byte", "%u bytes", bytes) :
+    + 					/* TRANSLATORS: IEC 80000-13:2008 byte/second */
+    +-					Q_("%u byte/s", "%u bytes/s", (unsigned)bytes),
+    ++					Q_("%u byte/s", "%u bytes/s", bytes),
+    + 				(unsigned)bytes);
+    + 	}
+    + }
+2:  398682c07aa ! 2:  6db8ab7a121 string-list API: change "nr" and "alloc" to "size_t"
+    @@ Commit message
+         two lines, which is the case for most such struct member
+         declarations (e.g. in "strbuf.h" and "strvec.h").
+     
+    +    Changing e.g. "int i" to "size_t i" in run_and_feed_hook() isn't
+    +    strictly necessary, and there are a lot more cases where we'll use a
+    +    local "int", "unsigned int" etc. variable derived from the "nr" in the
+    +    "struct string_list". But in that case as well as
+    +    add_wrapped_shortlog_msg() in builtin/shortlog.c we need to adjust the
+    +    printf format referring to "nr" anyway, so let's also change the other
+    +    variables referring to it.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/receive-pack.c ##
+    @@ bundle.c: int verify_bundle(struct repository *r,
+      		r = &header->references;
+      		printf_ln(Q_("The bundle contains this ref:",
+     -			     "The bundle contains these %d refs:",
+    --			     r->nr),
+    --			  r->nr);
+     +			     "The bundle contains these %"PRIuMAX" refs:",
+    -+			     (unsigned long)r->nr),
+    + 			     r->nr),
+    +-			  r->nr);
+     +			  (uintmax_t)r->nr);
+      		list_refs(r, 0, NULL);
+      		r = &header->prerequisites;
+    @@ bundle.c: int verify_bundle(struct repository *r,
+      		} else {
+      			printf_ln(Q_("The bundle requires this ref:",
+     -				     "The bundle requires these %d refs:",
+    --				     r->nr),
+    --				  r->nr);
+     +				     "The bundle requires these %"PRIuMAX" refs:",
+    -+				     (unsigned long)r->nr),
+    + 				     r->nr),
+    +-				  r->nr);
+     +				  (uintmax_t)r->nr);
+      			list_refs(r, 0, NULL);
+      		}
+    @@ commit-graph.c: static int fill_oids_from_packs(struct write_commit_graph_contex
+      		strbuf_addf(&progress_title,
+     -			    Q_("Finding commits for commit graph in %d pack",
+     -			       "Finding commits for commit graph in %d packs",
+    --			       pack_indexes->nr),
+    --			    pack_indexes->nr);
+     +			    Q_("Finding commits for commit graph in %"PRIuMAX" pack",
+     +			       "Finding commits for commit graph in %"PRIuMAX" packs",
+    -+			       (unsigned long)pack_indexes->nr),
+    + 			       pack_indexes->nr),
+    +-			    pack_indexes->nr);
+     +			    (uintmax_t)pack_indexes->nr);
+      		ctx->progress = start_delayed_progress(progress_title.buf, 0);
+      		ctx->progress_done = 0;
+    @@ wt-status.c: static void show_rebase_information(struct wt_status *s,
+      			status_printf_ln(s, color,
+     -				Q_("Last command done (%d command done):",
+     -					"Last commands done (%d commands done):",
+    --					have_done.nr),
+    --				have_done.nr);
+     +				Q_("Last command done (%"PRIuMAX" command done):",
+     +					"Last commands done (%"PRIuMAX" commands done):",
+    -+					(unsigned long)have_done.nr),
+    + 					have_done.nr),
+    +-				have_done.nr);
+     +				(uintmax_t)have_done.nr);
+      			for (i = (have_done.nr > nr_lines_to_show)
+      				? have_done.nr - nr_lines_to_show : 0;
+    @@ wt-status.c: static void show_rebase_information(struct wt_status *s,
+      			status_printf_ln(s, color,
+     -				Q_("Next command to do (%d remaining command):",
+     -					"Next commands to do (%d remaining commands):",
+    --					yet_to_do.nr),
+    --				yet_to_do.nr);
+     +				Q_("Next command to do (%"PRIuMAX" remaining command):",
+     +					"Next commands to do (%"PRIuMAX" remaining commands):",
+    -+					(unsigned long)yet_to_do.nr),
+    + 					yet_to_do.nr),
+    +-				yet_to_do.nr);
+     +				(uintmax_t)yet_to_do.nr);
+      			for (i = 0; i < nr_lines_to_show && i < yet_to_do.nr; i++)
+      				status_printf_ln(s, color, "   %s", yet_to_do.items[i].string);
+-- 
+2.35.1.1242.gfeba0eae32b
+
