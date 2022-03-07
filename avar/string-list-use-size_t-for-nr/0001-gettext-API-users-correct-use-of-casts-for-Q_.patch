@@ -1,0 +1,122 @@
+From 83659fbc459c40f8a93fddf7db527d08e11f1a53 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.2-83659fbc459-20220307T102655Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20220307T102655Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220307T102655Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 7 Mar 2022 10:57:28 +0100
+Subject: [PATCH 1/2] gettext API users: correct use of casts for Q_()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change users of the inline gettext.h Q_() function to cast its
+argument to "unsigned long" instead of "int" or "unsigned int".
+
+The ngettext() function (which Q_() resolves to) takes an "unsigned
+long int", and so does our Q_() wrapper for it, see 0c9ea33b90f (i18n:
+add stub Q_() wrapper for ngettext, 2011-03-09).
+
+In a subsequent commit we'll be making more use of this pattern of:
+
+    func(Q_(..%"PRIuMAX..., (unsigned long)x), (uintmax_t)x);
+
+By making this change we ensure that this case isn't the odd one out
+in that post-image.
+
+This:
+
+ * Corrects code added in 7171a0b0cf5 (index-pack: correct "len" type
+   in unpack_data(), 2016-07-13) to cast the "off_t len" to an
+   "unsigned long int" rather than an "unsigned int".
+
+ * Does the same for code in add-interactive.c added in several
+   commits starting with a8c45be939d (built-in add -i: implement the
+   `update` command, 2019-11-29).
+
+ * Likewise for a case in 9254bdfb4f9 (built-in add -p: implement the
+   'g' ("goto") command, 2019-12-13) where only the err() argument had
+   a cast, but not the same argument to Q_().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ add-interactive.c    | 15 +++++++++------
+ add-patch.c          |  8 ++++----
+ builtin/index-pack.c |  2 +-
+ 3 files changed, 14 insertions(+), 11 deletions(-)
+
+diff --git a/add-interactive.c b/add-interactive.c
+index e1ab39cce30..6da781004ad 100644
+--- a/add-interactive.c
++++ b/add-interactive.c
+@@ -707,8 +707,9 @@ static int run_update(struct add_i_state *s, const struct pathspec *ps,
+ 		res = error(_("could not write index"));
+ 
+ 	if (!res)
+-		printf(Q_("updated %d path\n",
+-			  "updated %d paths\n", count), (int)count);
++		printf(Q_("updated %"PRIuMAX" path\n",
++			  "updated %"PRIuMAX" paths\n", (unsigned long)count),
++		       (uintmax_t)count);
+ 
+ 	putchar('\n');
+ 	return res;
+@@ -814,8 +815,9 @@ static int run_revert(struct add_i_state *s, const struct pathspec *ps,
+ 						   NULL, NULL, NULL);
+ 
+ 	if (!res)
+-		printf(Q_("reverted %d path\n",
+-			  "reverted %d paths\n", count), (int)count);
++		printf(Q_("reverted %"PRIuMAX" path\n",
++			  "reverted %"PRIuMAX" paths\n", (unsigned long)count),
++		       (uintmax_t)count);
+ 
+ finish_revert:
+ 	putchar('\n');
+@@ -896,8 +898,9 @@ static int run_add_untracked(struct add_i_state *s, const struct pathspec *ps,
+ 		res = error(_("could not write index"));
+ 
+ 	if (!res)
+-		printf(Q_("added %d path\n",
+-			  "added %d paths\n", count), (int)count);
++		printf(Q_("added %"PRIuMAX" path\n",
++			  "added %"PRIuMAX" paths\n", (unsigned long)count),
++		       (uintmax_t)count);
+ 
+ finish_add_untracked:
+ 	putchar('\n');
+diff --git a/add-patch.c b/add-patch.c
+index 55d719f7845..dfef00e5680 100644
+--- a/add-patch.c
++++ b/add-patch.c
+@@ -1569,10 +1569,10 @@ static int patch_update_file(struct add_p_state *s,
+ 			else if (0 < response && response <= file_diff->hunk_nr)
+ 				hunk_index = response - 1;
+ 			else
+-				err(s, Q_("Sorry, only %d hunk available.",
+-					  "Sorry, only %d hunks available.",
+-					  file_diff->hunk_nr),
+-				    (int)file_diff->hunk_nr);
++				err(s, Q_("Sorry, only %"PRIuMAX" hunk available.",
++					  "Sorry, only %"PRIuMAX" hunks available.",
++					  (unsigned long)file_diff->hunk_nr),
++				    (uintmax_t)file_diff->hunk_nr);
+ 		} else if (s->answer.buf[0] == '/') {
+ 			regex_t regex;
+ 			int ret;
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index 3c2e6aee3cc..f15b59e22b0 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -579,7 +579,7 @@ static void *unpack_data(struct object_entry *obj,
+ 		if (!n)
+ 			die(Q_("premature end of pack file, %"PRIuMAX" byte missing",
+ 			       "premature end of pack file, %"PRIuMAX" bytes missing",
+-			       (unsigned int)len),
++			       (unsigned long)len),
+ 			    (uintmax_t)len);
+ 		from += n;
+ 		len -= n;
+-- 
+2.35.1.1241.gd8d69a17521
+
