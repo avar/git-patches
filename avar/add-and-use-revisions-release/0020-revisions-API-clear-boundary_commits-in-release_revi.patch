@@ -1,0 +1,143 @@
+From 193dd1e012ce235bef9f6b58ddeca36b6cdc720a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-20.24-193dd1e012c-20220309T120800Z-avarab@gmail.com>
+In-Reply-To: <cover-00.24-00000000000-20220309T120800Z-avarab@gmail.com>
+References: <cover-00.24-00000000000-20220309T120800Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 7 Oct 2021 12:58:41 +0200
+Subject: [PATCH 20/24] revisions API: clear "boundary_commits" in
+ release_revisions()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Clear the "boundary_commits" object_array in release_revisions(). This
+makes a *lot* of tests pass under SANITIZE=leak, including most of the
+t/t[0-9]*git-svn*.sh tests.
+
+This includes the tests we had false-positive passes on before my
+6798b08e848 (perl Git.pm: don't ignore signalled failure in
+_cmd_close(), 2022-02-01), now they pass for real.
+
+Since there are 66 tests matching t/t[0-9]*git-svn*.sh it's easier to
+list those that don't pass than to touch most of those 66. So let's
+introduce a "TEST_FAILS_SANITIZE_LEAK=true", which if set in the tests
+won't cause lib-git-svn.sh to set "TEST_PASSES_SANITIZE_LEAK=true.
+
+This change also marks all the tests that we removed
+"TEST_FAILS_SANITIZE_LEAK=true" from in an earlier commit due to
+removing the UNLEAK() from cmd_format_patch(), we can now assert that
+its API use doesn't leak any "struct rev_info" memory.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ revision.c                           | 1 +
+ t/t4021-format-patch-numbered.sh     | 1 +
+ t/t4028-format-patch-mime-headers.sh | 2 ++
+ t/t4036-format-patch-signer-mime.sh  | 1 +
+ t/t4122-apply-symlink-inside.sh      | 1 +
+ t/t4126-apply-empty.sh               | 1 +
+ t/t6110-rev-list-sparse.sh           | 1 +
+ t/t9001-send-email.sh                | 1 +
+ 8 files changed, 9 insertions(+)
+
+diff --git a/revision.c b/revision.c
+index 290700ea66f..a73e76bed4a 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2952,6 +2952,7 @@ void release_revisions(struct rev_info *revs)
+ 	release_revisions_commit_list(revs);
+ 	object_array_clear(&revs->pending);
+ 	release_revisions_cmdline(&revs->cmdline);
++	object_array_clear(&revs->boundary_commits);
+ 	clear_pathspec(&revs->prune_data);
+ 	release_revisions_mailmap(revs->mailmap);
+ 	free_grep_patterns(&revs->grep_filter);
+diff --git a/t/t4021-format-patch-numbered.sh b/t/t4021-format-patch-numbered.sh
+index 9be65fd4440..1219aa226dc 100755
+--- a/t/t4021-format-patch-numbered.sh
++++ b/t/t4021-format-patch-numbered.sh
+@@ -5,6 +5,7 @@
+ 
+ test_description='Format-patch numbering options'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t4028-format-patch-mime-headers.sh b/t/t4028-format-patch-mime-headers.sh
+index 204ba673cb5..60cb819c42e 100755
+--- a/t/t4028-format-patch-mime-headers.sh
++++ b/t/t4028-format-patch-mime-headers.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='format-patch mime headers and extra headers do not conflict'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'create commit with utf-8 body' '
+diff --git a/t/t4036-format-patch-signer-mime.sh b/t/t4036-format-patch-signer-mime.sh
+index 98d9713d8b2..48655bcc789 100755
+--- a/t/t4036-format-patch-signer-mime.sh
++++ b/t/t4036-format-patch-signer-mime.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='format-patch -s should force MIME encoding as needed'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t4122-apply-symlink-inside.sh b/t/t4122-apply-symlink-inside.sh
+index aa52de401b9..96965373036 100755
+--- a/t/t4122-apply-symlink-inside.sh
++++ b/t/t4122-apply-symlink-inside.sh
+@@ -4,6 +4,7 @@ test_description='apply to deeper directory without getting fooled with symlink'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t4126-apply-empty.sh b/t/t4126-apply-empty.sh
+index 66a7ba8ab8f..ece9fae207d 100755
+--- a/t/t4126-apply-empty.sh
++++ b/t/t4126-apply-empty.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='apply empty'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t6110-rev-list-sparse.sh b/t/t6110-rev-list-sparse.sh
+index 13c1da53528..ddefc7f24ee 100755
+--- a/t/t6110-rev-list-sparse.sh
++++ b/t/t6110-rev-list-sparse.sh
+@@ -4,6 +4,7 @@ test_description='operations that cull histories in unusual ways'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t9001-send-email.sh b/t/t9001-send-email.sh
+index 84d0f40d76a..dfa6b20f7a6 100755
+--- a/t/t9001-send-email.sh
++++ b/t/t9001-send-email.sh
+@@ -4,6 +4,7 @@ test_description='git send-email'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ # May be altered later in the test
+-- 
+2.35.1.1295.g6b025d3e231
+

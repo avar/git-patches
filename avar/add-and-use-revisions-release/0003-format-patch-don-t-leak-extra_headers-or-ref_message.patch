@@ -1,0 +1,93 @@
+From 061990075a87fb875a6874a570fddbd2b9ba82e4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.24-061990075a8-20220309T120800Z-avarab@gmail.com>
+In-Reply-To: <cover-00.24-00000000000-20220309T120800Z-avarab@gmail.com>
+References: <cover-00.24-00000000000-20220309T120800Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 27 Feb 2022 01:25:29 +0100
+Subject: [PATCH 03/24] format-patch: don't leak "extra_headers" or
+ "ref_message_ids"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix two memory leaks in "struct rev_info" by freeing that memory in
+cmd_format_patch(). These two are unusual special-cases in being in
+the "struct rev_info", but not being "owned" by the code in
+revisions.c. I.e. they're members of the struct so that this code in
+"builtin/log.c" can pass information code in log-tree.c.
+
+See 20ff06805c6 (format-patch: resurrect extra headers from config,
+2006-06-02) and d1566f7883f (git-format-patch: Make the second and
+subsequent mails replies to the first, 2006-07-14) for the initial
+introduction of "extra_headers" and "ref_message_ids".
+
+We can count on repo_init_revisions() memset()-ing this data to 0
+however, so we can count on it being either NULL or something we
+allocated. In the case of "extra_headers" let's add a local "char *"
+variable to hold it, to avoid the eventual cast from "const char *"
+when we free() it.
+
+While we're at it let's also move to using string_list_init_nodup()
+instead of relying on calloc() implicitly coming up with the same
+result. See 770fedaf9fb (string-list.[ch]: add a
+string_list_init_{nodup,dup}(), 2021-07-01) for the introduction of
+the string_list_init_nodup() helper. The string_list_clear() here is
+redundant due to the *_nodup() initialization, but let's add it anyway
+for consistency with other API use.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/log.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/log.c b/builtin/log.c
+index c211d66d1d0..00846c2c8ac 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -1746,6 +1746,7 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 	struct commit *commit;
+ 	struct commit **list = NULL;
+ 	struct rev_info rev;
++	char *extra_headers = NULL;
+ 	struct setup_revision_opt s_r_opt;
+ 	int nr = 0, total, i;
+ 	int use_stdout = 0;
+@@ -1946,7 +1947,8 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 		strbuf_addch(&buf, '\n');
+ 	}
+ 
+-	rev.extra_headers = strbuf_detach(&buf, NULL);
++	extra_headers = strbuf_detach(&buf, NULL);
++	rev.extra_headers = extra_headers;
+ 
+ 	if (from) {
+ 		if (split_ident_line(&rev.from_ident, from, strlen(from)))
+@@ -2173,8 +2175,10 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 		prepare_bases(&bases, base, list, nr);
+ 	}
+ 
+-	if (in_reply_to || thread || cover_letter)
+-		rev.ref_message_ids = xcalloc(1, sizeof(struct string_list));
++	if (in_reply_to || thread || cover_letter) {
++		rev.ref_message_ids = xmalloc(sizeof(*rev.ref_message_ids));
++		string_list_init_nodup(rev.ref_message_ids);
++	}
+ 	if (in_reply_to) {
+ 		const char *msgid = clean_message_id(in_reply_to);
+ 		string_list_append(rev.ref_message_ids, msgid);
+@@ -2281,6 +2285,11 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 	strbuf_release(&rdiff1);
+ 	strbuf_release(&rdiff2);
+ 	strbuf_release(&rdiff_title);
++	free(extra_headers);
++	if (rev.ref_message_ids) {
++		string_list_clear(rev.ref_message_ids, 0);
++		free(rev.ref_message_ids);
++	}
+ 	UNLEAK(rev);
+ 	return 0;
+ }
+-- 
+2.35.1.1295.g6b025d3e231
+

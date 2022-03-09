@@ -1,0 +1,129 @@
+From 2cbb2511edbe8a67610c8c3cd26dfa8efeda3d48 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.24-2cbb2511edb-20220309T120800Z-avarab@gmail.com>
+In-Reply-To: <cover-00.24-00000000000-20220309T120800Z-avarab@gmail.com>
+References: <cover-00.24-00000000000-20220309T120800Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 30 Sep 2021 16:41:22 +0200
+Subject: [PATCH 10/24] revisions API users: use release_revisions() in
+ builtin/log.c
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In preparation for having the "log" family of functions make wider use
+of release_revisions() let's have them call it just before
+exiting. This changes the "log", "whatchanged", "show",
+"format-patch", etc. commands, all of which live in this file.
+
+The release_revisions() API still only frees the "pending" member, but
+will learn to more members of "struct rev_info" in subsequent commits.
+
+In the case of "format-patch" revert the addition of UNLEAK() in
+dee839a2633 (format-patch: mark rev_info with UNLEAK, 2021-12-16), and
+which will cause several tests that previously passed under
+"TEST_PASSES_SANITIZE_LEAK=true" to start failing.
+
+In subsequent commits we'll now be able to use those tests to check
+whether that part of the API is really leaking memory, and will fix
+all of those memory leaks. Removing the UNLEAK() allows us to make
+incremental progress in that direction. See [1] for further details
+about this approach.
+
+1. https://lore.kernel.org/git/220218.861r00ib86.gmgdl@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/log.c          | 20 ++++++++++++--------
+ t/t4126-apply-empty.sh |  2 --
+ 2 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/builtin/log.c b/builtin/log.c
+index 00846c2c8ac..3c1edc27605 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -294,6 +294,12 @@ static void cmd_log_init(int argc, const char **argv, const char *prefix,
+ 	cmd_log_init_finish(argc, argv, prefix, rev, opt);
+ }
+ 
++static int cmd_log_deinit(int ret, struct rev_info *rev)
++{
++	release_revisions(rev);
++	return ret;
++}
++
+ /*
+  * This gives a rough estimate for how many commits we
+  * will print out in the list.
+@@ -557,7 +563,7 @@ int cmd_whatchanged(int argc, const char **argv, const char *prefix)
+ 	cmd_log_init(argc, argv, prefix, &rev, &opt);
+ 	if (!rev.diffopt.output_format)
+ 		rev.diffopt.output_format = DIFF_FORMAT_RAW;
+-	return cmd_log_walk(&rev);
++	return cmd_log_deinit(cmd_log_walk(&rev), &rev);
+ }
+ 
+ static void show_tagger(const char *buf, struct rev_info *rev)
+@@ -676,7 +682,7 @@ int cmd_show(int argc, const char **argv, const char *prefix)
+ 	cmd_log_init(argc, argv, prefix, &rev, &opt);
+ 
+ 	if (!rev.no_walk)
+-		return cmd_log_walk(&rev);
++		return cmd_log_deinit(cmd_log_walk(&rev), &rev);
+ 
+ 	count = rev.pending.nr;
+ 	objects = rev.pending.objects;
+@@ -731,8 +737,7 @@ int cmd_show(int argc, const char **argv, const char *prefix)
+ 			ret = error(_("unknown type: %d"), o->type);
+ 		}
+ 	}
+-	free(objects);
+-	return ret;
++	return cmd_log_deinit(ret, &rev);
+ }
+ 
+ /*
+@@ -760,7 +765,7 @@ int cmd_log_reflog(int argc, const char **argv, const char *prefix)
+ 	rev.always_show_header = 1;
+ 	cmd_log_init_finish(argc, argv, prefix, &rev, &opt);
+ 
+-	return cmd_log_walk(&rev);
++	return cmd_log_deinit(cmd_log_walk(&rev), &rev);
+ }
+ 
+ static void log_setup_revisions_tweak(struct rev_info *rev,
+@@ -791,7 +796,7 @@ int cmd_log(int argc, const char **argv, const char *prefix)
+ 	opt.revarg_opt = REVARG_COMMITTISH;
+ 	opt.tweak = log_setup_revisions_tweak;
+ 	cmd_log_init(argc, argv, prefix, &rev, &opt);
+-	return cmd_log_walk(&rev);
++	return cmd_log_deinit(cmd_log_walk(&rev), &rev);
+ }
+ 
+ /* format-patch */
+@@ -2290,8 +2295,7 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 		string_list_clear(rev.ref_message_ids, 0);
+ 		free(rev.ref_message_ids);
+ 	}
+-	UNLEAK(rev);
+-	return 0;
++	return cmd_log_deinit(0, &rev);
+ }
+ 
+ static int add_pending_commit(const char *arg, struct rev_info *revs, int flags)
+diff --git a/t/t4126-apply-empty.sh b/t/t4126-apply-empty.sh
+index 33860d38290..66a7ba8ab8f 100755
+--- a/t/t4126-apply-empty.sh
++++ b/t/t4126-apply-empty.sh
+@@ -2,8 +2,6 @@
+ 
+ test_description='apply empty'
+ 
+-
+-TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+-- 
+2.35.1.1295.g6b025d3e231
+

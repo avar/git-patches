@@ -1,0 +1,174 @@
+From 0c1e5b9f19ca1d578b1e2866a5d5fd6004067dd1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-05.24-0c1e5b9f19c-20220309T120800Z-avarab@gmail.com>
+In-Reply-To: <cover-00.24-00000000000-20220309T120800Z-avarab@gmail.com>
+References: <cover-00.24-00000000000-20220309T120800Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 19 Sep 2021 16:41:24 +0200
+Subject: [PATCH 05/24] revisions.[ch]: provide and start using a
+ release_revisions()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The users of the revisions.[ch] API's "struct rev_info" are a major
+source of memory leaks in the test suite under SANITIZE=leak, which in
+turn adds a lot of noise when trying to mark up tests with
+"TEST_PASSES_SANITIZE_LEAK=true".
+
+The users of that API are largely one-shot, e.g. "git log", so
+arguably freeing the memory is a waste of time, but in many cases
+they've actually been trying to free the memory, and just doing that
+in a buggy manner.
+
+Let's provide a release_revisions() function for these users, and
+start migrating them over per the plan outlined in [1]. Right now this
+only handles the "pending" member of the struct, but more will be
+added in subsequent commits.
+
+Even though we only clear the "pending" member now, let's not leave a
+trap in code like the pre-image of index_differs_from(), where we'd
+start doing the wrong thing as soon as the release_revisions() learned
+to clear its "diffopt". I.e. we need to call release_revisions() after
+we've inspected any state in "struct rev_info".
+
+1. https://lore.kernel.org/git/87a6k8daeu.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/checkout.c | 2 +-
+ builtin/stash.c    | 3 +--
+ diff-lib.c         | 6 ++++--
+ range-diff.c       | 2 +-
+ revision.c         | 7 +++++++
+ revision.h         | 6 ++++++
+ wt-status.c        | 7 ++++---
+ 7 files changed, 24 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index 9244827ca02..ed993383531 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -629,7 +629,7 @@ static void show_local_changes(struct object *head,
+ 	diff_setup_done(&rev.diffopt);
+ 	add_pending_object(&rev, head, NULL);
+ 	run_diff_index(&rev, 0);
+-	object_array_clear(&rev.pending);
++	release_revisions(&rev);
+ }
+ 
+ static void describe_detached_head(const char *msg, struct commit *commit)
+diff --git a/builtin/stash.c b/builtin/stash.c
+index 3e8af210fde..af9b61ef17a 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -1277,9 +1277,8 @@ static int stash_working_tree(struct stash_info *info, const struct pathspec *ps
+ 
+ done:
+ 	discard_index(&istate);
+-	UNLEAK(rev);
+-	object_array_clear(&rev.pending);
+ 	clear_pathspec(&rev.prune_data);
++	release_revisions(&rev);
+ 	strbuf_release(&diff_output);
+ 	remove_path(stash_index_path.buf);
+ 	return ret;
+diff --git a/diff-lib.c b/diff-lib.c
+index ca085a03efc..ad1dd4834f7 100644
+--- a/diff-lib.c
++++ b/diff-lib.c
+@@ -651,6 +651,7 @@ int index_differs_from(struct repository *r,
+ {
+ 	struct rev_info rev;
+ 	struct setup_revision_opt opt;
++	unsigned int has_changes;
+ 
+ 	repo_init_revisions(r, &rev, NULL);
+ 	memset(&opt, 0, sizeof(opt));
+@@ -662,8 +663,9 @@ int index_differs_from(struct repository *r,
+ 		diff_flags_or(&rev.diffopt.flags, flags);
+ 	rev.diffopt.ita_invisible_in_index = ita_invisible_in_index;
+ 	run_diff_index(&rev, 1);
+-	object_array_clear(&rev.pending);
+-	return (rev.diffopt.flags.has_changes != 0);
++	has_changes = rev.diffopt.flags.has_changes;
++	release_revisions(&rev);
++	return (has_changes != 0);
+ }
+ 
+ static struct strbuf *idiff_prefix_cb(struct diff_options *opt, void *data)
+diff --git a/range-diff.c b/range-diff.c
+index 30a4de5c2d8..2d0cd271a9e 100644
+--- a/range-diff.c
++++ b/range-diff.c
+@@ -600,6 +600,6 @@ int is_range_diff_range(const char *arg)
+ 	}
+ 
+ 	free(copy);
+-	object_array_clear(&revs.pending);
++	release_revisions(&revs);
+ 	return negative > 0 && positive > 0;
+ }
+diff --git a/revision.c b/revision.c
+index 5824fdeddfd..831f2cf977b 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2926,6 +2926,13 @@ static void release_revisions_commit_list(struct rev_info *revs)
+ 	revs->commits = NULL;
+ }
+ 
++void release_revisions(struct rev_info *revs)
++{
++	if (!revs)
++		return;
++	object_array_clear(&revs->pending);
++}
++
+ static void add_child(struct rev_info *revs, struct commit *parent, struct commit *child)
+ {
+ 	struct commit_list *l = xcalloc(1, sizeof(*l));
+diff --git a/revision.h b/revision.h
+index b9c2421687f..c28e901021d 100644
+--- a/revision.h
++++ b/revision.h
+@@ -370,6 +370,12 @@ void repo_init_revisions(struct repository *r,
+ int setup_revisions(int argc, const char **argv, struct rev_info *revs,
+ 		    struct setup_revision_opt *);
+ 
++/**
++ * Free data allocated in a "struct rev_info" after it's been setup
++ * with repo_init_revisions() and setup_revisions().
++ */
++void release_revisions(struct rev_info *revs);
++
+ void parse_revision_opt(struct rev_info *revs, struct parse_opt_ctx_t *ctx,
+ 			const struct option *options,
+ 			const char * const usagestr[]);
+diff --git a/wt-status.c b/wt-status.c
+index 335e723a71e..398d0951aca 100644
+--- a/wt-status.c
++++ b/wt-status.c
+@@ -653,7 +653,7 @@ static void wt_status_collect_changes_index(struct wt_status *s)
+ 	rev.diffopt.rename_score = s->rename_score >= 0 ? s->rename_score : rev.diffopt.rename_score;
+ 	copy_pathspec(&rev.prune_data, &s->pathspec);
+ 	run_diff_index(&rev, 1);
+-	object_array_clear(&rev.pending);
++	release_revisions(&rev);
+ 	clear_pathspec(&rev.prune_data);
+ }
+ 
+@@ -2568,8 +2568,9 @@ int has_uncommitted_changes(struct repository *r,
+ 
+ 	diff_setup_done(&rev_info.diffopt);
+ 	result = run_diff_index(&rev_info, 1);
+-	object_array_clear(&rev_info.pending);
+-	return diff_result_code(&rev_info.diffopt, result);
++	result = diff_result_code(&rev_info.diffopt, result);
++	release_revisions(&rev_info);
++	return result;
+ }
+ 
+ /**
+-- 
+2.35.1.1295.g6b025d3e231
+
