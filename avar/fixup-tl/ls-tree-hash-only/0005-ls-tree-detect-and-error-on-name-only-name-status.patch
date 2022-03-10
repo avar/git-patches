@@ -1,0 +1,94 @@
+From 2d2f0fcec620a313744224d01e90486bbac67a8a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.7-2d2f0fcec62-20220310T134811Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20220310T134811Z-avarab@gmail.com>
+References: <cover.1646390152.git.dyroneteng@gmail.com>
+	<cover-0.7-00000000000-20220310T134811Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 4 Mar 2022 12:49:23 +0100
+Subject: [RFC/REVIEW 5/7] ls-tree: detect and error on --name-only
+ --name-status
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The --name-only and --name-status options are synonyms, but let's
+detect and error if both are provided.
+
+In addition let's add explicit --format tests for the combination of
+these various options.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-tree.c       | 11 ++++++++++-
+ t/t3103-ls-tree-misc.sh | 15 +++++++++------
+ 2 files changed, 19 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/ls-tree.c b/builtin/ls-tree.c
+index 95816709d38..528b4e5b5f6 100644
+--- a/builtin/ls-tree.c
++++ b/builtin/ls-tree.c
+@@ -52,6 +52,7 @@ static const  char * const ls_tree_usage[] = {
+ static enum ls_tree_cmdmode {
+ 	MODE_LONG = 1,
+ 	MODE_NAME_ONLY,
++	MODE_NAME_STATUS,
+ 	MODE_OBJECT_ONLY,
+ } cmdmode;
+ 
+@@ -301,7 +302,7 @@ int cmd_ls_tree(int argc, const char **argv, const char *prefix)
+ 		OPT_CMDMODE(0, "name-only", &cmdmode, N_("list only filenames"),
+ 			    MODE_NAME_ONLY),
+ 		OPT_CMDMODE(0, "name-status", &cmdmode, N_("list only filenames"),
+-			    MODE_NAME_ONLY),
++			    MODE_NAME_STATUS),
+ 		OPT_CMDMODE(0, "object-only", &cmdmode, N_("list only objects"),
+ 			    MODE_OBJECT_ONLY),
+ 		OPT_SET_INT(0, "full-name", &chomp_prefix,
+@@ -327,6 +328,14 @@ int cmd_ls_tree(int argc, const char **argv, const char *prefix)
+ 		ls_tree_prefix = prefix = NULL;
+ 		chomp_prefix = 0;
+ 	}
++	/*
++	 * We wanted to detect conflicts between --name-only and
++	 * --name-status, but once we're done with that subsequent
++	 * code should only need to check the primary name.
++	 */
++	if (cmdmode == MODE_NAME_STATUS)
++		cmdmode = MODE_NAME_ONLY;
++
+ 	/* -d -r should imply -t, but -d by itself should not have to. */
+ 	if ( (LS_TREE_ONLY|LS_RECURSIVE) ==
+ 	    ((LS_TREE_ONLY|LS_RECURSIVE) & ls_options))
+diff --git a/t/t3103-ls-tree-misc.sh b/t/t3103-ls-tree-misc.sh
+index ce39158338a..81c63439623 100755
+--- a/t/t3103-ls-tree-misc.sh
++++ b/t/t3103-ls-tree-misc.sh
+@@ -24,15 +24,18 @@ test_expect_success 'ls-tree fails with non-zero exit code on broken tree' '
+ '
+ 
+ for opts in \
+-	"--name-only --long" \
+-	"--name-status --long" \
+-	"--name-only --object-only" \
++	"--long --name-only" \
++	"--name-only --name-status" \
+ 	"--name-status --object-only" \
+-	"--object-only --long" \
+-	" --object-only --format"
++	"--object-only --long"
+ do
+ 	test_expect_success "usage: incompatible options: $opts" '
+ 		test_expect_code 129 git ls-tree $opts $tree
+-    '
++	'
++
++	one_opt=$(echo "$opts" | cut -d' '  -f1)
++	test_expect_success "usage: incompatible options: $one_opt and --format" '
++		test_expect_code 129 git ls-tree $one_opt --format=fmt $tree
++	'
+ done
+ test_done
+-- 
+2.35.1.1295.g6b025d3e231
+
