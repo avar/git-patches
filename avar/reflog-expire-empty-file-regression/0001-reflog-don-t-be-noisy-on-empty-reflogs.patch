@@ -1,0 +1,62 @@
+From de5e2b0e290791d0a4f58a893d8571b5fc8c4f1a Mon Sep 17 00:00:00 2001
+Message-Id: <de5e2b0e290791d0a4f58a893d8571b5fc8c4f1a.1646952836.git.avarab@gmail.com>
+In-Reply-To: <571c0796-66d4-e8c7-c5a5-2e7a28132aa9@kdbg.org>
+References: <571c0796-66d4-e8c7-c5a5-2e7a28132aa9@kdbg.org>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 10 Mar 2022 22:35:06 +0100
+Subject: [PATCH] reflog: don't be noisy on empty reflogs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in my daf1d8285ee (reflog expire: don't use
+lookup_commit_reference_gently(), 2021-12-22), in changing from
+lookup_commit_reference_gently() to lookup_commit() we stopped trying
+to call deref_tag() and parse_object() on the provided OID, but we
+also started returning non-NULL for the null_oid().
+
+As a result we'd emit an error() via mark_reachable() later in this
+function as we tried to invoke parse_commit() on it.
+
+Reported-by: Johannes Sixt <j6t@kdbg.org>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reflog.c  | 2 ++
+ t/t1410-reflog.sh | 9 +++++++++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index 016466852f1..3fdf926759c 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -374,6 +374,8 @@ static void reflog_expiry_prepare(const char *refname,
+ 		cb->unreachable_expire_kind = UE_HEAD;
+ 	} else {
+ 		commit = lookup_commit(the_repository, oid);
++		if (commit && is_null_oid(&commit->object.oid))
++			commit = NULL;
+ 		cb->unreachable_expire_kind = commit ? UE_NORMAL : UE_ALWAYS;
+ 	}
+ 
+diff --git a/t/t1410-reflog.sh b/t/t1410-reflog.sh
+index 68f69bb5431..ea8e6ac2a02 100755
+--- a/t/t1410-reflog.sh
++++ b/t/t1410-reflog.sh
+@@ -423,4 +423,13 @@ test_expect_success 'expire with multiple worktrees' '
+ 	)
+ '
+ 
++test_expect_success REFFILES 'empty reflog' '
++	test_when_finished "rm -rf empty" &&
++	git init empty &&
++	test_commit -C empty A &&
++	>empty/.git/logs/refs/heads/foo &&
++	git -C empty reflog expire --all 2>err &&
++	test_must_be_empty err
++'
++
+ test_done
+-- 
+2.35.GIT-dev
+
