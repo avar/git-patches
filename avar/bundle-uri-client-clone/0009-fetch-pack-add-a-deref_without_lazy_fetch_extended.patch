@@ -1,0 +1,84 @@
+From d9f5b4865115b89865df0cd16e56a10d6b703693 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.13-d9f5b486511-20220311T155343Z-avarab@gmail.com>
+In-Reply-To: <571c0796-66d4-e8c7-c5a5-2e7a28132aa9@kdbg.org>
+References: <571c0796-66d4-e8c7-c5a5-2e7a28132aa9@kdbg.org>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 26 Jul 2021 10:05:49 +0200
+Subject: [PATCH 09/13] fetch-pack: add a deref_without_lazy_fetch_extended()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a version of the deref_without_lazy_fetch function which can be
+called with custom oi_flags and to grab information about the
+"object_type". This will be used for the bundle-uri client in a
+subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ fetch-pack.c | 25 ++++++++++++++++++-------
+ 1 file changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/fetch-pack.c b/fetch-pack.c
+index 87657907e78..a0558f70b0c 100644
+--- a/fetch-pack.c
++++ b/fetch-pack.c
+@@ -115,11 +115,12 @@ static void for_each_cached_alternate(struct fetch_negotiator *negotiator,
+ 		cb(negotiator, cache.items[i]);
+ }
+ 
+-static struct commit *deref_without_lazy_fetch(const struct object_id *oid,
+-					       int mark_tags_complete)
++static struct commit *deref_without_lazy_fetch_extended(const struct object_id *oid,
++							int mark_tags_complete,
++							enum object_type *type,
++							unsigned int oi_flags)
+ {
+-	enum object_type type;
+-	struct object_info info = { .typep = &type };
++	struct object_info info = { .typep = type };
+ 	struct commit *commit;
+ 
+ 	commit = lookup_commit_in_graph(the_repository, oid);
+@@ -128,9 +129,9 @@ static struct commit *deref_without_lazy_fetch(const struct object_id *oid,
+ 
+ 	while (1) {
+ 		if (oid_object_info_extended(the_repository, oid, &info,
+-					     OBJECT_INFO_SKIP_FETCH_OBJECT | OBJECT_INFO_QUICK))
++					     oi_flags))
+ 			return NULL;
+-		if (type == OBJ_TAG) {
++		if (*type == OBJ_TAG) {
+ 			struct tag *tag = (struct tag *)
+ 				parse_object(the_repository, oid);
+ 
+@@ -144,7 +145,7 @@ static struct commit *deref_without_lazy_fetch(const struct object_id *oid,
+ 		}
+ 	}
+ 
+-	if (type == OBJ_COMMIT) {
++	if (*type == OBJ_COMMIT) {
+ 		struct commit *commit = lookup_commit(the_repository, oid);
+ 		if (!commit || repo_parse_commit(the_repository, commit))
+ 			return NULL;
+@@ -154,6 +155,16 @@ static struct commit *deref_without_lazy_fetch(const struct object_id *oid,
+ 	return NULL;
+ }
+ 
++
++static struct commit *deref_without_lazy_fetch(const struct object_id *oid,
++					       int mark_tags_complete)
++{
++	enum object_type type;
++	unsigned flags = OBJECT_INFO_SKIP_FETCH_OBJECT | OBJECT_INFO_QUICK;
++	return deref_without_lazy_fetch_extended(oid, mark_tags_complete,
++						 &type, flags);
++}
++
+ static int rev_list_insert_ref(struct fetch_negotiator *negotiator,
+ 			       const struct object_id *oid)
+ {
+-- 
+2.35.1.1337.g7e32d794afe
+
