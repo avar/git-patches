@@ -1,0 +1,105 @@
+From d2ae423d1ad4448ed7e703f859fb5aab68523c5c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-d2ae423d1ad-20220311T094315Z-avarab@gmail.com>
+In-Reply-To: <220311.867d90j2vj.gmgdl@evledraar.gmail.com>
+References: <220311.867d90j2vj.gmgdl@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 11 Mar 2022 09:29:10 +0100
+Subject: [PATCH] parse-options: add per-option flag to stop abbreviation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+For cases like "format-patch --output-directory=dir" we disallow
+abbreviations entirely, because we'd like setup_revisions() to do a
+subsequent option parsing pass, and it accepts "--output=file".
+
+That's one reason for why the parse_options() in diff.c added in
+4a288478394 (diff.c: prepare to use parse_options() for parsing,
+2019-01-27) passes PARSE_OPT_KEEP_UNKNOWN. I.e. we need the
+"--output=file" to be retained in the arguments for passing it down to
+setup_revisions().
+
+It's not stated explicitly but I think "--output"
+v.s. "--output-directory" is the specific case the author had in mind
+when adding the PARSE_OPT_KEEP_UNKNOWN case in the pre-image. That was
+added in an earlier commit in the same series,
+baa4adc66ae (parse-options: disable option abbreviation with
+PARSE_OPT_KEEP_UNKNOWN, 2019-01-27).
+
+As that commit shows we had to disallow "git difftool --symlink" as an
+abbreviation for "git difftool --symlinks" as a side-effect, even
+though that abbreviation wouldn't have conflicted.
+
+So let's tweak this rule to be more narrowly scoped, now we'll allow
+abbreviated options regardless of PARSE_OPT_KEEP_UNKNOWN being set for
+parse_options(), but we'll provide individual options an opt-out. By
+using that opt-out for "--output-directory" we can have that case work
+without overzealously disallowing others.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/log.c       | 3 ++-
+ parse-options.c     | 2 +-
+ parse-options.h     | 1 +
+ t/t7800-difftool.sh | 5 +++++
+ 4 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/log.c b/builtin/log.c
+index c211d66d1d0..adacc65bc7e 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -1811,7 +1811,8 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 			    PARSE_OPT_NONEG, subject_prefix_callback),
+ 		OPT_CALLBACK_F('o', "output-directory", &output_directory,
+ 			    N_("dir"), N_("store resulting files in <dir>"),
+-			    PARSE_OPT_NONEG, output_directory_callback),
++			    PARSE_OPT_NONEG | PARSE_OPT_NO_ABBREV,
++			    output_directory_callback),
+ 		OPT_CALLBACK_F('k', "keep-subject", &rev, NULL,
+ 			    N_("don't strip/add [PATCH]"),
+ 			    PARSE_OPT_NOARG | PARSE_OPT_NONEG, keep_callback),
+diff --git a/parse-options.c b/parse-options.c
+index 6e57744fd22..9d0c4694482 100644
+--- a/parse-options.c
++++ b/parse-options.c
+@@ -332,7 +332,7 @@ static enum parse_opt_result parse_long_opt(
+ 			rest = NULL;
+ 		if (!rest) {
+ 			/* abbreviated? */
+-			if (!(p->flags & PARSE_OPT_KEEP_UNKNOWN) &&
++			if (!(options->flags & PARSE_OPT_NO_ABBREV) &&
+ 			    !strncmp(long_name, arg, arg_end - arg)) {
+ is_abbreviated:
+ 				if (abbrev_option &&
+diff --git a/parse-options.h b/parse-options.h
+index 685fccac137..f6372f60edb 100644
+--- a/parse-options.h
++++ b/parse-options.h
+@@ -48,6 +48,7 @@ enum parse_opt_option_flags {
+ 	PARSE_OPT_NOCOMPLETE = 1 << 9,
+ 	PARSE_OPT_COMP_ARG = 1 << 10,
+ 	PARSE_OPT_CMDMODE = 1 << 11,
++	PARSE_OPT_NO_ABBREV = 1 << 12,
+ };
+ 
+ enum parse_opt_result {
+diff --git a/t/t7800-difftool.sh b/t/t7800-difftool.sh
+index 096456292c0..ae47426f66e 100755
+--- a/t/t7800-difftool.sh
++++ b/t/t7800-difftool.sh
+@@ -582,6 +582,11 @@ test_expect_success SYMLINKS 'difftool --dir-diff --symlinks without unstaged ch
+ 	EOF
+ 	git difftool --dir-diff --symlinks \
+ 		--extcmd "./.git/CHECK_SYMLINKS" branch HEAD &&
++	test_cmp expect actual &&
++
++	GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS=false \
++	git difftool --dir-diff --symlink \
++		--extcmd "./.git/CHECK_SYMLINKS" branch HEAD &&
+ 	test_cmp expect actual
+ '
+ 
+-- 
+2.35.1.1334.gf8cd03b07c8
+
