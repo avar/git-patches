@@ -18,10 +18,89 @@ of the same ideas in [4]. Per [1] we're planning to work together on
 getting a version of this into git that makes everyone happy, sending
 what I've got here is the first step in that.
 
+A high-level summary of the important differences in my approach &
+Derrick's (which I hope I'm summarizing fairly here) is that his
+approach optionally adds a bundle TOC format, that format allows you
+to define topology relationships between bundles to guide a
+(returning) client in what it needs to fetch.
+
+Whereas the idea in this series is to lean entirely on the client
+downloading bundles & inferring what needs to be done via the
+tip/prereqs listed in the header format of the (existing, not changed
+here) bundle format.
+
+Both have pros & cons, I started trying to summarize those, but let's
+leave that for later.
+
+There's also some high-level "journey" differences in the
+two. E.g. Derrick implemented the ability to have "git bundle" itself
+fetch bundles remotely, I don't have that and instead lean entirely on
+the protocol and "fetch". Those differences really aren't important,
+and we can have our cake & eat it too on that front. I.e. end up with
+some sensible intersection (or union) of the tooling.
+
+I ran out of time to finish up some of what I had on this topic this
+week, but figured (especially since I'd promised to get it done this
+week) to send what I have now for discussion.
+
+Things missing & reader's notes:
+
+ * I had some amendmends to the protocol I meant to distill further
+   into the protocol docs at [5]. Basically omitting the ability to
+   transmit key-values and to have it just be a list of URIs with an
+   optional <header> for each one, which is purely a server-to-client
+   aid (i.e. those headers will be what you'll find in the pointed-to
+   bundles).
+
+* This series goes up to "clone", but I also have incremental fetch
+  patches. I ran into an (easily solvable bug) in that & thought it
+  was best to omit it for now. It'll be here soon.
+
+  Basically for incremental fetch we'll in parallel get the headers
+  for remote bundles, and then do an early abort of those downloads
+  that we deem that we don't need.
+
+  Clever (but all standard & boring) use of HTTP caching headers
+  between client & servers then allows the client to not request the
+  same thing again and again. I.e. want less server load on your CDN?
+  Just have the bundles be unique URLs and set appropriate caching
+  headers.
+
+* 13/13 demonstrates some of those ideas at a high level.
+
+* A problem with this implementation (and Derrick's, I believe) is
+  that it keeps a server waiting while we twiddle our thumbs and wget
+  (or equivalent) the bundle(s) locally. If you e.g. clone
+  "chromium.git" the server will get tired of waiting, drop the
+  connection, and unless the bundle is 100% up-to-date the "clone"
+  will fail.
+
+  The solution to this is to get the bundle headers in parallel, and
+  as soon as we've got them present the OIDs in the headers as "HAVE"
+  to the server, which'll then send us an incremental PACK (and even
+  possibly a packfile-uri) for the difference between those bundle(s)
+  and what its tips are.
+
+  We can then simply disconnect, download/index-pack everything, and
+  do a connectivity checkat the end.
+
+  This requires some careful error handling, e.g. if the resulting
+  repo isn't valid we'll need to retry, and the current negotiation
+  API isn't very happy to negotiate on the basis of OIDs we don't have
+  in the object store (but the protocol handles it just fine).
+
+  So while I have local patches for (some of) that I opted to leave it
+  out for now. Once we have incremental fetch it's *mostly* an
+  optimization anyway (except in cases of e.g. chromium.git), so for
+  the initial protocol etc. discussion it's probably best to leave it
+  out.
+
+
 1. https://lore.kernel.org/git/ddebc223-1e13-e758-f9b1-d3f23961e459@github.com/
 2. https://lore.kernel.org/git/patch-3.3-64224ec2cba-20211025T211159Z-avarab@gmail.com/
 3. https://lore.kernel.org/git/RFC-cover-00.13-0000000000-20210805T150534Z-avarab@gmail.com/
 4. https://lore.kernel.org/git/pull.1160.git.1645641063.gitgitgadget@gmail.com/
+5. https://lore.kernel.org/git/211027.86ilxixoxz.gmgdl@evledraar.gmail.com/
 
 Ævar Arnfjörð Bjarmason (13):
   protocol v2: add server-side "bundle-uri" skeleton
