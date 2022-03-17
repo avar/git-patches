@@ -1,0 +1,105 @@
+From 618e975f8b2cf602487f44dc07d156bc0b231800 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-8.8-618e975f8b2-20220317T180135Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20220317T180135Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20220317T180135Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 14 Jan 2022 18:26:32 +0100
+Subject: [PATCH 8/8] reflog [show]: display sensible -h output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "git reflog show -h" output to show the usage summary
+relevant to it, rather than displaying the same output that "git log
+-h" would show.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reflog.c  | 25 +++++++++++++++++++++++--
+ t/t1410-reflog.sh |  5 +++++
+ 2 files changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index 3971921fc14..aaf65ed31c6 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -5,6 +5,9 @@
+ #include "worktree.h"
+ #include "reflog.h"
+ 
++#define BUILTIN_REFLOG_SHOW_USAGE \
++	N_("git reflog [show] [<log-options>] [<ref>]")
++
+ #define BUILTIN_REFLOG_EXPIRE_USAGE \
+ 	N_("git reflog expire [--expire=<time>] [--expire-unreachable=<time>]\n" \
+ 	   "                  [--rewrite] [--updateref] [--stale-fix]\n" \
+@@ -17,6 +20,11 @@
+ #define BUILTIN_REFLOG_EXISTS_USAGE \
+ 	N_("git reflog exists <ref>")
+ 
++static const char *const reflog_show_usage[] = {
++	BUILTIN_REFLOG_SHOW_USAGE,
++	NULL,
++};
++
+ static const char *const reflog_expire_usage[] = {
+ 	BUILTIN_REFLOG_EXPIRE_USAGE,
+ 	NULL
+@@ -33,7 +41,7 @@ static const char *const reflog_exists_usage[] = {
+ };
+ 
+ static const char *const reflog_usage[] = {
+-	N_("git reflog [show] [<log-options>] [<ref>]"),
++	BUILTIN_REFLOG_SHOW_USAGE,
+ 	BUILTIN_REFLOG_EXPIRE_USAGE,
+ 	BUILTIN_REFLOG_DELETE_USAGE,
+ 	BUILTIN_REFLOG_EXISTS_USAGE,
+@@ -207,6 +215,19 @@ static int expire_total_callback(const struct option *opt,
+ 	return 0;
+ }
+ 
++static int cmd_reflog_show(int argc, const char **argv, const char *prefix)
++{
++	struct option options[] = {
++		OPT_END()
++	};
++
++	parse_options(argc, argv, prefix, options, reflog_show_usage,
++		      PARSE_OPT_KEEP_DASHDASH | PARSE_OPT_KEEP_ARGV0 |
++		      PARSE_OPT_KEEP_UNKNOWN);
++
++	return cmd_log_reflog(argc - 1, argv + 1, prefix);
++}
++
+ static int cmd_reflog_expire(int argc, const char **argv, const char *prefix)
+ {
+ 	struct cmd_reflog_expire_cb cmd = { 0 };
+@@ -404,7 +425,7 @@ int cmd_reflog(int argc, const char **argv, const char *prefix)
+ 		goto log_reflog;
+ 
+ 	if (!strcmp(argv[1], "show"))
+-		return cmd_log_reflog(argc - 1, argv + 1, prefix);
++		return cmd_reflog_show(argc, argv, prefix);
+ 	else if (!strcmp(argv[1], "expire"))
+ 		return cmd_reflog_expire(argc - 1, argv + 1, prefix);
+ 	else if (!strcmp(argv[1], "delete"))
+diff --git a/t/t1410-reflog.sh b/t/t1410-reflog.sh
+index 0dc36d842b0..3f469353ec7 100755
+--- a/t/t1410-reflog.sh
++++ b/t/t1410-reflog.sh
+@@ -111,6 +111,11 @@ test_expect_success 'correct usage on sub-command -h' '
+ 	grep "git reflog expire" err
+ '
+ 
++test_expect_success 'correct usage on "git reflog show -h"' '
++	test_expect_code 129 git reflog show -h >err &&
++	grep -F "git reflog [show]" err
++'
++
+ test_expect_success 'pass through -- to sub-command' '
+ 	test_when_finished "rm -rf repo" &&
+ 	git init repo &&
+-- 
+2.35.1.1384.g7d2906948a1
+

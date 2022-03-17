@@ -1,0 +1,102 @@
+From f88acdc97022e08613c21e590f03140d4fb93276 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-6.8-f88acdc9702-20220317T180135Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20220317T180135Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20220317T180135Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 14 Jan 2022 17:03:14 +0100
+Subject: [PATCH 6/8] reflog exists: use parse_options() API
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "reflog exists" command added in afcb2e7a3b8 (git-reflog:
+add exists command, 2015-07-21) to use parse_options() instead of its
+own custom command-line parser. This continues work started in
+33d7bdd6459 (builtin/reflog.c: use parse-options api for expire,
+delete subcommands, 2022-01-06).
+
+As a result we'll understand the --end-of-options synonym for "--", so
+let's test for that.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reflog.c         | 38 ++++++++++++++++----------------------
+ t/t1418-reflog-exists.sh |  5 +++++
+ 2 files changed, 21 insertions(+), 22 deletions(-)
+
+diff --git a/builtin/reflog.c b/builtin/reflog.c
+index 458764400b5..9847e9db3de 100644
+--- a/builtin/reflog.c
++++ b/builtin/reflog.c
+@@ -27,8 +27,10 @@ static const char *const reflog_delete_usage[] = {
+ 	NULL
+ };
+ 
+-static const char reflog_exists_usage[] =
+-	BUILTIN_REFLOG_EXISTS_USAGE;
++static const char *const reflog_exists_usage[] = {
++	BUILTIN_REFLOG_EXISTS_USAGE,
++	NULL,
++};
+ 
+ static timestamp_t default_reflog_expire;
+ static timestamp_t default_reflog_expire_unreachable;
+@@ -350,28 +352,20 @@ static int cmd_reflog_delete(int argc, const char **argv, const char *prefix)
+ 
+ static int cmd_reflog_exists(int argc, const char **argv, const char *prefix)
+ {
+-	int i, start = 0;
+-
+-	for (i = 1; i < argc; i++) {
+-		const char *arg = argv[i];
+-		if (!strcmp(arg, "--")) {
+-			i++;
+-			break;
+-		}
+-		else if (arg[0] == '-')
+-			usage(_(reflog_exists_usage));
+-		else
+-			break;
+-	}
+-
+-	start = i;
++	struct option options[] = {
++		OPT_END()
++	};
++	const char *refname;
+ 
+-	if (argc - start != 1)
+-		usage(_(reflog_exists_usage));
++	argc = parse_options(argc, argv, prefix, options, reflog_exists_usage,
++			     0);
++	if (!argc)
++		usage_with_options(reflog_exists_usage, options);
+ 
+-	if (check_refname_format(argv[start], REFNAME_ALLOW_ONELEVEL))
+-		die(_("invalid ref format: %s"), argv[start]);
+-	return !reflog_exists(argv[start]);
++	refname = argv[0];
++	if (check_refname_format(refname, REFNAME_ALLOW_ONELEVEL))
++		die(_("invalid ref format: %s"), refname);
++	return !reflog_exists(refname);
+ }
+ 
+ /*
+diff --git a/t/t1418-reflog-exists.sh b/t/t1418-reflog-exists.sh
+index 60c6411ce3c..d51ecd5e925 100755
+--- a/t/t1418-reflog-exists.sh
++++ b/t/t1418-reflog-exists.sh
+@@ -29,4 +29,9 @@ test_expect_success 'reflog exists works with a "--" delimiter' '
+ 	test_must_fail git reflog exists -- refs/heads/nonexistent
+ '
+ 
++test_expect_success 'reflog exists works with a "--end-of-options" delimiter' '
++	git reflog exists --end-of-options refs/heads/main &&
++	test_must_fail git reflog exists --end-of-options refs/heads/nonexistent
++'
++
+ test_done
+-- 
+2.35.1.1384.g7d2906948a1
+
