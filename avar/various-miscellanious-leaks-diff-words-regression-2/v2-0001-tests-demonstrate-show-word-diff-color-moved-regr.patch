@@ -1,0 +1,80 @@
+From 7f6a64502597fd33db81931a6b488dbc29455be0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.2-7f6a6450259-20220317T144833Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.2-00000000000-20220317T144833Z-avarab@gmail.com>
+References: <a5e5cdd4658d457ffbd80f7263e352cbf3141a1a.1647520853.git.git@grubix.eu>
+	<cover-v2-0.2-00000000000-20220317T144833Z-avarab@gmail.com>
+From: Michael J Gruber <git@grubix.eu>
+Date: Thu, 17 Mar 2022 13:46:06 +0100
+Subject: [PATCH v2 1/2] tests: demonstrate "show --word-diff --color-moved"
+ regression
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a failing test which demonstrates a regression in
+a18d66cefb ("diff.c: free "buf" in diff_words_flush()", 2022-03-04),
+the regression is discussed in detail in the subsequent commit. With
+it running `git show --word-diff --color-moved` with SANITIZE=address
+would emit:
+
+	==31191==ERROR: AddressSanitizer: attempting double-free on 0x617000021100 in thread T0:
+	    #0 0x49f0a2 in free (git+0x49f0a2)
+	    #1 0x9b0e4d in diff_words_flush diff.c:2153:3
+	    #2 0x9aed5d in fn_out_consume diff.c:2354:3
+	    #3 0xe092ab in consume_one xdiff-interface.c:43:9
+	    #4 0xe072eb in xdiff_outf xdiff-interface.c:76:10
+	    #5 0xec7014 in xdl_emit_diffrec xdiff/xutils.c:53:6
+	    [...]
+
+	0x617000021100 is located 0 bytes inside of 768-byte region [0x617000021100,0x617000021400)
+	freed by thread T0 here:
+	    #0 0x49f0a2 in free (git+0x49f0a2)
+	    [...(same stacktrace)...]
+
+	previously allocated by thread T0 here:
+	    #0 0x49f603 in __interceptor_realloc (git+0x49f603)
+	    #1 0xde4da4 in xrealloc wrapper.c:126:8
+	    #2 0x995dc5 in append_emitted_diff_symbol diff.c:794:2
+	    #3 0x96c44a in emit_diff_symbol diff.c:1527:3
+	    [...]
+
+This was not caught by the test suite because we test `diff
+--word-diff --color-moved` only so far.
+
+Therefore, add a test for `show`, too.
+
+Signed-off-by: Michael J Gruber <git@grubix.eu>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4015-diff-whitespace.sh | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/t/t4015-diff-whitespace.sh b/t/t4015-diff-whitespace.sh
+index 9babf13bc9b..ff8a0426ca5 100755
+--- a/t/t4015-diff-whitespace.sh
++++ b/t/t4015-diff-whitespace.sh
+@@ -1622,7 +1622,7 @@ test_expect_success 'cmd option assumes configured colored-moved' '
+ 	test_cmp expected actual
+ '
+ 
+-test_expect_success 'no effect from --color-moved with --word-diff' '
++test_expect_success 'no effect on diff from --color-moved with --word-diff' '
+ 	cat <<-\EOF >text.txt &&
+ 	Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+ 	EOF
+@@ -1636,6 +1636,12 @@ test_expect_success 'no effect from --color-moved with --word-diff' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_failure 'no effect on show from --color-moved with --word-diff' '
++	git show --color-moved --word-diff >actual &&
++	git show --word-diff >expect &&
++	test_cmp expect actual
++'
++
+ test_expect_success 'set up whitespace tests' '
+ 	git reset --hard &&
+ 	# Note that these lines have no leading or trailing whitespace.
+-- 
+2.35.1.1384.g7d2906948a1
+

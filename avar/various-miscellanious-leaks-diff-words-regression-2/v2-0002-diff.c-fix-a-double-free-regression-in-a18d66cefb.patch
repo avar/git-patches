@@ -1,0 +1,120 @@
+From cae114915992446db790963a77c511683c8d5226 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.2-cae11491599-20220317T144833Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.2-00000000000-20220317T144833Z-avarab@gmail.com>
+References: <a5e5cdd4658d457ffbd80f7263e352cbf3141a1a.1647520853.git.git@grubix.eu>
+	<cover-v2-0.2-00000000000-20220317T144833Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 17 Mar 2022 15:16:51 +0100
+Subject: [PATCH v2 2/2] diff.c: fix a double-free regression in a18d66cefb
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+My a18d66cefb9 (diff.c: free "buf" in diff_words_flush(), 2022-03-04)
+has what it retrospect is a rather obvious bug (I don't know what I
+was thinking, if it all): We use the "emitted_symbols" allocation in
+append_emitted_diff_symbol() N times, but starting with a18d66cefb9
+we'd free it after its first use!
+
+The correct way to free this data would have been to add the free() to
+the existing free_diff_words_data() function, so let's do that. The
+"ecbdata->diff_words->opt->emitted_symbols" might be NULL, so let's
+add a trivial free_emitted_diff_symbols() helper next to the function
+that appends to it.
+
+This fixes the "no effect on show from" leak tested for in the
+preceding commit. Perhaps confusingly this change will skip that test
+under SANITIZE=leak, but otherwise opt-in the
+"t4015-diff-whitespace.sh" test.
+
+The reason is that a18d66cefb9 "fixed" the leak in the preceding "no
+effect on diff" test, but for the first call to diff_words_flush() the
+"wol->buf" would be NULL, so we wouldn't double-free (and
+SANITIZE=address would see nothing amiss). With this change we'll
+still pass that test, showing that we've also fixed leaks on this
+codepath.
+
+We then have to skip the new "no effect on show" test because it
+happens to trip over an unrelated memory leak (in revision.c). The
+same goes for "move detection with submodules". Both of them pass with
+SANITIZE=address though, which would error on the "no effect on show"
+test before this change.
+
+Reported-by: Michael J Gruber <git@grubix.eu>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c                     | 11 +++++++++--
+ t/t4015-diff-whitespace.sh |  6 ++++--
+ 2 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/diff.c b/diff.c
+index 6b22946cd0e..ef7159968b6 100644
+--- a/diff.c
++++ b/diff.c
+@@ -800,6 +800,14 @@ static void append_emitted_diff_symbol(struct diff_options *o,
+ 	f->line = e->line ? xmemdupz(e->line, e->len) : NULL;
+ }
+ 
++static void free_emitted_diff_symbols(struct emitted_diff_symbols *e)
++{
++	if (!e)
++		return;
++	free(e->buf);
++	free(e);
++}
++
+ struct moved_entry {
+ 	const struct emitted_diff_symbol *es;
+ 	struct moved_entry *next_line;
+@@ -2150,7 +2158,6 @@ static void diff_words_flush(struct emit_callback *ecbdata)
+ 
+ 		for (i = 0; i < wol->nr; i++)
+ 			free((void *)wol->buf[i].line);
+-		free(wol->buf);
+ 
+ 		wol->nr = 0;
+ 	}
+@@ -2228,7 +2235,7 @@ static void free_diff_words_data(struct emit_callback *ecbdata)
+ {
+ 	if (ecbdata->diff_words) {
+ 		diff_words_flush(ecbdata);
+-		free (ecbdata->diff_words->opt->emitted_symbols);
++		free_emitted_diff_symbols(ecbdata->diff_words->opt->emitted_symbols);
+ 		free (ecbdata->diff_words->opt);
+ 		free (ecbdata->diff_words->minus.text.ptr);
+ 		free (ecbdata->diff_words->minus.orig);
+diff --git a/t/t4015-diff-whitespace.sh b/t/t4015-diff-whitespace.sh
+index ff8a0426ca5..f3e20dd5bba 100755
+--- a/t/t4015-diff-whitespace.sh
++++ b/t/t4015-diff-whitespace.sh
+@@ -6,6 +6,8 @@
+ test_description='Test special whitespace in diff engine.
+ 
+ '
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ . "$TEST_DIRECTORY"/lib-diff.sh
+ 
+@@ -1636,7 +1638,7 @@ test_expect_success 'no effect on diff from --color-moved with --word-diff' '
+ 	test_cmp expect actual
+ '
+ 
+-test_expect_failure 'no effect on show from --color-moved with --word-diff' '
++test_expect_success !SANITIZE_LEAK 'no effect on show from --color-moved with --word-diff' '
+ 	git show --color-moved --word-diff >actual &&
+ 	git show --word-diff >expect &&
+ 	test_cmp expect actual
+@@ -2022,7 +2024,7 @@ test_expect_success '--color-moved rewinds for MIN_ALNUM_COUNT' '
+ 	test_cmp expected actual
+ '
+ 
+-test_expect_success 'move detection with submodules' '
++test_expect_success !SANITIZE_LEAK 'move detection with submodules' '
+ 	test_create_repo bananas &&
+ 	echo ripe >bananas/recipe &&
+ 	git -C bananas add recipe &&
+-- 
+2.35.1.1384.g7d2906948a1
+
