@@ -1,0 +1,115 @@
+From ad45319b19a58c974595f7aa31d40ce1ca6fbd88 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.5-ad45319b19a-20220317T171618Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20220317T171618Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220317T171618Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 17 Mar 2022 16:41:15 +0100
+Subject: [PATCH 5/5] refs debug: add a wrapper for "read_symbolic_ref"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In cd475b3b038 (refs: add ability for backends to special-case reading
+of symbolic refs, 2022-03-01) when the "read_symbolic_ref" callback
+was added we'd fall back on "refs_read_raw_ref" if there wasn't any
+backend implementation of "read_symbolic_ref".
+
+As discussed in the preceding commit this would only happen if we were
+running the "debug" backend, e.g. in the "setup for ref completion"
+test in t9902-completion.sh with:
+
+    GIT_TRACE_REFS=1 git fetch --no-tags other
+
+Let's improve the trace output, but and also eliminate the
+now-redundant refs_read_raw_ref() fallback case. As noted in the
+preceding commit the "packed" backend will never call
+refs_read_symbolic_ref() (nor is it ever going to). For any future
+backend such as reftable it's OK to ask that they either implement
+this (or a wrapper) themselves.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs.c       | 13 +------------
+ refs/debug.c | 27 ++++++++++++++++++++++++++-
+ 2 files changed, 27 insertions(+), 13 deletions(-)
+
+diff --git a/refs.c b/refs.c
+index 0b79bdd7c37..1a964505f92 100644
+--- a/refs.c
++++ b/refs.c
+@@ -1676,18 +1676,7 @@ int refs_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ int refs_read_symbolic_ref(struct ref_store *ref_store, const char *refname,
+ 			   struct strbuf *referent)
+ {
+-	struct object_id oid;
+-	int ret, failure_errno = 0;
+-	unsigned int type = 0;
+-
+-	if (ref_store->be->read_symbolic_ref)
+-		return ref_store->be->read_symbolic_ref(ref_store, refname, referent);
+-
+-	ret = refs_read_raw_ref(ref_store, refname, &oid, referent, &type, &failure_errno);
+-	if (ret || !(type & REF_ISSYMREF))
+-		return -1;
+-
+-	return 0;
++	return ref_store->be->read_symbolic_ref(ref_store, refname, referent);
+ }
+ 
+ const char *refs_resolve_ref_unsafe(struct ref_store *refs,
+diff --git a/refs/debug.c b/refs/debug.c
+index b83b5817118..eed8bc94b04 100644
+--- a/refs/debug.c
++++ b/refs/debug.c
+@@ -262,6 +262,24 @@ static int debug_read_raw_ref(struct ref_store *ref_store, const char *refname,
+ 	return res;
+ }
+ 
++static int debug_read_symbolic_ref(struct ref_store *ref_store, const char *refname,
++				   struct strbuf *referent)
++{
++	struct debug_ref_store *drefs = (struct debug_ref_store *)ref_store;
++	struct ref_store *refs = drefs->refs;
++	int res;
++
++	res = refs->be->read_symbolic_ref(refs, refname, referent);
++	if (!res)
++		trace_printf_key(&trace_refs, "read_symbolic_ref: %s: (%s)\n",
++				 refname, referent->buf);
++	else
++		trace_printf_key(&trace_refs,
++				 "read_symbolic_ref: %s: %d\n", refname, res);
++	return res;
++
++}
++
+ static struct ref_iterator *
+ debug_reflog_iterator_begin(struct ref_store *ref_store)
+ {
+@@ -423,6 +441,13 @@ struct ref_storage_be refs_be_debug = {
+ 	.name = "debug",
+ 	.init = NULL,
+ 	.init_db = debug_init_db,
++
++	/*
++	 * None of these should be NULL. If the "files" backend (in
++	 * "struct ref_storage_be refs_be_files" in files-backend.c)
++	 * has a function we should also have a wrapper for it here.
++	 * Test the output with "GIT_TRACE_REFS=1".
++	 */
+ 	.transaction_prepare = debug_transaction_prepare,
+ 	.transaction_finish = debug_transaction_finish,
+ 	.transaction_abort = debug_transaction_abort,
+@@ -436,7 +461,7 @@ struct ref_storage_be refs_be_debug = {
+ 
+ 	.iterator_begin = debug_ref_iterator_begin,
+ 	.read_raw_ref = debug_read_raw_ref,
+-	.read_symbolic_ref = NULL,
++	.read_symbolic_ref = debug_read_symbolic_ref,
+ 
+ 	.reflog_iterator_begin = debug_reflog_iterator_begin,
+ 	.for_each_reflog_ent = debug_for_each_reflog_ent,
+-- 
+2.35.1.1384.g7d2906948a1
+
