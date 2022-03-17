@@ -1,0 +1,78 @@
+From c21e3e43a551fa631dda589cf4209f8256a283f5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-05.13-c21e3e43a55-20220317T100814Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+References: <cover-v2-00.10-00000000000-20220307T123909Z-avarab@gmail.com>
+	<cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 13 Feb 2022 16:19:49 +0100
+Subject: [PATCH v3 05/13] bugreport tests: tighten up "git bugreport -s hooks"
+ test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend a test added in 788a776069b (bugreport: collect list of
+populated hooks, 2020-05-07) to "test_cmp" for the expected output,
+instead of selectively using "grep" to check for specific things we
+either expect or don't expect in the output.
+
+As noted in a preceding commit our .git/hooks directory already
+contains *.sample hooks, so we have no need to clobber the
+prepare-commit-msg.sample hook in particular.
+
+Instead we should assert that those *.sample hooks are not included in
+the output, and for good measure let's add a new "unknown-hook", to
+check that we only look through our own known hooks. See
+cfe853e66be (hook-list.h: add a generated list of hooks, like
+config-list.h, 2021-09-26) for how we generate that data.
+
+We're intentionally not piping the "actual" output through "sort" or
+similar, we'd also like to check that our reported hooks are sorted.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0091-bugreport.sh | 26 +++++++++++++++-----------
+ 1 file changed, 15 insertions(+), 11 deletions(-)
+
+diff --git a/t/t0091-bugreport.sh b/t/t0091-bugreport.sh
+index eeedbfa9193..08f5fe9caef 100755
+--- a/t/t0091-bugreport.sh
++++ b/t/t0091-bugreport.sh
+@@ -60,18 +60,22 @@ test_expect_success 'can create leading directories outside of a git dir' '
+ 
+ test_expect_success 'indicates populated hooks' '
+ 	test_when_finished rm git-bugreport-hooks.txt &&
+-	test_when_finished rm -fr .git/hooks &&
+-	rm -fr .git/hooks &&
+-	mkdir .git/hooks &&
+-	for hook in applypatch-msg prepare-commit-msg.sample
+-	do
+-		write_script ".git/hooks/$hook" <<-EOF || return 1
+-		echo "hook $hook exists"
+-		EOF
+-	done &&
++
++	test_hook applypatch-msg <<-\EOF &&
++	true
++	EOF
++	test_hook unknown-hook <<-\EOF &&
++	true
++	EOF
+ 	git bugreport -s hooks &&
+-	grep applypatch-msg git-bugreport-hooks.txt &&
+-	! grep prepare-commit-msg git-bugreport-hooks.txt
++
++	sort >expect <<-\EOF &&
++	[Enabled Hooks]
++	applypatch-msg
++	EOF
++
++	sed -ne "/^\[Enabled Hooks\]$/,/^$/p" <git-bugreport-hooks.txt >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_done
+-- 
+2.35.1.1384.g7d2906948a1
+

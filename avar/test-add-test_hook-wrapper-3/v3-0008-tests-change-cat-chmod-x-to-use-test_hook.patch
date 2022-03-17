@@ -1,0 +1,82 @@
+From bb25560d4323488103de7420de04ddc1804145ce Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-08.13-bb25560d432-20220317T100814Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+References: <cover-v2-00.10-00000000000-20220307T123909Z-avarab@gmail.com>
+	<cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 7 Dec 2021 02:14:26 +0100
+Subject: [PATCH v3 08/13] tests: change "cat && chmod +x" to use "test_hook"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor various test code to use the "test_hook" helper. This change:
+
+ - Fixes the long-standing issues with those tests using "#!/bin/sh"
+   instead of "#!$SHELL_PATH". Using "#!/bin/sh" here happened to work
+   because this code was so simple that it e.g. worked on Solaris
+   /bin/sh.
+
+ - Removes the "mkdir .git/hooks" invocation, as explained in a
+   preceding commit we'll rely on the default templates to create that
+   directory for us.
+
+For the test in "t5402-post-merge-hook.sh" it's easier and more
+correct to unroll the for-loop into a test_expect_success, so let's do
+that.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5402-post-merge-hook.sh | 16 +++++++++-------
+ t/t5601-clone.sh           |  4 +---
+ 2 files changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/t/t5402-post-merge-hook.sh b/t/t5402-post-merge-hook.sh
+index 3e5e19c7191..915af2de95e 100755
+--- a/t/t5402-post-merge-hook.sh
++++ b/t/t5402-post-merge-hook.sh
+@@ -25,13 +25,15 @@ test_expect_success setup '
+ 	GIT_DIR=clone2/.git git update-index --add a
+ '
+ 
+-for clone in 1 2; do
+-	cat >clone${clone}/.git/hooks/post-merge <<'EOF'
+-#!/bin/sh
+-echo $@ >> $GIT_DIR/post-merge.args
+-EOF
+-	chmod u+x clone${clone}/.git/hooks/post-merge
+-done
++test_expect_success 'setup clone hooks' '
++	test_when_finished "rm -f hook" &&
++	cat >hook <<-\EOF &&
++	echo $@ >>$GIT_DIR/post-merge.args
++	EOF
++
++	test_hook --setup -C clone1 post-merge <hook &&
++	test_hook --setup -C clone2 post-merge <hook
++'
+ 
+ test_expect_success 'post-merge does not run for up-to-date ' '
+ 	GIT_DIR=clone1/.git git merge $commit0 &&
+diff --git a/t/t5601-clone.sh b/t/t5601-clone.sh
+index 83c24fc97a7..4a61f2c901e 100755
+--- a/t/t5601-clone.sh
++++ b/t/t5601-clone.sh
+@@ -79,12 +79,10 @@ test_expect_success 'clone from hooks' '
+ 	cd .. &&
+ 	git init r1 &&
+ 	cd r1 &&
+-	cat >.git/hooks/pre-commit <<-\EOF &&
+-	#!/bin/sh
++	test_hook pre-commit <<-\EOF &&
+ 	git clone ../r0 ../r2
+ 	exit 1
+ 	EOF
+-	chmod u+x .git/hooks/pre-commit &&
+ 	: >file &&
+ 	git add file &&
+ 	test_must_fail git commit -m invoke-hook &&
+-- 
+2.35.1.1384.g7d2906948a1
+

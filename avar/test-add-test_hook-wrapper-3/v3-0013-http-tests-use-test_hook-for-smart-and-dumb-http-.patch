@@ -1,0 +1,101 @@
+From 2dffde3203642f2f930862be3133f0594b704bc9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-13.13-2dffde32036-20220317T100814Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+References: <cover-v2-00.10-00000000000-20220307T123909Z-avarab@gmail.com>
+	<cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Mar 2022 22:36:28 +0100
+Subject: [PATCH v3 13/13] http tests: use "test_hook" for "smart" and "dumb"
+ http tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the http tests to use "test_hook" insteadd of
+"write_script". In both cases we can get rid of sub-shelling. For
+"t/t5550-http-fetch-dumb.sh" add a trivial helper which sets up the
+hook and calls "update-server-info".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5541-http-push-smart.sh | 10 ++++------
+ t/t5550-http-fetch-dumb.sh | 25 ++++++++++---------------
+ 2 files changed, 14 insertions(+), 21 deletions(-)
+
+diff --git a/t/t5541-http-push-smart.sh b/t/t5541-http-push-smart.sh
+index ab4b5cfcd11..2f09ff4fac6 100755
+--- a/t/t5541-http-push-smart.sh
++++ b/t/t5541-http-push-smart.sh
+@@ -419,10 +419,7 @@ test_expect_success CMDLINE_LIMIT 'push 2000 tags over http' '
+ '
+ 
+ test_expect_success GPG 'push with post-receive to inspect certificate' '
+-	(
+-		cd "$HTTPD_DOCUMENT_ROOT_PATH"/test_repo.git &&
+-		mkdir -p hooks &&
+-		write_script hooks/post-receive <<-\EOF &&
++	test_hook -C "$HTTPD_DOCUMENT_ROOT_PATH"/test_repo.git post-receive <<-\EOF &&
+ 		# discard the update list
+ 		cat >/dev/null
+ 		# record the push certificate
+@@ -437,8 +434,9 @@ test_expect_success GPG 'push with post-receive to inspect certificate' '
+ 		NONCE_STATUS=${GIT_PUSH_CERT_NONCE_STATUS-nononcestatus}
+ 		NONCE=${GIT_PUSH_CERT_NONCE-nononce}
+ 		E_O_F
+-		EOF
+-
++	EOF
++	(
++		cd "$HTTPD_DOCUMENT_ROOT_PATH"/test_repo.git &&
+ 		git config receive.certnonceseed sekrit &&
+ 		git config receive.certnonceslop 30
+ 	) &&
+diff --git a/t/t5550-http-fetch-dumb.sh b/t/t5550-http-fetch-dumb.sh
+index 259203926a9..f0d9cd584d3 100755
+--- a/t/t5550-http-fetch-dumb.sh
++++ b/t/t5550-http-fetch-dumb.sh
+@@ -25,16 +25,17 @@ test_expect_success 'setup repository' '
+ 	git commit -m two
+ '
+ 
++setup_post_update_server_info_hook () {
++	test_hook --setup -C "$1" post-update <<-\EOF &&
++	exec git update-server-info
++	EOF
++	git -C "$1" update-server-info
++}
++
+ test_expect_success 'create http-accessible bare repository with loose objects' '
+ 	cp -R .git "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
+-	(cd "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
+-	 git config core.bare true &&
+-	 mkdir -p hooks &&
+-	 write_script "hooks/post-update" <<-\EOF &&
+-	 exec git update-server-info
+-	EOF
+-	 hooks/post-update
+-	) &&
++	git -C "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" config core.bare true &&
++	setup_post_update_server_info_hook "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
+ 	git remote add public "$HTTPD_DOCUMENT_ROOT_PATH/repo.git" &&
+ 	git push public main:main
+ '
+@@ -62,13 +63,7 @@ test_expect_success 'create password-protected repository' '
+ 
+ test_expect_success 'create empty remote repository' '
+ 	git init --bare "$HTTPD_DOCUMENT_ROOT_PATH/empty.git" &&
+-	(cd "$HTTPD_DOCUMENT_ROOT_PATH/empty.git" &&
+-	 mkdir -p hooks &&
+-	 write_script "hooks/post-update" <<-\EOF &&
+-	 exec git update-server-info
+-	EOF
+-	 hooks/post-update
+-	)
++	setup_post_update_server_info_hook "$HTTPD_DOCUMENT_ROOT_PATH/empty.git"
+ '
+ 
+ test_expect_success 'empty dumb HTTP repository has default hash algorithm' '
+-- 
+2.35.1.1384.g7d2906948a1
+

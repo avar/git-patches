@@ -1,0 +1,239 @@
+From dab99b8359df8a0a83cf7ac34073ccbebc0c40b5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-10.13-dab99b8359d-20220317T100814Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+References: <cover-v2-00.10-00000000000-20220307T123909Z-avarab@gmail.com>
+	<cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 13 Feb 2022 12:52:20 +0100
+Subject: [PATCH v3 10/13] tests: use "test_hook" for misc "mkdir -p" and
+ "chmod" cases
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make use of "test_hook" in various cases that didn't fit neatly into
+preceding commits. Here we need to indent blocks in addition to
+changing the test code, or to make other small cosmetic changes.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3412-rebase-root.sh       | 18 ++++-------
+ t/t3413-rebase-hook.sh       | 18 ++++-------
+ t/t5401-update-hooks.sh      | 62 ++++++++++++++++--------------------
+ t/t5407-post-rewrite-hook.sh | 14 ++++----
+ t/t5541-http-push-smart.sh   | 22 ++++++-------
+ 5 files changed, 56 insertions(+), 78 deletions(-)
+
+diff --git a/t/t3412-rebase-root.sh b/t/t3412-rebase-root.sh
+index 1e9f7833dd6..58371d8a547 100755
+--- a/t/t3412-rebase-root.sh
++++ b/t/t3412-rebase-root.sh
+@@ -31,12 +31,9 @@ test_expect_success 'rebase --root fails with too many args' '
+ '
+ 
+ test_expect_success 'setup pre-rebase hook' '
+-	mkdir -p .git/hooks &&
+-	cat >.git/hooks/pre-rebase <<EOF &&
+-#!$SHELL_PATH
+-echo "\$1,\$2" >.git/PRE-REBASE-INPUT
+-EOF
+-	chmod +x .git/hooks/pre-rebase
++	test_hook --setup pre-rebase <<-\EOF
++	echo "$1,$2" >.git/PRE-REBASE-INPUT
++	EOF
+ '
+ cat > expect <<EOF
+ 4
+@@ -141,12 +138,9 @@ commit work7~5
+ EOF
+ 
+ test_expect_success 'setup pre-rebase hook that fails' '
+-	mkdir -p .git/hooks &&
+-	cat >.git/hooks/pre-rebase <<EOF &&
+-#!$SHELL_PATH
+-false
+-EOF
+-	chmod +x .git/hooks/pre-rebase
++	test_hook --setup --clobber pre-rebase <<-\EOF
++	false
++	EOF
+ '
+ 
+ test_expect_success 'pre-rebase hook stops rebase' '
+diff --git a/t/t3413-rebase-hook.sh b/t/t3413-rebase-hook.sh
+index b4acb3be5cf..9fab0d779bb 100755
+--- a/t/t3413-rebase-hook.sh
++++ b/t/t3413-rebase-hook.sh
+@@ -41,12 +41,9 @@ test_expect_success 'rebase -i' '
+ '
+ 
+ test_expect_success 'setup pre-rebase hook' '
+-	mkdir -p .git/hooks &&
+-	cat >.git/hooks/pre-rebase <<EOF &&
+-#!$SHELL_PATH
+-echo "\$1,\$2" >.git/PRE-REBASE-INPUT
+-EOF
+-	chmod +x .git/hooks/pre-rebase
++	test_hook --setup pre-rebase <<-\EOF
++	echo "$1,$2" >.git/PRE-REBASE-INPUT
++	EOF
+ '
+ 
+ test_expect_success 'pre-rebase hook gets correct input (1)' '
+@@ -102,12 +99,9 @@ test_expect_success 'pre-rebase hook gets correct input (6)' '
+ '
+ 
+ test_expect_success 'setup pre-rebase hook that fails' '
+-	mkdir -p .git/hooks &&
+-	cat >.git/hooks/pre-rebase <<EOF &&
+-#!$SHELL_PATH
+-false
+-EOF
+-	chmod +x .git/hooks/pre-rebase
++	test_hook --setup --clobber pre-rebase <<-\EOF
++	false
++	EOF
+ '
+ 
+ test_expect_success 'pre-rebase hook stops rebase (1)' '
+diff --git a/t/t5401-update-hooks.sh b/t/t5401-update-hooks.sh
+index 799349a416c..001b7a17ad2 100755
+--- a/t/t5401-update-hooks.sh
++++ b/t/t5401-update-hooks.sh
+@@ -20,45 +20,37 @@ test_expect_success setup '
+ 	git clone --bare ./. victim.git &&
+ 	GIT_DIR=victim.git git update-ref refs/heads/tofail $commit1 &&
+ 	git update-ref refs/heads/main $commit1 &&
+-	git update-ref refs/heads/tofail $commit0
+-'
++	git update-ref refs/heads/tofail $commit0 &&
+ 
+-cat >victim.git/hooks/pre-receive <<'EOF'
+-#!/bin/sh
+-printf %s "$@" >>$GIT_DIR/pre-receive.args
+-cat - >$GIT_DIR/pre-receive.stdin
+-echo STDOUT pre-receive
+-echo STDERR pre-receive >&2
+-EOF
+-chmod u+x victim.git/hooks/pre-receive
++	test_hook --setup -C victim.git pre-receive <<-\EOF &&
++	printf %s "$@" >>$GIT_DIR/pre-receive.args
++	cat - >$GIT_DIR/pre-receive.stdin
++	echo STDOUT pre-receive
++	echo STDERR pre-receive >&2
++	EOF
+ 
+-cat >victim.git/hooks/update <<'EOF'
+-#!/bin/sh
+-echo "$@" >>$GIT_DIR/update.args
+-read x; printf %s "$x" >$GIT_DIR/update.stdin
+-echo STDOUT update $1
+-echo STDERR update $1 >&2
+-test "$1" = refs/heads/main || exit
+-EOF
+-chmod u+x victim.git/hooks/update
++	test_hook --setup -C victim.git update <<-\EOF &&
++	echo "$@" >>$GIT_DIR/update.args
++	read x; printf %s "$x" >$GIT_DIR/update.stdin
++	echo STDOUT update $1
++	echo STDERR update $1 >&2
++	test "$1" = refs/heads/main || exit
++	EOF
+ 
+-cat >victim.git/hooks/post-receive <<'EOF'
+-#!/bin/sh
+-printf %s "$@" >>$GIT_DIR/post-receive.args
+-cat - >$GIT_DIR/post-receive.stdin
+-echo STDOUT post-receive
+-echo STDERR post-receive >&2
+-EOF
+-chmod u+x victim.git/hooks/post-receive
++	test_hook --setup -C victim.git post-receive <<-\EOF &&
++	printf %s "$@" >>$GIT_DIR/post-receive.args
++	cat - >$GIT_DIR/post-receive.stdin
++	echo STDOUT post-receive
++	echo STDERR post-receive >&2
++	EOF
+ 
+-cat >victim.git/hooks/post-update <<'EOF'
+-#!/bin/sh
+-echo "$@" >>$GIT_DIR/post-update.args
+-read x; printf %s "$x" >$GIT_DIR/post-update.stdin
+-echo STDOUT post-update
+-echo STDERR post-update >&2
+-EOF
+-chmod u+x victim.git/hooks/post-update
++	test_hook --setup -C victim.git post-update <<-\EOF
++	echo "$@" >>$GIT_DIR/post-update.args
++	read x; printf %s "$x" >$GIT_DIR/post-update.stdin
++	echo STDOUT post-update
++	echo STDERR post-update >&2
++	EOF
++'
+ 
+ test_expect_success push '
+ 	test_must_fail git send-pack --force ./victim.git \
+diff --git a/t/t5407-post-rewrite-hook.sh b/t/t5407-post-rewrite-hook.sh
+index 6da8d760e28..5f3ff051ca2 100755
+--- a/t/t5407-post-rewrite-hook.sh
++++ b/t/t5407-post-rewrite-hook.sh
+@@ -17,15 +17,13 @@ test_expect_success 'setup' '
+ 	git checkout A^0 &&
+ 	test_commit E bar E &&
+ 	test_commit F foo F &&
+-	git checkout main
+-'
++	git checkout main &&
+ 
+-cat >.git/hooks/post-rewrite <<EOF
+-#!/bin/sh
+-echo \$@ > "$TRASH_DIRECTORY"/post-rewrite.args
+-cat > "$TRASH_DIRECTORY"/post-rewrite.data
+-EOF
+-chmod u+x .git/hooks/post-rewrite
++	test_hook --setup post-rewrite <<-EOF
++	echo \$@ > "$TRASH_DIRECTORY"/post-rewrite.args
++	cat > "$TRASH_DIRECTORY"/post-rewrite.data
++	EOF
++'
+ 
+ clear_hook_input () {
+ 	rm -f post-rewrite.args post-rewrite.data
+diff --git a/t/t5541-http-push-smart.sh b/t/t5541-http-push-smart.sh
+index 8ca50f8b18c..ab4b5cfcd11 100755
+--- a/t/t5541-http-push-smart.sh
++++ b/t/t5541-http-push-smart.sh
+@@ -96,18 +96,18 @@ test_expect_success 'create and delete remote branch' '
+ 	test_must_fail git show-ref --verify refs/remotes/origin/dev
+ '
+ 
+-cat >"$HTTPD_DOCUMENT_ROOT_PATH/test_repo.git/hooks/update" <<EOF
+-#!/bin/sh
+-exit 1
+-EOF
+-chmod a+x "$HTTPD_DOCUMENT_ROOT_PATH/test_repo.git/hooks/update"
++test_expect_success 'setup rejected update hook' '
++	test_hook --setup -C "$HTTPD_DOCUMENT_ROOT_PATH/test_repo.git" update <<-\EOF &&
++	exit 1
++	EOF
+ 
+-cat >exp <<EOF
+-remote: error: hook declined to update refs/heads/dev2
+-To http://127.0.0.1:$LIB_HTTPD_PORT/smart/test_repo.git
+- ! [remote rejected] dev2 -> dev2 (hook declined)
+-error: failed to push some refs to 'http://127.0.0.1:$LIB_HTTPD_PORT/smart/test_repo.git'
+-EOF
++	cat >exp <<-EOF
++	remote: error: hook declined to update refs/heads/dev2
++	To http://127.0.0.1:$LIB_HTTPD_PORT/smart/test_repo.git
++	 ! [remote rejected] dev2 -> dev2 (hook declined)
++	error: failed to push some refs to '\''http://127.0.0.1:$LIB_HTTPD_PORT/smart/test_repo.git'\''
++	EOF
++'
+ 
+ test_expect_success 'rejected update prints status' '
+ 	cd "$ROOT_PATH"/test_repo_clone &&
+-- 
+2.35.1.1384.g7d2906948a1
+

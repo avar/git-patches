@@ -1,0 +1,103 @@
+From bb57b29859867ec21500df8074064efc487e02cb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-07.13-bb57b298598-20220317T100814Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+References: <cover-v2-00.10-00000000000-20220307T123909Z-avarab@gmail.com>
+	<cover-v3-00.13-00000000000-20220317T100814Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 13 Feb 2022 15:12:23 +0100
+Subject: [PATCH v3 07/13] gc + p4 tests: use "test_hook", remove sub-shells
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the repository setup code for tests that test hooks the use
+of sub-shells when setting up the test repository and hooks, and use
+the "test_hook" wrapper instead of "write_scripts".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6500-gc.sh           | 22 ++++++++++------------
+ t/t9800-git-p4-basic.sh | 23 ++++++++++++++---------
+ 2 files changed, 24 insertions(+), 21 deletions(-)
+
+diff --git a/t/t6500-gc.sh b/t/t6500-gc.sh
+index c2021267f2c..cd6c53360d2 100755
+--- a/t/t6500-gc.sh
++++ b/t/t6500-gc.sh
+@@ -101,12 +101,12 @@ test_expect_success 'pre-auto-gc hook can stop auto gc' '
+ 	EOF
+ 
+ 	git init pre-auto-gc-hook &&
++	test_hook -C pre-auto-gc-hook pre-auto-gc <<-\EOF &&
++	echo >&2 no gc for you &&
++	exit 1
++	EOF
+ 	(
+ 		cd pre-auto-gc-hook &&
+-		write_script ".git/hooks/pre-auto-gc" <<-\EOF &&
+-		echo >&2 no gc for you &&
+-		exit 1
+-		EOF
+ 
+ 		git config gc.auto 3 &&
+ 		git config gc.autoDetach false &&
+@@ -128,14 +128,12 @@ test_expect_success 'pre-auto-gc hook can stop auto gc' '
+ 	See "git help gc" for manual housekeeping.
+ 	EOF
+ 
+-	(
+-		cd pre-auto-gc-hook &&
+-		write_script ".git/hooks/pre-auto-gc" <<-\EOF &&
+-		echo >&2 will gc for you &&
+-		exit 0
+-		EOF
+-		git gc --auto >../out.actual 2>../err.actual
+-	) &&
++	test_hook -C pre-auto-gc-hook --clobber pre-auto-gc <<-\EOF &&
++	echo >&2 will gc for you &&
++	exit 0
++	EOF
++
++	git -C pre-auto-gc-hook gc --auto >out.actual 2>err.actual &&
+ 
+ 	test_must_be_empty out.actual &&
+ 	test_cmp err.expect err.actual
+diff --git a/t/t9800-git-p4-basic.sh b/t/t9800-git-p4-basic.sh
+index 806005a793a..8b30062c0cf 100755
+--- a/t/t9800-git-p4-basic.sh
++++ b/t/t9800-git-p4-basic.sh
+@@ -277,16 +277,21 @@ test_expect_success 'run hook p4-pre-submit before submit' '
+ 		git commit -m "add hello.txt" &&
+ 		git config git-p4.skipSubmitEdit true &&
+ 		git p4 submit --dry-run >out &&
+-		grep "Would apply" out &&
+-		mkdir -p .git/hooks &&
+-		write_script .git/hooks/p4-pre-submit <<-\EOF &&
+-		exit 0
+-		EOF
++		grep "Would apply" out
++	) &&
++	test_hook -C "$git" p4-pre-submit <<-\EOF &&
++	exit 0
++	EOF
++	(
++		cd "$git" &&
+ 		git p4 submit --dry-run >out &&
+-		grep "Would apply" out &&
+-		write_script .git/hooks/p4-pre-submit <<-\EOF &&
+-		exit 1
+-		EOF
++		grep "Would apply" out
++	) &&
++	test_hook -C "$git" --clobber p4-pre-submit <<-\EOF &&
++	exit 1
++	EOF
++	(
++		cd "$git" &&
+ 		test_must_fail git p4 submit --dry-run >errs 2>&1 &&
+ 		! grep "Would apply" errs
+ 	)
+-- 
+2.35.1.1384.g7d2906948a1
+
