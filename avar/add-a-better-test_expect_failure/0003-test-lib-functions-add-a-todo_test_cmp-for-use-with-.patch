@@ -1,0 +1,242 @@
+From caf7fd395d97038d13a11755c2145fb404131f39 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.7-caf7fd395d9-20220318T002354Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20220318T002354Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20220318T002354Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 17 Feb 2022 19:49:33 +0100
+Subject: [PATCH 3/7] test-lib-functions: add a "todo_test_cmp", for use with
+ "test_expect_todo"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Introduce a new "todo_test_cmp" for use with the new
+"test_expect_todo" function. This is a thin wrapper around the
+previously introduced "test_todo". Instead of the more verbose:
+
+    test_todo test_cmp --want want --expect expect -- actual
+
+We can now do:
+
+    todo_test_cmp want expect actual
+
+Since it uses "test_todo", this "test_cmp_todo" function will BUG()
+out if "want" and "expect" are the same, and likewise if the "want" is
+equivalent to "actual".
+
+Let's convert most of the tests added in 45bde58ef8f (grep:
+demonstrate bug with textconv attributes and submodules, 2021-09-29)
+to use it, as well as a merge test added in
+6d49de414f9 (t6023-merge-file.sh: fix and mark as broken invalid
+tests, 2014-06-29).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6403-merge-file.sh              | 23 +++++++++++--
+ t/t7814-grep-recurse-submodules.sh | 54 +++++++++++++++++++++---------
+ t/test-lib-functions.sh            | 22 ++++++++++++
+ 3 files changed, 81 insertions(+), 18 deletions(-)
+
+diff --git a/t/t6403-merge-file.sh b/t/t6403-merge-file.sh
+index 12b334af85c..d466360c41a 100755
+--- a/t/t6403-merge-file.sh
++++ b/t/t6403-merge-file.sh
+@@ -92,8 +92,27 @@ test_expect_todo "merge without conflict (missing LF at EOF)" '
+ 		git merge-file test2.txt orig.txt new4.txt
+ '
+ 
+-test_expect_failure "merge result added missing LF" '
+-	test_cmp test.txt test2.txt
++test_expect_todo "merge result added missing LF" '
++	cat >expect <<-\EOF &&
++	Dominus regit me, et nihil mihi deerit.
++	In loco pascuae ibi me collocavit,
++	super aquam refectionis educavit me;
++	animam meam convertit,
++	deduxit me super semitas jusitiae,
++	<<<<<<< test2.txt
++	<<<<<<< test2.txt
++	propter nomen suum.
++	Nam et si ambulavero in medio umbrae mortis,
++	non timebo mala, quoniam tu mecum es:
++	virga tua et baculus tuus ipsa me consolata sunt.
++	=======
++	propter nomen suum.
++	>>>>>>> new4.txt
++	=======
++	propter nomen suum.
++	>>>>>>> new4.txt
++	EOF
++	todo_test_cmp test.txt expect test2.txt
+ '
+ 
+ test_expect_success "merge without conflict (missing LF at EOF, away from change in the other file)" '
+diff --git a/t/t7814-grep-recurse-submodules.sh b/t/t7814-grep-recurse-submodules.sh
+index a4476dc4922..8d9b53ccfed 100755
+--- a/t/t7814-grep-recurse-submodules.sh
++++ b/t/t7814-grep-recurse-submodules.sh
+@@ -442,77 +442,98 @@ test_expect_success 'grep --recurse-submodules with --cached ignores worktree mo
+ 	test_must_be_empty actual
+ '
+ 
+-test_expect_failure 'grep --textconv: superproject .gitattributes does not affect submodules' '
++test_expect_todo 'grep --textconv: superproject .gitattributes does not affect submodules' '
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x.textconv "sed -e \"s/d/x/\"" &&
+ 	echo "a diff=d2x" >.gitattributes &&
+ 
++	cat >want <<-\EOF &&
++	a:(1|2)x(3|4)
++	EOF
+ 	cat >expect <<-\EOF &&
+ 	a:(1|2)x(3|4)
++	submodule/a:(1|2)x(3|4)
++	submodule/sub/a:(1|2)x(3|4)
+ 	EOF
+ 	git grep --textconv --recurse-submodules x >actual &&
+-	test_cmp expect actual
++	todo_test_cmp want expect actual
+ '
+ 
+-test_expect_failure 'grep --textconv: superproject .gitattributes (from index) does not affect submodules' '
++test_expect_todo 'grep --textconv: superproject .gitattributes (from index) does not affect submodules' '
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x.textconv "sed -e \"s/d/x/\"" &&
+ 	echo "a diff=d2x" >.gitattributes &&
+ 	git add .gitattributes &&
+ 	rm .gitattributes &&
+ 
++	cat >want <<-\EOF &&
++	a:(1|2)x(3|4)
++	EOF
+ 	cat >expect <<-\EOF &&
+ 	a:(1|2)x(3|4)
++	submodule/a:(1|2)x(3|4)
++	submodule/sub/a:(1|2)x(3|4)
+ 	EOF
+ 	git grep --textconv --recurse-submodules x >actual &&
+-	test_cmp expect actual
++	todo_test_cmp want expect actual
+ '
+ 
+-test_expect_failure 'grep --textconv: superproject .git/info/attributes does not affect submodules' '
++test_expect_todo 'grep --textconv: superproject .git/info/attributes does not affect submodules' '
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x.textconv "sed -e \"s/d/x/\"" &&
+ 	super_attr="$(git rev-parse --git-path info/attributes)" &&
+ 	test_when_finished "rm -f \"$super_attr\"" &&
+ 	echo "a diff=d2x" >"$super_attr" &&
+ 
++	cat >want <<-\EOF &&
++	a:(1|2)x(3|4)
++	EOF
+ 	cat >expect <<-\EOF &&
+ 	a:(1|2)x(3|4)
++	submodule/a:(1|2)x(3|4)
++	submodule/sub/a:(1|2)x(3|4)
+ 	EOF
+ 	git grep --textconv --recurse-submodules x >actual &&
+-	test_cmp expect actual
++	todo_test_cmp want expect actual
+ '
+ 
+ # Note: what currently prevents this test from passing is not that the
+ # .gitattributes file from "./submodule" is being ignored, but that it is being
+ # propagated to the nested "./submodule/sub" files.
+ #
+-test_expect_failure 'grep --textconv correctly reads submodule .gitattributes' '
++test_expect_todo 'grep --textconv correctly reads submodule .gitattributes' '
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x.textconv "sed -e \"s/d/x/\"" &&
+ 	echo "a diff=d2x" >submodule/.gitattributes &&
+ 
++	cat >want <<-\EOF &&
++	submodule/a:(1|2)x(3|4)
++	EOF
+ 	cat >expect <<-\EOF &&
+ 	submodule/a:(1|2)x(3|4)
++	submodule/sub/a:(1|2)x(3|4)
+ 	EOF
+ 	git grep --textconv --recurse-submodules x >actual &&
+-	test_cmp expect actual
++	todo_test_cmp want expect actual
+ '
+ 
+-test_expect_failure 'grep --textconv correctly reads submodule .gitattributes (from index)' '
++test_expect_todo 'grep --textconv correctly reads submodule .gitattributes (from index)' '
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x.textconv "sed -e \"s/d/x/\"" &&
+ 	echo "a diff=d2x" >submodule/.gitattributes &&
+ 	git -C submodule add .gitattributes &&
+ 	rm submodule/.gitattributes &&
+ 
+-	cat >expect <<-\EOF &&
++	cat >want <<-\EOF &&
+ 	submodule/a:(1|2)x(3|4)
+ 	EOF
+-	git grep --textconv --recurse-submodules x >actual &&
+-	test_cmp expect actual
++	>expect &&
++
++	test_might_fail git grep --textconv --recurse-submodules x >actual &&
++	todo_test_cmp want expect actual
+ '
+ 
+-test_expect_failure 'grep --textconv correctly reads submodule .git/info/attributes' '
++test_expect_todo 'grep --textconv correctly reads submodule .git/info/attributes' '
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x.textconv "sed -e \"s/d/x/\"" &&
+ 
+@@ -520,11 +541,12 @@ test_expect_failure 'grep --textconv correctly reads submodule .git/info/attribu
+ 	test_when_finished "rm -f \"$submodule_attr\"" &&
+ 	echo "a diff=d2x" >"$submodule_attr" &&
+ 
+-	cat >expect <<-\EOF &&
++	cat >want <<-\EOF &&
+ 	submodule/a:(1|2)x(3|4)
+ 	EOF
+-	git grep --textconv --recurse-submodules x >actual &&
+-	test_cmp expect actual
++	>expect &&
++	test_might_fail git grep --textconv --recurse-submodules x >actual &&
++	todo_test_cmp want expect actual
+ '
+ 
+ test_expect_failure 'grep saves textconv cache in the appropriate repository' '
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 53335393b9b..300f5f357bb 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -1263,6 +1263,28 @@ test_cmp () {
+ 	eval "$GIT_TEST_CMP" '"$@"'
+ }
+ 
++# todo_test_cmp is a "test_cmp" for use in conjunction with
++# "test_expect_todo".
++#
++# It takes a mandatory extra first argument of "want", indicating the
++# output we'd like to have once we turn that "test_expect_todo" into a
++# "test_expect_success":
++#
++#	test_expect_todo 'foo still doesn't work' '
++#		echo yay >want &&
++#		echo error >expect &&
++#		foo >actual &&
++#		test_cmp want expect actual
++#	'
++todo_test_cmp () {
++	test "$#" -ne 3 && BUG "3 param, not $#"
++	local want=$1 &&
++	local expect=$2 &&
++	local actual=$3 &&
++
++	test_todo test_cmp --want "$want" --expect "$expect" -- "$actual"
++}
++
+ # Check that the given config key has the expected value.
+ #
+ #    test_cmp_config [-C <dir>] <expected-value>
+-- 
+2.35.1.1436.g756b814e59f
+

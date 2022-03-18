@@ -1,0 +1,100 @@
+From fc88584811910128e70fbd38ce93b00638b1da74 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.7-fc885848119-20220318T002354Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20220318T002354Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20220318T002354Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 17 Feb 2022 19:50:01 +0100
+Subject: [PATCH 4/7] test-lib-functions: add a "todo_test_path", for use with
+ "test_expect_todo"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a new "todo_test_path" helper and convert an additional test added
+in 45bde58ef8f (grep: demonstrate bug with textconv attributes and
+submodules, 2021-09-29) to use it in conjunction with
+"test_expect_todo".
+
+Like the "todo_test_cmp" function introduced in a preceding commit,
+this function is a trivial wrapper around "test_todo". Rather than a
+more verbose:
+
+	test_todo \
+		--want "test_path_is_missing" \
+		--expect "test_path_is_file" \
+		-- "$super_textconv_cache"
+
+We can do:
+
+	todo_test_path is_missing is_file "$super_textconv_cache"
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7814-grep-recurse-submodules.sh |  6 +++---
+ t/test-lib-functions.sh            | 25 +++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+), 3 deletions(-)
+
+diff --git a/t/t7814-grep-recurse-submodules.sh b/t/t7814-grep-recurse-submodules.sh
+index 8d9b53ccfed..8df692ee9a0 100755
+--- a/t/t7814-grep-recurse-submodules.sh
++++ b/t/t7814-grep-recurse-submodules.sh
+@@ -549,7 +549,7 @@ test_expect_todo 'grep --textconv correctly reads submodule .git/info/attributes
+ 	todo_test_cmp want expect actual
+ '
+ 
+-test_expect_failure 'grep saves textconv cache in the appropriate repository' '
++test_expect_todo 'grep saves textconv cache in the appropriate repository' '
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x_cached.textconv "sed -e \"s/d/x/\"" &&
+ 	test_config_global diff.d2x_cached.cachetextconv true &&
+@@ -562,8 +562,8 @@ test_expect_failure 'grep saves textconv cache in the appropriate repository' '
+ 	super_textconv_cache="$(git rev-parse --git-path refs/notes/textconv/d2x_cached)" &&
+ 	sub_textconv_cache="$(git -C submodule rev-parse \
+ 			--path-format=absolute --git-path refs/notes/textconv/d2x_cached)" &&
+-	test_path_is_missing "$super_textconv_cache" &&
+-	test_path_is_file "$sub_textconv_cache"
++	todo_test_path is_missing is_file "$super_textconv_cache" &&
++	todo_test_path is_file is_missing "$sub_textconv_cache"
+ '
+ 
+ test_expect_success 'grep partially-cloned submodule' '
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 300f5f357bb..50054d25719 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -1036,6 +1036,31 @@ test_todo () {
+ 	BUG "a test_todo didn't pass with either --want ('$want') or --expect ('$expect')"
+ }
+ 
++# todo_test_path is a test_path_* for use in conjunction with
++# "test_expect_todo".
++#
++# It takes "want_fn" and "expect_fn" arguments of e.g. "is_file" or
++# "is_dir", which will be turned into corresponding "test_file_*"
++# calls. Use it like:
++#
++#	test_expect_todo 'foo should be a directory' '
++#		>foo &&
++#		todo_test_path is_dir is_file foo
++#	'
++todo_test_path () {
++	test "$#" -ne 3 && BUG "3 param, not $#"
++	local want_fn=$1
++	local expect_fn=$2
++	local path=$3 &&
++	shift 3 &&
++
++	test_todo \
++		--want "test_path_$want_fn" \
++		--expect "test_path_$expect_fn" \
++		-- \
++		"$path"
++}
++
+ # test_line_count checks that a file has the number of lines it
+ # ought to. For example:
+ #
+-- 
+2.35.1.1436.g756b814e59f
+

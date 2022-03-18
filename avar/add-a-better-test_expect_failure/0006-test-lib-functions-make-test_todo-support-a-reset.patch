@@ -1,0 +1,131 @@
+From a4a44861bf0c85252e023cbbf9603435df8b2f83 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-6.7-a4a44861bf0-20220318T002354Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20220318T002354Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20220318T002354Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 18 Feb 2022 19:46:00 +0100
+Subject: [PATCH 6/7] test-lib-functions: make test_todo support a --reset
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in the preceding commit that introduced "test_todo" we
+couldn't run something like "git rm" since we run both the --want and
+--expect variants, and if --want has removed a file the --expect won't
+succeed.
+
+Let's add a --reset option to the command, this allows us to convert a
+test added in 03415ca8db2 (t3600: document failure of rm across
+symbolic links, 2013-04-04) to a more exact "test_expect_todo".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3600-rm.sh           | 23 ++++++++++++++++++-----
+ t/test-lib-functions.sh | 26 ++++++++++++++++++++++----
+ 2 files changed, 40 insertions(+), 9 deletions(-)
+
+diff --git a/t/t3600-rm.sh b/t/t3600-rm.sh
+index e74a318ac33..42879e9060b 100755
+--- a/t/t3600-rm.sh
++++ b/t/t3600-rm.sh
+@@ -790,7 +790,7 @@ test_expect_success SYMLINKS 'rm across a symlinked leading path (no index)' '
+ 	test_path_is_file e/f
+ '
+ 
+-test_expect_failure SYMLINKS 'rm across a symlinked leading path (w/ index)' '
++test_expect_todo SYMLINKS 'rm across a symlinked leading path (w/ index)' '
+ 	rm -rf d e &&
+ 	mkdir d &&
+ 	echo content >d/f &&
+@@ -798,10 +798,23 @@ test_expect_failure SYMLINKS 'rm across a symlinked leading path (w/ index)' '
+ 	git commit -m "d/f exists" &&
+ 	mv d e &&
+ 	ln -s e d &&
+-	test_must_fail git rm d/f &&
+-	git rev-parse --verify :d/f &&
+-	test -h d &&
+-	test_path_is_file e/f
++	test_todo \
++		--want "test_must_fail git" \
++		--reset "git reset --hard" \
++		--expect git \
++		-- \
++		rm d/f &&
++	test_todo \
++		--want git \
++		--expect "test_must_fail git" \
++		-- \
++		rev-parse --verify :d/f &&
++	test_todo \
++		--want "test -h" \
++		--expect "test_path_is_missing" \
++		-- \
++		d &&
++	todo_test_path is_file is_missing e/f
+ '
+ 
+ test_expect_success 'setup for testing rm messages' '
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 3febf4b0811..5313ab28e72 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -966,6 +966,10 @@ test_path_is_missing () {
+ #	--expect <expect>
+ #		The condition we have now. Injected in the same way as
+ #		the arguments to --want.
++#	--reset <reset>
++#		A command to run between the <want> and <expect>
++#		conditions to reset the repository state. Used e.g. if
++#		both run a "git rm" command that might succeed.
+ #
+ # test_todo is a wrapper for use with "test_expect_todo". It declares
+ # an outcome we want, and one we currently expect:
+@@ -985,8 +989,12 @@ test_path_is_missing () {
+ # Because we run both neither of them can mutate the test
+ # state. I.e. they must be read-only commands such as "wc -l", and not
+ # a state-altering command such as "rm".
++#
++# To run a command that mutates the repository state supply a --reset
++# option, e.g. "git reset --hard" if you need to run "git rm".
+ test_todo () {
+ 	local common_fn= &&
++	local reset= &&
+ 	local have_want= &&
+ 	local want= &&
+ 	local expect= &&
+@@ -1004,6 +1012,10 @@ test_todo () {
+ 			have_expect=t &&
+ 			shift
+ 			;;
++		--reset)
++			reset="$2" &&
++			shift
++			;;
+ 		--)
+ 			shift &&
+ 			break
+@@ -1028,10 +1040,16 @@ test_todo () {
+ 	then
+ 		BUG "a test_todo succeeded with --want ('$want').  Turn it into a test_expect_success + $@ $want?" &&
+ 		return 1
+-	elif $common_fn $expect "$@"
+-	then
+-		say "a test_todo will succeed with --expect ('$expect'), we eventually want '$want' instead" >&3 &&
+-		return 0
++	else
++		if test -n "$reset"
++		then
++			$reset
++		fi &&
++		if $common_fn $expect "$@"
++		then
++			say "a test_todo will succeed with --expect ('$expect'), we eventually want '$want' instead" >&3 &&
++			return 0
++		fi
+ 	fi &&
+ 	BUG "a test_todo didn't pass with either --want ('$want') or --expect ('$expect')"
+ }
+-- 
+2.35.1.1436.g756b814e59f
+

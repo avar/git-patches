@@ -1,0 +1,120 @@
+From 52817f4e2622ad05517ccaeea635d24263625706 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.7-52817f4e262-20220318T002354Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20220318T002354Z-avarab@gmail.com>
+References: <cover-0.7-00000000000-20220318T002354Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 18 Feb 2022 15:13:30 +0100
+Subject: [PATCH 5/7] tests: convert some "test_expect_failure" to
+ "test_expect_todo"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Convert tests added in [1] and [2] to use "test_expect_todo" to more
+specifically mark the failure condition, rather then the blank check
+for failure given by "test_expect_failure".
+
+For [1] there isn't an easy way to fit the "echo world" and "test_cmp"
+into a "test_todo", and in any case we might not have that output once
+we fix the bug noted in [1].
+
+For [2] we'd need add "test_with_config" (which invokes both "git" and
+"test-tool" to the list in "test_must_fail_acceptable", but adding a
+file-specific function to "test-lib-functions.sh" would be a bit odd.
+
+Let's instead expand the restrictive list added in
+6a67c759489 (test-lib-functions: restrict test_must_fail usage,
+2020-07-07). As shown in the commits that preceded it the list came
+about because we wanted to exclude the likes of "cvs" and "p4" from
+"test_might_fail".
+
+It's a fair bet that if we use it with a test_* function that that
+function is being appropriately used with it (i.e. invokes one of or
+own programs). It's possible that without an exhaustive list we'll get
+it wrong, but I also don't think it's worth it to maintain that
+exhaustive list. Let's just allow all test_* names instead.
+
+1. 90a6464b4ad (rerere: make sure it works even in a workdir attached
+   to a young repository, 2011-03-10
+2. 751d3b9415f (t1309: document cases where we would want early config
+   not to die(), 2017-03-13)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1021-rerere-in-workdir.sh |  9 +++++----
+ t/t1309-early-config.sh      | 14 ++++++++++----
+ t/test-lib-functions.sh      |  2 +-
+ 3 files changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/t/t1021-rerere-in-workdir.sh b/t/t1021-rerere-in-workdir.sh
+index 0b892894eb9..e4f4b9124c3 100755
+--- a/t/t1021-rerere-in-workdir.sh
++++ b/t/t1021-rerere-in-workdir.sh
+@@ -41,7 +41,7 @@ test_expect_success SYMLINKS 'rerere in workdir' '
+ # For the purpose of helping contrib/workdir/git-new-workdir users, we do not
+ # have to support relative symlinks, but it might be nicer to make this work
+ # with a relative symbolic link someday.
+-test_expect_failure SYMLINKS 'rerere in workdir (relative)' '
++test_expect_todo SYMLINKS 'rerere in workdir (relative)' '
+ 	rm -rf .git/rr-cache &&
+ 	"$SHELL_PATH" "$TEST_DIRECTORY/../contrib/workdir/git-new-workdir" . krow &&
+ 	(
+@@ -49,9 +49,10 @@ test_expect_failure SYMLINKS 'rerere in workdir (relative)' '
+ 		rm -f .git/rr-cache &&
+ 		ln -s ../.git/rr-cache .git/rr-cache &&
+ 		test_must_fail git merge side &&
+-		git rerere status >actual &&
+-		echo world >expect &&
+-		test_cmp expect actual
++		test_todo \
++			--want "git" \
++			--expect "test_must_fail git" \
++			 -- rerere status
+ 	)
+ '
+ 
+diff --git a/t/t1309-early-config.sh b/t/t1309-early-config.sh
+index 537435b90ae..fedbdac621a 100755
+--- a/t/t1309-early-config.sh
++++ b/t/t1309-early-config.sh
+@@ -81,13 +81,19 @@ test_expect_success 'ignore .git/ with incompatible repository version' '
+ 	test_i18ngrep "warning:.* Expected git repo version <= [1-9]" err
+ '
+ 
+-test_expect_failure 'ignore .git/ with invalid repository version' '
+-	test_with_config "[core]repositoryformatversion = invalid"
++test_expect_todo 'ignore .git/ with invalid repository version' '
++	test_todo \
++		--want test_with_config \
++		--expect "test_must_fail test_with_config" \
++		-- "[core]repositoryformatversion = invalid"
+ '
+ 
+ 
+-test_expect_failure 'ignore .git/ with invalid config' '
+-	test_with_config "["
++test_expect_todo 'ignore .git/ with invalid config' '
++	test_todo \
++		--want test_with_config \
++		--expect "test_must_fail test_with_config" \
++		-- "["
+ '
+ 
+ test_expect_success 'early config and onbranch' '
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 50054d25719..3febf4b0811 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -1152,7 +1152,7 @@ test_must_fail_acceptable () {
+ 	fi
+ 
+ 	case "$1" in
+-	git|__git*|test-tool|test_terminal)
++	git|__git*|test-tool|test_*)
+ 		return 0
+ 		;;
+ 	*)
+-- 
+2.35.1.1436.g756b814e59f
+
