@@ -1,8 +1,8 @@
-From 87cef52a093611935cad83eb99a48b610a87b0c7 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v11-8.8-87cef52a093-20220319T000832Z-avarab@gmail.com>
-In-Reply-To: <cover-v11-0.8-00000000000-20220319T000832Z-avarab@gmail.com>
+From 5eded90249683002159b9b7febb63c197c12cdf4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v11-8.8-5eded902496-20220319T001411Z-avarab@gmail.com>
+In-Reply-To: <cover-v11-0.8-00000000000-20220319T001411Z-avarab@gmail.com>
 References: <cover-v10-0.6-00000000000-20220204T135538Z-avarab@gmail.com>
-	<cover-v11-0.8-00000000000-20220319T000832Z-avarab@gmail.com>
+	<cover-v11-0.8-00000000000-20220319T001411Z-avarab@gmail.com>
 From: Han Xin <hanxin.hx@alibaba-inc.com>
 Date: Thu, 20 Jan 2022 19:21:13 +0800
 Subject: [PATCH v11 8/8] unpack-objects: use stream_loose_object() to unpack
@@ -73,6 +73,26 @@ creates an artificial repo with a 1, 25, 50, 75 and 100MB blob:
 Using this test we'll always use >100MB of memory on
 origin/master (around ~105MB), but max out at e.g. ~55MB if we set
 core.bigFileThreshold=50m.
+
+The relevant "Maximum resident set size" lines were manually added
+below the relevant benchmark:
+
+  '/usr/bin/time -v ./git -C dest.git -c core.bigFileThreshold=50m unpack-objects </tmp/repo/my.pack 2>&1 | grep Maximum' in 'origin/master' ran
+        Maximum resident set size (kbytes): 107080
+    1.02 ± 0.78 times faster than '/usr/bin/time -v ./git -C dest.git -c core.bigFileThreshold=512 unpack-objects </tmp/repo/my.pack 2>&1 | grep Maximum' in 'origin/master'
+        Maximum resident set size (kbytes): 106968
+    1.09 ± 0.79 times faster than '/usr/bin/time -v ./git -C dest.git -c core.bigFileThreshold=100m unpack-objects </tmp/repo/my.pack 2>&1 | grep Maximum' in 'origin/master'
+        Maximum resident set size (kbytes): 107032
+    1.42 ± 1.07 times faster than '/usr/bin/time -v ./git -C dest.git -c core.bigFileThreshold=100m unpack-objects </tmp/repo/my.pack 2>&1 | grep Maximum' in 'HEAD'
+        Maximum resident set size (kbytes): 107072
+    1.83 ± 1.02 times faster than '/usr/bin/time -v ./git -C dest.git -c core.bigFileThreshold=50m unpack-objects </tmp/repo/my.pack 2>&1 | grep Maximum' in 'HEAD'
+        Maximum resident set size (kbytes): 55704
+    2.16 ± 1.19 times faster than '/usr/bin/time -v ./git -C dest.git -c core.bigFileThreshold=512 unpack-objects </tmp/repo/my.pack 2>&1 | grep Maximum' in 'HEAD'
+        Maximum resident set size (kbytes): 4564
+
+This shows that if you have enough memory this new streaming method is
+slower the lower you set the streaming threshold, but the benefit is
+more bounded memory use.
 
 An earlier version of this patch introduced a new
 "core.bigFileStreamingThreshold" instead of re-using the existing
