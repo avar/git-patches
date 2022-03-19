@@ -1,0 +1,66 @@
+From 6acd87597722faf9bf93d6eb3773705e5f6dbc4e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v11-2.8-6acd8759772-20220319T000832Z-avarab@gmail.com>
+In-Reply-To: <cover-v11-0.8-00000000000-20220319T000832Z-avarab@gmail.com>
+References: <cover-v10-0.6-00000000000-20220204T135538Z-avarab@gmail.com>
+	<cover-v11-0.8-00000000000-20220319T000832Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Feb 2022 13:57:48 +0100
+Subject: [PATCH v11 2/8] object-file.c: do fsync() and close() before
+ post-write die()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change write_loose_object() to do an fsync() and close() before the
+oideq() sanity check at the end. This change re-joins code that was
+split up by the die() sanity check added in 748af44c63e (sha1_file: be
+paranoid when creating loose objects, 2010-02-21).
+
+I don't think that this change matters in itself, if we called die()
+it was possible that our data wouldn't fully make it to disk, but in
+any case we were writing data that we'd consider corrupted. It's
+possible that a subsequent "git fsck" will be less confused now.
+
+The real reason to make this change is that in a subsequent commit
+we'll split this code in write_loose_object() into a utility function,
+all its callers will want the preceding sanity checks, but not the
+"oideq" check. By moving the close_loose_object() earlier it'll be
+easier to reason about the introduction of the utility function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-file.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index bdc5cbdd386..4c140eda6bf 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -2001,12 +2001,21 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
+ 		die(_("deflateEnd on object %s failed (%d)"), oid_to_hex(oid),
+ 		    ret);
+ 	the_hash_algo->final_oid_fn(&parano_oid, &c);
++
++	/*
++	 * We already did a write_buffer() to the "fd", let's fsync()
++	 * and close().
++	 *
++	 * We might still die() on a subsequent sanity check, but
++	 * let's not add to that confusion by not flushing any
++	 * outstanding writes to disk first.
++	 */
++	close_loose_object(fd);
++
+ 	if (!oideq(oid, &parano_oid))
+ 		die(_("confused by unstable object source data for %s"),
+ 		    oid_to_hex(oid));
+ 
+-	close_loose_object(fd);
+-
+ 	if (mtime) {
+ 		struct utimbuf utb;
+ 		utb.actime = mtime;
+-- 
+2.35.1.1438.g8874c8eeb35
+

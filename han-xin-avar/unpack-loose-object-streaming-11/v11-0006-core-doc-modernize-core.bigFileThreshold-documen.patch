@@ -1,0 +1,94 @@
+From d8ae2eadb9866d81c198cb3ce25ba9d3cc52d2b0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v11-6.8-d8ae2eadb98-20220319T000832Z-avarab@gmail.com>
+In-Reply-To: <cover-v11-0.8-00000000000-20220319T000832Z-avarab@gmail.com>
+References: <cover-v10-0.6-00000000000-20220204T135538Z-avarab@gmail.com>
+	<cover-v11-0.8-00000000000-20220319T000832Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Feb 2022 15:06:37 +0100
+Subject: [PATCH v11 6/8] core doc: modernize core.bigFileThreshold
+ documentation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The core.bigFileThreshold documentation has been largely unchanged
+since 5eef828bc03 (fast-import: Stream very large blobs directly to
+pack, 2010-02-01).
+
+But since then this setting has been expanded to affect a lot more
+than that description indicated. Most notably in how "git diff" treats
+them, see 6bf3b813486 (diff --stat: mark any file larger than
+core.bigfilethreshold binary, 2014-08-16).
+
+In addition to that, numerous commands and APIs make use of a
+streaming mode for files above this threshold.
+
+So let's attempt to summarize 12 years of changes in behavior, which
+can be seen with:
+
+    git log --oneline -Gbig_file_thre 5eef828bc03.. -- '*.c'
+
+To do that turn this into a bullet-point list. The summary Han Xin
+produced in [1] helped a lot, but is a bit too detailed for
+documentation aimed at users. Let's instead summarize how
+user-observable behavior differs, and generally describe how we tend
+to stream these files in various commands.
+
+1. https://lore.kernel.org/git/20220120112114.47618-5-chiyutianyi@gmail.com/
+
+Helped-by: Han Xin <chiyutianyi@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/core.txt | 33 ++++++++++++++++++++++++---------
+ 1 file changed, 24 insertions(+), 9 deletions(-)
+
+diff --git a/Documentation/config/core.txt b/Documentation/config/core.txt
+index c04f62a54a1..b6a12218665 100644
+--- a/Documentation/config/core.txt
++++ b/Documentation/config/core.txt
+@@ -412,17 +412,32 @@ You probably do not need to adjust this value.
+ Common unit suffixes of 'k', 'm', or 'g' are supported.
+ 
+ core.bigFileThreshold::
+-	Files larger than this size are stored deflated, without
+-	attempting delta compression.  Storing large files without
+-	delta compression avoids excessive memory usage, at the
+-	slight expense of increased disk usage. Additionally files
+-	larger than this size are always treated as binary.
++	The size of files considered "big", which as discussed below
++	changes the behavior of numerous git commands, as well as how
++	such files are stored within the repository. The default is
++	512 MiB. Common unit suffixes of 'k', 'm', or 'g' are
++	supported.
+ +
+-Default is 512 MiB on all platforms.  This should be reasonable
+-for most projects as source code and other text files can still
+-be delta compressed, but larger binary media files won't be.
++Files above the configured limit will be:
+ +
+-Common unit suffixes of 'k', 'm', or 'g' are supported.
++* Stored deflated, without attempting delta compression.
+++
++The default limit is primarily set with this use-case in mind. With it
++most projects will have their source code and other text files delta
++compressed, but not larger binary media files.
+++
++Storing large files without delta compression avoids excessive memory
++usage, at the slight expense of increased disk usage.
+++
++* Will be treated as if though they were labeled "binary" (see
++  linkgit:gitattributes[5]). This means that e.g. linkgit:git-log[1]
++  and linkgit:git-diff[1] will not diffs for files above this limit.
+++
++* Will be generally be streamed when written, which avoids excessive
++memory usage, at the cost of some fixed overhead. Commands that make
++use of this include linkgit:git-archive[1],
++linkgit:git-fast-import[1], linkgit:git-index-pack[1] and
++linkgit:git-fsck[1].
+ 
+ core.excludesFile::
+ 	Specifies the pathname to the file that contains patterns to
+-- 
+2.35.1.1438.g8874c8eeb35
+

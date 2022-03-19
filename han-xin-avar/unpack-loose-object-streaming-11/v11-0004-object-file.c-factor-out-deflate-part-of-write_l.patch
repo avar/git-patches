@@ -1,0 +1,75 @@
+From 20d97cc2605f684a757f1c1eedbb3083cec9c959 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v11-4.8-20d97cc2605-20220319T000832Z-avarab@gmail.com>
+In-Reply-To: <cover-v11-0.8-00000000000-20220319T000832Z-avarab@gmail.com>
+References: <cover-v10-0.6-00000000000-20220204T135538Z-avarab@gmail.com>
+	<cover-v11-0.8-00000000000-20220319T000832Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 18 Mar 2022 19:29:17 +0100
+Subject: [PATCH v11 4/8] object-file.c: factor out deflate part of
+ write_loose_object()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Split out the part of write_loose_object() that deals with calling
+git_deflate() into a utility function, a subsequent commit will
+introduce another function that'll make use of it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-file.c | 31 +++++++++++++++++++++++++------
+ 1 file changed, 25 insertions(+), 6 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index 4fcaf7a36ce..b66dc24e4b8 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1992,6 +1992,28 @@ static int start_loose_object_common(struct strbuf *tmp_file,
+ 	return fd;
+ }
+ 
++/**
++ * Common steps for the inner git_deflate() loop for writing loose
++ * objects. Returns what git_deflate() returns.
++ */
++static int write_loose_object_common(git_hash_ctx *c,
++				     git_zstream *stream, const int flush,
++				     unsigned char *in0, const int fd,
++				     unsigned char *compressed,
++				     const size_t compressed_len)
++{
++	int ret;
++
++	ret = git_deflate(stream, flush ? Z_FINISH : 0);
++	the_hash_algo->update_fn(c, in0, stream->next_in - in0);
++	if (write_buffer(fd, compressed, stream->next_out - compressed) < 0)
++		die(_("unable to write loose object file"));
++	stream->next_out = compressed;
++	stream->avail_out = compressed_len;
++
++	return ret;
++}
++
+ /**
+  * Common steps for loose object writers to end writing loose objects:
+  *
+@@ -2049,12 +2071,9 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
+ 	stream.avail_in = len;
+ 	do {
+ 		unsigned char *in0 = stream.next_in;
+-		ret = git_deflate(&stream, Z_FINISH);
+-		the_hash_algo->update_fn(&c, in0, stream.next_in - in0);
+-		if (write_buffer(fd, compressed, stream.next_out - compressed) < 0)
+-			die(_("unable to write loose object file"));
+-		stream.next_out = compressed;
+-		stream.avail_out = sizeof(compressed);
++
++		ret = write_loose_object_common(&c, &stream, 1, in0, fd,
++						compressed, sizeof(compressed));
+ 	} while (ret == Z_OK);
+ 
+ 	end_loose_object_common(fd, ret, &c, &stream, &parano_oid, oid,
+-- 
+2.35.1.1438.g8874c8eeb35
+
