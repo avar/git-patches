@@ -1,0 +1,58 @@
+From d0c9b430b2cac0a00b7dfb52ca150390190e1cc4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-d0c9b430b2c-20220321T230933Z-avarab@gmail.com>
+In-Reply-To: <0220321203019.2614799-1-jonathantanmy@google.com>
+References: <0220321203019.2614799-1-jonathantanmy@google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 21 Mar 2022 23:35:44 +0100
+Subject: [PATCH] hooks: fix "invoked hook" regression in a8cc5943338
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in a8cc5943338 (hooks: fix an obscure TOCTOU "did we
+just run a hook?" race, 2022-03-07): The "invoked_hook" variable
+passed to run_commit_hook() wasn't passed forward to run_hooks_opt(),
+as push_to_checkout() in that commit correctly did.
+
+Whether we ran the code contingent on having run the hook or not was
+thus undefined, but in practice on most (all?) modern platforms we'd
+have run it (almost?) all the time, since stack variables will get
+initialized to some random value, which most of the time isn't "0".
+
+This bug was revealed by running e.g. "t5537-fetch-shallow.sh" with
+the --valgrind option. Unfortunately running the whole test suite with
+--valgrind is really slow, so we didn't have a CI job that spotted
+this. The --valgrind output was:
+
+    ==31275== Conditional jump or move depends on uninitialised value(s)
+    ==31275==    at 0x43C63F: prepare_to_commit (commit.c:1058)
+    ==31275==    by 0x4396A5: cmd_commit (commit.c:1722)
+    ==31275==    by 0x407C8A: run_builtin (git.c:465)
+    ==31275==    by 0x406741: handle_builtin (git.c:718)
+    ==31275==    by 0x407665: run_argv (git.c:785)
+    ==31275==    by 0x406500: cmd_main (git.c:916)
+    ==31275==    by 0x510839: main (common-main.c:56)
+    ==31275==  Uninitialised value was created by a stack allocation
+    ==31275==    at 0x43B344: prepare_to_commit (commit.c:719)
+
+Reported-by: Jonathan Tan <jonathantanmy@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/commit.c b/commit.c
+index 98b2e556653..ec1207ebef4 100644
+--- a/commit.c
++++ b/commit.c
+@@ -1732,5 +1732,6 @@ int run_commit_hook(int editor_is_used, const char *index_file,
+ 		strvec_push(&opt.args, arg);
+ 	va_end(args);
+ 
++	opt.invoked_hook = invoked_hook;
+ 	return run_hooks_opt(name, &opt);
+ }
+-- 
+2.35.1.1441.g1e9a595f48f
+
