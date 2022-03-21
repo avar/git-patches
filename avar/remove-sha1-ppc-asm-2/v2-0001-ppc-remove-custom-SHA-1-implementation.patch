@@ -1,5 +1,5 @@
 From e77fd23a82465f031444422573beddce893d1fa5 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-1.1-e77fd23a824-20220321T170331Z-avarab@gmail.com>
+Message-Id: <patch-v2-1.1-e77fd23a824-20220321T170347Z-avarab@gmail.com>
 In-Reply-To: <patch-1.1-05dcdca3877-20220319T005952Z-avarab@gmail.com>
 References: <patch-1.1-05dcdca3877-20220319T005952Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -49,6 +49,96 @@ as 544d93bc3b4 (block-sha1: remove use of obsolete x86 assembly,
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+Range-diff against v1:
+1:  05dcdca3877 ! 1:  e77fd23a824 ppc: remove custom SHA-1 implementation
+    @@ Makefile: ifdef OPENSSL_SHA1
+      	BASIC_CFLAGS += -DSHA1_OPENSSL
+      else
+     +ifdef PPC_SHA1
+    -+$(error PPC_SHA1 has been removed! You should almost definitely remove that \
+    -+knob and use the DC_SHA1 default! See INSTALL for more information)
+    ++$(error PPC_SHA1 has been removed! Use DC_SHA1 instead, which is the default)
+     +endif
+      ifdef BLK_SHA1
+      	LIB_OBJS += block-sha1/sha1.o
+    @@ Makefile: endif
+      
+      ifdef OPENSSL_SHA256
+      	EXTLIBS += $(LIB_4_CRYPTO)
+    -@@ Makefile: OBJECTS += $(SCALAR_OBJECTS)
+    - .PHONY: objects
+    - objects: $(OBJECTS)
+    - 
+    -+# Derived from $(OBJECTS)
+    -+OBJECTS_C = $(OBJECTS:%.o=%.c)
+    -+OBJECTS_S = $(OBJECTS:%.o=%.s)
+    -+OBJECTS_SP = $(OBJECTS:%.o=%.sp)
+    -+
+    - dep_files := $(foreach f,$(OBJECTS),$(dir $f).depend/$(notdir $f).d)
+    - dep_dirs := $(addsuffix .depend,$(sort $(dir $(OBJECTS))))
+    - 
+     @@ Makefile: missing_compdb_dir =
+      compdb_args =
+      endif
+    @@ Makefile: missing_compdb_dir =
+     -ASM_SRC := $(wildcard $(OBJECTS:o=S))
+     -ASM_OBJ := $(ASM_SRC:S=o)
+     -C_OBJ := $(filter-out $(ASM_OBJ),$(OBJECTS))
+    --
+    --$(C_OBJ): %.o: %.c GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
+    --	$(QUIET_CC)$(CC) -o $*.o -c $(dep_args) $(compdb_args) $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) $<
+    --$(ASM_OBJ): %.o: %.S GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
+    -+$(OBJECTS): %.o: %.c GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
+    ++C_OBJ = $(OBJECTS)
+    + 
+    + $(C_OBJ): %.o: %.c GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
+      	$(QUIET_CC)$(CC) -o $*.o -c $(dep_args) $(compdb_args) $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) $<
+    +-$(ASM_OBJ): %.o: %.S GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
+    +-	$(QUIET_CC)$(CC) -o $*.o -c $(dep_args) $(compdb_args) $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) $<
+      
+      %.s: %.c GIT-CFLAGS FORCE
+    -@@ Makefile: XGETTEXT_FLAGS_SH = $(XGETTEXT_FLAGS) --language=Shell \
+    - 	--keyword=gettextln --keyword=eval_gettextln
+    - XGETTEXT_FLAGS_PERL = $(XGETTEXT_FLAGS) --language=Perl \
+    - 	--keyword=__ --keyword=N__ --keyword="__n:1,2"
+    --LOCALIZED_C = $(C_OBJ:o=c) $(LIB_H) $(GENERATED_H)
+    -+LOCALIZED_C = $(OBJECTS_C) $(LIB_H) $(GENERATED_H)
+    - LOCALIZED_SH = $(SCRIPT_SH)
+    - LOCALIZED_SH += git-sh-setup.sh
+    - LOCALIZED_PERL = $(SCRIPT_PERL)
+    -@@ Makefile: t/helper/test-%$X: t/helper/test-%.o GIT-LDFLAGS $(GITLIBS) $(REFTABLE_TEST_LIB)
+    - check-sha1:: t/helper/test-tool$X
+    - 	t/helper/test-sha1.sh
+    - 
+    --SP_OBJ = $(patsubst %.o,%.sp,$(C_OBJ))
+    --
+    --$(SP_OBJ): %.sp: %.c %.o
+    -+$(OBJECTS_SP): %.sp: %.c %.o
+    - 	$(QUIET_SP)cgcc -no-compile $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) \
+    - 		-Wsparse-error \
+    - 		$(SPARSE_FLAGS) $(SP_EXTRA_FLAGS) $< && \
+    - 	>$@
+    - 
+    - .PHONY: sparse
+    --sparse: $(SP_OBJ)
+    -+sparse: $(OBJECTS_SP)
+    - 
+    - EXCEPT_HDRS := $(GENERATED_H) unicode-width.h compat/% xdiff/%
+    - ifndef GCRYPT_SHA256
+    -@@ Makefile: clean: profile-clean coverage-clean cocciclean
+    - 	$(RM) $(ALL_PROGRAMS) $(SCRIPT_LIB) $(BUILT_INS) git$X
+    - 	$(RM) $(TEST_PROGRAMS)
+    - 	$(RM) $(FUZZ_PROGRAMS)
+    --	$(RM) $(SP_OBJ)
+    -+	$(RM) $(OBJECTS_SP)
+    - 	$(RM) $(HCC)
+    - 	$(RM) -r bin-wrappers $(dep_dirs) $(compdb_dir) compile_commands.json
+    - 	$(RM) -r po/build/
+    + 	$(QUIET_CC)$(CC) -o $@ -S $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) $<
+     
+      ## configure.ac ##
+     @@ configure.ac: AC_MSG_NOTICE([CHECKS for site configuration])
+
  INSTALL       |   3 +-
  Makefile      |  17 +---
  configure.ac  |   3 -
