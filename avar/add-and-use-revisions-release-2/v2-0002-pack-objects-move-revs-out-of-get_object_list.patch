@@ -1,0 +1,126 @@
+From 619b757d98465dbc4995bdc11a5282fbfcbd3daa Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-02.31-619b757d984-20220322T211633Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.31-00000000000-20220322T211633Z-avarab@gmail.com>
+References: <cover-00.24-00000000000-20220309T123321Z-avarab@gmail.com>
+	<cover-v2-00.31-00000000000-20220322T211633Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Wed, 9 Mar 2022 14:59:49 -0500
+Subject: [PATCH v2 02/31] pack-objects: move revs out of get_object_list()
+
+We intend to parse the --filter option directly into revs.filter, but we
+first need to move the 'revs' variable out of get_object_list() and pass
+it as a pointer instead. This change only deals with the issues of
+making that work.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ builtin/pack-objects.c | 33 ++++++++++++++++++---------------
+ 1 file changed, 18 insertions(+), 15 deletions(-)
+
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index 829ca359cf9..f29bef9d0b6 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -3714,9 +3714,8 @@ static void mark_bitmap_preferred_tips(void)
+ 	}
+ }
+ 
+-static void get_object_list(int ac, const char **av)
++static void get_object_list(struct rev_info *revs, int ac, const char **av)
+ {
+-	struct rev_info revs;
+ 	struct setup_revision_opt s_r_opt = {
+ 		.allow_exclude_promisor_objects = 1,
+ 	};
+@@ -3724,10 +3723,10 @@ static void get_object_list(int ac, const char **av)
+ 	int flags = 0;
+ 	int save_warning;
+ 
+-	repo_init_revisions(the_repository, &revs, NULL);
++	repo_init_revisions(the_repository, revs, NULL);
+ 	save_commit_buffer = 0;
+-	setup_revisions(ac, av, &revs, &s_r_opt);
+-	list_objects_filter_copy(&revs.filter, &filter_options);
++	setup_revisions(ac, av, revs, &s_r_opt);
++	list_objects_filter_copy(&revs->filter, &filter_options);
+ 
+ 	/* make sure shallows are read */
+ 	is_repository_shallow(the_repository);
+@@ -3757,13 +3756,13 @@ static void get_object_list(int ac, const char **av)
+ 			}
+ 			die(_("not a rev '%s'"), line);
+ 		}
+-		if (handle_revision_arg(line, &revs, flags, REVARG_CANNOT_BE_FILENAME))
++		if (handle_revision_arg(line, revs, flags, REVARG_CANNOT_BE_FILENAME))
+ 			die(_("bad revision '%s'"), line);
+ 	}
+ 
+ 	warn_on_object_refname_ambiguity = save_warning;
+ 
+-	if (use_bitmap_index && !get_object_list_from_bitmap(&revs))
++	if (use_bitmap_index && !get_object_list_from_bitmap(revs))
+ 		return;
+ 
+ 	if (use_delta_islands)
+@@ -3772,24 +3771,24 @@ static void get_object_list(int ac, const char **av)
+ 	if (write_bitmap_index)
+ 		mark_bitmap_preferred_tips();
+ 
+-	if (prepare_revision_walk(&revs))
++	if (prepare_revision_walk(revs))
+ 		die(_("revision walk setup failed"));
+-	mark_edges_uninteresting(&revs, show_edge, sparse);
++	mark_edges_uninteresting(revs, show_edge, sparse);
+ 
+ 	if (!fn_show_object)
+ 		fn_show_object = show_object;
+-	traverse_commit_list(&revs,
++	traverse_commit_list(revs,
+ 			     show_commit, fn_show_object,
+ 			     NULL);
+ 
+ 	if (unpack_unreachable_expiration) {
+-		revs.ignore_missing_links = 1;
+-		if (add_unseen_recent_objects_to_traversal(&revs,
++		revs->ignore_missing_links = 1;
++		if (add_unseen_recent_objects_to_traversal(revs,
+ 				unpack_unreachable_expiration))
+ 			die(_("unable to add recent objects"));
+-		if (prepare_revision_walk(&revs))
++		if (prepare_revision_walk(revs))
+ 			die(_("revision walk setup failed"));
+-		traverse_commit_list(&revs, record_recent_commit,
++		traverse_commit_list(revs, record_recent_commit,
+ 				     record_recent_object, NULL);
+ 	}
+ 
+@@ -3872,6 +3871,8 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 	int rev_list_index = 0;
+ 	int stdin_packs = 0;
+ 	struct string_list keep_pack_list = STRING_LIST_INIT_NODUP;
++	struct rev_info revs;
++
+ 	struct option pack_objects_options[] = {
+ 		OPT_SET_INT('q', "quiet", &progress,
+ 			    N_("do not show progress meter"), 0),
+@@ -3976,6 +3977,8 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 
+ 	read_replace_refs = 0;
+ 
++	repo_init_revisions(the_repository, &revs, NULL);
++
+ 	sparse = git_env_bool("GIT_TEST_PACK_SPARSE", -1);
+ 	if (the_repository->gitdir) {
+ 		prepare_repo_settings(the_repository);
+@@ -4154,7 +4157,7 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 	} else if (!use_internal_rev_list) {
+ 		read_object_list_from_stdin();
+ 	} else {
+-		get_object_list(rp.nr, rp.v);
++		get_object_list(&revs, rp.nr, rp.v);
+ 	}
+ 	cleanup_preferred_base();
+ 	if (include_tag && nr_result)
+-- 
+2.35.1.1445.g47c57a399c6
+

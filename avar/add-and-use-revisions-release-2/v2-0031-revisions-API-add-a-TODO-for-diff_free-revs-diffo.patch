@@ -1,0 +1,99 @@
+From 199e6803e3fc4d7ba6538007004380cbc8bf408f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-31.31-199e6803e3f-20220322T211633Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.31-00000000000-20220322T211633Z-avarab@gmail.com>
+References: <cover-00.24-00000000000-20220309T123321Z-avarab@gmail.com>
+	<cover-v2-00.31-00000000000-20220322T211633Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 10 Mar 2022 13:42:18 +0100
+Subject: [PATCH v2 31/31] revisions API: add a TODO for
+ diff_free(&revs->diffopt)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a TODO comment indicating that we should release "diffopt" in
+release_revisions(). In a preceding commit we started releasing the
+"pruning" member of the same type, but handling "diffopt" will require
+us to untangle the "no_free" conditions I added in e900d494dcf (diff:
+add an API for deferred freeing, 2021-02-11).
+
+Let's leave a TODO comment to that effect, and so that we don't forget
+refactor code that was changed to use release_revisions() in earlier
+commits to stop using the "diffopt" member after a call to
+release_revisions(). This works currently, but would become a logic
+error as soon as we started freeing "diffopt". Doing that change now
+doesn't harm anything, and future-proofs us against a later change to
+release_revisions().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff-lib.c  | 4 +++-
+ revision.c  | 1 +
+ wt-status.c | 6 ++++--
+ 3 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/diff-lib.c b/diff-lib.c
+index 298265e5b54..7eb66a417aa 100644
+--- a/diff-lib.c
++++ b/diff-lib.c
+@@ -651,6 +651,7 @@ int index_differs_from(struct repository *r,
+ {
+ 	struct rev_info rev;
+ 	struct setup_revision_opt opt;
++	unsigned has_changes;
+ 
+ 	repo_init_revisions(r, &rev, NULL);
+ 	memset(&opt, 0, sizeof(opt));
+@@ -662,8 +663,9 @@ int index_differs_from(struct repository *r,
+ 		diff_flags_or(&rev.diffopt.flags, flags);
+ 	rev.diffopt.ita_invisible_in_index = ita_invisible_in_index;
+ 	run_diff_index(&rev, 1);
++	has_changes = rev.diffopt.flags.has_changes;
+ 	release_revisions(&rev);
+-	return (rev.diffopt.flags.has_changes != 0);
++	return (has_changes != 0);
+ }
+ 
+ static struct strbuf *idiff_prefix_cb(struct diff_options *opt, void *data)
+diff --git a/revision.c b/revision.c
+index ab570ac754c..ebcb87acaa0 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2967,6 +2967,7 @@ void release_revisions(struct rev_info *revs)
+ 	date_mode_release(&revs->date_mode);
+ 	release_revisions_mailmap(revs->mailmap);
+ 	free_grep_patterns(&revs->grep_filter);
++	/* TODO (need to handle "no_free"): diff_free(&revs->diffopt) */
+ 	diff_free(&revs->pruning);
+ 	reflog_walk_info_release(revs->reflog_info);
+ 	release_revisions_topo_walk_info(revs->topo_walk_info);
+diff --git a/wt-status.c b/wt-status.c
+index 61e0c1022f5..102d904adcb 100644
+--- a/wt-status.c
++++ b/wt-status.c
+@@ -2545,8 +2545,9 @@ int has_unstaged_changes(struct repository *r, int ignore_submodules)
+ 	rev_info.diffopt.flags.quick = 1;
+ 	diff_setup_done(&rev_info.diffopt);
+ 	result = run_diff_files(&rev_info, 0);
++	result = diff_result_code(&rev_info.diffopt, result);
+ 	release_revisions(&rev_info);
+-	return diff_result_code(&rev_info.diffopt, result);
++	return result;
+ }
+ 
+ /**
+@@ -2578,8 +2579,9 @@ int has_uncommitted_changes(struct repository *r,
+ 
+ 	diff_setup_done(&rev_info.diffopt);
+ 	result = run_diff_index(&rev_info, 1);
++	result = diff_result_code(&rev_info.diffopt, result);
+ 	release_revisions(&rev_info);
+-	return diff_result_code(&rev_info.diffopt, result);
++	return result;
+ }
+ 
+ /**
+-- 
+2.35.1.1445.g47c57a399c6
+

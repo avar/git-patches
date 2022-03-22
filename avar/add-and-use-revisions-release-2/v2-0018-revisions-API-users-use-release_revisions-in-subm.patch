@@ -1,0 +1,55 @@
+From 0c2285fcc5ec9e793afb0b3343ce1b30c2c9920e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-18.31-0c2285fcc5e-20220322T211633Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.31-00000000000-20220322T211633Z-avarab@gmail.com>
+References: <cover-00.24-00000000000-20220309T123321Z-avarab@gmail.com>
+	<cover-v2-00.31-00000000000-20220322T211633Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Feb 2022 14:24:47 +0100
+Subject: [PATCH v2 18/31] revisions API users: use release_revisions() in
+ submodule.c edge case
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Use release_revisions() on the the "struct rev_info" in
+show_submodule_diff_summary() where we need to pre-initialize with "{
+0 }" to make sure that we won't segfault when calling
+release_revisions().
+
+Most functions that use "struct rev_info" will call
+repo_init_revisions() early, which will do an equivalent memset(). In
+this case we might "goto out" before doing the equivalent of that
+operation, see the "goto" on "(!left || !right || !sub)" added in
+8e6df65015f (submodule: refactor show_submodule_summary with helper
+function, 2016-08-31).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ submodule.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/submodule.c b/submodule.c
+index 0510cb193b6..285c1896c9e 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -638,7 +638,7 @@ void show_submodule_diff_summary(struct diff_options *o, const char *path,
+ 		struct object_id *one, struct object_id *two,
+ 		unsigned dirty_submodule)
+ {
+-	struct rev_info rev;
++	struct rev_info rev = { 0 };
+ 	struct commit *left = NULL, *right = NULL;
+ 	struct commit_list *merge_bases = NULL;
+ 	struct repository *sub;
+@@ -664,6 +664,7 @@ void show_submodule_diff_summary(struct diff_options *o, const char *path,
+ 	print_submodule_diff_summary(sub, &rev, o);
+ 
+ out:
++	release_revisions(&rev);
+ 	if (merge_bases)
+ 		free_commit_list(merge_bases);
+ 	clear_commit_marks(left, ~0);
+-- 
+2.35.1.1445.g47c57a399c6
+
