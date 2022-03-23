@@ -1,0 +1,92 @@
+From 47b236139e699036f8d44aba3e5ac611ed48219a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-47b236139e6-20220323T204401Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 17 Dec 2021 03:47:44 +0100
+Subject: [PATCH] test-lib: have --immediate emit valid TAP on failure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "--immediate" option so that it emits valid TAP on
+failure. Before this it would omit the required plan at the end,
+e.g. under SANITIZE=leak we'd show a "No plan found in TAP output"
+error from "prove":
+
+    $ prove t0006-date.sh ::  --immediate
+    t0006-date.sh .. Dubious, test returned 1 (wstat 256, 0x100)
+    Failed 1/22 subtests
+
+    Test Summary Report
+    -------------------
+    t0006-date.sh (Wstat: 256 Tests: 22 Failed: 1)
+      Failed test:  22
+      Non-zero exit status: 1
+      Parse errors: No plan found in TAP output
+    Files=1, Tests=22,  0 wallclock secs ( 0.02 usr  0.01 sys +  0.18 cusr  0.06 csys =  0.27 CPU)
+    Result: FAIL
+
+Now we'll emit output that doesn't result in TAP parsing failures:
+
+    $ prove t0006-date.sh ::  --immediate
+    t0006-date.sh .. Dubious, test returned 1 (wstat 256, 0x100)
+    Failed 1/22 subtests
+
+    Test Summary Report
+    -------------------
+    t0006-date.sh (Wstat: 256 Tests: 22 Failed: 1)
+      Failed test:  22
+      Non-zero exit status: 1
+    Files=1, Tests=22,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.19 cusr  0.05 csys =  0.26 CPU)
+    Result: FAIL
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0000-basic.sh | 13 +++++++++++++
+ t/test-lib.sh    |  6 +++++-
+ 2 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/t/t0000-basic.sh b/t/t0000-basic.sh
+index 9dcbf518a78..17a268ccd1b 100755
+--- a/t/t0000-basic.sh
++++ b/t/t0000-basic.sh
+@@ -101,6 +101,19 @@ test_expect_success 'subtest: 2/3 tests passing' '
+ 	EOF
+ '
+ 
++test_expect_success 'subtest: --immediate' '
++	run_sub_test_lib_test_err partial-pass \
++		--immediate &&
++	check_sub_test_lib_test_err partial-pass \
++		<<-\EOF_OUT 3<<-EOF_ERR
++	> ok 1 - passing test #1
++	> not ok 2 - failing test #2
++	> #	false
++	> 1..2
++	EOF_OUT
++	EOF_ERR
++'
++
+ test_expect_success 'subtest: a failing TODO test' '
+ 	write_and_run_sub_test_lib_test failing-todo <<-\EOF &&
+ 	test_expect_success "passing test" "true"
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 515b1af7ed4..4373f7d70b5 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -806,7 +806,11 @@ test_failure_ () {
+ 	say_color error "not ok $test_count - $1"
+ 	shift
+ 	printf '%s\n' "$*" | sed -e 's/^/#	/'
+-	test "$immediate" = "" || _error_exit
++	if test -n "$immediate"
++	then
++		say_color error "1..$test_count"
++		_error_exit
++	fi
+ }
+ 
+ test_known_broken_ok_ () {
+-- 
+2.35.1.1452.ga7cfc89151f
+
