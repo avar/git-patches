@@ -1,0 +1,116 @@
+From 2bf14fd4946ebcdafa6219a6c2d4148f46549912 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-5.7-2bf14fd4946-20220323T140753Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-0.7-00000000000-20220323T140753Z-avarab@gmail.com>
+References: <RFC-cover-0.7-00000000000-20220323T033928Z-avarab@gmail.com>
+	<RFC-cover-v2-0.7-00000000000-20220323T140753Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 23 Mar 2022 13:17:51 +0100
+Subject: [RFC PATCH v2 5/7] add: use WLI_NEED_LOOSE_FSYNC for new "only the
+ index" bulk fsync()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We can now bring "bulk" syncing back to "git add" using a mechanism
+discussed in the preceding commit where we fsync() on the index, not
+the last object we write.
+
+On a ramdisk:
+
+	$ git hyperfine -L rev ns/batched-fsync,HEAD -s 'make CFLAGS=-O3 && rm -rf repo && git init repo && cp -R t repo/' -p 'rm -rf repo/.git/objects/* repo/.git/
+	index' './git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' --warmup 1
+	Benchmark 1: ./git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' in 'ns/batched-fsync
+	  Time (mean ± σ):     299.5 ms ±   1.6 ms    [User: 193.4 ms, System: 103.7 ms]
+	  Range (min … max):   296.6 ms … 301.6 ms    10 runs
+
+	Benchmark 2: ./git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' in 'HEAD
+	  Time (mean ± σ):     282.8 ms ±   2.1 ms    [User: 193.8 ms, System: 86.6 ms]
+	  Range (min … max):   279.1 ms … 285.6 ms    10 runs
+
+	Summary
+	  './git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' in 'HEAD' ran
+	    1.06 ± 0.01 times faster than './git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' in 'ns/batched-fsync'
+
+My times on my spinning disk are too fuzzy to quote with confidence,
+but I have seen it go as well as 15-30% faster. FWIW doing "strace
+--summary-only" on the ramdisk is ~20% faster:
+
+	$ git hyperfine -L rev ns/batched-fsync,HEAD -s 'make CFLAGS=-O3 && rm -rf repo && git init repo && cp -R t repo/' -p 'rm -rf repo/.git/objects/* repo/.git/index' 'strace --summary-only ./git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' --warmup 1
+	Benchmark 1: strace --summary-only ./git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' in 'ns/batched-fsync
+	  Time (mean ± σ):     917.4 ms ±  18.8 ms    [User: 388.7 ms, System: 672.1 ms]
+	  Range (min … max):   885.3 ms … 948.1 ms    10 runs
+
+	Benchmark 2: strace --summary-only ./git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' in 'HEAD
+	  Time (mean ± σ):     769.0 ms ±   9.2 ms    [User: 358.2 ms, System: 521.2 ms]
+	  Range (min … max):   760.7 ms … 792.6 ms    10 runs
+
+	Summary
+	  'strace --summary-only ./git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' in 'HEAD' ran
+	    1.19 ± 0.03 times faster than 'strace --summary-only ./git -c core.fsync=loose-object -c core.fsyncMethod=batch -C repo add .' in 'ns/batched-fsync'
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/add.c | 6 ++++--
+ cache.h       | 1 +
+ read-cache.c  | 8 ++++++++
+ 3 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/add.c b/builtin/add.c
+index 3ffb86a4338..6ef18b6246c 100644
+--- a/builtin/add.c
++++ b/builtin/add.c
+@@ -580,7 +580,8 @@ int cmd_add(int argc, const char **argv, const char *prefix)
+ 		 (intent_to_add ? ADD_CACHE_INTENT : 0) |
+ 		 (ignore_add_errors ? ADD_CACHE_IGNORE_ERRORS : 0) |
+ 		 (!(addremove || take_worktree_changes)
+-		  ? ADD_CACHE_IGNORE_REMOVAL : 0));
++		  ? ADD_CACHE_IGNORE_REMOVAL : 0)) |
++		ADD_CACHE_HASH_N_OBJECTS;
+ 
+ 	if (read_cache_preload(&pathspec) < 0)
+ 		die(_("index file corrupt"));
+@@ -686,7 +687,8 @@ int cmd_add(int argc, const char **argv, const char *prefix)
+ 
+ finish:
+ 	if (write_locked_index(&the_index, &lock_file,
+-			       COMMIT_LOCK | SKIP_IF_UNCHANGED))
++			       COMMIT_LOCK | SKIP_IF_UNCHANGED |
++			       WLI_NEED_LOOSE_FSYNC))
+ 		die(_("Unable to write new index file"));
+ 
+ 	dir_clear(&dir);
+diff --git a/cache.h b/cache.h
+index 7542e009a34..d57af938cbc 100644
+--- a/cache.h
++++ b/cache.h
+@@ -857,6 +857,7 @@ int remove_file_from_index(struct index_state *, const char *path);
+ #define ADD_CACHE_IGNORE_ERRORS	4
+ #define ADD_CACHE_IGNORE_REMOVAL 8
+ #define ADD_CACHE_INTENT 16
++#define ADD_CACHE_HASH_N_OBJECTS 32
+ /*
+  * These two are used to add the contents of the file at path
+  * to the index, marking the working tree up-to-date by storing
+diff --git a/read-cache.c b/read-cache.c
+index 275f6308c32..788423b6dde 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -755,6 +755,14 @@ int add_to_index(struct index_state *istate, const char *path, struct stat *st,
+ 	unsigned hash_flags = pretend ? 0 : HASH_WRITE_OBJECT;
+ 	struct object_id oid;
+ 
++	/*
++	 * TODO: Can't we also set HASH_N_OBJECTS_FIRST as a function
++	 * of !(ce->ce_flags & CE_ADDED) or something? I'm not too
++	 * familiar with the cache API...
++	 */
++	if (flags & ADD_CACHE_HASH_N_OBJECTS)
++		hash_flags |= HASH_N_OBJECTS;
++
+ 	if (flags & ADD_CACHE_RENORMALIZE)
+ 		hash_flags |= HASH_RENORMALIZE;
+ 
+-- 
+2.35.1.1428.g1c1a0152d61
+

@@ -1,0 +1,162 @@
+From 4df8012100af7235f923c4ee8c1663ff780d4e76 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-3.7-4df8012100a-20220323T140753Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-0.7-00000000000-20220323T140753Z-avarab@gmail.com>
+References: <RFC-cover-0.7-00000000000-20220323T033928Z-avarab@gmail.com>
+	<RFC-cover-v2-0.7-00000000000-20220323T140753Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 23 Mar 2022 02:38:59 +0100
+Subject: [RFC PATCH v2 3/7] update-index: pass down skeleton "oflags" argument
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As with a preceding change to "unpack-objects" add an "oflags" going
+from cmd_update_index() all the way down to the code in
+object-file.c. Note also how index_mem() will now call
+write_object_file_flags().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/update-index.c | 32 ++++++++++++++++++--------------
+ object-file.c          |  2 +-
+ 2 files changed, 19 insertions(+), 15 deletions(-)
+
+diff --git a/builtin/update-index.c b/builtin/update-index.c
+index 95ed3c47b2e..34aaaa16c20 100644
+--- a/builtin/update-index.c
++++ b/builtin/update-index.c
+@@ -267,10 +267,12 @@ static int process_lstat_error(const char *path, int err)
+ 	return error("lstat(\"%s\"): %s", path, strerror(err));
+ }
+ 
+-static int add_one_path(const struct cache_entry *old, const char *path, int len, struct stat *st)
++static int add_one_path(const struct cache_entry *old, const char *path,
++			int len, struct stat *st, const unsigned oflags)
+ {
+ 	int option;
+ 	struct cache_entry *ce;
++	unsigned f;
+ 
+ 	/* Was the old index entry already up-to-date? */
+ 	if (old && !ce_stage(old) && !ce_match_stat(old, st, 0))
+@@ -283,8 +285,8 @@ static int add_one_path(const struct cache_entry *old, const char *path, int len
+ 	fill_stat_cache_info(&the_index, ce, st);
+ 	ce->ce_mode = ce_mode_from_stat(old, st->st_mode);
+ 
+-	if (index_path(&the_index, &ce->oid, path, st,
+-		       info_only ? 0 : HASH_WRITE_OBJECT)) {
++	f = oflags | (info_only ? 0 : HASH_WRITE_OBJECT);
++	if (index_path(&the_index, &ce->oid, path, st, f)) {
+ 		discard_cache_entry(ce);
+ 		return -1;
+ 	}
+@@ -320,7 +322,8 @@ static int add_one_path(const struct cache_entry *old, const char *path, int len
+  *  - it doesn't exist at all in the index, but it is a valid
+  *    git directory, and it should be *added* as a gitlink.
+  */
+-static int process_directory(const char *path, int len, struct stat *st)
++static int process_directory(const char *path, int len, struct stat *st,
++			     const unsigned oflags)
+ {
+ 	struct object_id oid;
+ 	int pos = cache_name_pos(path, len);
+@@ -334,7 +337,7 @@ static int process_directory(const char *path, int len, struct stat *st)
+ 			if (resolve_gitlink_ref(path, "HEAD", &oid) < 0)
+ 				return 0;
+ 
+-			return add_one_path(ce, path, len, st);
++			return add_one_path(ce, path, len, st, oflags);
+ 		}
+ 		/* Should this be an unconditional error? */
+ 		return remove_one_path(path);
+@@ -358,13 +361,14 @@ static int process_directory(const char *path, int len, struct stat *st)
+ 
+ 	/* No match - should we add it as a gitlink? */
+ 	if (!resolve_gitlink_ref(path, "HEAD", &oid))
+-		return add_one_path(NULL, path, len, st);
++		return add_one_path(NULL, path, len, st, oflags);
+ 
+ 	/* Error out. */
+ 	return error("%s: is a directory - add files inside instead", path);
+ }
+ 
+-static int process_path(const char *path, struct stat *st, int stat_errno)
++static int process_path(const char *path, struct stat *st, int stat_errno,
++			const unsigned oflags)
+ {
+ 	int pos, len;
+ 	const struct cache_entry *ce;
+@@ -395,9 +399,9 @@ static int process_path(const char *path, struct stat *st, int stat_errno)
+ 		return process_lstat_error(path, stat_errno);
+ 
+ 	if (S_ISDIR(st->st_mode))
+-		return process_directory(path, len, st);
++		return process_directory(path, len, st, oflags);
+ 
+-	return add_one_path(ce, path, len, st);
++	return add_one_path(ce, path, len, st, oflags);
+ }
+ 
+ static int add_cacheinfo(unsigned int mode, const struct object_id *oid,
+@@ -446,7 +450,7 @@ static void chmod_path(char flip, const char *path)
+ 	die("git update-index: cannot chmod %cx '%s'", flip, path);
+ }
+ 
+-static void update_one(const char *path)
++static void update_one(const char *path, const unsigned oflags)
+ {
+ 	int stat_errno = 0;
+ 	struct stat st;
+@@ -485,7 +489,7 @@ static void update_one(const char *path)
+ 		report("remove '%s'", path);
+ 		return;
+ 	}
+-	if (process_path(path, &st, stat_errno))
++	if (process_path(path, &st, stat_errno, oflags))
+ 		die("Unable to process path %s", path);
+ 	report("add '%s'", path);
+ }
+@@ -776,7 +780,7 @@ static int do_reupdate(int ac, const char **av,
+ 		 */
+ 		save_nr = active_nr;
+ 		path = xstrdup(ce->name);
+-		update_one(path);
++		update_one(path, 0);
+ 		free(path);
+ 		discard_cache_entry(old);
+ 		if (save_nr != active_nr)
+@@ -1138,7 +1142,7 @@ int cmd_update_index(int argc, const char **argv, const char *prefix)
+ 
+ 			setup_work_tree();
+ 			p = prefix_path(prefix, prefix_length, path);
+-			update_one(p);
++			update_one(p, 0);
+ 			if (set_executable_bit)
+ 				chmod_path(set_executable_bit, p);
+ 			free(p);
+@@ -1183,7 +1187,7 @@ int cmd_update_index(int argc, const char **argv, const char *prefix)
+ 				strbuf_swap(&buf, &unquoted);
+ 			}
+ 			p = prefix_path(prefix, prefix_length, buf.buf);
+-			update_one(p);
++			update_one(p, 0);
+ 			if (set_executable_bit)
+ 				chmod_path(set_executable_bit, p);
+ 			free(p);
+diff --git a/object-file.c b/object-file.c
+index dbeb3df502d..8999fce2b15 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -2211,7 +2211,7 @@ static int index_mem(struct index_state *istate,
+ 	}
+ 
+ 	if (write_object)
+-		ret = write_object_file(buf, size, type, oid);
++		ret = write_object_file_flags(buf, size, type, oid, flags);
+ 	else
+ 		hash_object_file(the_hash_algo, buf, size, type, oid);
+ 	if (re_allocated)
+-- 
+2.35.1.1428.g1c1a0152d61
+
