@@ -1,0 +1,102 @@
+From 69190804c67ef63b1903ada2241ae617c39d9d6b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.1-69190804c67-20220325T143322Z-avarab@gmail.com>
+In-Reply-To: <patch-v2-1.1-777838267a5-20220225T090816Z-avarab@gmail.com>
+References: <patch-v2-1.1-777838267a5-20220225T090816Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 20 Jan 2022 16:33:25 +0100
+Subject: [PATCH v3] http API: fix dangling pointer issue noted by GCC 12.0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The pre-release GCC 12.0 development branch has a new warning about
+dangling pointers in -Wall:
+
+    http.c: In function ‘run_active_slot’:
+    http.c:1332:24: error: storing the address of local variable ‘finished’ in ‘*slot.finished’ [-Werror=dangling-pointer=]
+     1332 |         slot->finished = &finished;
+          |         ~~~~~~~~~~~~~~~^~~~~~~~~~~
+    http.c:1330:13: note: ‘finished’ declared here
+     1330 |         int finished = 0;
+          |             ^~~~~~~~
+
+This is on a locally built "gcc (GCC) 12.0.1 20220120 (experimental)",
+built from gcc.git's 8bc700f4c3f (Enhance vec_pack_trunc for integral
+mode mask., 2022-01-17).
+
+The GCC warning is specifically about pointers that survive the exit
+of the function. See a comment added to
+"pass_waccess::use_after_inval_p" in the GCC commit that added the
+warning, or:
+
+    /* The use is one of a dangling pointer if a clobber of the variable
+      [the pointer points to] has not been found before the function exit
+      point.  */
+    [...]
+
+There's a few possible ways to fix this, but the simplest is to assign
+NULL to "slot->finished" at the end of run_active_slot().
+
+This isn't the only caller that assigns to "slot->finished", see see
+the assignments in http-walker.c:process_alternates_response() and
+http.c:finish_active_slot().
+
+But those assignments are both to the pointer to our local variable
+here, so this fix is correct. The only way that code in http-walker.c
+could have done its assignments is to the pointer to this specific
+variable.
+
+It was suggested[2] to guard that with "if (slot->finished ==
+&finished)", but that'll still trigger the warning.
+
+1. https://gcc.gnu.org/git/?p=gcc.git;a=commitdiff;h=9d6a0f388eb048f8d87f47af78f07b5ce513bfe6
+2. https://lore.kernel.org/git/xmqq8rv2nggn.fsf@gitster.g/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff against v2:
+1:  777838267a5 ! 1:  69190804c67 http API: fix dangling pointer issue noted by GCC 12.0
+    @@ Commit message
+             [...]
+     
+         There's a few possible ways to fix this, but the simplest is to assign
+    -    NULL to "slot->finished" at the end of run_active_slot(), it's the
+    -    only caller that ever assigns non-NULL to it. It was suggested[2] to
+    -    guard that with "if (slot->finished == &finished)", but that'll still
+    -    trigger the warning.
+    +    NULL to "slot->finished" at the end of run_active_slot().
+    +
+    +    This isn't the only caller that assigns to "slot->finished", see see
+    +    the assignments in http-walker.c:process_alternates_response() and
+    +    http.c:finish_active_slot().
+    +
+    +    But those assignments are both to the pointer to our local variable
+    +    here, so this fix is correct. The only way that code in http-walker.c
+    +    could have done its assignments is to the pointer to this specific
+    +    variable.
+    +
+    +    It was suggested[2] to guard that with "if (slot->finished ==
+    +    &finished)", but that'll still trigger the warning.
+     
+         1. https://gcc.gnu.org/git/?p=gcc.git;a=commitdiff;h=9d6a0f388eb048f8d87f47af78f07b5ce513bfe6
+         2. https://lore.kernel.org/git/xmqq8rv2nggn.fsf@gitster.g/
+
+ http.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/http.c b/http.c
+index 229da4d1488..2f67fbb33cd 100644
+--- a/http.c
++++ b/http.c
+@@ -1367,6 +1367,7 @@ void run_active_slot(struct active_request_slot *slot)
+ 			select(max_fd+1, &readfds, &writefds, &excfds, &select_timeout);
+ 		}
+ 	}
++	slot->finished = NULL;
+ }
+ 
+ static void release_active_slot(struct active_request_slot *slot)
+-- 
+2.35.1.1509.ge4eeb5bd39e
+
