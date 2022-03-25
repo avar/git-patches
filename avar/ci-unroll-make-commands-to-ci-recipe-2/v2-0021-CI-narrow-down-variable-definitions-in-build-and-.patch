@@ -1,0 +1,168 @@
+From 44e3ace5fbef84357db3291d6261179b1c7d442b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-21.25-44e3ace5fbe-20220325T182519Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.25-00000000000-20220325T182519Z-avarab@gmail.com>
+References: <cover-00.25-00000000000-20220221T143936Z-avarab@gmail.com>
+	<cover-v2-00.25-00000000000-20220325T182519Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 27 Jan 2022 12:07:39 +0100
+Subject: [PATCH v2 21/25] CI: narrow down variable definitions in --build and
+ --test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In a preceding step the "setvar" function was made to take a
+"--build", "--test" or "--all" argument to indicate where the
+variables it sets were used.
+
+Let's make use of that by having the relevant parts of
+".github/workflows/main.yml" invoke "ci/lib.sh" with those options.
+
+By doing this the set of variables shown in build-only steps will be
+fewer, which makes diagnosing anything going on there easier, as we
+won't have to look at a deluge of e.g. GIT_TEST_* variables.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml | 20 +++++++++++---------
+ ci/lib.sh                  | 17 +++++++++++++++++
+ 2 files changed, 28 insertions(+), 9 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 1e13718b989..0787cadc76b 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -84,7 +84,7 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - uses: git-for-windows/setup-git-for-windows-sdk@v1
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+       shell: bash
+     - name: build
+       shell: bash
+@@ -122,7 +122,7 @@ jobs:
+       shell: bash
+       run: tar xf artifacts.tar.gz && tar xf tracked.tar.gz
+     - uses: git-for-windows/setup-git-for-windows-sdk@v1
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --test
+       shell: bash
+     - name: select tests
+       run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
+@@ -169,7 +169,7 @@ jobs:
+     - name: copy dlls to root
+       shell: cmd
+       run: compat\vcbuild\vcpkg_copy_dlls.bat release
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+       shell: bash
+     - name: generate Visual Studio solution
+       shell: bash
+@@ -211,7 +211,7 @@ jobs:
+     - name: extract tracked files and build artifacts
+       shell: bash
+       run: tar xf artifacts.tar.gz && tar xf tracked.tar.gz
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --test
+       shell: bash
+     - name: select tests
+       run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
+@@ -275,8 +275,9 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make
++    - run: ci/lib.sh --test
+     - run: make test
+       if: success()
+     - run: ci/print-test-failures.sh
+@@ -310,8 +311,9 @@ jobs:
+     steps:
+     - uses: actions/checkout@v1
+     - run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make
++    - run: ci/lib.sh --test
+     - run: make test
+       if: success() && matrix.vector.skip-tests != 'no'
+     - run: ci/print-test-failures.sh
+@@ -331,7 +333,7 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make ci-static-analysis
+   sparse:
+     needs: ci-config
+@@ -352,7 +354,7 @@ jobs:
+     - uses: actions/checkout@v2
+     - name: Install other dependencies
+       run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make sparse
+   documentation:
+     name: documentation
+@@ -364,7 +366,7 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make check-docs
+     - run: "make doc > >(tee stdout.log) 2> >(tee stderr.raw >&2)"
+       shell: bash
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 5eadc96de29..367d1ee05d5 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -5,6 +5,13 @@ set -ex
+ . ${0%/*}/lib-ci-type.sh
+ 
+ # Starting assertions
++mode=$1
++if test -z "$mode"
++then
++	echo "need a $0 mode, e.g. --build or --test"
++	exit 1
++fi
++
+ if test -z "$jobname"
+ then
+ 	echo "must set a CI jobname" >&2
+@@ -13,9 +20,14 @@ fi
+ 
+ # Helper functions
+ setenv () {
++	skip=
+ 	varmode=
+ 	case "$1" in
+ 	--*)
++		if test "$1" != "$mode" && test "$1" != "--all"
++		then
++			skip=t
++		fi
+ 		varmode=$1
+ 		shift
+ 		;;
+@@ -25,6 +37,11 @@ setenv () {
+ 	val=$2
+ 	shift 2
+ 
++	if test -n "$skip"
++	then
++		return 0
++	fi
++
+ 	if test -n "$GITHUB_ENV"
+ 	then
+ 		echo "$key=$val" >>"$GITHUB_ENV"
+-- 
+2.35.1.1517.g20a06c426a7
+

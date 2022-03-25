@@ -1,0 +1,162 @@
+From dfa91ac8938ceb4dc30e97dbc6b0fb6fc47486e9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-15.25-dfa91ac8938-20220325T182519Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.25-00000000000-20220325T182519Z-avarab@gmail.com>
+References: <cover-00.25-00000000000-20220221T143936Z-avarab@gmail.com>
+	<cover-v2-00.25-00000000000-20220325T182519Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 Jan 2022 20:01:28 +0100
+Subject: [PATCH v2 15/25] CI: split up and reduce "ci/test-documentation.sh"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "ci/test-documentation.sh" script to run the bash-specific
+parts in as one command in the CI job itself, and to run the two "make
+doc" commands at the top-level.
+
+It'll now be obvious from the title of the step if if we failed in the
+asciidoc or asciidoctor step.
+
+Since the "check_unignored_build_artifacts()" function is now only
+used in "ci/check-unignored-build-artifacts.sh" move that function
+there.
+
+The recipe for the job in ".github/workflows/main.yml" is now a bit
+verbose because it's effectively the same job twice, with a "make
+clean" in-between. It would be better for the verbosity to run it via
+a matrix as done in the alternate approach in [1] does, but then we'd
+sacrifice overall CPU time for the brevity. It might still be worth
+doing, but let's go for this simpler approach for now.
+
+1. https://lore.kernel.org/git/patch-v2-6.6-7c423c8283d-20211120T030848Z-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml            | 16 +++++++++++++-
+ ci/check-unignored-build-artifacts.sh | 10 +++++++++
+ ci/lib.sh                             | 10 ---------
+ ci/test-documentation.sh              | 31 +++++++++------------------
+ 4 files changed, 35 insertions(+), 32 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 2c23a19eac2..92b914f16fd 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -365,4 +365,18 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - run: ci/install-dependencies.sh
+-    - run: ci/test-documentation.sh
++    - run: ci/lib.sh
++    - run: make check-docs
++    - run: "make doc > >(tee stdout.log) 2> >(tee stderr.raw >&2)"
++      shell: bash
++    - run: ci/test-documentation.sh AsciiDoc
++      if: success()
++    - run: ci/check-unignored-build-artifacts.sh
++      if: success()
++    - run: make clean
++    - run: "make USE_ASCIIDOCTOR=1 doc > >(tee stdout.log) 2> >(tee stderr.raw >&2)"
++      shell: bash
++    - run: ci/test-documentation.sh Asciidoctor
++      if: success()
++    - run: ci/check-unignored-build-artifacts.sh
++      if: success()
+diff --git a/ci/check-unignored-build-artifacts.sh b/ci/check-unignored-build-artifacts.sh
+index 56d04b0db9a..0bc04f32804 100755
+--- a/ci/check-unignored-build-artifacts.sh
++++ b/ci/check-unignored-build-artifacts.sh
+@@ -5,4 +5,14 @@
+ 
+ . ${0%/*}/lib.sh
+ 
++check_unignored_build_artifacts ()
++{
++	! git ls-files --other --exclude-standard --error-unmatch \
++		-- ':/*' 2>/dev/null ||
++	{
++		echo "$(tput setaf 1)error: found unignored build artifacts$(tput sgr0)"
++		false
++	}
++}
++
+ check_unignored_build_artifacts
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 05f3dd15e27..fc6ce4d3e04 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -39,16 +39,6 @@ setenv () {
+ 	fi
+ }
+ 
+-check_unignored_build_artifacts ()
+-{
+-	! git ls-files --other --exclude-standard --error-unmatch \
+-		-- ':/*' 2>/dev/null ||
+-	{
+-		echo "$(tput setaf 1)error: found unignored build artifacts$(tput sgr0)"
+-		false
+-	}
+-}
+-
+ # GitHub Action doesn't set TERM, which is required by tput
+ setenv TERM ${TERM:-dumb}
+ 
+diff --git a/ci/test-documentation.sh b/ci/test-documentation.sh
+index 6b5cce03bd7..b8a6a6f664e 100755
+--- a/ci/test-documentation.sh
++++ b/ci/test-documentation.sh
+@@ -1,10 +1,12 @@
+-#!/usr/bin/env bash
++#!/bin/sh
+ #
+-# Perform sanity checks on documentation and build it.
++# Perform sanity checks on "make doc" output and built documentation
+ #
+ 
+ . ${0%/*}/lib.sh
+ 
++generator=$1
++
+ filter_log () {
+ 	sed -e '/^GIT_VERSION = /d' \
+ 	    -e "/constant Gem::ConfigMap is deprecated/d" \
+@@ -14,28 +16,15 @@ filter_log () {
+ 	    "$1"
+ }
+ 
+-make check-docs
+-
+-# Build docs with AsciiDoc
+-make doc > >(tee stdout.log) 2> >(tee stderr.raw >&2)
+-cat stderr.raw
+-filter_log stderr.raw >stderr.log
+-test ! -s stderr.log
+-test -s Documentation/git.html
+-test -s Documentation/git.xml
+-test -s Documentation/git.1
+-grep '<meta name="generator" content="AsciiDoc ' Documentation/git.html
+-
+-rm -f stdout.log stderr.log stderr.raw
+-check_unignored_build_artifacts
+-
+-# Build docs with AsciiDoctor
+-make clean
+-make USE_ASCIIDOCTOR=1 doc > >(tee stdout.log) 2> >(tee stderr.raw >&2)
+ cat stderr.raw
+ filter_log stderr.raw >stderr.log
+ test ! -s stderr.log
+ test -s Documentation/git.html
+-grep '<meta name="generator" content="Asciidoctor ' Documentation/git.html
++if test "$generator" = "Asciidoctor"
++then
++	test -s Documentation/git.xml
++	test -s Documentation/git.1
++fi
++grep "<meta name=\"generator\" content=\"$generator " Documentation/git.html
+ 
+ rm -f stdout.log stderr.log stderr.raw
+-- 
+2.35.1.1517.g20a06c426a7
+

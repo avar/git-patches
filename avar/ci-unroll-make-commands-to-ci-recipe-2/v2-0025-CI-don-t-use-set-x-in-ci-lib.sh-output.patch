@@ -1,0 +1,91 @@
+From 6dc96ba8b826de0f6b130cbb4d899b4fb2116888 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-25.25-6dc96ba8b82-20220325T182519Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.25-00000000000-20220325T182519Z-avarab@gmail.com>
+References: <cover-00.25-00000000000-20220221T143936Z-avarab@gmail.com>
+	<cover-v2-00.25-00000000000-20220325T182519Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 21 Feb 2022 11:49:56 +0100
+Subject: [PATCH v2 25/25] CI: don't use "set -x" in "ci/lib.sh" output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the "set -x" from the "ci/lib.sh" output. Before preceding
+commits the logic in that file was much more complex, and likely to
+fail in some scenarios.
+
+Now we only task "ci/lib.sh" with setting various variables for
+subsequent steps in our jobs, so we can start emitting more tailored
+debugging output, which makes what it's doing easier to read.
+
+This change also changes the output of the "ci/print-test-failures.sh"
+script, since it's the only other user of "ci/lib-ci-type.sh". In that
+case it's also helpful to know what "$CI_TYPE" we're using, as that
+script doesn't "set -x" and will act differently depending on the
+$CI_TYPE.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/lib-ci-type.sh | 2 ++
+ ci/lib.sh         | 9 ++++++++-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/ci/lib-ci-type.sh b/ci/lib-ci-type.sh
+index bd6e093c8f4..6cfe58596d2 100644
+--- a/ci/lib-ci-type.sh
++++ b/ci/lib-ci-type.sh
+@@ -6,3 +6,5 @@ else
+ 	env >&2
+ 	exit 1
+ fi
++
++echo "CONFIG: CI_TYPE=$CI_TYPE" >&2
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 663cbdef9d1..304380958bd 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-set -ex
++set -e
+ 
+ # Helper libraries
+ . ${0%/*}/lib-ci-type.sh
+@@ -11,12 +11,16 @@ then
+ 	echo "need a $0 mode, e.g. --build or --test"
+ 	exit 1
+ fi
++echo "CONFIG: mode=$mode" >&2
+ 
+ if test -z "$jobname"
+ then
+ 	echo "must set a CI jobname" >&2
+ 	exit 1
+ fi
++echo "CONFIG: jobname=$jobname" >&2
++echo "CONFIG: runs_on_pool=$runs_on_pool" >&2
++echo "CONFIG: GITHUB_ENV=$GITHUB_ENV" >&2
+ 
+ # Helper functions
+ setenv () {
+@@ -39,6 +43,7 @@ setenv () {
+ 
+ 	if test -n "$skip"
+ 	then
++		echo "SKIP '$key=$val'" >&2
+ 		return 0
+ 	fi
+ 
+@@ -50,6 +55,8 @@ setenv () {
+ 		# itself.
+ 		eval "export $key=\"$val\""
+ 	fi
++
++	echo "SET: '$key=$val'" >&2
+ }
+ 
+ # Clear variables that may come from the outside world.
+-- 
+2.35.1.1517.g20a06c426a7
+
