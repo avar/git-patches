@@ -1,5 +1,5 @@
-From 1b8c0579a09d58432aaeeb93b15ab9a22a7f2709 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-1.1-1b8c0579a09-20220325T120451Z-avarab@gmail.com>
+From 193534b0f079b5595efbfdc3febaa87910fae6a5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-193534b0f07-20220325T121715Z-avarab@gmail.com>
 In-Reply-To: <pull.1186.git.1647970119.gitgitgadget@gmail.com>
 References: <pull.1186.git.1647970119.gitgitgadget@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -62,6 +62,24 @@ clearly separating the two makes the flow clearer. Likewise
 redundantly but explicitly (i.e. redundant v.s. a "{ 0 }") "0" to
 "have_revs" early in cmd_pack_objects().
 
+This does add the future constraint to opt_parse_list_objects_filter()
+that we'll need to adjust this wrapper code if it looks at any other
+value of the "struct option" than the "value" member.
+
+But that regression should be relatively easy to spot. I'm
+intentionally not initializing the "struct wrap" with e.g. "{ 0 }" so
+that various memory sanity checkers would spot that, we just
+initialize the "value" in po_filter_cb(). By doing this e.g. we'll die
+on e.g. this test if we were to use another member of "opt" in
+opt_parse_list_objects_filter()>
+
+    ./t5317-pack-objects-filter-objects.sh -vixd --valgrind-only=3
+
+While we're at it add parentheses around the arguments to the OPT_*
+macros in in list-objects-filter-options.h, as we need to change those
+lines anyway. It doesn't matter in this case, but is good general
+practice.
+
 1. https://lore.kernel.org/git/619b757d98465dbc4995bdc11a5282fbfcbd3daa.1647970119.git.gitgitgadget@gmail.com
 2. https://lore.kernel.org/git/97de926904988b89b5663bd4c59c011a1723a8f5.1647970119.git.gitgitgadget@gmail.com/
 
@@ -72,7 +90,7 @@ Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
  2 files changed, 30 insertions(+), 8 deletions(-)
 
 diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
-index d39f668ad56..2df805ca412 100644
+index d39f668ad56..735080a4a95 100644
 --- a/builtin/pack-objects.c
 +++ b/builtin/pack-objects.c
 @@ -3857,6 +3857,23 @@ static int option_parse_unpack_unreachable(const struct option *opt,
@@ -87,13 +105,13 @@ index d39f668ad56..2df805ca412 100644
 +static int po_filter_cb(const struct option *opt, const char *arg, int unset)
 +{
 +	struct po_filter_data *data = opt->value;
-+	struct option fake = { 0 };
++	struct option wrap; /* don't initialize! */
 +
 +	repo_init_revisions(the_repository, &data->revs, NULL);
-+	fake.value = &data->revs.filter;
++	wrap.value = &data->revs.filter;
 +	data->have_revs = 1;
 +
-+	return opt_parse_list_objects_filter(&fake, arg, unset);
++	return opt_parse_list_objects_filter(&wrap, arg, unset);
 +}
 +
  int cmd_pack_objects(int argc, const char **argv, const char *prefix)
