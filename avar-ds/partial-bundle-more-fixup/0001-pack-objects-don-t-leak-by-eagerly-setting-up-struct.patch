@@ -1,0 +1,174 @@
+From c2fcf0e6dab6734678e01c9189d3c4c04a9df73b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-c2fcf0e6dab-20220325T120351Z-avarab@gmail.com>
+In-Reply-To: <pull.1186.git.1647970119.gitgitgadget@gmail.com>
+References: <pull.1186.git.1647970119.gitgitgadget@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 25 Mar 2022 12:18:29 +0100
+Subject: [PATCH] pack-objects: don't leak by eagerly setting up "struct
+ rev_info"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the preceding [1] (pack-objects: move revs out of
+get_object_list(), 2022-03-22) the "repo_init_revisions()" was moved
+to cmd_pack_objects() so that it unconditionally took place for all
+invocations of "git pack-objects".
+
+We'd thus start leaking memory, which is easily reproduced in
+e.g. git.git by feeding e83c5163316 (Initial revision of "git", the
+information manager from hell, 2005-04-07) to "git pack-objects";
+
+    $ echo e83c5163316f89bfbde7d9ab23ca2e25604af290 | ./git pack-objects initial
+    [...]
+	==19130==ERROR: LeakSanitizer: detected memory leaks
+
+	Direct leak of 7120 byte(s) in 1 object(s) allocated from:
+	    #0 0x455308 in __interceptor_malloc (/home/avar/g/git/git+0x455308)
+	    #1 0x75b399 in do_xmalloc /home/avar/g/git/wrapper.c:41:8
+	    #2 0x75b356 in xmalloc /home/avar/g/git/wrapper.c:62:9
+	    #3 0x5d7609 in prep_parse_options /home/avar/g/git/diff.c:5647:2
+	    #4 0x5d415a in repo_diff_setup /home/avar/g/git/diff.c:4621:2
+	    #5 0x6dffbb in repo_init_revisions /home/avar/g/git/revision.c:1853:2
+	    #6 0x4f599d in cmd_pack_objects /home/avar/g/git/builtin/pack-objects.c:3980:2
+	    #7 0x4592ca in run_builtin /home/avar/g/git/git.c:465:11
+	    #8 0x457d81 in handle_builtin /home/avar/g/git/git.c:718:3
+	    #9 0x458ca5 in run_argv /home/avar/g/git/git.c:785:4
+	    #10 0x457b40 in cmd_main /home/avar/g/git/git.c:916:19
+	    #11 0x562259 in main /home/avar/g/git/common-main.c:56:11
+	    #12 0x7fce792ac7ec in __libc_start_main csu/../csu/libc-start.c:332:16
+	    #13 0x4300f9 in _start (/home/avar/g/git/git+0x4300f9)
+
+	SUMMARY: LeakSanitizer: 7120 byte(s) leaked in 1 allocation(s).
+	Aborted
+
+Narrowly fixing that commit would have been easy, just add call
+repo_init_revisions() right before get_object_list(), which is
+effectively what was done before that commit.
+
+But an unstated constraint when setting it up early is that it was
+needed for the subsequent [2] (pack-objects: parse --filter directly
+into revs.filter, 2022-03-22), i.e. we might have a --filter
+command-line option, and need to either have the "struct rev_info"
+setup when we encounter that option, or later.
+
+Let's just change the control flow so that we'll instead set up the
+"struct rev_info" only when we need it. Doing so leads to a bit more
+verbosity, but it's a lot clearer what we're doing and why.
+
+We could furthermore combine the two get_object_list() invocations
+here by having repo_init_revisions() invoked on &pfd.revs, but I think
+clearly separating the two makes the flow clearer. Likewise
+redundantly but explicitly (i.e. redundant v.s. a "{ 0 }") "0" to
+"have_revs" early in cmd_pack_objects().
+
+1. https://lore.kernel.org/git/619b757d98465dbc4995bdc11a5282fbfcbd3daa.1647970119.git.gitgitgadget@gmail.com
+2. https://lore.kernel.org/git/97de926904988b89b5663bd4c59c011a1723a8f5.1647970119.git.gitgitgadget@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/pack-objects.c        | 30 +++++++++++++++++++++++++-----
+ list-objects-filter-options.h |  8 +++++---
+ 2 files changed, 30 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index d39f668ad56..2df805ca412 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -3857,6 +3857,23 @@ static int option_parse_unpack_unreachable(const struct option *opt,
+ 	return 0;
+ }
+ 
++struct po_filter_data {
++	unsigned have_revs:1;
++	struct rev_info revs;
++};
++
++static int po_filter_cb(const struct option *opt, const char *arg, int unset)
++{
++	struct po_filter_data *data = opt->value;
++	struct option fake = { 0 };
++
++	repo_init_revisions(the_repository, &data->revs, NULL);
++	fake.value = &data->revs.filter;
++	data->have_revs = 1;
++
++	return opt_parse_list_objects_filter(&fake, arg, unset);
++}
++
+ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ {
+ 	int use_internal_rev_list = 0;
+@@ -3867,7 +3884,7 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 	int rev_list_index = 0;
+ 	int stdin_packs = 0;
+ 	struct string_list keep_pack_list = STRING_LIST_INIT_NODUP;
+-	struct rev_info revs;
++	struct po_filter_data pfd = { .have_revs = 0 };
+ 
+ 	struct option pack_objects_options[] = {
+ 		OPT_SET_INT('q', "quiet", &progress,
+@@ -3954,7 +3971,7 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 			      &write_bitmap_index,
+ 			      N_("write a bitmap index if possible"),
+ 			      WRITE_BITMAP_QUIET, PARSE_OPT_HIDDEN),
+-		OPT_PARSE_LIST_OBJECTS_FILTER(&revs.filter),
++		OPT_PARSE_LIST_OBJECTS_FILTER_CB(&pfd, po_filter_cb),
+ 		OPT_CALLBACK_F(0, "missing", NULL, N_("action"),
+ 		  N_("handling for missing objects"), PARSE_OPT_NONEG,
+ 		  option_parse_missing_action),
+@@ -3973,8 +3990,6 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 
+ 	read_replace_refs = 0;
+ 
+-	repo_init_revisions(the_repository, &revs, NULL);
+-
+ 	sparse = git_env_bool("GIT_TEST_PACK_SPARSE", -1);
+ 	if (the_repository->gitdir) {
+ 		prepare_repo_settings(the_repository);
+@@ -4076,7 +4091,7 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 	if (!rev_list_all || !rev_list_reflog || !rev_list_index)
+ 		unpack_unreachable_expiration = 0;
+ 
+-	if (revs.filter.choice) {
++	if (pfd.have_revs && pfd.revs.filter.choice) {
+ 		if (!pack_to_stdout)
+ 			die(_("cannot use --filter without --stdout"));
+ 		if (stdin_packs)
+@@ -4152,7 +4167,12 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 			add_unreachable_loose_objects();
+ 	} else if (!use_internal_rev_list) {
+ 		read_object_list_from_stdin();
++	} else if (pfd.have_revs) {
++		get_object_list(&pfd.revs, rp.nr, rp.v);
+ 	} else {
++		struct rev_info revs;
++
++		repo_init_revisions(the_repository, &revs, NULL);
+ 		get_object_list(&revs, rp.nr, rp.v);
+ 	}
+ 	cleanup_preferred_base();
+diff --git a/list-objects-filter-options.h b/list-objects-filter-options.h
+index 90e4bc96252..910f4a46e91 100644
+--- a/list-objects-filter-options.h
++++ b/list-objects-filter-options.h
+@@ -107,10 +107,12 @@ void parse_list_objects_filter(
+ int opt_parse_list_objects_filter(const struct option *opt,
+ 				  const char *arg, int unset);
+ 
++#define OPT_PARSE_LIST_OBJECTS_FILTER_CB(fo, cb) \
++	OPT_CALLBACK(0, "filter", (fo), N_("args"), \
++		     N_("object filtering"), (cb))
++
+ #define OPT_PARSE_LIST_OBJECTS_FILTER(fo) \
+-	OPT_CALLBACK(0, "filter", fo, N_("args"), \
+-	  N_("object filtering"), \
+-	  opt_parse_list_objects_filter)
++	OPT_PARSE_LIST_OBJECTS_FILTER_CB((fo), opt_parse_list_objects_filter)
+ 
+ /*
+  * Translates abbreviated numbers in the filter's filter_spec into their
+-- 
+2.35.1.1501.g363d33e530b
+
