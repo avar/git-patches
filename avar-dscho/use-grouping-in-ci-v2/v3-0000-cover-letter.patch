@@ -1,0 +1,286 @@
+From 1d2b94436fc585294ae47b7e142bf7113d41b2a0 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-cover-v3-0.6-00000000000-20220325T183946Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.25-00000000000-20220325T182534Z-avarab@gmail.com>
+References: <cover-v2-00.25-00000000000-20220325T182534Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 25 Mar 2022 19:39:46 +0100
+Subject: [RFC PATCH v3 0/6] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Johannes Schindelin (6):
+  ci: make it easier to find failed tests' logs in the GitHub workflow
+  tests: refactor --write-junit-xml code
+  test(junit): avoid line feeds in XML attributes
+  ci: optionally mark up output in the GitHub workflow
+  ci: use `--github-workflow-markup` in the GitHub workflow
+  ci: call `finalize_test_case_output` a little later
+
+ .github/workflows/main.yml           |  20 +---
+ ci/lib.sh                            |   2 +-
+ ci/print-test-failures-github.sh     |  35 +++++++
+ t/test-lib-functions.sh              |   4 +-
+ t/test-lib-github-workflow-markup.sh |  50 ++++++++++
+ t/test-lib-junit.sh                  | 132 +++++++++++++++++++++++++++
+ t/test-lib.sh                        | 128 ++++----------------------
+ 7 files changed, 244 insertions(+), 127 deletions(-)
+ create mode 100755 ci/print-test-failures-github.sh
+ create mode 100644 t/test-lib-github-workflow-markup.sh
+ create mode 100644 t/test-lib-junit.sh
+
+Range-diff against v2:
+ 1:  db08b07c37a <  -:  ----------- ci: fix code style
+ 2:  42ff3e170bf <  -:  ----------- ci/run-build-and-tests: take a more high-level view
+ 3:  bbbe1623257 !  1:  d88749c60c9 ci: make it easier to find failed tests' logs in the GitHub workflow
+    @@ Commit message
+         nested groupings in GitHub workflows' output).
+     
+         Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## .github/workflows/main.yml ##
+     @@ .github/workflows/main.yml: jobs:
+    +       shell: bash
+          - name: test
+            shell: bash
+    -       run: . /etc/profile && ci/run-test-slice.sh ${{matrix.nr}} 10
+    +-      run: . /etc/profile && make -C t -e
+     -    - name: ci/print-test-failures.sh
+     -      if: failure()
+     -      shell: bash
+     -      run: ci/print-test-failures.sh
+    ++      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+          - name: Upload failed tests' directories
+            if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+            uses: actions/upload-artifact@v2
+     @@ .github/workflows/main.yml: jobs:
+    -       env:
+    -         NO_SVN_TESTS: 1
+    -       run: . /etc/profile && ci/run-test-slice.sh ${{matrix.nr}} 10
+    +       shell: bash
+    +     - name: test
+    +       shell: bash
+    +-      run: . /etc/profile && make -C t -e
+     -    - name: ci/print-test-failures.sh
+     -      if: failure()
+     -      shell: bash
+     -      run: ci/print-test-failures.sh
+    ++      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+          - name: Upload failed tests' directories
+            if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+            uses: actions/upload-artifact@v2
+     @@ .github/workflows/main.yml: jobs:
+    -     - uses: actions/checkout@v2
+    -     - run: ci/install-dependencies.sh
+    -     - run: ci/run-build-and-tests.sh
+    +     - run: ci/lib.sh --build
+    +     - run: make
+    +     - run: ci/lib.sh --test
+    +-    - run: make test
+    ++    - run: make test || ci/print-test-failures-github.sh
+    +       if: success()
+     -    - run: ci/print-test-failures.sh
+     -      if: failure()
+          - name: Upload failed tests' directories
+            if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+            uses: actions/upload-artifact@v2
+     @@ .github/workflows/main.yml: jobs:
+    -     - uses: actions/checkout@v1
+    -     - run: ci/install-docker-dependencies.sh
+    -     - run: ci/run-build-and-tests.sh
+    +     - run: ci/lib.sh --build
+    +     - run: make
+    +     - run: ci/lib.sh --test
+    +-    - run: make test
+    ++    - run: make test || ci/print-test-failures-github.sh
+    +       if: success() && matrix.vector.skip-tests != 'no'
+     -    - run: ci/print-test-failures.sh
+    --      if: failure()
+    +-      if: failure() && matrix.vector.skip-tests != 'no'
+          - name: Upload failed tests' directories
+            if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+            uses: actions/upload-artifact@v1
+     
+    - ## ci/lib.sh ##
+    -@@ ci/lib.sh: check_unignored_build_artifacts () {
+    - 	}
+    - }
+    - 
+    -+handle_failed_tests () {
+    -+	return 1
+    -+}
+    + ## ci/print-test-failures-github.sh (new) ##
+    +@@
+    ++#!/bin/sh
+     +
+    - # GitHub Action doesn't set TERM, which is required by tput
+    - export TERM=${TERM:-dumb}
+    - 
+    -@@ ci/lib.sh: then
+    - 	CI_JOB_ID="$GITHUB_RUN_ID"
+    - 	CC="${CC:-gcc}"
+    - 	DONT_SKIP_TAGS=t
+    ++. ${0%/*}/lib-ci-type.sh
+    ++
+    ++set -e
+    ++
+    ++case "$CI_TYPE" in
+    ++github-actions)
+     +	handle_failed_tests () {
+     +		mkdir -p t/failed-test-artifacts
+     +		echo "FAILED_TEST_ARTIFACTS=t/failed-test-artifacts" >>$GITHUB_ENV
+    @@ ci/lib.sh: then
+     +		done
+     +		return 1
+     +	}
+    - 
+    - 	cache_dir="$HOME/none"
+    - 
+    -
+    - ## ci/run-build-and-tests.sh ##
+    -@@ ci/run-build-and-tests.sh: esac
+    - make
+    - if test -n "$run_tests"
+    - then
+    --	make test
+    -+	make test ||
+    -+	handle_failed_tests
+    - fi
+    - check_unignored_build_artifacts
+    - 
+    -
+    - ## ci/run-test-slice.sh ##
+    -@@ ci/run-test-slice.sh: esac
+    - 
+    - make --quiet -C t T="$(cd t &&
+    - 	./helper/test-tool path-utils slice-tests "$1" "$2" t[0-9]*.sh |
+    --	tr '\n' ' ')"
+    -+	tr '\n' ' ')" ||
+    ++	;;
+    ++*)
+    ++	echo "Unhandled CI type: $CI_TYPE" >&2
+    ++	exit 1
+    ++	;;
+    ++esac
+    ++
+     +handle_failed_tests
+    - 
+    - check_unignored_build_artifacts
+ 4:  f72254a9ac6 <  -:  ----------- ci/run-build-and-tests: add some structure to the GitHub workflow output
+ 5:  9eda6574313 !  2:  ad1e1465a81 tests: refactor --write-junit-xml code
+    @@ Commit message
+         --color-moved-ws=allow-indentation-change <commit>`.
+     
+         Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## t/test-lib-junit.sh (new) ##
+     @@
+ 6:  c8b240af749 !  3:  fc96e5b7296 test(junit): avoid line feeds in XML attributes
+    @@ Commit message
+         incorrect, so let's fix it.
+     
+         Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## t/test-lib-junit.sh ##
+     @@ t/test-lib-junit.sh: finalize_test_case_output () {
+ 7:  15f199e810e !  4:  429c256ac62 ci: optionally mark up output in the GitHub workflow
+    @@ Commit message
+         to test cases that were expected to fail but didn't.
+     
+         Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## t/test-lib-functions.sh ##
+     @@ t/test-lib-functions.sh: test_verify_prereq () {
+ 8:  91ea54f36c5 !  5:  72058db67b0 ci: use `--github-workflow-markup` in the GitHub workflow
+    @@ Metadata
+      ## Commit message ##
+         ci: use `--github-workflow-markup` in the GitHub workflow
+     
+    -    This makes the output easier to digest.
+    +    [Ævar: due to re-structuring on top of my series the {begin,end}_group
+    +    in CI isn't needed at all to get "group" output for the test
+    +    suite. This commit includes the now-squashed "ci/run-build-and-tests:
+    +    add some structure to the GitHub workflow output":]
+     
+    -    Note: since workflow output currently cannot contain any nested groups
+    -    (see https://github.com/actions/runner/issues/802 for details), we need
+    -    to remove the explicit grouping that would span the entirety of each
+    -    failed test script.
+    +    The current output of Git's GitHub workflow can be quite confusing,
+    +    especially for contributors new to the project.
+    +
+    +    To make it more helpful, let's introduce some collapsible grouping.
+    +    Initially, readers will see the high-level view of what actually
+    +    happened (did the build fail, or the test suite?). To drill down, the
+    +    respective group can be expanded.
+    +
+    +    Note: sadly, workflow output currently cannot contain any nested groups
+    +    (see https://github.com/actions/runner/issues/802 for details),
+    +    therefore we take pains to ensure to end any previous group before
+    +    starting a new one.
+    +
+    +    [Ævar: The above comment isn't true anymore, as that limitation has
+    +    been removed by basing this on my patches to run "make" and "make
+    +    test" directly from the top-level of main.yml.
+    +
+    +    Those are now effectively their own "group", effectively giving this
+    +    stage another group "level" to use. This means that the equivalent of
+    +    "make test" won't be on the same level as an individual test failure.
+    +
+    +    We no longer take any pains to ensure balanced group output as a
+    +    result (which was a caveat the previous ci/lib.sh implementation had
+    +    to deal with., We just need to "cat" the generated *.markup]
+     
+         Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## ci/lib.sh ##
+    -@@ ci/lib.sh: then
+    +@@ ci/lib.sh: MAKEFLAGS="DEVELOPER=$DEVELOPER SKIP_DASHED_BUILT_INS=$SKIP_DASHED_BUILT_INS"
+    + case "$CI_TYPE" in
+    + github-actions)
+    + 	setenv --test GIT_PROVE_OPTS "--timer --jobs 10"
+    +-	GIT_TEST_OPTS="--verbose-log -x"
+    ++	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+    + 	MAKEFLAGS="$MAKEFLAGS --jobs=10"
+    + 	test Windows != "$RUNNER_OS" ||
+    + 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+    +
+    + ## ci/print-test-failures-github.sh ##
+    +@@ ci/print-test-failures-github.sh: github-actions)
+      			test_name="${test_exit%.exit}"
+      			test_name="${test_name##*/}"
+      			printf "\\e[33m\\e[1m=== Failed test: ${test_name} ===\\e[m\\n"
+    --			group "Failed test: $test_name" cat "t/test-results/$test_name.out"
+    +-			cat "t/test-results/$test_name.out"
+     +			cat "t/test-results/$test_name.markup"
+      
+      			trash_dir="t/trash directory.$test_name"
+      			cp "t/test-results/$test_name.out" t/failed-test-artifacts/
+    -@@ ci/lib.sh: then
+    - 	cache_dir="$HOME/none"
+    - 
+    - 	export GIT_PROVE_OPTS="--timer --jobs 10"
+    --	export GIT_TEST_OPTS="--verbose-log -x"
+    -+	export GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+    - 	MAKEFLAGS="$MAKEFLAGS --jobs=10"
+    - 	test windows != "$CI_OS_NAME" ||
+    - 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+ 9:  be2a83f5da3 !  6:  1d2b94436fc ci: call `finalize_test_case_output` a little later
+    @@ Commit message
+         test case.
+     
+         Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## t/test-lib.sh ##
+     @@ t/test-lib.sh: trap '{ code=$?; set +x; } 2>/dev/null; exit $code' INT TERM HUP
+-- 
+2.35.1.1517.g20a06c426a7
+
