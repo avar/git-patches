@@ -1,0 +1,124 @@
+From 5f5c0d263959439c346de017f94732f0f13a4b4b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-09.27-5f5c0d26395-20220325T171340Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.27-00000000000-20220325T171340Z-avarab@gmail.com>
+References: <cover-v2-00.27-00000000000-20220323T203149Z-avarab@gmail.com>
+	<cover-v3-00.27-00000000000-20220325T171340Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Feb 2022 14:24:47 +0100
+Subject: [PATCH v3 09/27] revisions API users: use release_revisions() in
+ submodule.c edge case
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Use release_revisions() on the the "struct rev_info" in
+show_submodule_diff_summary() where we'd otherwise need to do the
+equivalent of pre-initializing the "struct rev_info" with "{ 0 }" if
+we were going to add it to the cleanup being performed in the "out"
+part of the function, let's instead introduce an "out_no_rev" for the
+reasons discussed in the preceding commit.
+
+Doing so for the "goto" on "(!left || !right || !sub)" added in
+8e6df65015f (submodule: refactor show_submodule_summary with helper
+function, 2016-08-31) would have been straightforward, as in the
+preceding commit.
+
+But for the case of prepare_submodule_diff_summary() failing it's less
+straightforward. Reading the pre-image we could simply retain the
+"goto out" if it fails, because we can see that the first thing it
+does is call repo_init_revisions().
+
+But having a hard reliance on that would be a bit nasty, as we'd
+potentially introduce a segfault if the function did some other
+initialization first, and early aborted if that failed.
+
+Let's just fold that helper function away into
+show_submodule_diff_summary() itself, which was its only user. Now
+following the flow of initialization is more obvious, and it's
+immediately clear that the "goto out" if prepare_revision_walk()
+returns non-zero is safe.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ submodule.c | 41 +++++++++++++++++------------------------
+ 1 file changed, 17 insertions(+), 24 deletions(-)
+
+diff --git a/submodule.c b/submodule.c
+index 0510cb193b6..1dd61476307 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -477,28 +477,6 @@ void handle_ignore_submodules_arg(struct diff_options *diffopt,
+ 	 */
+ }
+ 
+-static int prepare_submodule_diff_summary(struct repository *r, struct rev_info *rev,
+-					  const char *path,
+-					  struct commit *left, struct commit *right,
+-					  struct commit_list *merge_bases)
+-{
+-	struct commit_list *list;
+-
+-	repo_init_revisions(r, rev, NULL);
+-	setup_revisions(0, NULL, rev, NULL);
+-	rev->left_right = 1;
+-	rev->first_parent_only = 1;
+-	left->object.flags |= SYMMETRIC_LEFT;
+-	add_pending_object(rev, &left->object, path);
+-	add_pending_object(rev, &right->object, path);
+-	for (list = merge_bases; list; list = list->next) {
+-		list->item->object.flags |= UNINTERESTING;
+-		add_pending_object(rev, &list->item->object,
+-			oid_to_hex(&list->item->object.oid));
+-	}
+-	return prepare_revision_walk(rev);
+-}
+-
+ static void print_submodule_diff_summary(struct repository *r, struct rev_info *rev, struct diff_options *o)
+ {
+ 	static const char format[] = "  %m %s";
+@@ -642,6 +620,7 @@ void show_submodule_diff_summary(struct diff_options *o, const char *path,
+ 	struct commit *left = NULL, *right = NULL;
+ 	struct commit_list *merge_bases = NULL;
+ 	struct repository *sub;
++	struct commit_list *list;
+ 
+ 	sub = open_submodule(path);
+ 	show_submodule_header(o, path, one, two, dirty_submodule,
+@@ -653,10 +632,22 @@ void show_submodule_diff_summary(struct diff_options *o, const char *path,
+ 	 * all the information the user needs.
+ 	 */
+ 	if (!left || !right || !sub)
+-		goto out;
++		goto out_no_rev;
+ 
++	repo_init_revisions(sub, &rev, NULL);
++	setup_revisions(0, NULL, &rev, NULL);
++	rev.left_right = 1;
++	rev.first_parent_only = 1;
++	left->object.flags |= SYMMETRIC_LEFT;
++	add_pending_object(&rev, &left->object, path);
++	add_pending_object(&rev, &right->object, path);
++	for (list = merge_bases; list; list = list->next) {
++		list->item->object.flags |= UNINTERESTING;
++		add_pending_object(&rev, &list->item->object,
++			oid_to_hex(&list->item->object.oid));
++	}
+ 	/* Treat revision walker failure the same as missing commits */
+-	if (prepare_submodule_diff_summary(sub, &rev, path, left, right, merge_bases)) {
++	if (prepare_revision_walk(&rev)) {
+ 		diff_emit_submodule_error(o, "(revision walker failed)\n");
+ 		goto out;
+ 	}
+@@ -664,6 +655,8 @@ void show_submodule_diff_summary(struct diff_options *o, const char *path,
+ 	print_submodule_diff_summary(sub, &rev, o);
+ 
+ out:
++	release_revisions(&rev);
++out_no_rev:
+ 	if (merge_bases)
+ 		free_commit_list(merge_bases);
+ 	clear_commit_marks(left, ~0);
+-- 
+2.35.1.1509.ge4eeb5bd39e
+
