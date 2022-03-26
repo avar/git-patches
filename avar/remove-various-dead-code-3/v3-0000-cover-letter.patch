@@ -1,9 +1,9 @@
 From 7a82b1fd0051efae02a3231732867b99388ed875 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-0.7-00000000000-20220326T171108Z-avarab@gmail.com>
+Message-Id: <cover-v3-0.7-00000000000-20220326T171200Z-avarab@gmail.com>
 In-Reply-To: <cover-v2-0.5-00000000000-20211119T202455Z-avarab@gmail.com>
 References: <cover-v2-0.5-00000000000-20211119T202455Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Sat, 26 Mar 2022 18:11:08 +0100
+Date: Sat, 26 Mar 2022 18:12:00 +0100
 Subject: [PATCH v3 0/7] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -69,129 +69,8 @@ Range-diff against v2:
      @@ alloc.c: void *alloc_commit_node(struct repository *r)
       	init_commit_node(c);
       	return c;
-5:  818f1a46d66 ! 7:  7a82b1fd005 json-writer.[ch]: remove unused formatting functions
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    json-writer.[ch]: remove unused formatting functions
-    +    git-sh-setup: don't mark trees not used in-tree for i18n
-     
-    -    These were added in 75459410edd (json_writer: new routines to create
-    -    JSON data, 2018-07-13) for future use with trace2, but have not been
-    -    used by anything. These are easy enough to bring back should we need
-    -    them, but until then there's no point in carrying them.
-    +    Partially revert d323c6b6410 (i18n: git-sh-setup.sh: mark strings for
-    +    translation, 2016-06-17).
-    +
-    +    These strings are no longer used in-tree, and we shouldn't be wasting
-    +    translator time on them for the benefit of a hypothetical out-of-tree
-    +    user of git-sh-setup.sh.
-    +
-    +    Since d03ebd411c6 (rebase: remove the rebase.useBuiltin setting,
-    +    2019-03-18) we've had no in-tree user of require_work_tree_exists(),
-    +    and since the more recent c1e10b2dce2 (git-sh-setup: remove messaging
-    +    supporting --preserve-merges, 2021-10-21) the only in-tree user of
-    +    require_clean_work_tree() is git-filter-branch.sh. Let's only
-    +    translate the message it uses, and revert the others to the pre-image
-    +    of d323c6b6410.
-     
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-    - ## json-writer.c ##
-    -@@ json-writer.c: void jw_array_false(struct json_writer *jw)
-    - 	strbuf_addstr(&jw->json, "false");
-    + ## git-sh-setup.sh ##
-    +@@ git-sh-setup.sh: cd_to_toplevel () {
-    + require_work_tree_exists () {
-    + 	if test "z$(git rev-parse --is-bare-repository)" != zfalse
-    + 	then
-    +-		program_name=$0
-    +-		die "$(eval_gettext "fatal: \$program_name cannot be used without a working tree.")"
-    ++		die "fatal: $0 cannot be used without a working tree."
-    + 	fi
-      }
-      
-    --void jw_array_bool(struct json_writer *jw, int value)
-    --{
-    --	if (value)
-    --		jw_array_true(jw);
-    --	else
-    --		jw_array_false(jw);
-    --}
-    --
-    - void jw_array_null(struct json_writer *jw)
-    - {
-    - 	array_common(jw);
-    - 	strbuf_addstr(&jw->json, "null");
-    - }
-    - 
-    --void jw_array_sub_jw(struct json_writer *jw, const struct json_writer *value)
-    --{
-    --	assert_is_terminated(value);
-    --
-    --	array_common(jw);
-    --	append_sub_jw(jw, value);
-    --}
-    --
-    --void jw_array_argc_argv(struct json_writer *jw, int argc, const char **argv)
-    --{
-    --	int k;
-    --
-    --	for (k = 0; k < argc; k++)
-    --		jw_array_string(jw, argv[k]);
-    --}
-    --
-    - void jw_array_argv(struct json_writer *jw, const char **argv)
-    - {
-    - 	while (*argv)
-    -
-    - ## json-writer.h ##
-    -@@ json-writer.h: void jw_array_intmax(struct json_writer *jw, intmax_t value);
-    - void jw_array_double(struct json_writer *jw, int precision, double value);
-    - void jw_array_true(struct json_writer *jw);
-    - void jw_array_false(struct json_writer *jw);
-    --void jw_array_bool(struct json_writer *jw, int value);
-    - void jw_array_null(struct json_writer *jw);
-    --void jw_array_sub_jw(struct json_writer *jw, const struct json_writer *value);
-    --void jw_array_argc_argv(struct json_writer *jw, int argc, const char **argv);
-    - void jw_array_argv(struct json_writer *jw, const char **argv);
-    +@@ git-sh-setup.sh: require_clean_work_tree () {
-      
-    - void jw_array_inline_begin_object(struct json_writer *jw);
-    + 	if ! git diff-files --quiet --ignore-submodules
-    + 	then
-    +-		action=$1
-    +-		case "$action" in
-    ++		case "$1" in
-    + 		"rewrite branches")
-    + 			gettextln "Cannot rewrite branches: You have unstaged changes." >&2
-    + 			;;
-    + 		*)
-    +-			eval_gettextln "Cannot \$action: You have unstaged changes." >&2
-    ++			# Some out-of-tree user of require_clean_work_tree()
-    ++			echo "Cannot $1: You have unstaged changes." >&2
-    + 			;;
-    + 		esac
-    + 		err=1
-    +@@ git-sh-setup.sh: require_clean_work_tree () {
-    + 	then
-    + 		if test $err = 0
-    + 		then
-    +-			action=$1
-    +-			eval_gettextln "Cannot \$action: Your index contains uncommitted changes." >&2
-    ++			case "$1" in
-    ++			"rewrite branches")
-    ++				gettextln "Cannot rewrite branches: You have unstaged changes." >&2
-    ++				;;
-    ++			*)
-    ++				# Some out-of-tree user of require_clean_work_tree()
-    ++				echo "Cannot $1: Your index contains uncommitted changes." >&2
-    ++				;;
-    ++			esac
-    + 		else
-    + 		    gettextln "Additionally, your index contains uncommitted changes." >&2
-    + 		fi
+5:  818f1a46d66 < -:  ----------- json-writer.[ch]: remove unused formatting functions
+-:  ----------- > 7:  7a82b1fd005 git-sh-setup: don't mark trees not used in-tree for i18n
 -- 
 2.35.1.1535.gf8d72b9da1e
 
