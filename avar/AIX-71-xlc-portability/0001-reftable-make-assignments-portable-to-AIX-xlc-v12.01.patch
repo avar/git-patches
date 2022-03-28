@@ -1,0 +1,125 @@
+From 98267695418ad3d12adedf3158eb93a35bf4f274 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-98267695418-20220328T190642Z-avarab@gmail.com>
+In-Reply-To: <c052b97e-e788-f63a-15c5-b1fbb6a480e8@web.de>
+References: <c052b97e-e788-f63a-15c5-b1fbb6a480e8@web.de>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Mar 2022 11:02:15 +0200
+Subject: [PATCH] reftable: make assignments portable to AIX xlc v12.01
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the assignment syntax introduced in 66c0dabab5e (reftable: make
+reftable_record a tagged union, 2022-01-20) to be portable to AIX xlc
+v12.1:
+
+    avar@gcc111:[/home/avar]xlc -qversion
+    IBM XL C/C++ for AIX, V12.1 (5765-J02, 5725-C72)
+    Version: 12.01.0000.0000
+
+The error emitted before this was e.g.:
+
+    "reftable/generic.c", line 133.26: 1506-196 (S) Initialization
+    between types "char*" and "struct reftable_ref_record" is not
+    allowed.
+
+The syntax in the pre-image is supported by e.g. xlc 13.01 on a newer
+AIX version:
+
+    avar@gcc119:[/home/avar]xlc -qversion
+    IBM XL C/C++ for AIX, V13.1.3 (5725-C72, 5765-J07)
+    Version: 13.01.0003.0006
+
+But as we've otherwise supported this compiler let's not break it
+entirely if it's easy to work around it.
+
+Suggested-by: René Scharfe <l.s.r@web.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ reftable/generic.c     |  8 ++++++--
+ reftable/record_test.c |  4 +++-
+ reftable/writer.c      | 12 +++++++++---
+ 3 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/reftable/generic.c b/reftable/generic.c
+index b27d152e89a..57f8032db94 100644
+--- a/reftable/generic.c
++++ b/reftable/generic.c
+@@ -130,7 +130,9 @@ int reftable_iterator_next_ref(struct reftable_iterator *it,
+ {
+ 	struct reftable_record rec = {
+ 		.type = BLOCK_TYPE_REF,
+-		.u.ref = *ref,
++		.u = {
++			.ref = *ref
++		},
+ 	};
+ 	int err = iterator_next(it, &rec);
+ 	*ref = rec.u.ref;
+@@ -142,7 +144,9 @@ int reftable_iterator_next_log(struct reftable_iterator *it,
+ {
+ 	struct reftable_record rec = {
+ 		.type = BLOCK_TYPE_LOG,
+-		.u.log = *log,
++		.u = {
++			.log = *log,
++		},
+ 	};
+ 	int err = iterator_next(it, &rec);
+ 	*log = rec.u.log;
+diff --git a/reftable/record_test.c b/reftable/record_test.c
+index f91ea5e8830..70ae78feca4 100644
+--- a/reftable/record_test.c
++++ b/reftable/record_test.c
+@@ -339,7 +339,9 @@ static void test_reftable_obj_record_roundtrip(void)
+ 		};
+ 		struct reftable_record in = {
+ 			.type = BLOCK_TYPE_OBJ,
+-			.u.obj = recs[i],
++			.u = {
++				.obj = recs[i],
++			},
+ 		};
+ 		struct strbuf key = STRBUF_INIT;
+ 		struct reftable_record out = { .type = BLOCK_TYPE_OBJ };
+diff --git a/reftable/writer.c b/reftable/writer.c
+index 6d979e245ff..427f1317c6b 100644
+--- a/reftable/writer.c
++++ b/reftable/writer.c
+@@ -257,7 +257,9 @@ int reftable_writer_add_ref(struct reftable_writer *w,
+ {
+ 	struct reftable_record rec = {
+ 		.type = BLOCK_TYPE_REF,
+-		.u.ref = *ref,
++		.u = {
++			.ref = *ref
++		},
+ 	};
+ 	int err = 0;
+ 
+@@ -308,7 +310,9 @@ static int reftable_writer_add_log_verbatim(struct reftable_writer *w,
+ {
+ 	struct reftable_record rec = {
+ 		.type = BLOCK_TYPE_LOG,
+-		.u.log = *log,
++		.u = {
++			.log = *log,
++		},
+ 	};
+ 	if (w->block_writer &&
+ 	    block_writer_type(w->block_writer) == BLOCK_TYPE_REF) {
+@@ -401,7 +405,9 @@ static int writer_finish_section(struct reftable_writer *w)
+ 		for (i = 0; i < idx_len; i++) {
+ 			struct reftable_record rec = {
+ 				.type = BLOCK_TYPE_INDEX,
+-				.u.idx = idx[i],
++				.u = {
++					.idx = idx[i],
++				},
+ 			};
+ 			if (block_writer_add(w->block_writer, &rec) == 0) {
+ 				continue;
+-- 
+2.35.1.1548.gaad2ca01774
+
