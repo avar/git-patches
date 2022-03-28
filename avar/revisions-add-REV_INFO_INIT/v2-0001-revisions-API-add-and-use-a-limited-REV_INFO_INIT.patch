@@ -1,0 +1,120 @@
+From 3b1c1353c6230b0b20d404e37b4f31b1650180b5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.2-3b1c1353c62-20220328T152901Z-avarab@gmail.com>
+In-Reply-To: <patch-1.1-193534b0f07-20220325T121715Z-avarab@gmail.com>
+References: <patch-1.1-193534b0f07-20220325T121715Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 26 Mar 2022 14:01:06 +0100
+Subject: [PATCH v2 1/2] revisions API: add and use a limited REV_INFO_INIT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a new REV_INFO_INIT macro, as noted in the added API documentation
+this isn't sufficient to initialize a "struct rev_info" yet, but
+subsequent commits will get us closer to that eventual goal.
+
+Even though we can't fully initialize with this REV_INFO_INIT it's
+useful to clearly separate those things that we can statically
+initialize, and those that we can't.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ revision.c | 27 ++++-----------------------
+ revision.h | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 33 insertions(+), 23 deletions(-)
+
+diff --git a/revision.c b/revision.c
+index 2b4b8c842d9..9f8124f2484 100644
+--- a/revision.c
++++ b/revision.c
+@@ -1819,42 +1819,23 @@ static int add_parents_only(struct rev_info *revs, const char *arg_, int flags,
+ 	return 1;
+ }
+ 
+-static void grep_init(struct grep_opt *opt)
++static void repo_init_revisions_macro(struct rev_info *rev)
+ {
+-	struct grep_opt blank = GREP_OPT_INIT;
+-	memcpy(opt, &blank, sizeof(*opt));
++	struct rev_info blank = REV_INFO_INIT;
++	memcpy(rev, &blank, sizeof(*rev));
+ }
+ 
+ void repo_init_revisions(struct repository *r,
+ 			 struct rev_info *revs,
+ 			 const char *prefix)
+ {
+-	memset(revs, 0, sizeof(*revs));
+-
++	repo_init_revisions_macro(revs);
+ 	revs->repo = r;
+-	revs->abbrev = DEFAULT_ABBREV;
+-	revs->simplify_history = 1;
+ 	revs->pruning.repo = r;
+-	revs->pruning.flags.recursive = 1;
+-	revs->pruning.flags.quick = 1;
+ 	revs->pruning.add_remove = file_add_remove;
+ 	revs->pruning.change = file_change;
+ 	revs->pruning.change_fn_data = revs;
+-	revs->sort_order = REV_SORT_IN_GRAPH_ORDER;
+-	revs->dense = 1;
+ 	revs->prefix = prefix;
+-	revs->max_age = -1;
+-	revs->min_age = -1;
+-	revs->skip_count = -1;
+-	revs->max_count = -1;
+-	revs->max_parents = -1;
+-	revs->expand_tabs_in_log = -1;
+-
+-	revs->commit_format = CMIT_FMT_DEFAULT;
+-	revs->expand_tabs_in_log_default = 8;
+-
+-	grep_init(&revs->grep_filter);
+-	revs->grep_filter.status_only = 1;
+ 
+ 	repo_diff_setup(revs->repo, &revs->diffopt);
+ 	if (prefix && !revs->diffopt.prefix) {
+diff --git a/revision.h b/revision.h
+index 5bc59c7bfe1..3c611d9c914 100644
+--- a/revision.h
++++ b/revision.h
+@@ -329,6 +329,35 @@ struct rev_info {
+ 	struct tmp_objdir *remerge_objdir;
+ };
+ 
++/**
++ * Initialize the "struct rev_info" structure with *some* default
++ * values, this is not sufficient (yet!) to initialize a "struct
++ * rev_info", but it's OK (but redundant) to use it before a call to
++ * repo_init_revisions(), which does the real initialization.
++ *
++ * In the future this might be sufficient to fully initialize a
++ * "struct rev_info", but right now it's a central place to declare
++ * those things that we can statically initialize.
++ */
++#define REV_INFO_INIT { \
++	.abbrev = DEFAULT_ABBREV, \
++	.simplify_history = 1, \
++	.pruning.flags.recursive = 1, \
++	.pruning.flags.quick = 1, \
++	.sort_order = REV_SORT_IN_GRAPH_ORDER, \
++	.dense = 1, \
++	.max_age = -1, \
++	.min_age = -1, \
++	.skip_count = -1, \
++	.max_count = -1, \
++	.max_parents = -1, \
++	.expand_tabs_in_log = -1, \
++	.commit_format = CMIT_FMT_DEFAULT, \
++	.expand_tabs_in_log_default = 8, \
++	.grep_filter = GREP_OPT_INIT, \
++	.grep_filter.status_only = 1, \
++}
++
+ int ref_excluded(struct string_list *, const char *path);
+ void clear_ref_exclusion(struct string_list **);
+ void add_ref_exclusion(struct string_list **, const char *exclude);
+-- 
+2.35.1.1541.g9c2d54e20ab
+

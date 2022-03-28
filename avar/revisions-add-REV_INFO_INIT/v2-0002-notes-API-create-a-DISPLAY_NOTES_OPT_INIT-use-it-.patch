@@ -1,0 +1,110 @@
+From 96a7e1247653fb004eda790e50b7965befcb0f0b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.2-96a7e124765-20220328T152901Z-avarab@gmail.com>
+In-Reply-To: <patch-1.1-193534b0f07-20220325T121715Z-avarab@gmail.com>
+References: <patch-1.1-193534b0f07-20220325T121715Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 26 Mar 2022 14:08:50 +0100
+Subject: [PATCH v2 2/2] notes API: create a DISPLAY_NOTES_OPT_INIT, use it in
+ REV_INFO_INIT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the init_display_notes() function added in the series merged in
+17066bea38d (Merge branch 'dl/format-patch-notes-config-fixup',
+2019-12-25) to a new macro, and use it in REV_INFO_INIT. This allows
+for moving another small bit of revision API initialization to being
+statically initialized via a macro.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/log.c | 3 +--
+ notes.c       | 6 ------
+ notes.h       | 5 +++++
+ revision.c    | 2 --
+ revision.h    | 1 +
+ 5 files changed, 7 insertions(+), 10 deletions(-)
+
+diff --git a/builtin/log.c b/builtin/log.c
+index c211d66d1d0..a40e9bc9b76 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -862,7 +862,7 @@ static enum cover_setting config_cover_letter;
+ static const char *config_output_directory;
+ static enum cover_from_description cover_from_description_mode = COVER_FROM_MESSAGE;
+ static int show_notes;
+-static struct display_notes_opt notes_opt;
++static struct display_notes_opt notes_opt = DISPLAY_NOTES_OPT_INIT;
+ 
+ static enum cover_from_description parse_cover_from_description(const char *arg)
+ {
+@@ -1869,7 +1869,6 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 	extra_cc.strdup_strings = 1;
+ 
+ 	init_log_defaults();
+-	init_display_notes(&notes_opt);
+ 	git_config(git_format_config, NULL);
+ 	repo_init_revisions(the_repository, &rev, prefix);
+ 	git_config(grep_config, &rev.grep_filter);
+diff --git a/notes.c b/notes.c
+index 7452e71cc8d..e86c93bf42f 100644
+--- a/notes.c
++++ b/notes.c
+@@ -1047,12 +1047,6 @@ struct notes_tree **load_notes_trees(struct string_list *refs, int flags)
+ 	return trees;
+ }
+ 
+-void init_display_notes(struct display_notes_opt *opt)
+-{
+-	memset(opt, 0, sizeof(*opt));
+-	opt->use_default_notes = -1;
+-}
+-
+ void enable_default_display_notes(struct display_notes_opt *opt, int *show_notes)
+ {
+ 	opt->use_default_notes = 1;
+diff --git a/notes.h b/notes.h
+index c1682c39a97..f423d510c13 100644
+--- a/notes.h
++++ b/notes.h
+@@ -260,6 +260,11 @@ struct display_notes_opt {
+ 	struct string_list extra_notes_refs;
+ };
+ 
++#define DISPLAY_NOTES_OPT_INIT { \
++	.use_default_notes = -1, \
++	.extra_notes_refs = STRING_LIST_INIT_NODUP, \
++}
++
+ /*
+  * Initialize a display_notes_opt to its default value.
+  */
+diff --git a/revision.c b/revision.c
+index 9f8124f2484..d917d9df4fa 100644
+--- a/revision.c
++++ b/revision.c
+@@ -1842,8 +1842,6 @@ void repo_init_revisions(struct repository *r,
+ 		revs->diffopt.prefix = prefix;
+ 		revs->diffopt.prefix_length = strlen(prefix);
+ 	}
+-
+-	init_display_notes(&revs->notes_opt);
+ }
+ 
+ static void add_pending_commit_list(struct rev_info *revs,
+diff --git a/revision.h b/revision.h
+index 3c611d9c914..59af755b146 100644
+--- a/revision.h
++++ b/revision.h
+@@ -356,6 +356,7 @@ struct rev_info {
+ 	.expand_tabs_in_log_default = 8, \
+ 	.grep_filter = GREP_OPT_INIT, \
+ 	.grep_filter.status_only = 1, \
++	.notes_opt = DISPLAY_NOTES_OPT_INIT, \
+ }
+ 
+ int ref_excluded(struct string_list *, const char *path);
+-- 
+2.35.1.1541.g9c2d54e20ab
+
