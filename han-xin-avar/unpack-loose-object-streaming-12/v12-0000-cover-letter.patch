@@ -4,12 +4,93 @@ In-Reply-To: <cover-v11-0.8-00000000000-20220319T001411Z-avarab@gmail.com>
 References: <cover-v11-0.8-00000000000-20220319T001411Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Tue, 29 Mar 2022 15:54:46 +0200
-Subject: [PATCH v12 0/8] *** SUBJECT HERE ***
+Subject: [PATCH v12 0/8] unpack-objects: support streaming blobs to disk
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series by Han Xin was waiting on some in-flight patches that
+landed in 430883a70c7 (Merge branch 'ab/object-file-api-updates',
+2022-03-16).
+
+This series teaches "git unpack-objects" to stream objects larger than
+core.bigFileThreshold to disk. As 8/8 shows streaming e.g. a 100MB
+blob now uses ~5MB of memory instead of ~105MB. This streaming method
+is slower if you've got memory to handle the blobs in-core, but if you
+don't it allows you to unpack objects at all, as you might otherwise
+OOM.
+
+Changes since v10[1]:
+
+ * René rightly spotted that the end_loose_object_common() function
+   was feeding NULL to a format. That's now fixed, and parts of that
+   function were pulled out into the two callers to make the trade-off
+   of factoring that logic out worth it.
+
+ * This topic conflicts with ns/batch-fsync in "seen" (see below). I
+   moved an inline comment on close_loose_object() around to make the
+   conflict easier (and it's better placed with the function anyway,
+   as we'll get two callers of it).
+
+Conflict this is the --remerge-diff with "seen" after resolving the
+conflict. Botht textual and semantic (there's a new caller in this
+topic) conflicts are caught by the compiler:
+
+	diff --git a/object-file.c b/object-file.c
+	remerge CONFLICT (content): Merge conflict in object-file.c
+	index 9c640f1f39d..6068f8ec6c4 100644
+	--- a/object-file.c
+	+++ b/object-file.c
+	@@ -1887,7 +1887,6 @@ void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+	 	hash_object_file_literally(algo, buf, len, type_name(type), oid);
+	 }
+
+	-<<<<<<< 34ee6a28a54 (unpack-objects: use stream_loose_object() to unpack large objects)
+	 /*
+	  * We already did a write_buffer() to the "fd", let's fsync()
+	  * and close().
+	@@ -1896,11 +1895,7 @@ void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+	  * subsequent sanity check, but let's not add to that confusion by not
+	  * flushing any outstanding writes to disk first.
+	  */
+	-static void close_loose_object(int fd)
+	-=======
+	-/* Finalize a file on disk, and close it. */
+	 static void close_loose_object(int fd, const char *filename)
+	->>>>>>> b1423c89b5a (Merge branch 'ab/reftable-aix-xlc-12' into seen)
+	 {
+	 	if (the_repository->objects->odb->will_destroy)
+	 		goto out;
+	@@ -2093,17 +2088,12 @@ static int write_loose_object(const struct object_id *oid, char *hdr,
+	 	ret = end_loose_object_common(&c, &stream, &parano_oid);
+	 	if (ret != Z_OK)
+	 		die(_("deflateEnd on object %s failed (%d)"), oid_to_hex(oid), ret);
+	-	close_loose_object(fd);
+	+	close_loose_object(fd, tmp_file.buf);
+
+	 	if (!oideq(oid, &parano_oid))
+	 		die(_("confused by unstable object source data for %s"),
+	 		    oid_to_hex(oid));
+
+	-<<<<<<< 34ee6a28a54 (unpack-objects: use stream_loose_object() to unpack large objects)
+	-=======
+	-	close_loose_object(fd, tmp_file.buf);
+	-
+	->>>>>>> b1423c89b5a (Merge branch 'ab/reftable-aix-xlc-12' into seen)
+	 	if (mtime) {
+	 		struct utimbuf utb;
+	 		utb.actime = mtime;
+	@@ -2206,7 +2196,7 @@ int stream_loose_object(struct input_stream *in_stream, size_t len,
+	 	ret = end_loose_object_common(&c, &stream, oid);
+	 	if (ret != Z_OK)
+	 		die(_("deflateEnd on stream object failed (%d)"), ret);
+	-	close_loose_object(fd);
+	+	close_loose_object(fd, tmp_file.buf);
+
+	 	if (freshen_packed_object(oid) || freshen_loose_object(oid)) {
+	 		unlink_or_warn(tmp_file.buf);
+
+1. https://lore.kernel.org/git/cover-v11-0.8-00000000000-20220319T001411Z-avarab@gmail.com/
 
 Han Xin (4):
   unpack-objects: low memory footprint for get_data() in dry_run mode
