@@ -1,0 +1,76 @@
+From 11f7aa026b44b84f8a65f83f6e64682c97f46e2f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v12-7.8-11f7aa026b4-20220329T131744Z-avarab@gmail.com>
+In-Reply-To: <cover-v11-0.8-00000000000-20220319T001411Z-avarab@gmail.com> --range-diff=han-xin-avar/unpack-loose-object-streaming-11>
+References: <cover-v11-0.8-00000000000-20220319T001411Z-avarab@gmail.com> --range-diff=han-xin-avar/unpack-loose-object-streaming-11>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 18 Mar 2022 19:45:05 +0100
+Subject: [PATCH v12 7/8] unpack-objects: refactor away
+ unpack_non_delta_entry()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The unpack_one() function will call either a non-trivial
+unpack_delta_entry() or a trivial unpack_non_delta_entry(). Let's
+inline the latter in the only caller.
+
+Since 21666f1aae4 (convert object type handling from a string to a
+number, 2007-02-26) the unpack_non_delta_entry() function has been
+rather trivial, and in a preceding commit the "dry_run" condition it
+was handling went away.
+
+This is not done as an optimization, as the compiler will easily
+discover that it can do the same, rather this makes a subsequent
+commit easier to reason about. As it'll be handling "OBJ_BLOB" in a
+special manner let's re-arrange that "case" in preparation for that
+change.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/unpack-objects.c | 18 +++++++-----------
+ 1 file changed, 7 insertions(+), 11 deletions(-)
+
+diff --git a/builtin/unpack-objects.c b/builtin/unpack-objects.c
+index e3d30025979..d374599d544 100644
+--- a/builtin/unpack-objects.c
++++ b/builtin/unpack-objects.c
+@@ -338,15 +338,6 @@ static void added_object(unsigned nr, enum object_type type,
+ 	}
+ }
+ 
+-static void unpack_non_delta_entry(enum object_type type, unsigned long size,
+-				   unsigned nr)
+-{
+-	void *buf = get_data(size);
+-
+-	if (buf)
+-		write_object(nr, type, buf, size);
+-}
+-
+ static int resolve_against_held(unsigned nr, const struct object_id *base,
+ 				void *delta_data, unsigned long delta_size)
+ {
+@@ -479,12 +470,17 @@ static void unpack_one(unsigned nr)
+ 	}
+ 
+ 	switch (type) {
++	case OBJ_BLOB:
+ 	case OBJ_COMMIT:
+ 	case OBJ_TREE:
+-	case OBJ_BLOB:
+ 	case OBJ_TAG:
+-		unpack_non_delta_entry(type, size, nr);
++	{
++		void *buf = get_data(size);
++
++		if (buf)
++			write_object(nr, type, buf, size);
+ 		return;
++	}
+ 	case OBJ_REF_DELTA:
+ 	case OBJ_OFS_DELTA:
+ 		unpack_delta_entry(type, size, nr);
+-- 
+2.35.1.1548.g36973b18e52
+
