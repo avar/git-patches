@@ -1,9 +1,9 @@
-From 6d0f8278d2fb1c8596e4d8e86406956f5046d063 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v4-00.27-00000000000-20220331T001624Z-avarab@gmail.com>
+From b02cb8fcded6815d79f434e093ff35790255d10d Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-00.27-00000000000-20220331T005325Z-avarab@gmail.com>
 In-Reply-To: <cover-v3-00.27-00000000000-20220325T171340Z-avarab@gmail.com>
 References: <cover-v3-00.27-00000000000-20220325T171340Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Thu, 31 Mar 2022 02:16:24 +0200
+Date: Thu, 31 Mar 2022 02:53:25 +0200
 Subject: [PATCH v4 00/27] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -158,12 +158,12 @@ Content-Transfer-Encoding: 8bit
  115 files changed, 436 insertions(+), 148 deletions(-)
 
 Range-diff against v3:
- 1:  7c8298f564f =  1:  b45b0b3dfb0 t/helper/test-fast-rebase.c: don't leak "struct strbuf"
- 2:  515bacc8f27 =  2:  d7d6d436f84 blame: use "goto cleanup" for cleanup_scoreboard()
- 3:  58b59542c2b =  3:  e483256ee95 string_list API users: use string_list_init_{no,}dup
- 4:  71495dfd073 =  4:  c5910074590 format-patch: don't leak "extra_headers" or "ref_message_ids"
- 5:  12fb45f02c1 =  5:  80d1280e491 revision.[ch]: split freeing of revs->commit into a function
- 6:  1e93a60d81a !  6:  17bd1f1cc66 revision.[ch]: provide and start using a release_revisions()
+ 1:  7c8298f564f =  1:  b99a07f98ee t/helper/test-fast-rebase.c: don't leak "struct strbuf"
+ 2:  515bacc8f27 =  2:  da5be507c0f blame: use "goto cleanup" for cleanup_scoreboard()
+ 3:  58b59542c2b =  3:  243f7c8df96 string_list API users: use string_list_init_{no,}dup
+ 4:  71495dfd073 =  4:  69f0aabe38f format-patch: don't leak "extra_headers" or "ref_message_ids"
+ 5:  12fb45f02c1 =  5:  2d0ed57ec2e revision.[ch]: split freeing of revs->commit into a function
+ 6:  1e93a60d81a !  6:  b9beaba16bf revision.[ch]: provide and start using a release_revisions()
     @@ revision.h: void repo_init_revisions(struct repository *r,
       		    struct setup_revision_opt *);
       
@@ -175,7 +175,44 @@ Range-diff against v3:
      + */
      +void release_revisions(struct rev_info *revs);
      +
- 7:  c4fc1c98e7b !  7:  bd6a3d62a78 revisions API users: add straightforward release_revisions()
+ 7:  c4fc1c98e7b !  7:  80ec9a131c0 revisions API users: add straightforward release_revisions()
+    @@ builtin/merge.c: static int evaluate_result(void)
+      
+     
+      ## builtin/pack-objects.c ##
+    -@@ builtin/pack-objects.c: static void read_packs_list_from_stdin(void)
+    - 	strbuf_release(&buf);
+    - 	string_list_clear(&include_packs, 0);
+    - 	string_list_clear(&exclude_packs, 0);
+    -+	release_revisions(&revs);
+    - }
+    - 
+    - static void read_object_list_from_stdin(void)
+    -@@ builtin/pack-objects.c: static void get_object_list(int ac, const char **av)
+    - 	if (unpack_unreachable)
+    - 		loosen_unused_packed_objects();
+    - 
+    -+	release_revisions(&revs);
+    - 	oid_array_clear(&recent_objects);
+    - }
+    - 
+    +@@ builtin/pack-objects.c: int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+    + 		read_object_list_from_stdin();
+    + 	} else if (pfd.have_revs) {
+    + 		get_object_list(&pfd.revs, rp.nr, rp.v);
+    ++		release_revisions(&pfd.revs);
+    + 	} else {
+    + 		struct rev_info revs;
+    + 
+    + 		repo_init_revisions(the_repository, &revs, NULL);
+    + 		get_object_list(&revs, rp.nr, rp.v);
+    ++		release_revisions(&revs);
+    + 	}
+    + 	cleanup_preferred_base();
+    + 	if (include_tag && nr_result)
+     
+      ## builtin/prune.c ##
+     @@ builtin/prune.c: int cmd_prune(int argc, const char **argv, const char *prefix)
     @@ submodule.c: static void collect_changed_submodules(struct repository *r,
      +	release_revisions(&rev);
       }
@@ -187,26 +224,26 @@ Range-diff against v3:
      @@ t/helper/test-revision-walking.c: static int run_revision_walk(void)
  8:  f8a9443fe6f <  -:  ----------- revisions API users: add "goto cleanup" for "rev_info" early exit
  9:  5f5c0d26395 <  -:  ----------- revisions API users: use release_revisions() in submodule.c edge case
- -:  ----------- >  8:  68ca8cd04bf revision.[ch]: document and move code declared around "init"
- -:  ----------- >  9:  25ba28cc79e revisions API users: use release_revisions() needing REV_INFO_INIT
-10:  9da5c5f5f5d = 10:  b35f068cf66 stash: always have the owner of "stash_info" free it
-11:  da4fcd04345 = 11:  8a2f4b3492b revisions API users: add "goto cleanup" for release_revisions()
-12:  b6acc61fb61 = 12:  1001bd84325 revisions API users: use release_revisions() in http-push.c
-13:  2eae0e809e5 = 13:  ad3d0ced58f revisions API users: use release_revisions() in builtin/log.c
-14:  216eb3b41f7 = 14:  926b5f2f336 revisions API users: use release_revisions() with UNLEAK()
-15:  f8e0eb52957 = 15:  ce97f0637ec revisions API users: use release_revisions() for "prune_data" users
-16:  0a5662a9f67 = 16:  8c2edb63bba revisions API: have release_revisions() release "commits"
-17:  65803961ee2 = 17:  532864f7edd revisions API: have release_revisions() release "mailmap"
-18:  ac68630dbf6 = 18:  665944ff184 revisions API: have release_revisions() release "cmdline"
-19:  740abb80c57 = 19:  dafb2cdfdef revisions API: have release_revisions() release "filter"
-20:  26163e5e754 = 20:  dd655a2d384 revisions API: have release_revisions() release "grep_filter"
-21:  842faebddc4 = 21:  c449f70425f revisions API: have release_revisions() release "prune_data"
-22:  bf93197993c = 22:  229c2db0d8a revisions API: clear "boundary_commits" in release_revisions()
-23:  af874c17fbd = 23:  688a40db244 revisions API: release "reflog_info" in release revisions()
-24:  006fa1fcc34 = 24:  1b80a5b1881 revisions API: call diff_free(&revs->pruning) in revisions_release()
-25:  0eacbd66711 = 25:  050d87a0cb8 revisions API: have release_revisions() release "date_mode"
-26:  5efc0ae58ed = 26:  06e997415fe revisions API: have release_revisions() release "topo_walk_info"
-27:  6c6fdf696af = 27:  6d0f8278d2f revisions API: add a TODO for diff_free(&revs->diffopt)
+ -:  ----------- >  8:  086cec742b4 revision.[ch]: document and move code declared around "init"
+ -:  ----------- >  9:  2f4e65fb534 revisions API users: use release_revisions() needing REV_INFO_INIT
+10:  9da5c5f5f5d = 10:  145a0f74b6a stash: always have the owner of "stash_info" free it
+11:  da4fcd04345 = 11:  c9898a5a96b revisions API users: add "goto cleanup" for release_revisions()
+12:  b6acc61fb61 = 12:  6e41d666223 revisions API users: use release_revisions() in http-push.c
+13:  2eae0e809e5 = 13:  02ca92660af revisions API users: use release_revisions() in builtin/log.c
+14:  216eb3b41f7 = 14:  1aeb1127f34 revisions API users: use release_revisions() with UNLEAK()
+15:  f8e0eb52957 = 15:  c12b3d5a035 revisions API users: use release_revisions() for "prune_data" users
+16:  0a5662a9f67 = 16:  2e351702677 revisions API: have release_revisions() release "commits"
+17:  65803961ee2 = 17:  f67f1f5a575 revisions API: have release_revisions() release "mailmap"
+18:  ac68630dbf6 = 18:  1df61550e5a revisions API: have release_revisions() release "cmdline"
+19:  740abb80c57 = 19:  065c3cc91b2 revisions API: have release_revisions() release "filter"
+20:  26163e5e754 = 20:  806fef06b87 revisions API: have release_revisions() release "grep_filter"
+21:  842faebddc4 = 21:  fabbe452a14 revisions API: have release_revisions() release "prune_data"
+22:  bf93197993c = 22:  cb201fa1914 revisions API: clear "boundary_commits" in release_revisions()
+23:  af874c17fbd = 23:  0363a69073c revisions API: release "reflog_info" in release revisions()
+24:  006fa1fcc34 = 24:  bad359b2983 revisions API: call diff_free(&revs->pruning) in revisions_release()
+25:  0eacbd66711 = 25:  9a51c1ae1d1 revisions API: have release_revisions() release "date_mode"
+26:  5efc0ae58ed = 26:  b56db37940d revisions API: have release_revisions() release "topo_walk_info"
+27:  6c6fdf696af = 27:  b02cb8fcded revisions API: add a TODO for diff_free(&revs->diffopt)
 -- 
 2.35.1.1557.g4e3e9cdb5e0
 
