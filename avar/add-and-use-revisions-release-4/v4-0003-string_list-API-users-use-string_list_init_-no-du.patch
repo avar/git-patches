@@ -1,0 +1,99 @@
+From e483256ee952f6023ae77e14a274bbd23ec71956 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-03.27-e483256ee95-20220331T001205Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.27-00000000000-20220331T001205Z-avarab@gmail.com>
+References: <cover-v3-00.27-00000000000-20220325T171340Z-avarab@gmail.com>
+	<cover-v4-00.27-00000000000-20220331T001205Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 27 Feb 2022 01:25:29 +0100
+Subject: [PATCH v4 03/27] string_list API users: use string_list_init_{no,}dup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up on the introduction of string_list_init_nodup() and
+string_list_init_dup() in the series merged in bd4232fac33 (Merge
+branch 'ab/struct-init', 2021-07-16) and convert code that implicitly
+relied on xcalloc() being equivalent to the initializer to use
+xmalloc() and string_list_init_{no,}dup() instead.
+
+In the case of get_unmerged() in merge-recursive.c we used the
+combination of xcalloc() and assigning "1" to "strdup_strings" to get
+what we'd get via string_list_init_dup(), let's use that instead.
+
+Adjacent code in cmd_format_patch() will be changed in a subsequent
+commit, since we're changing that let's change the other in-tree
+patterns that do the same. Let's also convert a "x == NULL" to "!x"
+per our CodingGuidelines, as we need to change the "if" line anyway.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/log.c      | 9 ++++++---
+ builtin/shortlog.c | 6 ++++--
+ merge-recursive.c  | 4 ++--
+ 3 files changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/log.c b/builtin/log.c
+index c211d66d1d0..634dc782cce 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -231,7 +231,8 @@ static void cmd_log_init_finish(int argc, const char **argv, const char *prefix,
+ 	}
+ 
+ 	if (mailmap) {
+-		rev->mailmap = xcalloc(1, sizeof(struct string_list));
++		rev->mailmap = xmalloc(sizeof(struct string_list));
++		string_list_init_nodup(rev->mailmap);
+ 		read_mailmap(rev->mailmap);
+ 	}
+ 
+@@ -2173,8 +2174,10 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 		prepare_bases(&bases, base, list, nr);
+ 	}
+ 
+-	if (in_reply_to || thread || cover_letter)
+-		rev.ref_message_ids = xcalloc(1, sizeof(struct string_list));
++	if (in_reply_to || thread || cover_letter) {
++		rev.ref_message_ids = xmalloc(sizeof(*rev.ref_message_ids));
++		string_list_init_nodup(rev.ref_message_ids);
++	}
+ 	if (in_reply_to) {
+ 		const char *msgid = clean_message_id(in_reply_to);
+ 		string_list_append(rev.ref_message_ids, msgid);
+diff --git a/builtin/shortlog.c b/builtin/shortlog.c
+index 26c5c0cf935..fcde07c9367 100644
+--- a/builtin/shortlog.c
++++ b/builtin/shortlog.c
+@@ -81,8 +81,10 @@ static void insert_one_record(struct shortlog *log,
+ 		format_subject(&subject, oneline, " ");
+ 		buffer = strbuf_detach(&subject, NULL);
+ 
+-		if (item->util == NULL)
+-			item->util = xcalloc(1, sizeof(struct string_list));
++		if (!item->util) {
++			item->util = xmalloc(sizeof(struct string_list));
++			string_list_init_nodup(item->util);
++		}
+ 		string_list_append(item->util, buffer);
+ 	}
+ }
+diff --git a/merge-recursive.c b/merge-recursive.c
+index 1ee6364e8b1..32bbba5fbb1 100644
+--- a/merge-recursive.c
++++ b/merge-recursive.c
+@@ -522,10 +522,10 @@ static struct stage_data *insert_stage_data(struct repository *r,
+  */
+ static struct string_list *get_unmerged(struct index_state *istate)
+ {
+-	struct string_list *unmerged = xcalloc(1, sizeof(struct string_list));
++	struct string_list *unmerged = xmalloc(sizeof(struct string_list));
+ 	int i;
+ 
+-	unmerged->strdup_strings = 1;
++	string_list_init_dup(unmerged);
+ 
+ 	/* TODO: audit for interaction with sparse-index. */
+ 	ensure_full_index(istate);
+-- 
+2.35.1.1557.g4e3e9cdb5e0
+

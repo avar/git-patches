@@ -1,0 +1,71 @@
+From c591007459085b345c8859598f10b99d0c43698d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-04.27-c5910074590-20220331T001205Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.27-00000000000-20220331T001205Z-avarab@gmail.com>
+References: <cover-v3-00.27-00000000000-20220325T171340Z-avarab@gmail.com>
+	<cover-v4-00.27-00000000000-20220331T001205Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sun, 27 Feb 2022 01:25:29 +0100
+Subject: [PATCH v4 04/27] format-patch: don't leak "extra_headers" or
+ "ref_message_ids"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix two memory leaks in "struct rev_info" by freeing that memory in
+cmd_format_patch(). These two are unusual special-cases in being in
+the "struct rev_info", but not being "owned" by the code in
+revision.c. I.e. they're members of the struct so that this code in
+"builtin/log.c" can pass information code in log-tree.c.
+
+See 20ff06805c6 (format-patch: resurrect extra headers from config,
+2006-06-02) and d1566f7883f (git-format-patch: Make the second and
+subsequent mails replies to the first, 2006-07-14) for the initial
+introduction of "extra_headers" and "ref_message_ids".
+
+We can count on repo_init_revisions() memset()-ing this data to 0
+however, so we can count on it being either NULL or something we
+allocated. In the case of "extra_headers" let's add a local "char *"
+variable to hold it, to avoid the eventual cast from "const char *"
+when we free() it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/log.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/log.c b/builtin/log.c
+index 634dc782cce..6f9928fabfe 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -1747,6 +1747,7 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 	struct commit *commit;
+ 	struct commit **list = NULL;
+ 	struct rev_info rev;
++	char *to_free = NULL;
+ 	struct setup_revision_opt s_r_opt;
+ 	int nr = 0, total, i;
+ 	int use_stdout = 0;
+@@ -1947,7 +1948,7 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 		strbuf_addch(&buf, '\n');
+ 	}
+ 
+-	rev.extra_headers = strbuf_detach(&buf, NULL);
++	rev.extra_headers = to_free = strbuf_detach(&buf, NULL);
+ 
+ 	if (from) {
+ 		if (split_ident_line(&rev.from_ident, from, strlen(from)))
+@@ -2284,6 +2285,10 @@ int cmd_format_patch(int argc, const char **argv, const char *prefix)
+ 	strbuf_release(&rdiff1);
+ 	strbuf_release(&rdiff2);
+ 	strbuf_release(&rdiff_title);
++	free(to_free);
++	if (rev.ref_message_ids)
++		string_list_clear(rev.ref_message_ids, 0);
++	free(rev.ref_message_ids);
+ 	UNLEAK(rev);
+ 	return 0;
+ }
+-- 
+2.35.1.1557.g4e3e9cdb5e0
+
