@@ -1,0 +1,90 @@
+From 574e3aebed07b7d68b501cc669d9752e63c5564c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-26.27-574e3aebed0-20220402T101406Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.27-00000000000-20220402T101406Z-avarab@gmail.com>
+References: <cover-v4-00.27-00000000000-20220331T005325Z-avarab@gmail.com>
+	<cover-v5-00.27-00000000000-20220402T101406Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Mar 2022 10:20:54 +0100
+Subject: [PATCH v5 26/27] revisions API: have release_revisions() release
+ "topo_walk_info"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the existing reset_topo_walk() into a thin wrapper for a
+release_revisions_topo_walk_info() + resetting the member to "NULL",
+and call release_revisions_topo_walk_info() from release_revisions().
+
+This fixes memory leaks that have been with us ever since
+"topo_walk_info" was added to revision.[ch] in
+f0d9cc4196a (revision.c: begin refactoring --topo-order logic,
+2018-11-01).
+
+Due to various other leaks this makes no tests pass in their entirety,
+but e.g. before this running this on git.git:
+
+    ./git -P log --pretty=tformat:"%P   %H | %s" --parents --full-history --topo-order -3 -- README.md
+
+Would report under SANITIZE=leak:
+
+    SUMMARY: LeakSanitizer: 531064 byte(s) leaked in 6 allocation(s).
+
+Now we'll free all of that memory.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ revision.c | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/revision.c b/revision.c
+index ef98e4711f3..28c3c3ff9b4 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2945,6 +2945,8 @@ static void release_revisions_mailmap(struct string_list *mailmap)
+ 	free(mailmap);
+ }
+ 
++static void release_revisions_topo_walk_info(struct topo_walk_info *info);
++
+ void release_revisions(struct rev_info *revs)
+ {
+ 	free_commit_list(revs->commits);
+@@ -2958,6 +2960,7 @@ void release_revisions(struct rev_info *revs)
+ 	free_grep_patterns(&revs->grep_filter);
+ 	diff_free(&revs->pruning);
+ 	reflog_walk_info_release(revs->reflog_info);
++	release_revisions_topo_walk_info(revs->topo_walk_info);
+ }
+ 
+ static void add_child(struct rev_info *revs, struct commit *parent, struct commit *child)
+@@ -3470,17 +3473,22 @@ static void compute_indegrees_to_depth(struct rev_info *revs,
+ 		indegree_walk_step(revs);
+ }
+ 
+-static void reset_topo_walk(struct rev_info *revs)
++static void release_revisions_topo_walk_info(struct topo_walk_info *info)
+ {
+-	struct topo_walk_info *info = revs->topo_walk_info;
+-
++	if (!info)
++		return;
+ 	clear_prio_queue(&info->explore_queue);
+ 	clear_prio_queue(&info->indegree_queue);
+ 	clear_prio_queue(&info->topo_queue);
+ 	clear_indegree_slab(&info->indegree);
+ 	clear_author_date_slab(&info->author_date);
++	free(info);
++}
+ 
+-	FREE_AND_NULL(revs->topo_walk_info);
++static void reset_topo_walk(struct rev_info *revs)
++{
++	release_revisions_topo_walk_info(revs->topo_walk_info);
++	revs->topo_walk_info = NULL;
+ }
+ 
+ static void init_topo_walk(struct rev_info *revs)
+-- 
+2.35.1.1585.gd85f8dcb745
+

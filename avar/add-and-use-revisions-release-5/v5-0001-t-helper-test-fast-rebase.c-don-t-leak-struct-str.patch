@@ -1,0 +1,54 @@
+From b99a07f98eeb318c2877c3a35041ae7a40f02167 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-01.27-b99a07f98ee-20220402T101406Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.27-00000000000-20220402T101406Z-avarab@gmail.com>
+References: <cover-v4-00.27-00000000000-20220331T005325Z-avarab@gmail.com>
+	<cover-v5-00.27-00000000000-20220402T101406Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Feb 2022 13:53:42 +0100
+Subject: [PATCH v5 01/27] t/helper/test-fast-rebase.c: don't leak "struct
+ strbuf"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak that's been with us since f9500261e0a (fast-rebase:
+write conflict state to working tree, index, and HEAD, 2021-05-20)
+changed this code to move these strbuf_release() into an if/else
+block.
+
+We'll also add to "reflog_msg" in the "else" arm of the "if" block
+being modified here, and we'll append to "branch_msg" in both
+cases. But after f9500261e0a only the "if" block would free these two
+"struct strbuf".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-fast-rebase.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/t/helper/test-fast-rebase.c b/t/helper/test-fast-rebase.c
+index fc2d4609043..993b90eaedd 100644
+--- a/t/helper/test-fast-rebase.c
++++ b/t/helper/test-fast-rebase.c
+@@ -201,8 +201,6 @@ int cmd__fast_rebase(int argc, const char **argv)
+ 		}
+ 		if (create_symref("HEAD", branch_name.buf, reflog_msg.buf) < 0)
+ 			die(_("unable to update HEAD"));
+-		strbuf_release(&reflog_msg);
+-		strbuf_release(&branch_name);
+ 
+ 		prime_cache_tree(the_repository, the_repository->index,
+ 				 result.tree);
+@@ -221,5 +219,8 @@ int cmd__fast_rebase(int argc, const char **argv)
+ 	if (write_locked_index(&the_index, &lock,
+ 			       COMMIT_LOCK | SKIP_IF_UNCHANGED))
+ 		die(_("unable to write %s"), get_index_file());
++
++	strbuf_release(&reflog_msg);
++	strbuf_release(&branch_name);
+ 	return (result.clean == 0);
+ }
+-- 
+2.35.1.1585.gd85f8dcb745
+

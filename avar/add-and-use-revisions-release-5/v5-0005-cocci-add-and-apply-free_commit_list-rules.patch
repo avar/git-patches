@@ -1,0 +1,202 @@
+From f71cc37f9a03dd06ca77747da491b0a50ce30d96 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-05.27-f71cc37f9a0-20220402T101406Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.27-00000000000-20220402T101406Z-avarab@gmail.com>
+References: <cover-v4-00.27-00000000000-20220331T005325Z-avarab@gmail.com>
+	<cover-v5-00.27-00000000000-20220402T101406Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 2 Apr 2022 01:42:39 +0200
+Subject: [PATCH v5 05/27] cocci: add and apply free_commit_list() rules
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add and apply coccinelle rules to remove "if (E)" before
+"free_commit_list(E)", the function can accept NULL, and further
+change cases where "E = NULL" followed to also be unconditionally.
+
+The code changes in this commit were entirely made by the coccinelle
+rule being added here, and applied with:
+
+    make contrib/coccinelle/free.cocci.patch
+    patch -p1 <contrib/coccinelle/free.cocci.patch
+
+The only manual intervention here is that the the relevant code in
+commit.c has been manually re-indented.
+
+Suggested-by: Phillip Wood <phillip.wood123@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rev-list.c            |  6 ++----
+ commit.c                      | 19 ++++++++-----------
+ contrib/coccinelle/free.cocci | 27 +++++++++++++++++++++++++++
+ revision.c                    | 17 ++++++-----------
+ submodule.c                   |  6 ++----
+ 5 files changed, 45 insertions(+), 30 deletions(-)
+
+diff --git a/builtin/rev-list.c b/builtin/rev-list.c
+index 572da1472e5..07c0ad11d8d 100644
+--- a/builtin/rev-list.c
++++ b/builtin/rev-list.c
+@@ -213,10 +213,8 @@ static void show_commit(struct commit *commit, void *data)
+ 
+ static void finish_commit(struct commit *commit)
+ {
+-	if (commit->parents) {
+-		free_commit_list(commit->parents);
+-		commit->parents = NULL;
+-	}
++	free_commit_list(commit->parents);
++	commit->parents = NULL;
+ 	free_commit_buffer(the_repository->parsed_objects,
+ 			   commit);
+ }
+diff --git a/commit.c b/commit.c
+index ffcc4a97cd1..c43e49c4e1b 100644
+--- a/commit.c
++++ b/commit.c
+@@ -407,17 +407,14 @@ int parse_commit_buffer(struct repository *r, struct commit *item, const void *b
+ 
+ 	if (item->object.parsed)
+ 		return 0;
+-
+-	if (item->parents) {
+-		/*
+-		 * Presumably this is leftover from an earlier failed parse;
+-		 * clear it out in preparation for us re-parsing (we'll hit the
+-		 * same error, but that's good, since it lets our caller know
+-		 * the result cannot be trusted.
+-		 */
+-		free_commit_list(item->parents);
+-		item->parents = NULL;
+-	}
++	/*
++	 * Presumably this is leftover from an earlier failed parse;
++	 * clear it out in preparation for us re-parsing (we'll hit the
++	 * same error, but that's good, since it lets our caller know
++	 * the result cannot be trusted.
++	 */
++	free_commit_list(item->parents);
++	item->parents = NULL;
+ 
+ 	tail += size;
+ 	if (tail <= bufptr + tree_entry_len + 1 || memcmp(bufptr, "tree ", 5) ||
+diff --git a/contrib/coccinelle/free.cocci b/contrib/coccinelle/free.cocci
+index 4490069df96..6fb9eb6e883 100644
+--- a/contrib/coccinelle/free.cocci
++++ b/contrib/coccinelle/free.cocci
+@@ -2,13 +2,21 @@
+ expression E;
+ @@
+ - if (E)
++(
+   free(E);
++|
++  free_commit_list(E);
++)
+ 
+ @@
+ expression E;
+ @@
+ - if (!E)
++(
+   free(E);
++|
++  free_commit_list(E);
++)
+ 
+ @@
+ expression E;
+@@ -16,3 +24,22 @@ expression E;
+ - free(E);
+ + FREE_AND_NULL(E);
+ - E = NULL;
++
++@@
++expression E;
++@@
++- if (E)
++- {
++  free_commit_list(E);
++  E = NULL;
++- }
++
++@@
++expression E;
++statement S;
++@@
++- if (E) {
+++ if (E)
++  S
++  free_commit_list(E);
++- }
+diff --git a/revision.c b/revision.c
+index 7d435f80480..4963ba7def8 100644
+--- a/revision.c
++++ b/revision.c
+@@ -1456,10 +1456,9 @@ static int limit_list(struct rev_info *revs)
+ 	if (revs->left_only || revs->right_only)
+ 		limit_left_right(newlist, revs);
+ 
+-	if (bottom) {
++	if (bottom)
+ 		limit_to_ancestry(bottom, newlist);
+-		free_commit_list(bottom);
+-	}
++	free_commit_list(bottom);
+ 
+ 	/*
+ 	 * Check if any commits have become TREESAME by some of their parents
+@@ -4080,10 +4079,8 @@ static void create_boundary_commit_list(struct rev_info *revs)
+ 	 * boundary commits anyway.  (This is what the code has always
+ 	 * done.)
+ 	 */
+-	if (revs->commits) {
+-		free_commit_list(revs->commits);
+-		revs->commits = NULL;
+-	}
++	free_commit_list(revs->commits);
++	revs->commits = NULL;
+ 
+ 	/*
+ 	 * Put all of the actual boundary commits from revs->boundary_commits
+@@ -4220,10 +4217,8 @@ struct commit *get_revision(struct rev_info *revs)
+ 		graph_update(revs->graph, c);
+ 	if (!c) {
+ 		free_saved_parents(revs);
+-		if (revs->previous_parents) {
+-			free_commit_list(revs->previous_parents);
+-			revs->previous_parents = NULL;
+-		}
++		free_commit_list(revs->previous_parents);
++		revs->previous_parents = NULL;
+ 	}
+ 	return c;
+ }
+diff --git a/submodule.c b/submodule.c
+index 86c8f0f89db..9b715b4a5cb 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -645,8 +645,7 @@ void show_submodule_diff_summary(struct diff_options *o, const char *path,
+ 	print_submodule_diff_summary(sub, &rev, o);
+ 
+ out:
+-	if (merge_bases)
+-		free_commit_list(merge_bases);
++	free_commit_list(merge_bases);
+ 	clear_commit_marks(left, ~0);
+ 	clear_commit_marks(right, ~0);
+ 	if (sub) {
+@@ -735,8 +734,7 @@ void show_submodule_inline_diff(struct diff_options *o, const char *path,
+ 
+ done:
+ 	strbuf_release(&sb);
+-	if (merge_bases)
+-		free_commit_list(merge_bases);
++	free_commit_list(merge_bases);
+ 	if (left)
+ 		clear_commit_marks(left, ~0);
+ 	if (right)
+-- 
+2.35.1.1585.gd85f8dcb745
+
