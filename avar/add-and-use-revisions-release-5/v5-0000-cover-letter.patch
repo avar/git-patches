@@ -4,12 +4,55 @@ In-Reply-To: <cover-v4-00.27-00000000000-20220331T005325Z-avarab@gmail.com>
 References: <cover-v4-00.27-00000000000-20220331T005325Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Sat, 2 Apr 2022 12:20:02 +0200
-Subject: [PATCH v5 00/27] *** SUBJECT HERE ***
+Subject: [PATCH v5 00/27] revision.[ch]: add and use release_revisions()
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series reduces the memory leaks spotted by our tests by at least
+half, see v3[1] for a more general overview.
+
+Thanks a lot to Phillip Wood and Junio for the v4 review! I think this
+v5 should address all of the things brought up in v4 in one way or
+another, changes:
+
+ * The "extra_headers" or "ref_message_ids" freeing is the same, but
+   the commit message is altered to explain that commit.
+
+ * The "revision.[ch]: split freeing of revs->commit into a function"
+   is gone, instead I applied a coccinelle rule to free_commit_list()
+   as suggested by Phillip Wood (well, the change in pattern, not the
+   rule was the suggestion).
+
+ * The release_revisions() is now simply using free_commit_list()
+   without a NULL assignment to the member, and I changed some
+   FREE_AND_NULL() that I'd added (for e.g. cmdline) to just free().
+
+   The "and NULL" was just cargo-culted from elswhere, but for
+   release_revisions() we not only aren't using the struct again (it's
+   not a "reset"), but it it wouldn't have worked as a reset before
+   anyway (some things free'd without NULL-ing).
+
+   We could trivially have a "reset" variant of release_revisions(),
+   but since no current API user wanted it let's leave it, leving the
+   memory uninitialized will help to catch any invalid API usage.
+
+ * I missed a object_array_clear() in builtin/stash.c that
+   could/should be free'd by release_revisions().
+
+ * An obscure memory leak in stash.c (on "master") around
+   assert_stash_ref() has been fixed.
+
+ * Add a "goto usage" pattern for a memory leak new in stash.c that
+   this series introduced, i.e. because strvec_clear() was moved to a
+   "cleanup" block if we invoked usage_with_options() between the two
+   we'd exit without the cleanup. Now we'll cleanup on "usage" too.
+
+ * Updated commit message & docs around REV_INFO_INIT, hopefully
+   addressing the thread left off at
+   https://lore.kernel.org/git/220401.86h77dnkpw.gmgdl@evledraar.gmail.com/
+
+1. https://lore.kernel.org/git/cover-v3-00.27-00000000000-20220325T171340Z-avarab@gmail.com/
 
 Ævar Arnfjörð Bjarmason (27):
   t/helper/test-fast-rebase.c: don't leak "struct strbuf"
