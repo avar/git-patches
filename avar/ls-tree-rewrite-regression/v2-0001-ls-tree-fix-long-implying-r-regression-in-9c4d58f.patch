@@ -1,0 +1,213 @@
+From d15455b31011452266d8f638f78f3d13300fe907 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-d15455b3101-20220404T233812Z-avarab@gmail.com>
+In-Reply-To: <9ce4dadf140204e934f7025bb91385c376118940.1649111831.git.steadmon@google.com>
+References: <9ce4dadf140204e934f7025bb91385c376118940.1649111831.git.steadmon@google.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 5 Apr 2022 01:02:01 +0200
+Subject: [PATCH v2] ls-tree: fix --long implying -r regression in 9c4d58ff2c3
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression introduced in 9c4d58ff2c3 (ls-tree: split up "fast
+path" callbacks, 2022-03-23), and improve the tests added in the
+1041d58b4d9 (Merge branch 'tl/ls-tree-oid-only', 2022-04-04) topic it
+was merged as part of to test the full expected output of various
+"ls-tree" options with and without -r.
+
+These tests all pass with that topic reverted, except those that would
+fail because they're testing the new --object-only feature introduced
+in that topic.
+
+Reported-By: Josh Steadmon <steadmon@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-tree.c         |   2 +-
+ t/t3104-ls-tree-format.sh | 126 +++++++++++++++++++++++++++++++++++---
+ 2 files changed, 119 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/ls-tree.c b/builtin/ls-tree.c
+index 5dac9ee5b9d..e279be8bb63 100644
+--- a/builtin/ls-tree.c
++++ b/builtin/ls-tree.c
+@@ -255,7 +255,7 @@ static int show_tree_long(const struct object_id *oid, struct strbuf *base,
+ 	printf("%06o %s %s %7s\t", data.mode, type_name(data.type),
+ 	       find_unique_abbrev(data.oid, abbrev), size_text);
+ 	show_tree_common_default_long(base, pathname, data.base->len);
+-	return 1;
++	return recurse;
+ }
+ 
+ static int show_tree_name_only(const struct object_id *oid, struct strbuf *base,
+diff --git a/t/t3104-ls-tree-format.sh b/t/t3104-ls-tree-format.sh
+index 0769a933d69..f032eb63565 100755
+--- a/t/t3104-ls-tree-format.sh
++++ b/t/t3104-ls-tree-format.sh
+@@ -23,6 +23,19 @@ test_ls_tree_format () {
+ 	fmtopts=$3 &&
+ 	shift 2 &&
+ 
++	cat >expect &&
++	cat <&6 >expect.-d &&
++	cat <&7 >expect.-r &&
++	cat <&8 >expect.-t &&
++
++	for opt in '' '-d' '-r' '-t' '-t'
++	do
++		test_expect_success "'ls-tree $opts${opt:+ $opt}' output" '
++			git ls-tree ${opt:+$opt }$opts $opt HEAD >actual &&
++			test_cmp expect${opt:+.$opt} actual
++		'
++	done
++
+ 	test_expect_success "ls-tree '--format=<$format>' is like options '$opts $fmtopts'" '
+ 		git ls-tree $opts -r HEAD >expect &&
+ 		git ls-tree --format="$format" -r $fmtopts HEAD >actual &&
+@@ -39,38 +52,135 @@ test_ls_tree_format () {
+ 
+ test_ls_tree_format \
+ 	"%(objectmode) %(objecttype) %(objectname)%x09%(path)" \
+-	""
++	"" \
++	<<-OUT 6<<-OUT_D 7<<-OUT_R 8<<-OUT_T
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	OUT_D
++	100644 blob $(git rev-parse HEAD:dir/sub-file.t)	dir/sub-file.t
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT_R
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT_T
+ 
+ test_ls_tree_format \
+ 	"%(objectmode) %(objecttype) %(objectname) %(objectsize:padded)%x09%(path)" \
+-	"--long"
++	"--long" \
++	<<-OUT 6<<-OUT_D 7<<-OUT_R 8<<-OUT_T
++	040000 tree $(git rev-parse HEAD:dir)       -	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)       9	top-file.t
++	OUT
++	040000 tree $(git rev-parse HEAD:dir)       -	dir
++	OUT_D
++	100644 blob $(git rev-parse HEAD:dir/sub-file.t)      13	dir/sub-file.t
++	100644 blob $(git rev-parse HEAD:top-file.t)       9	top-file.t
++	OUT_R
++	040000 tree $(git rev-parse HEAD:dir)       -	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)       9	top-file.t
++	OUT_T
+ 
+ test_ls_tree_format \
+ 	"%(path)" \
+-	"--name-only"
++	"--name-only" \
++	<<-OUT 6<<-OUT_D 7<<-OUT_R 8<<-OUT_T
++	dir
++	top-file.t
++	OUT
++	dir
++	OUT_D
++	dir/sub-file.t
++	top-file.t
++	OUT_R
++	dir
++	top-file.t
++	OUT_T
+ 
+ test_ls_tree_format \
+ 	"%(objectname)" \
+-	"--object-only"
++	"--object-only" \
++	<<-OUT 6<<-OUT_D 7<<-OUT_R 8<<-OUT_T
++	$(git rev-parse HEAD:dir)
++	$(git rev-parse HEAD:top-file.t)
++	OUT
++	$(git rev-parse HEAD:dir)
++	OUT_D
++	$(git rev-parse HEAD:dir/sub-file.t)
++	$(git rev-parse HEAD:top-file.t)
++	OUT_R
++	$(git rev-parse HEAD:dir)
++	$(git rev-parse HEAD:top-file.t)
++	OUT_T
+ 
+ test_ls_tree_format \
+ 	"%(objectname)" \
+ 	"--object-only --abbrev" \
+-	"--abbrev"
++	"--abbrev" \
++	<<-OUT 6<<-OUT_D 7<<-OUT_R 8<<-OUT_T
++	$(git rev-parse HEAD:dir | test_copy_bytes 7)
++	$(git rev-parse HEAD:top-file.t| test_copy_bytes 7)
++	OUT
++	$(git rev-parse HEAD:dir | test_copy_bytes 7)
++	OUT_D
++	$(git rev-parse HEAD:dir/sub-file.t | test_copy_bytes 7)
++	$(git rev-parse HEAD:top-file.t | test_copy_bytes 7)
++	OUT_R
++	$(git rev-parse HEAD:dir | test_copy_bytes 7)
++	$(git rev-parse HEAD:top-file.t | test_copy_bytes 7)
++	OUT_T
+ 
+ test_ls_tree_format \
+ 	"%(objectmode) %(objecttype) %(objectname)%x09%(path)" \
+ 	"-t" \
+-	"-t"
++	"-t" \
++	<<-OUT 6<<-OUT_D 7<<-OUT_R 8<<-OUT_T
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	OUT_D
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:dir/sub-file.t)	dir/sub-file.t
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT_R
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT_T
+ 
+ test_ls_tree_format \
+ 	"%(objectmode) %(objecttype) %(objectname)%x09%(path)" \
+ 	"--full-name" \
+-	"--full-name"
++	"--full-name" \
++	<<-OUT 6<<-OUT_D 7<<-OUT_R 8<<-OUT_T
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	OUT_D
++	100644 blob $(git rev-parse HEAD:dir/sub-file.t)	dir/sub-file.t
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT_R
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT_T
+ 
+ test_ls_tree_format \
+ 	"%(objectmode) %(objecttype) %(objectname)%x09%(path)" \
+ 	"--full-tree" \
+-	"--full-tree"
++	"--full-tree" \
++	<<-OUT 6<<-OUT_D 7<<-OUT_R 8<<-OUT_T
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	OUT_D
++	100644 blob $(git rev-parse HEAD:dir/sub-file.t)	dir/sub-file.t
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT_R
++	040000 tree $(git rev-parse HEAD:dir)	dir
++	100644 blob $(git rev-parse HEAD:top-file.t)	top-file.t
++	OUT_T
+ 
+ test_done
+-- 
+2.35.1.1604.g35dc6517170
+
