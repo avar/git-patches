@@ -1,0 +1,69 @@
+From e700d372e0c0bee9c60dd4d70a3853345d9fd587 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-e700d372e0c-20220405T195425Z-avarab@gmail.com>
+In-Reply-To: <20220405141552.qgl6t2urtbeilsmp@lucy.dinwoodie.org>
+References: <20220405141552.qgl6t2urtbeilsmp@lucy.dinwoodie.org>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 5 Apr 2022 20:57:17 +0200
+Subject: [PATCH] Documentation/Makefile: fix "make info" regression in
+ dad9cd7d518
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in my dad9cd7d518 (Makefile: move ".SUFFIXES" rule to
+shared.mak, 2022-03-03). As explained in the GNU make documentation
+for the $* variable, available at:
+
+	info make --index-search='$*'
+
+This rule relied on ".texi" being in the default list of suffixes, as
+seen at:
+
+	make -f/dev/null -p | grep -v -e ^# -e ^$|grep -F .SUFFIXES
+
+The documentation explains what was going on here:
+
+	In an explicit rule, there is no stem; so '$*' cannot be determined
+	in that way.  Instead, if the target name ends with a recognized
+	suffix (*note Old-Fashioned Suffix Rules: Suffix Rules.), '$*' is
+	set to the target name minus the suffix.  For example, if the
+	target name is 'foo.c', then '$*' is set to 'foo', since '.c' is a
+	suffix.  GNU 'make' does this bizarre thing only for compatibility
+	with other implementations of 'make'.  You should generally avoid
+	using '$*' except in implicit rules or static pattern rules.
+
+	If the target name in an explicit rule does not end with a
+	recognized suffix, '$*' is set to the empty string for that rule.
+
+I.e. this rule added back in 5cefc33bffd (Documentation: add
+gitman.info target, 2007-12-10) was resolving gitman.texi from
+gitman.info. We can instead just use the more obvious $< variable
+referring to the prerequisite.
+
+This was the only use of $* in our Makefiles in an explicit rule, the
+three remaining ones are all implicit rules, and therefore didn't
+depend on the ".SUFFIXES" list.
+
+Reported-by: Adam Dinwoodie <adam@dinwoodie.org>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Documentation/Makefile b/Documentation/Makefile
+index 1eb9192dae8..44c080e3e5b 100644
+--- a/Documentation/Makefile
++++ b/Documentation/Makefile
+@@ -390,7 +390,7 @@ gitman.texi: $(MAN_XML) cat-texi.perl texi.xsl
+ 	$(RM) $@+
+ 
+ gitman.info: gitman.texi
+-	$(QUIET_MAKEINFO)$(MAKEINFO) --no-split --no-validate $*.texi
++	$(QUIET_MAKEINFO)$(MAKEINFO) --no-split --no-validate $<
+ 
+ $(patsubst %.txt,%.texi,$(MAN_TXT)): %.texi : %.xml
+ 	$(QUIET_DB2TEXI)$(DOCBOOK2X_TEXI) --to-stdout $*.xml >$@
+-- 
+2.35.1.1604.g35dc6517170
+
