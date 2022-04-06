@@ -1,0 +1,165 @@
+From 8af76f39b9f2538a5602c9d692f7f1ce4f6100a0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.3-8af76f39b9f-20220406T103105Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20220406T103105Z-avarab@gmail.com>
+References: <Ybtb6Shdj56ACdub@coredump.intra.peff.net>
+	<cover-0.3-00000000000-20220406T103105Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 16 Dec 2021 13:11:03 +0100
+Subject: [PATCH 3/3] run-command API users: use "env" not "env_array" in
+ comments & names
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up on the preceding commit which changed all references to the
+"env_array" when referring to the "struct child_process" member. These
+changes are all unnecessary for the compiler, but help the code's
+human readers.
+
+All the comments that referred to "env_array" have now been updated,
+as well as function names and variables that had "env_array" in their
+name, they now refer to "env".
+
+In addition the "out" name for the submodule.h prototype was
+inconsistent with the function definition's use of "env_array" in
+submodule.c. Both of them use "env" now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c |  2 +-
+ run-command.c               |  6 +++---
+ run-command.h               | 10 +++++-----
+ sequencer.c                 |  6 +++---
+ submodule.h                 |  4 ++--
+ 5 files changed, 14 insertions(+), 14 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index d89184fbf47..0f1b82fd87f 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -513,7 +513,7 @@ static void runcommand_in_submodule_cb(const struct cache_entry *list_item,
+ 		 * on windows. And since environment variables are
+ 		 * case-insensitive in windows, it interferes with the
+ 		 * existing PATH variable. Hence, to avoid that, we expose
+-		 * path via the args strvec and not via env_array.
++		 * path via the args strvec and not via env.
+ 		 */
+ 		sq_quote_buf(&sb, path);
+ 		strvec_pushf(&cp.args, "path=%s; %s",
+diff --git a/run-command.c b/run-command.c
+index 5f7ea713f06..789eaa59750 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1816,16 +1816,16 @@ int run_auto_maintenance(int quiet)
+ 	return run_command(&maint);
+ }
+ 
+-void prepare_other_repo_env(struct strvec *env_array, const char *new_git_dir)
++void prepare_other_repo_env(struct strvec *env, const char *new_git_dir)
+ {
+ 	const char * const *var;
+ 
+ 	for (var = local_repo_env; *var; var++) {
+ 		if (strcmp(*var, CONFIG_DATA_ENVIRONMENT) &&
+ 		    strcmp(*var, CONFIG_COUNT_ENVIRONMENT))
+-			strvec_push(env_array, *var);
++			strvec_push(env, *var);
+ 	}
+-	strvec_pushf(env_array, "%s=%s", GIT_DIR_ENVIRONMENT, new_git_dir);
++	strvec_pushf(env, "%s=%s", GIT_DIR_ENVIRONMENT, new_git_dir);
+ }
+ 
+ enum start_bg_result start_bg_command(struct child_process *cmd,
+diff --git a/run-command.h b/run-command.h
+index 89e1bda0c96..bb43ccf646e 100644
+--- a/run-command.h
++++ b/run-command.h
+@@ -58,7 +58,7 @@ struct child_process {
+ 	struct strvec args;
+ 
+ 	/**
+-	 * Like .args the .env_array is a `struct strvec'.
++	 * Like .args the .env is a `struct strvec'.
+ 	 *
+ 	 * To modify the environment of the sub-process, specify an array of
+ 	 * environment settings. Each string in the array manipulates the
+@@ -70,7 +70,7 @@ struct child_process {
+ 	 * - If the string does not contain '=', it names an environment
+ 	 *   variable that will be removed from the child process's environment.
+ 	 *
+-	 * The memory in .env_array will be cleaned up automatically during
++	 * The memory in .env will be cleaned up automatically during
+ 	 * `finish_command` (or during `start_command` when it is unsuccessful).
+ 	 */
+ 	struct strvec env;
+@@ -480,14 +480,14 @@ int run_processes_parallel_tr2(int n, get_next_task_fn, start_failure_fn,
+ 			       const char *tr2_category, const char *tr2_label);
+ 
+ /**
+- * Convenience function which prepares env_array for a command to be run in a
+- * new repo. This adds all GIT_* environment variables to env_array with the
++ * Convenience function which prepares env for a command to be run in a
++ * new repo. This adds all GIT_* environment variables to env with the
+  * exception of GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT (which cause the
+  * corresponding environment variables to be unset in the subprocess) and adds
+  * an environment variable pointing to new_git_dir. See local_repo_env in
+  * cache.h for more information.
+  */
+-void prepare_other_repo_env(struct strvec *env_array, const char *new_git_dir);
++void prepare_other_repo_env(struct strvec *env, const char *new_git_dir);
+ 
+ /**
+  * Possible return values for start_bg_command().
+diff --git a/sequencer.c b/sequencer.c
+index 3d0331b7689..79e14b51a23 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -919,7 +919,7 @@ static char *get_author(const char *message)
+ 	return NULL;
+ }
+ 
+-static const char *author_date_from_env_array(const struct strvec *env)
++static const char *author_date_from_env(const struct strvec *env)
+ {
+ 	int i;
+ 	const char *date;
+@@ -1011,7 +1011,7 @@ static int run_git_commit(const char *defmsg,
+ 		strvec_pushf(&cmd.env, "GIT_COMMITTER_DATE=%s",
+ 			     opts->ignore_date ?
+ 			     "" :
+-			     author_date_from_env_array(&cmd.env));
++			     author_date_from_env(&cmd.env));
+ 	if (opts->ignore_date)
+ 		strvec_push(&cmd.env, "GIT_AUTHOR_DATE=");
+ 
+@@ -3923,7 +3923,7 @@ static int do_merge(struct repository *r,
+ 			strvec_pushf(&cmd.env, "GIT_COMMITTER_DATE=%s",
+ 				     opts->ignore_date ?
+ 				     "" :
+-				     author_date_from_env_array(&cmd.env));
++				     author_date_from_env(&cmd.env));
+ 		if (opts->ignore_date)
+ 			strvec_push(&cmd.env, "GIT_AUTHOR_DATE=");
+ 
+diff --git a/submodule.h b/submodule.h
+index 40c14452377..2ac7a04e726 100644
+--- a/submodule.h
++++ b/submodule.h
+@@ -158,11 +158,11 @@ int submodule_move_head(const char *path,
+ void submodule_unset_core_worktree(const struct submodule *sub);
+ 
+ /*
+- * Prepare the "env_array" parameter of a "struct child_process" for executing
++ * Prepare the "env" parameter of a "struct child_process" for executing
+  * a submodule by clearing any repo-specific environment variables, but
+  * retaining any config in the environment.
+  */
+-void prepare_submodule_repo_env(struct strvec *out);
++void prepare_submodule_repo_env(struct strvec *env);
+ 
+ #define ABSORB_GITDIR_RECURSE_SUBMODULES (1<<0)
+ void absorb_git_dir_into_superproject(const char *path,
+-- 
+2.36.0.rc0.849.g2d5b5d9ab01
+
