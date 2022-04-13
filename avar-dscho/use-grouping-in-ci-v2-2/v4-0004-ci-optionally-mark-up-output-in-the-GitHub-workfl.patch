@@ -1,0 +1,134 @@
+From 8acaa800d3a4d4a3311ad2f2520212a813ddca32 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v4-4.6-8acaa800d3a-20220413T195450Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v4-0.6-00000000000-20220413T195450Z-avarab@gmail.com>
+References: <RFC-cover-v3-0.6-00000000000-20220325T183946Z-avarab@gmail.com>
+	<RFC-cover-v4-0.6-00000000000-20220413T195450Z-avarab@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Sun, 16 Jan 2022 13:19:06 +0100
+Subject: [RFC PATCH v4 4/6] ci: optionally mark up output in the GitHub
+ workflow
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A couple of commands exist to spruce up the output in GitHub workflows:
+https://docs.github.com/en/actions/learn-github-actions/workflow-commands-for-github-actions
+
+In addition to the `::group::<label>`/`::endgroup::` commands (which we
+already use to structure the output of the build step better), we also
+use `::error::`/`::notice::` to draw the attention to test failures and
+to test cases that were expected to fail but didn't.
+
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib-functions.sh              |  4 +--
+ t/test-lib-github-workflow-markup.sh | 50 ++++++++++++++++++++++++++++
+ t/test-lib.sh                        |  5 ++-
+ 3 files changed, 56 insertions(+), 3 deletions(-)
+ create mode 100644 t/test-lib-github-workflow-markup.sh
+
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 93c03380d44..af4831a54c6 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -795,7 +795,7 @@ test_verify_prereq () {
+ }
+ 
+ test_expect_failure () {
+-	test_start_
++	test_start_ "$@"
+ 	test "$#" = 3 && { test_prereq=$1; shift; } || test_prereq=
+ 	test "$#" = 2 ||
+ 	BUG "not 2 or 3 parameters to test-expect-failure"
+@@ -815,7 +815,7 @@ test_expect_failure () {
+ }
+ 
+ test_expect_success () {
+-	test_start_
++	test_start_ "$@"
+ 	test "$#" = 3 && { test_prereq=$1; shift; } || test_prereq=
+ 	test "$#" = 2 ||
+ 	BUG "not 2 or 3 parameters to test-expect-success"
+diff --git a/t/test-lib-github-workflow-markup.sh b/t/test-lib-github-workflow-markup.sh
+new file mode 100644
+index 00000000000..d8dc969df4a
+--- /dev/null
++++ b/t/test-lib-github-workflow-markup.sh
+@@ -0,0 +1,50 @@
++# Library of functions to mark up test scripts' output suitable for
++# pretty-printing it in GitHub workflows.
++#
++# Copyright (c) 2022 Johannes Schindelin
++#
++# This program is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation, either version 2 of the License, or
++# (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program.  If not, see http://www.gnu.org/licenses/ .
++#
++# The idea is for `test-lib.sh` to source this file when run in GitHub
++# workflows; these functions will then override (empty) functions
++# that are are called at the appropriate times during the test runs.
++
++start_test_output () {
++	test -n "$GIT_TEST_TEE_OUTPUT_FILE" ||
++	die "--github-workflow-markup requires --verbose-log"
++	github_markup_output="${GIT_TEST_TEE_OUTPUT_FILE%.out}.markup"
++	>$github_markup_output
++	GIT_TEST_TEE_OFFSET=0
++}
++
++# No need to override start_test_case_output
++
++finalize_test_case_output () {
++	test_case_result=$1
++	shift
++	case "$test_case_result" in
++	failure)
++		echo >>$github_markup_output "::error::failed: $this_test.$test_count $1"
++		;;
++	fixed)
++		echo >>$github_markup_output "::notice::fixed: $this_test.$test_count $1"
++		;;
++	esac
++	echo >>$github_markup_output "::group::$test_case_result: $this_test.$test_count $*"
++	test-tool >>$github_markup_output path-utils skip-n-bytes \
++		"$GIT_TEST_TEE_OUTPUT_FILE" $GIT_TEST_TEE_OFFSET
++	echo >>$github_markup_output "::endgroup::"
++}
++
++# No need to override finalize_test_output
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 62a57b00730..8a63b4b64c9 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -204,6 +204,9 @@ parse_option () {
+ 	--write-junit-xml)
+ 		. "$TEST_DIRECTORY/test-lib-junit.sh"
+ 		;;
++	--github-workflow-markup)
++		. "$TEST_DIRECTORY/test-lib-github-workflow-markup.sh"
++		;;
+ 	--stress)
+ 		stress=t ;;
+ 	--stress=*)
+@@ -1081,7 +1084,7 @@ test_start_ () {
+ 	test_count=$(($test_count+1))
+ 	maybe_setup_verbose
+ 	maybe_setup_valgrind
+-	start_test_case_output
++	start_test_case_output "$@"
+ }
+ 
+ test_finish_ () {
+-- 
+2.36.0.rc2.843.g193535c2aa7
+

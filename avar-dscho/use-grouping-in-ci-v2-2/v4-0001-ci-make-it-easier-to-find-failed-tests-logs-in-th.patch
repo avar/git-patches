@@ -1,0 +1,153 @@
+From cc137c69ee1f52744ebbda3378b085f161291509 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v4-1.6-cc137c69ee1-20220413T195450Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v4-0.6-00000000000-20220413T195450Z-avarab@gmail.com>
+References: <RFC-cover-v3-0.6-00000000000-20220325T183946Z-avarab@gmail.com>
+	<RFC-cover-v4-0.6-00000000000-20220413T195450Z-avarab@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Sun, 16 Jan 2022 12:33:38 +0100
+Subject: [RFC PATCH v4 1/6] ci: make it easier to find failed tests' logs in
+ the GitHub workflow
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When investigating a test failure, the time that matters most is the
+time it takes from getting aware of the failure to displaying the output
+of the failing test case.
+
+You currently have to know a lot of implementation details when
+investigating test failures in the CI runs. The first step is easy: the
+failed job is marked quite clearly, but when opening it, the failed step
+is expanded, which in our case is the one running
+`ci/run-build-and-tests.sh`. This step, most notably, only offers a
+high-level view of what went wrong: it prints the output of `prove`
+which merely tells the reader which test script failed.
+
+The actually interesting part is in the detailed log of said failed
+test script. But that log is shown in the CI run's step that runs
+`ci/print-test-failures.sh`. And that step is _not_ expanded in the web
+UI by default. It is even marked as "successful", which makes it very
+easy to miss that there is useful information hidden in there.
+
+Let's help the reader by showing the failed tests' detailed logs in the
+step that is expanded automatically, i.e. directly after the test suite
+failed.
+
+This also helps the situation where the _build_ failed and the
+`print-test-failures` step was executed under the assumption that the
+_test suite_ failed, and consequently failed to find any failed tests.
+
+An alternative way to implement this patch would be to source
+`ci/print-test-failures.sh` in the `handle_test_failures` function to
+show these logs. However, over the course of the next few commits, we
+want to introduce some grouping which would be harder to achieve that
+way (for example, we do want a leaner, and colored, preamble for each
+failed test script, and it would be trickier to accommodate the lack of
+nested groupings in GitHub workflows' output).
+
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml       | 20 ++++--------------
+ ci/print-test-failures-github.sh | 35 ++++++++++++++++++++++++++++++++
+ 2 files changed, 39 insertions(+), 16 deletions(-)
+ create mode 100755 ci/print-test-failures-github.sh
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 6d25ec4ae3b..e55dda807f0 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -129,11 +129,7 @@ jobs:
+       shell: bash
+     - name: test
+       shell: bash
+-      run: . /etc/profile && make -C t -e
+-    - name: ci/print-test-failures.sh
+-      if: failure()
+-      shell: bash
+-      run: ci/print-test-failures.sh
++      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+     - name: Upload failed tests' directories
+       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+       uses: actions/upload-artifact@v2
+@@ -218,11 +214,7 @@ jobs:
+       shell: bash
+     - name: test
+       shell: bash
+-      run: . /etc/profile && make -C t -e
+-    - name: ci/print-test-failures.sh
+-      if: failure()
+-      shell: bash
+-      run: ci/print-test-failures.sh
++      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+     - name: Upload failed tests' directories
+       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+       uses: actions/upload-artifact@v2
+@@ -265,10 +257,8 @@ jobs:
+     - run: ci/lib.sh --build
+     - run: make
+     - run: ci/lib.sh --test
+-    - run: make test
++    - run: make test || ci/print-test-failures-github.sh
+       if: success()
+-    - run: ci/print-test-failures.sh
+-      if: failure()
+     - name: Upload failed tests' directories
+       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+       uses: actions/upload-artifact@v2
+@@ -301,10 +291,8 @@ jobs:
+     - run: ci/lib.sh --build
+     - run: make
+     - run: ci/lib.sh --test
+-    - run: make test
++    - run: make test || ci/print-test-failures-github.sh
+       if: success() && matrix.vector.skip-tests != 'no'
+-    - run: ci/print-test-failures.sh
+-      if: failure() && matrix.vector.skip-tests != 'no'
+     - name: Upload failed tests' directories
+       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+       uses: actions/upload-artifact@v1
+diff --git a/ci/print-test-failures-github.sh b/ci/print-test-failures-github.sh
+new file mode 100755
+index 00000000000..218aaf19763
+--- /dev/null
++++ b/ci/print-test-failures-github.sh
+@@ -0,0 +1,35 @@
++#!/bin/sh
++
++. ${0%/*}/lib-ci-type.sh
++
++set -e
++
++case "$CI_TYPE" in
++github-actions)
++	handle_failed_tests () {
++		mkdir -p t/failed-test-artifacts
++		echo "FAILED_TEST_ARTIFACTS=t/failed-test-artifacts" >>$GITHUB_ENV
++
++		for test_exit in t/test-results/*.exit
++		do
++			test 0 != "$(cat "$test_exit")" || continue
++
++			test_name="${test_exit%.exit}"
++			test_name="${test_name##*/}"
++			printf "\\e[33m\\e[1m=== Failed test: ${test_name} ===\\e[m\\n"
++			cat "t/test-results/$test_name.out"
++
++			trash_dir="t/trash directory.$test_name"
++			cp "t/test-results/$test_name.out" t/failed-test-artifacts/
++			tar czf t/failed-test-artifacts/"$test_name".trash.tar.gz "$trash_dir"
++		done
++		return 1
++	}
++	;;
++*)
++	echo "Unhandled CI type: $CI_TYPE" >&2
++	exit 1
++	;;
++esac
++
++handle_failed_tests
+-- 
+2.36.0.rc2.843.g193535c2aa7
+

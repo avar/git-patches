@@ -1,0 +1,80 @@
+From 4499f743dd1a97c7b73e156d1be9043d3762d323 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v4-5.6-4499f743dd1-20220413T195450Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v4-0.6-00000000000-20220413T195450Z-avarab@gmail.com>
+References: <RFC-cover-v3-0.6-00000000000-20220325T183946Z-avarab@gmail.com>
+	<RFC-cover-v4-0.6-00000000000-20220413T195450Z-avarab@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Mon, 13 Dec 2021 20:50:41 +0100
+Subject: [RFC PATCH v4 5/6] ci: use `--github-workflow-markup` in the GitHub
+ workflow
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+[Ævar: due to re-structuring on top of my series the {begin,end}_group
+in CI isn't needed at all to get "group" output for the test
+suite. This commit includes the now-squashed "ci/run-build-and-tests:
+add some structure to the GitHub workflow output":]
+
+The current output of Git's GitHub workflow can be quite confusing,
+especially for contributors new to the project.
+
+To make it more helpful, let's introduce some collapsible grouping.
+Initially, readers will see the high-level view of what actually
+happened (did the build fail, or the test suite?). To drill down, the
+respective group can be expanded.
+
+Note: sadly, workflow output currently cannot contain any nested groups
+(see https://github.com/actions/runner/issues/802 for details),
+therefore we take pains to ensure to end any previous group before
+starting a new one.
+
+[Ævar: The above comment isn't true anymore, as that limitation has
+been removed by basing this on my patches to run "make" and "make
+test" directly from the top-level of main.yml.
+
+Those are now effectively their own "group", effectively giving this
+stage another group "level" to use. This means that the equivalent of
+"make test" won't be on the same level as an individual test failure.
+
+We no longer take any pains to ensure balanced group output as a
+result (which was a caveat the previous ci/lib.sh implementation had
+to deal with., We just need to "cat" the generated *.markup]
+
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/lib.sh                        | 3 ++-
+ ci/print-test-failures-github.sh | 2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 3fd5291bc80..718c3252789 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -145,7 +145,8 @@ MAKEFLAGS="$MAKEFLAGS SKIP_DASHED_BUILT_INS=$SKIP_DASHED_BUILT_INS"
+ case "$CI_TYPE" in
+ github-actions)
+ 	setenv --test GIT_PROVE_OPTS "--timer --jobs $NPROC"
+-	GIT_TEST_OPTS="--verbose-log -x"
++	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
++	MAKEFLAGS="$MAKEFLAGS --jobs=10"
+ 	test Windows != "$RUNNER_OS" ||
+ 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+ 	setenv --test GIT_TEST_OPTS "$GIT_TEST_OPTS"
+diff --git a/ci/print-test-failures-github.sh b/ci/print-test-failures-github.sh
+index 218aaf19763..e432a601621 100755
+--- a/ci/print-test-failures-github.sh
++++ b/ci/print-test-failures-github.sh
+@@ -17,7 +17,7 @@ github-actions)
+ 			test_name="${test_exit%.exit}"
+ 			test_name="${test_name##*/}"
+ 			printf "\\e[33m\\e[1m=== Failed test: ${test_name} ===\\e[m\\n"
+-			cat "t/test-results/$test_name.out"
++			cat "t/test-results/$test_name.markup"
+ 
+ 			trash_dir="t/trash directory.$test_name"
+ 			cp "t/test-results/$test_name.out" t/failed-test-artifacts/
+-- 
+2.36.0.rc2.843.g193535c2aa7
+
