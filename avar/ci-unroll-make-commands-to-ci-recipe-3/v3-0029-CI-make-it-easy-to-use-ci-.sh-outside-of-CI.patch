@@ -1,0 +1,186 @@
+From 2e3c02fa0dfcc92c1222bb6446414914c3dd3af1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-29.29-2e3c02fa0df-20220413T193749Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.29-00000000000-20220413T193749Z-avarab@gmail.com>
+References: <cover-v2-00.25-00000000000-20220325T182534Z-avarab@gmail.com>
+	<cover-v3-00.29-00000000000-20220413T193749Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Apr 2022 14:34:24 +0200
+Subject: [PATCH v3 29/29] CI: make it easy to use ci/*.sh outside of CI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In preceding commits the ci/.sh scripts have lost most of their
+CI-specific assumptions. Let's go even further and explicitly support
+running ci/lib.sh outside of CI.
+
+This was possible before by faking up enough CI-specific variables,
+but as shown in the new "help" output being added here using the
+ci/lib.sh to provide "CI-like" has now become trivial.
+
+The ci/print-test-failures.sh scripts can now be used outside of CI as
+well, the only GitHub CI-specific part is now guarded by a check that
+we'll pass if outside of GitHub CI.
+
+There's also a special-case here to not clobber $MAKEFLAGS in the
+environment if we're outside of CI, in case the user has e.g. "jN" or
+other flags to "make" that they'd prefer configured already.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/lib-ci-type.sh         |  3 --
+ ci/lib.sh                 | 61 ++++++++++++++++++++++++++++++++++++---
+ ci/print-test-failures.sh | 11 ++-----
+ 3 files changed, 60 insertions(+), 15 deletions(-)
+
+diff --git a/ci/lib-ci-type.sh b/ci/lib-ci-type.sh
+index 6f01fd9e5d9..09acab7aaec 100644
+--- a/ci/lib-ci-type.sh
++++ b/ci/lib-ci-type.sh
+@@ -3,7 +3,4 @@
+ if test "$GITHUB_ACTIONS" = "true"
+ then
+ 	CI_TYPE=github-actions
+-else
+-	echo "Could not identify CI type" >&2
+-	exit 1
+ fi
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 94f83069884..3fd5291bc80 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -1,6 +1,30 @@
+ #!/bin/sh
+ set -e
+ 
++#  Usage
++CI_TYPE_HELP_COMMANDS='
++	# run "make all test" like the "linux-leaks" job
++	(eval $(jobname=linux-leaks ci/lib.sh --all) && make test)
++
++	# run "make all test" like the "linux-musl" job
++	(eval $(jobname=linux-musl ci/lib.sh --all) && make test)
++
++	# run "make test" like the "linux-TEST-vars" job (uses various GIT_TEST_* modes)
++	make && (eval $(jobname=linux-TEST-vars ci/lib.sh --test) && make test)
++
++	# run "make test" like the "linux-sha256" job
++	make && (eval $(jobname=linux-sha256 ci/lib.sh --test) && make test)
++'
++
++CI_TYPE_HELP="
++running $0 outside of CI? You can use ci/lib.sh to set up your
++environment like a given CI job. E.g.:
++$CI_TYPE_HELP_COMMANDS
++
++note that some of these (e.g. the linux-musl one) may not work as
++expected due to the CI job configuring a platform that may not match
++yours."
++
+ # Helper libraries
+ . ${0%/*}/lib-ci-type.sh
+ 
+@@ -9,6 +33,10 @@ mode=$1
+ if test -z "$mode"
+ then
+ 	echo "need a $0 mode, e.g. --build or --test" >&2
++	if test -z "$CI_TYPE"
++	then
++		echo "$CI_TYPE_HELP" >&2
++	fi
+ 	exit 1
+ fi
+ 
+@@ -35,7 +63,7 @@ setenv () {
+ 	do
+ 		case "$1" in
+ 		--build | --test)
+-			if test "$1" != "$mode"
++			if test "$1" != "$mode" && test "$mode" != "--all"
+ 			then
+ 				skip=t
+ 			fi
+@@ -65,6 +93,10 @@ setenv () {
+ 	if test -n "$GITHUB_ENV"
+ 	then
+ 		echo "$key=$val" >>"$GITHUB_ENV"
++	elif test -z "$CI_TYPE"
++	then
++		echo "$key=\"$val\""
++		echo "export $key"
+ 	fi
+ 
+ 	echo "SET: '$key=$val'" >&2
+@@ -76,10 +108,29 @@ CC_PACKAGE=
+ 
+ # How many jobs to run in parallel?
+ NPROC=10
++case "$CI_TYPE" in
++'')
++	if command -v nproc >/dev/null
++	then
++		NPROC=$(nproc)
++	else
++		NPROC=1
++	fi
++
++	if test -n "$MAKEFLAGS"
++	then
++		COMMON_MAKEFLAGS="$MAKEFLAGS"
++	else
++		COMMON_MAKEFLAGS=--jobs=$NPROC
++	fi
++	;;
++*)
++	# For "--test" we carry the MAKEFLAGS over from earlier steps, except
++	# in stand-alone jobs which will use $COMMON_MAKEFLAGS.
++	COMMON_MAKEFLAGS=--jobs=$NPROC
++	;;
++esac
+ 
+-# For "--test" we carry the MAKEFLAGS over from earlier steps, except
+-# in stand-alone jobs which will use $COMMON_MAKEFLAGS.
+-COMMON_MAKEFLAGS=--jobs=$NPROC
+ 
+ # Clear MAKEFLAGS that may come from the outside world.
+ MAKEFLAGS=$COMMON_MAKEFLAGS
+@@ -99,6 +150,8 @@ github-actions)
+ 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+ 	setenv --test GIT_TEST_OPTS "$GIT_TEST_OPTS"
+ 	;;
++'')
++	;;
+ *)
+ 	echo "Unhandled CI type: $CI_TYPE" >&2
+ 	exit 1
+diff --git a/ci/print-test-failures.sh b/ci/print-test-failures.sh
+index 2405f65650a..ba8428ad484 100755
+--- a/ci/print-test-failures.sh
++++ b/ci/print-test-failures.sh
+@@ -38,19 +38,14 @@ do
+ 		test_name="${TEST_EXIT%.exit}"
+ 		test_name="${test_name##*/}"
+ 		trash_dir="trash directory.$test_name"
+-		case "$CI_TYPE" in
+-		github-actions)
++		if test "$CI_TYPE" = "github-actions"
++		then
+ 			mkdir -p failed-test-artifacts
+ 			echo "FAILED_TEST_ARTIFACTS=t/failed-test-artifacts" >>$GITHUB_ENV
+ 			cp "${TEST_EXIT%.exit}.out" failed-test-artifacts/
+ 			tar czf failed-test-artifacts/"$test_name".trash.tar.gz "$trash_dir"
+ 			continue
+-			;;
+-		*)
+-			echo "Unhandled CI type: $CI_TYPE" >&2
+-			exit 1
+-			;;
+-		esac
++		fi
+ 		trash_tgz_b64="trash.$test_name.base64"
+ 		if [ -d "$trash_dir" ]
+ 		then
+-- 
+2.36.0.rc2.843.g193535c2aa7
+
