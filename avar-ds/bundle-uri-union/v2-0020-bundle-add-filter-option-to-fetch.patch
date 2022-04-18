@@ -1,0 +1,103 @@
+From c3a60a9bc72f37dcfbdc49cecfba7e64b017813b Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-20.36-c3a60a9bc72-20220418T165545Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Mon, 31 Jan 2022 14:54:27 -0500
+Subject: [RFC PATCH v2 20/36] bundle: add --filter option to 'fetch'
+
+When a repository uses an object filter for partial clone, the 'git
+bundle fetch' command should try to download bundles that match that
+filter.
+
+Teach 'git bundle fetch' to take a '--filter' option and then only
+consider bundles that match that filter (or lack thereof). This allows
+the bundle server to advertise different sets of bundles for different
+filters.
+
+Add some verification to be sure that the bundle we downloaded actually
+uses that filter. This is especially important when no filter is
+requested but the downloaded bundle _does_ have a filter.
+
+RFC-TODO: add tests for the happy path.
+
+RFC-TODO: add tests for these validations.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ builtin/bundle.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/builtin/bundle.c b/builtin/bundle.c
+index 255d7aa774b..711e0863a16 100644
+--- a/builtin/bundle.c
++++ b/builtin/bundle.c
+@@ -9,6 +9,7 @@
+ #include "refs.h"
+ #include "config.h"
+ #include "packfile.h"
++#include "list-objects-filter-options.h"
+ 
+ /*
+  * Basic handler for bundle files to connect repositories via sneakernet.
+@@ -410,10 +411,13 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 	};
+ 	struct remote_bundle_info *stack = NULL;
+ 	struct hashmap toc = { 0 };
++	const char *filter = NULL;
+ 
+ 	struct option options[] = {
+ 		OPT_BOOL(0, "progress", &progress,
+ 			 N_("show progress meter")),
++		OPT_STRING(0, "filter", &filter,
++			   N_("filter-spec"), N_("only install bundles matching this filter")),
+ 		OPT_END()
+ 	};
+ 
+@@ -453,6 +457,17 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 
+ 		/* initialize stack using timestamp heuristic. */
+ 		hashmap_for_each_entry(&toc, &iter, info, ent) {
++			/* Skip if filter does not match. */
++			if (!filter && info->filter_str)
++				continue;
++			if (filter &&
++			    (!info->filter_str || strcasecmp(filter, info->filter_str)))
++				continue;
++
++			/*
++			 * Now that the filter matches, start with the
++			 * bundle with largest timestamp.
++			 */
+ 			if (info->timestamp > max_time || !stack) {
+ 				stack = info;
+ 				max_time = info->timestamp;
+@@ -472,6 +487,7 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 	while (stack) {
+ 		int valid = 1;
+ 		int bundle_fd;
++		const char *filter_str = NULL;
+ 		struct string_list_item *prereq;
+ 		struct bundle_header header = BUNDLE_HEADER_INIT;
+ 
+@@ -487,6 +503,16 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 		if (bundle_fd < 0)
+ 			die(_("failed to read bundle from '%s'"), stack->uri);
+ 
++		if (header.filter.choice)
++			filter_str = list_objects_filter_spec(&header.filter);
++
++		if (filter && (!filter_str || strcasecmp(filter, filter_str)))
++			die(_("bundle from '%s' does not match expected filter"),
++			    stack->uri);
++		if (!filter && filter_str)
++			die(_("bundle from '%s' has an unexpected filter"),
++			    stack->uri);
++
+ 		reprepare_packed_git(the_repository);
+ 		for_each_string_list_item(prereq, &header.prerequisites) {
+ 			struct object_info info = OBJECT_INFO_INIT;
+-- 
+2.36.0.rc2.902.g60576bbc845
+

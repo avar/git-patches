@@ -1,0 +1,67 @@
+From 2917cdd82773704d286032bc4c825d049a1424e9 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-07.36-2917cdd8277-20220418T165545Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Tue, 8 Feb 2022 10:51:26 -0500
+Subject: [RFC PATCH v2 07/36] remote: allow relative_url() to return an
+ absolute url
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the 'url' parameter was absolute, the previous implementation would
+concatenate 'remote_url' with 'url'. Instead, we want to return 'url' in
+this case.
+
+The documentation now discusses what happens when supplying two
+absolute URLs.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ remote.c | 12 ++++++++++--
+ remote.h |  1 +
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/remote.c b/remote.c
+index 87656138645..7576f673fcd 100644
+--- a/remote.c
++++ b/remote.c
+@@ -2761,10 +2761,18 @@ char *relative_url(const char *remote_url, const char *url,
+ 	int is_relative = 0;
+ 	int colonsep = 0;
+ 	char *out;
+-	char *remoteurl = xstrdup(remote_url);
++	char *remoteurl;
+ 	struct strbuf sb = STRBUF_INIT;
+-	size_t len = strlen(remoteurl);
++	size_t len;
++
++	if (!url_is_local_not_ssh(url) || is_absolute_path(url))
++		return xstrdup(url);
++
++	len = strlen(remote_url);
++	if (!len)
++		BUG("invalid empty remote_url");
+ 
++	remoteurl = xstrdup(remote_url);
+ 	if (is_dir_sep(remoteurl[len-1]))
+ 		remoteurl[len-1] = '\0';
+ 
+diff --git a/remote.h b/remote.h
+index f18fd27e530..dd4402436f1 100644
+--- a/remote.h
++++ b/remote.h
+@@ -434,6 +434,7 @@ void apply_push_cas(struct push_cas_option *, struct remote *, struct ref *);
+  * http://a.com/b  ../../../c       http:/c          error out
+  * http://a.com/b  ../../../../c    http:c           error out
+  * http://a.com/b  ../../../../../c    .:c           error out
++ * http://a.com/b  http://d.org/e   http://d.org/e   as is
+  * NEEDSWORK: Given how chop_last_dir() works, this function is broken
+  * when a local part has a colon in its path component, too.
+  */
+-- 
+2.36.0.rc2.902.g60576bbc845
+

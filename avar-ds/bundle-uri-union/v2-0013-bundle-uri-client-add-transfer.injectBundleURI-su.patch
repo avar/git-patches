@@ -1,0 +1,173 @@
+From 5c50daa92bb95ec056fb74a418f19a051c31bd8c Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-13.36-5c50daa92bb-20220418T165545Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 19 Jul 2021 15:41:52 +0200
+Subject: [RFC PATCH v2 13/36] bundle-uri client: add transfer.injectBundleURI
+ support
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add the ability to inject "fake" bundle URIs into the newly supported
+bundle-uri dialog. As discussed in the added documentation this allows
+us to pretend as though the remote supports bundle URIs.
+
+This will be useful both for ad-hoc testing, and for the real use-case
+of retrofitting bundle URI support on-the-fly, i.e. to have:
+
+	git -c transfer.injectBundleURI "file://$(pwd)/local.bdl" \
+	clone https://example.com/git.git"
+
+Be similar in spirit to:
+
+	git clone --reference local-clone.git --disassociate \
+	https://example.com/git.git"
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/transfer.txt     | 20 ++++++++++++
+ t/lib-t5730-protocol-v2-bundle-uri.sh | 46 +++++++++++++++++++++++++++
+ transport.c                           | 33 +++++++++++++++++++
+ 3 files changed, 99 insertions(+)
+
+diff --git a/Documentation/config/transfer.txt b/Documentation/config/transfer.txt
+index b49429eb4db..71b9b8f29e6 100644
+--- a/Documentation/config/transfer.txt
++++ b/Documentation/config/transfer.txt
+@@ -77,3 +77,23 @@ transfer.unpackLimit::
+ transfer.advertiseSID::
+ 	Boolean. When true, client and server processes will advertise their
+ 	unique session IDs to their remote counterpart. Defaults to false.
++
++transfer.injectBundleURI::
++	Allows for the injection of `bundle-uri` lines into the
++	protocol v2 transport dialog (see `protocol.version` in
++	linkgit:git-config[1]). See `bundle-uri` in
++	link:technical/protocol-v2.html[the Git Wire Protocol, Version
++	2] documentation for what the format looks like.
+++
++Can be given more than once, each key being injected as one line into
++the dialog.
+++
++This is useful for testing the `bundle-uri` facility, and to e.g. use
++linkgit:git-clone[1] to clone from a server which does not support
++`bundle-uri`, but where the clone can benefit from getting some or
++most of the data from a static bundle retrieved from elsewhere.
+++
++Impacts any command that uses the transport to communicate with remote
++linkgit:git-upload-pack[1] processes, e.g. linkgit:git-clone[1],
++linkgit:git-fetch[1] and the linkgit:git-ls-remote-bundle-uri[1]
++inspection command, this includes the `file://` protocol.
+diff --git a/t/lib-t5730-protocol-v2-bundle-uri.sh b/t/lib-t5730-protocol-v2-bundle-uri.sh
+index d0b15a47ec2..28c095c1224 100644
+--- a/t/lib-t5730-protocol-v2-bundle-uri.sh
++++ b/t/lib-t5730-protocol-v2-bundle-uri.sh
+@@ -267,3 +267,49 @@ test_expect_success "ls-remote-bundle-uri --[no-]quiet with $T5730_PROTOCOL:// u
+ 	test_must_be_empty err &&
+ 	test_cmp out.expect out.actual
+ '
++
++test_expect_success "ls-remote-bundle-uri with -c transfer.injectBundleURI using with $T5730_PROTOCOL:// using protocol v2" '
++	test_when_finished "rm -f log" &&
++
++	test_config -C "$T5730_PARENT" uploadpack.bundleURI \
++		"$T5730_BUNDLE_URI_ESCAPED" &&
++
++	cat >expect <<-\EOF &&
++	https://injected.example.com/fake-1.bdl
++	https://injected.example.com/fake-2.bdl
++	EOF
++	GIT_TRACE_PACKET="$PWD/log" \
++	git \
++		-c protocol.version=2 \
++		-c transfer.injectBundleURI="https://injected.example.com/fake-1.bdl" \
++		-c transfer.injectBundleURI="https://injected.example.com/fake-2.bdl" \
++		ls-remote-bundle-uri \
++		"$T5730_URI" \
++		>actual 2>err &&
++	test_cmp expect actual &&
++	test_path_is_missing log
++'
++
++test_expect_success "ls-remote-bundle-uri with bad -c transfer.injectBundleURI protocol v2 with $T5730_PROTOCOL://" '
++	test_when_finished "rm -f log" &&
++
++	test_config -C "$T5730_PARENT" uploadpack.bundleURI \
++		"$T5730_BUNDLE_URI_ESCAPED" &&
++
++	cat >err.expect <<-\EOF &&
++	error: bad (empty) transfer.injectBundleURI
++	error: could not get the bundle-uri list
++	EOF
++
++	test_must_fail env \
++		GIT_TRACE_PACKET="$PWD/log" \
++		git \
++		-c protocol.version=2 \
++		-c transfer.injectBundleURI \
++		ls-remote-bundle-uri \
++		"$T5730_URI" \
++		>out 2>err.actual &&
++	test_must_be_empty out &&
++	test_cmp err.expect err.actual &&
++	test_path_is_missing log
++'
+diff --git a/transport.c b/transport.c
+index e648d3110bb..342e39d81f3 100644
+--- a/transport.c
++++ b/transport.c
+@@ -1521,14 +1521,47 @@ int transport_fetch_refs(struct transport *transport, struct ref *refs)
+ 	return rc;
+ }
+ 
++struct config_cb {
++	struct transport *transport;
++	int configured;
++	int ret;
++};
++
++static int bundle_uri_config(const char *var, const char *value, void *data)
++{
++	struct config_cb *cb = data;
++	struct transport *transport = cb->transport;
++	struct string_list *uri = &transport->bundle_uri;
++
++	if (!strcmp(var, "transfer.injectbundleuri")) {
++		cb->configured = 1;
++		if (!value)
++			cb->ret = error(_("bad (empty) transfer.injectBundleURI"));
++		else if (bundle_uri_parse_line(uri, value) < 0)
++			cb->ret = error(_("bad transfer.injectBundleURI: '%s'"),
++					value);
++		return 0;
++	}
++	return 0;
++}
++
+ int transport_get_remote_bundle_uri(struct transport *transport, int quiet)
+ {
+ 	const struct transport_vtable *vtable = transport->vtable;
++	struct config_cb cb = {
++		.transport = transport,
++	};
+ 
+ 	/* Lazily configured */
+ 	if (transport->got_remote_bundle_uri++)
+ 		return 0;
+ 
++	git_config(bundle_uri_config, &cb);
++
++	/* Our own config can fake it up with transport.injectBundleURI */
++	if (cb.configured)
++		return cb.ret;
++
+ 	/*
+ 	 * This is intentionally below the transport.injectBundleURI,
+ 	 * we want to be able to inject into protocol v0, or into the
+-- 
+2.36.0.rc2.902.g60576bbc845
+

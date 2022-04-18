@@ -1,0 +1,87 @@
+From 2c9886c64eace9f8b76286a288bc8e82011f6931 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-29.36-2c9886c64ea-20220418T165545Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Tue, 8 Feb 2022 12:02:35 -0500
+Subject: [RFC PATCH v2 29/36] serve: advertise 'features' when config exists
+
+The 'features' capability allows a server to recommend some Git features
+at a high level. Previous changes implemented the capability so servers
+understand it, but it was never advertised.
+
+Now, allow it to be advertised, but only when the capability will
+actually _do_ something. That is, advertise if and only if a config
+value exists with the prefix "serve.". This avoids unnecessary round
+trips for an empty result.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ serve.c              | 18 +++++++++++++++---
+ t/t5701-git-serve.sh |  9 +++++++++
+ 2 files changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/serve.c b/serve.c
+index 3368d16efda..6237bf63d60 100644
+--- a/serve.c
++++ b/serve.c
+@@ -19,12 +19,24 @@ static int always_advertise(struct repository *r,
+ 	return 1;
+ }
+ 
+-static int never_advertise(struct repository *r,
+-			   struct strbuf *value)
++static int key_serve_prefix(const char *key, const char *value, void *data)
+ {
++	int *signal = data;
++	if (!strncmp(key, "serve.", 6)) {
++		*signal = 1;
++		return 1;
++	}
+ 	return 0;
+ }
+ 
++static int has_serve_config(struct repository *r,
++			    struct strbuf *value)
++{
++	int signal = 0;
++	repo_config(r, key_serve_prefix, &signal);
++	return signal;
++}
++
+ static int agent_advertise(struct repository *r,
+ 			   struct strbuf *value)
+ {
+@@ -121,7 +133,7 @@ static struct protocol_capability capabilities[] = {
+ 	},
+ 	{
+ 		.name = "features",
+-		.advertise = never_advertise,
++		.advertise = has_serve_config,
+ 		.command = cap_features,
+ 	},
+ 	{
+diff --git a/t/t5701-git-serve.sh b/t/t5701-git-serve.sh
+index 9d053f77a93..befc800593e 100755
+--- a/t/t5701-git-serve.sh
++++ b/t/t5701-git-serve.sh
+@@ -33,6 +33,15 @@ test_expect_success 'test capability advertisement' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'test capability advertisement' '
++	test_when_finished git config --unset serve.bundleuri &&
++	git config serve.bundleuri "file://$(pwd)" &&
++	GIT_TEST_SIDEBAND_ALL=0 test-tool serve-v2 \
++		--advertise-capabilities >out &&
++	test-tool pkt-line unpack <out >actual &&
++	grep features actual
++'
++
+ test_expect_success 'stateless-rpc flag does not list capabilities' '
+ 	# Empty request
+ 	test-tool pkt-line pack >in <<-EOF &&
+-- 
+2.36.0.rc2.902.g60576bbc845
+

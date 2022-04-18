@@ -1,0 +1,106 @@
+From 62623324d2ffd2fa8035813afa9a2f6ed513e757 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-23.36-62623324d2f-20220418T165545Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.36-00000000000-20220418T165545Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Mon, 31 Jan 2022 14:38:20 -0500
+Subject: [RFC PATCH v2 23/36] clone: add --bundle-uri option
+
+Cloning a remote repository is one of the most expensive operations in
+Git. The server can spend a lot of CPU time generating a pack-file for
+the client's request. The amount of data can clog the network for a long
+time, and the Git protocol is not resumable. For users with poor network
+connections or are located far away from the origin server, this can be
+especially painful.
+
+The 'git bundle fetch' command allows users to bootstrap a repository
+using a set of bundles. However, this would require them to use 'git
+init' first, followed by the 'git bundle fetch', and finally add a
+remote, fetch, and checkout the branch they want.
+
+Instead, integrate this workflow directly into 'git clone' with the
+--bundle-uri' option. If the user is aware of a bundle server, then they
+can tell Git to bootstrap the new repository with these bundles before
+fetching the remaining objects from the origin server.
+
+RFC-TODO: Document this option in git-clone.txt.
+
+RFC-TODO: I added a comment about the location of this code being
+necessary for the later step of auto-discovering the bundle URI from the
+origin server. This is probably not actually a requirement, but rather a
+pain point around how I implemented the feature. If a --bundle-uri
+option is specified, but SSH is used for the clone, then the SSH
+connection is left open while Git downloads bundles from another server.
+This is sub-optimal and should be reconsidered when fully reviewed.
+
+RFC-TODO: create tests for this option with a variety of URI types.
+
+RFC-TODO: a simple end-to-end test is available at the end of the
+series.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ builtin/clone.c | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index e11f4019b87..51141c979fa 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -78,6 +78,7 @@ static int option_filter_submodules = -1;    /* unspecified */
+ static int config_filter_submodules = -1;    /* unspecified */
+ static struct string_list server_options = STRING_LIST_INIT_NODUP;
+ static int option_remote_submodules;
++static const char *bundle_uri;
+ 
+ static int recurse_submodules_cb(const struct option *opt,
+ 				 const char *arg, int unset)
+@@ -161,6 +162,8 @@ static struct option builtin_clone_options[] = {
+ 		    N_("any cloned submodules will use their remote-tracking branch")),
+ 	OPT_BOOL(0, "sparse", &option_sparse_checkout,
+ 		    N_("initialize sparse-checkout file to include only files at root")),
++	OPT_STRING(0, "bundle-uri", &bundle_uri,
++		   N_("uri"), N_("a URI for downloading bundles before fetching from origin remote")),
+ 	OPT_END()
+ };
+ 
+@@ -1233,6 +1236,35 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 
+ 	refs = transport_get_remote_refs(transport, &transport_ls_refs_options);
+ 
++	/*
++	 * NOTE: The bundle URI download takes place after transport_get_remote_refs()
++	 * because a later change will introduce a check for recommended features,
++	 * which might include a recommended bundle URI.
++	 */
++
++	/*
++	 * Before fetching from the remote, download and install bundle
++	 * data from the --bundle-uri option.
++	 */
++	if (bundle_uri) {
++		const char *filter = NULL;
++
++		if (filter_options.filter_spec.nr)
++			filter = expand_list_objects_filter_spec(&filter_options);
++		/*
++		 * Set the config for fetching from this bundle URI in the
++		 * future, but do it before fetch_bundle_uri() which might
++		 * un-set it (for instance, if there is no table of contents).
++		 */
++		git_config_set("fetch.bundleuri", bundle_uri);
++		if (filter)
++			git_config_set("fetch.bundlefilter", filter);
++
++		if (!fetch_bundle_uri(bundle_uri, filter))
++			warning(_("failed to fetch objects from bundle URI '%s'"),
++				bundle_uri);
++	}
++
+ 	if (refs)
+ 		mapped_refs = wanted_peer_refs(refs, &remote->fetch);
+ 
+-- 
+2.36.0.rc2.902.g60576bbc845
+
