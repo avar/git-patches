@@ -1,0 +1,77 @@
+From 5458e6dab0b3a4bceb5873ab283ad9d710703b78 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v3-16.31-5458e6dab0b-20220418T131803Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v3-00.31-00000000000-20220418T131803Z-avarab@gmail.com>
+References: <cover-v3-00.29-00000000000-20220413T194847Z-avarab@gmail.com>
+	<RFC-cover-v3-00.31-00000000000-20220418T131803Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 Jan 2022 19:32:09 +0100
+Subject: [RFC PATCH v3 16/31] CI: invoke "make artifacts-tar" directly in
+ windows-build
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the windows-build job to invoke the "make artifacts-tar" step
+directly, instead of calling a "ci/make-test-artifacts.sh" script.
+
+The script was needed because "ci/lib.sh" would set up various
+environment variables for us, but now we can instead use the
+"ci/lib.sh" in its script mode.
+
+The "mkdir -p" added in b819f1d2cec (ci: parallelize testing on
+Windows, 2019-01-29) isn't needed, the same commit added that "mkdir
+-p" to the "artifacts-tar" rule itself, so we can have "make" create
+the directory for us.
+
+This also has the benefit of making the "build" step less chatty,
+since it won't start with the verbose "set -x" output, that's now
+contained in the "ci/lib.sh" step.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml |  5 ++++-
+ ci/make-test-artifacts.sh  | 10 ----------
+ 2 files changed, 4 insertions(+), 11 deletions(-)
+ delete mode 100755 ci/make-test-artifacts.sh
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 05c5771e7f6..2c23a19eac2 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -87,12 +87,15 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - uses: git-for-windows/setup-git-for-windows-sdk@v1
++    - run: ci/lib.sh
++      shell: bash
+     - name: build
+       shell: bash
+       env:
+         HOME: ${{runner.workspace}}
+         NO_PERL: 1
+-      run: . /etc/profile && ci/make-test-artifacts.sh artifacts
++      run: . /etc/profile && make artifacts-tar ARTIFACTS_DIRECTORY=artifacts
++      if: success()
+     - run: ci/check-unignored-build-artifacts.sh
+       if: success()
+       shell: bash
+diff --git a/ci/make-test-artifacts.sh b/ci/make-test-artifacts.sh
+deleted file mode 100755
+index 45298562982..00000000000
+--- a/ci/make-test-artifacts.sh
++++ /dev/null
+@@ -1,10 +0,0 @@
+-#!/bin/sh
+-#
+-# Build Git and store artifacts for testing
+-#
+-
+-mkdir -p "$1" # in case ci/lib.sh decides to quit early
+-
+-. ${0%/*}/lib.sh
+-
+-make artifacts-tar ARTIFACTS_DIRECTORY="$1"
+-- 
+2.36.0.rc2.898.gdf6bbac50ff
+

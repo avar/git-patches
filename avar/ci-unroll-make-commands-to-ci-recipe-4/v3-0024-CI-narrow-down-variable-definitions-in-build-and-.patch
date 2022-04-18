@@ -1,0 +1,213 @@
+From f57a6eb1eb030db7dae3b260a4ef73b8fcd7cf86 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v3-24.31-f57a6eb1eb0-20220418T131803Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v3-00.31-00000000000-20220418T131803Z-avarab@gmail.com>
+References: <cover-v3-00.29-00000000000-20220413T194847Z-avarab@gmail.com>
+	<RFC-cover-v3-00.31-00000000000-20220418T131803Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 27 Jan 2022 12:07:39 +0100
+Subject: [RFC PATCH v3 24/31] CI: narrow down variable definitions in --build
+ and --test
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In a preceding step the "setvar" function was made to take a
+"--build", "--test" or "--all" argument to indicate where the
+variables it sets were used.
+
+Let's make use of that by having the relevant parts of
+".github/workflows/main.yml" invoke "ci/lib.sh" with those options.
+
+By doing this the set of variables shown in build-only steps will be
+fewer, which makes diagnosing anything going on there easier, as we
+won't have to look at a deluge of e.g. GIT_TEST_* variables.
+
+Since we'll now always run "--build" for "make" and "--test" for "make
+test" we can stop setting the "fat" MAKEFLAGS entirely on the "test"
+steps, i.e. the one with PYTHON_PATH, CC etc. These will all be
+carried over from the earlier --build step.
+
+That won't be true in the case of the "windows-test" and "vs-test"
+jobs, since they run separately from the corresponding "build"
+step. So we'll need to make sure that we have the --jobs=N argument
+for those.
+
+This doesn't matter that much, as we'll still have --jobs=N in
+GIT_PROVE_OPTS. So the only thing we'll use it for is parallelism in
+the t/Makefile before we get to running "prove". Still, it's good to
+be consistent for good measure, and to run the t/Makefile itself in
+parallel.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml | 20 +++++++++++---------
+ ci/lib.sh                  | 30 +++++++++++++++++++++++-------
+ 2 files changed, 34 insertions(+), 16 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 1e13718b989..0787cadc76b 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -84,7 +84,7 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - uses: git-for-windows/setup-git-for-windows-sdk@v1
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+       shell: bash
+     - name: build
+       shell: bash
+@@ -122,7 +122,7 @@ jobs:
+       shell: bash
+       run: tar xf artifacts.tar.gz && tar xf tracked.tar.gz
+     - uses: git-for-windows/setup-git-for-windows-sdk@v1
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --test
+       shell: bash
+     - name: select tests
+       run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
+@@ -169,7 +169,7 @@ jobs:
+     - name: copy dlls to root
+       shell: cmd
+       run: compat\vcbuild\vcpkg_copy_dlls.bat release
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+       shell: bash
+     - name: generate Visual Studio solution
+       shell: bash
+@@ -211,7 +211,7 @@ jobs:
+     - name: extract tracked files and build artifacts
+       shell: bash
+       run: tar xf artifacts.tar.gz && tar xf tracked.tar.gz
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --test
+       shell: bash
+     - name: select tests
+       run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
+@@ -275,8 +275,9 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make
++    - run: ci/lib.sh --test
+     - run: make test
+       if: success()
+     - run: ci/print-test-failures.sh
+@@ -310,8 +311,9 @@ jobs:
+     steps:
+     - uses: actions/checkout@v1
+     - run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make
++    - run: ci/lib.sh --test
+     - run: make test
+       if: success() && matrix.vector.skip-tests != 'no'
+     - run: ci/print-test-failures.sh
+@@ -331,7 +333,7 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make ci-static-analysis
+   sparse:
+     needs: ci-config
+@@ -352,7 +354,7 @@ jobs:
+     - uses: actions/checkout@v2
+     - name: Install other dependencies
+       run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make sparse
+   documentation:
+     name: documentation
+@@ -364,7 +366,7 @@ jobs:
+     steps:
+     - uses: actions/checkout@v2
+     - run: ci/install-dependencies.sh
+-    - run: ci/lib.sh
++    - run: ci/lib.sh --build
+     - run: make check-docs
+     - run: "make doc > >(tee stdout.log) 2> >(tee stderr.raw >&2)"
+       shell: bash
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 8f7e178f3ff..50bc766254b 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -5,6 +5,13 @@ set -ex
+ . ${0%/*}/lib-ci-type.sh
+ 
+ # Starting assertions
++mode=$1
++if test -z "$mode"
++then
++	echo "need a $0 mode, e.g. --build or --test" >&2
++	exit 1
++fi
++
+ if test -z "$jobname"
+ then
+ 	echo "must set a CI jobname in the environment" >&2
+@@ -16,11 +23,12 @@ setenv () {
+ 	while test $# != 0
+ 	do
+ 		case "$1" in
+-		--build)
+-			;;
+-		--test)
+-			;;
+-		--all)
++		--build | --test)
++			if test "$1" != "$mode"
++			then
++				return 0
++			fi
++
+ 			;;
+ 		-*)
+ 			echo "BUG: bad setenv() option '$1'" >&2
+@@ -46,8 +54,12 @@ setenv () {
+ # How many jobs to run in parallel?
+ NPROC=10
+ 
++# For "--test" we carry the MAKEFLAGS over from earlier steps, except
++# in stand-alone jobs which will use $COMMON_MAKEFLAGS.
++COMMON_MAKEFLAGS=--jobs=$NPROC
++
+ # Clear MAKEFLAGS that may come from the outside world.
+-MAKEFLAGS=--jobs=$NPROC
++MAKEFLAGS=$COMMON_MAKEFLAGS
+ 
+ case "$CI_TYPE" in
+ github-actions)
+@@ -101,6 +113,9 @@ windows-build)
+ 	setenv --build NO_PERL NoThanks
+ 	setenv --build ARTIFACTS_DIRECTORY artifacts
+ 	;;
++windows-test)
++	setenv --test MAKEFLAGS "$COMMON_MAKEFLAGS"
++	;;
+ vs-build)
+ 	setenv --build NO_PERL NoThanks
+ 	setenv --build NO_GETTEXT NoThanks
+@@ -117,6 +132,7 @@ vs-build)
+ 	;;
+ vs-test)
+ 	setenv --test NO_SVN_TESTS YesPlease
++	setenv --test MAKEFLAGS "$COMMON_MAKEFLAGS"
+ 	;;
+ linux-gcc)
+ 	setenv --test GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME main
+@@ -162,4 +178,4 @@ linux-leaks)
+ 	;;
+ esac
+ 
+-setenv --all MAKEFLAGS "$MAKEFLAGS CC=${CC:-cc}"
++setenv --build MAKEFLAGS "$MAKEFLAGS CC=${CC:-cc}"
+-- 
+2.36.0.rc2.898.gdf6bbac50ff
+

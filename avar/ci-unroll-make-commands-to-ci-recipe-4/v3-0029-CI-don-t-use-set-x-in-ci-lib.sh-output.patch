@@ -1,0 +1,93 @@
+From 7bbfc332bd2a77604c183f07539d5f12b8f0c682 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v3-29.31-7bbfc332bd2-20220418T131803Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v3-00.31-00000000000-20220418T131803Z-avarab@gmail.com>
+References: <cover-v3-00.29-00000000000-20220413T194847Z-avarab@gmail.com>
+	<RFC-cover-v3-00.31-00000000000-20220418T131803Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 21 Feb 2022 11:49:56 +0100
+Subject: [RFC PATCH v3 29/31] CI: don't use "set -x" in "ci/lib.sh" output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the "set -x" from the "ci/lib.sh" output. Before preceding
+commits the logic in that file was much more complex, and likely to
+fail in some scenarios.
+
+Now we only task "ci/lib.sh" with setting various variables for
+subsequent steps in our jobs, so we can start emitting more tailored
+debugging output, which makes what it's doing easier to read.
+
+This change also changes the output of the "ci/print-test-failures.sh"
+script, since it's the only other user of "ci/lib-ci-type.sh". In that
+case it's also helpful to know what "$CI_TYPE" we're using, as that
+script doesn't "set -x" and will act differently depending on the
+$CI_TYPE.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/lib.sh | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 1a7200451e4..ab7546800e0 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-set -ex
++set -e
+ 
+ # Helper libraries
+ . ${0%/*}/lib-ci-type.sh
+@@ -18,15 +18,26 @@ then
+ 	exit 1
+ fi
+ 
++# Show our configuration
++echo "CONFIG: CI_TYPE=$CI_TYPE" >&2
++echo "CONFIG: jobname=$jobname" >&2
++echo "CONFIG: runs_on_pool=$runs_on_pool" >&2
++echo "CONFIG: GITHUB_ENV=$GITHUB_ENV" >&2
++if test -n "$GITHUB_ENV"
++then
++	echo "CONFIG: GITHUB_ENV=$GITHUB_ENV" >&2
++fi
++
+ # Helper functions
+ setenv () {
++	local skip=
+ 	while test $# != 0
+ 	do
+ 		case "$1" in
+ 		--build | --test)
+ 			if test "$1" != "$mode"
+ 			then
+-				return 0
++				skip=t
+ 			fi
+ 
+ 			;;
+@@ -45,10 +56,18 @@ setenv () {
+ 	val=$2
+ 	shift 2
+ 
++	if test -n "$skip"
++	then
++		echo "SKIP '$key=$val'" >&2
++		return 0
++	fi
++
+ 	if test -n "$GITHUB_ENV"
+ 	then
+ 		echo "$key=$val" >>"$GITHUB_ENV"
+ 	fi
++
++	echo "SET: '$key=$val'" >&2
+ }
+ 
+ # Clear variables that may come from the outside world.
+-- 
+2.36.0.rc2.898.gdf6bbac50ff
+
