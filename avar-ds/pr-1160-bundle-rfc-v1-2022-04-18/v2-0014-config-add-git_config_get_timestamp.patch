@@ -1,0 +1,159 @@
+From 1173ceeb08a14607c027a9e2421a939aee98fe93 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-14.23-1173ceeb08a-20220418T165525Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Tue, 8 Feb 2022 11:14:35 -0500
+Subject: [RFC PATCH v2 14/23] config: add git_config_get_timestamp()
+
+The existing config parsing methods do not include a way to consistently
+parse timestamps across all platforms. Recall that "unsigned long" is
+32 bits on 64-bit Windows, so git_config_get_ulong() is insufficient.
+
+Adding a new type requires quite a bit of boilerplate to match the style
+of other types.
+
+RFC-QUESTION: Would this be better to use uintmax_t, which could be cast
+to timestamp_t or other types more robust than "unsigned long"?
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ config.c | 39 +++++++++++++++++++++++++++++++++++++++
+ config.h | 14 ++++++++++++++
+ 2 files changed, 53 insertions(+)
+
+diff --git a/config.c b/config.c
+index a5e11aad7fe..0bc0ba27c76 100644
+--- a/config.c
++++ b/config.c
+@@ -1230,6 +1230,15 @@ int git_parse_ulong(const char *value, unsigned long *ret)
+ 	return 1;
+ }
+ 
++int git_parse_timestamp(const char *value, timestamp_t *ret)
++{
++	uintmax_t tmp;
++	if (!git_parse_unsigned(value, &tmp, maximum_unsigned_value_of_type(timestamp_t)))
++		return 0;
++	*ret = tmp;
++	return 1;
++}
++
+ int git_parse_ssize_t(const char *value, ssize_t *ret)
+ {
+ 	intmax_t tmp;
+@@ -1298,6 +1307,14 @@ unsigned long git_config_ulong(const char *name, const char *value)
+ 	return ret;
+ }
+ 
++timestamp_t git_config_timestamp(const char *name, const char *value)
++{
++	timestamp_t ret;
++	if (!git_parse_timestamp(value, &ret))
++		die_bad_number(name, value);
++	return ret;
++}
++
+ ssize_t git_config_ssize_t(const char *name, const char *value)
+ {
+ 	ssize_t ret;
+@@ -2439,6 +2456,16 @@ int git_configset_get_ulong(struct config_set *cs, const char *key, unsigned lon
+ 		return 1;
+ }
+ 
++int git_configset_get_timestamp(struct config_set *cs, const char *key, timestamp_t *dest)
++{
++	const char *value;
++	if (!git_configset_get_value(cs, key, &value)) {
++		*dest = git_config_timestamp(key, value);
++		return 0;
++	} else
++		return 1;
++}
++
+ int git_configset_get_bool(struct config_set *cs, const char *key, int *dest)
+ {
+ 	const char *value;
+@@ -2582,6 +2609,13 @@ int repo_config_get_ulong(struct repository *repo,
+ 	return git_configset_get_ulong(repo->config, key, dest);
+ }
+ 
++int repo_config_get_timestamp(struct repository *repo,
++			      const char *key, timestamp_t *dest)
++{
++	git_config_check_init(repo);
++	return git_configset_get_timestamp(repo->config, key, dest);
++}
++
+ int repo_config_get_bool(struct repository *repo,
+ 			 const char *key, int *dest)
+ {
+@@ -2655,6 +2689,11 @@ int git_config_get_ulong(const char *key, unsigned long *dest)
+ 	return repo_config_get_ulong(the_repository, key, dest);
+ }
+ 
++int git_config_get_timestamp(const char *key, timestamp_t *dest)
++{
++	return repo_config_get_timestamp(the_repository, key, dest);
++}
++
+ int git_config_get_bool(const char *key, int *dest)
+ {
+ 	return repo_config_get_bool(the_repository, key, dest);
+diff --git a/config.h b/config.h
+index 7654f61c634..63679ae1ffd 100644
+--- a/config.h
++++ b/config.h
+@@ -206,6 +206,7 @@ int config_with_options(config_fn_t fn, void *,
+ 
+ int git_parse_ssize_t(const char *, ssize_t *);
+ int git_parse_ulong(const char *, unsigned long *);
++int git_parse_timestamp(const char *, timestamp_t *);
+ 
+ /**
+  * Same as `git_config_bool`, except that it returns -1 on error rather
+@@ -226,6 +227,11 @@ int64_t git_config_int64(const char *, const char *);
+  */
+ unsigned long git_config_ulong(const char *, const char *);
+ 
++/**
++ * Identical to `git_config_int`, but for (unsigned) timestamps.
++ */
++timestamp_t git_config_timestamp(const char *name, const char *value);
++
+ ssize_t git_config_ssize_t(const char *, const char *);
+ 
+ /**
+@@ -476,6 +482,7 @@ int git_configset_get_value(struct config_set *cs, const char *key, const char *
+ int git_configset_get_string(struct config_set *cs, const char *key, char **dest);
+ int git_configset_get_int(struct config_set *cs, const char *key, int *dest);
+ int git_configset_get_ulong(struct config_set *cs, const char *key, unsigned long *dest);
++int git_configset_get_timestamp(struct config_set *cs, const char *key, timestamp_t *dest);
+ int git_configset_get_bool(struct config_set *cs, const char *key, int *dest);
+ int git_configset_get_bool_or_int(struct config_set *cs, const char *key, int *is_bool, int *dest);
+ int git_configset_get_maybe_bool(struct config_set *cs, const char *key, int *dest);
+@@ -496,6 +503,8 @@ int repo_config_get_int(struct repository *repo,
+ 			const char *key, int *dest);
+ int repo_config_get_ulong(struct repository *repo,
+ 			  const char *key, unsigned long *dest);
++int repo_config_get_timestamp(struct repository *repo,
++			      const char *key, timestamp_t *dest);
+ int repo_config_get_bool(struct repository *repo,
+ 			 const char *key, int *dest);
+ int repo_config_get_bool_or_int(struct repository *repo,
+@@ -565,6 +574,11 @@ int git_config_get_int(const char *key, int *dest);
+  */
+ int git_config_get_ulong(const char *key, unsigned long *dest);
+ 
++/**
++ * Similar to `git_config_get_int` but for (unsigned) timestamps.
++ */
++int git_config_get_timestamp(const char *key, timestamp_t *dest);
++
+ /**
+  * Finds and parses the value into a boolean value, for the configuration
+  * variable `key` respecting keywords like "true" and "false". Integer
+-- 
+2.36.0.rc2.902.g60576bbc845
+

@@ -1,0 +1,107 @@
+From 4398efebcecd656b4964820670305403ea6c8708 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-06.23-4398efebcec-20220418T165525Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Wed, 29 Dec 2021 10:40:33 -0500
+Subject: [RFC PATCH v2 06/23] remote-curl: add 'get' capability
+
+A future change will want a way to download a file over HTTP(S) using
+the simplest of download mechanisms. We do not want to assume that the
+server on the other side understands anything about the Git protocol but
+could be a simple static web server.
+
+Create the new 'get' capability for the remote helpers which advertises
+that the 'get' command is avalable. A caller can send a line containing
+'get <url> <path>' to download the file at <url> into the file at
+<path>.
+
+RFC-TODO: This change requires tests directly on the remote helper.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ Documentation/gitremote-helpers.txt |  6 ++++++
+ remote-curl.c                       | 32 +++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/Documentation/gitremote-helpers.txt b/Documentation/gitremote-helpers.txt
+index 6f1e269ae43..f82588601a9 100644
+--- a/Documentation/gitremote-helpers.txt
++++ b/Documentation/gitremote-helpers.txt
+@@ -168,6 +168,9 @@ Supported commands: 'list', 'import'.
+ 	Can guarantee that when a clone is requested, the received
+ 	pack is self contained and is connected.
+ 
++'get'::
++	Can use the 'get' command to download a file from a given URI.
++
+ If a helper advertises 'connect', Git will use it if possible and
+ fall back to another capability if the helper requests so when
+ connecting (see the 'connect' command under COMMANDS).
+@@ -418,6 +421,9 @@ Supported if the helper has the "connect" capability.
+ +
+ Supported if the helper has the "stateless-connect" capability.
+ 
++'get' <uri> <path>::
++	Downloads the file from the given `<uri>` to the given `<path>`.
++
+ If a fatal error occurs, the program writes the error message to
+ stderr and exits. The caller should expect that a suitable error
+ message has been printed if the child closes the connection without
+diff --git a/remote-curl.c b/remote-curl.c
+index 67f178b1120..53750d88e76 100644
+--- a/remote-curl.c
++++ b/remote-curl.c
+@@ -1276,6 +1276,33 @@ static void parse_fetch(struct strbuf *buf)
+ 	strbuf_reset(buf);
+ }
+ 
++static void parse_get(struct strbuf *buf)
++{
++	struct http_get_options opts = { 0 };
++	struct strbuf url = STRBUF_INIT;
++	struct strbuf path = STRBUF_INIT;
++	const char *p, *space;
++
++	if (!skip_prefix(buf->buf, "get ", &p))
++		die(_("http transport does not support %s"), buf->buf);
++
++	space = strchr(p, ' ');
++
++	if (!space)
++		die(_("protocol error: expected '<url> <path>', missing space"));
++
++	strbuf_add(&url, p, space - p);
++	strbuf_addstr(&path, space + 1);
++
++	http_get_file(url.buf, path.buf, &opts);
++
++	strbuf_release(&url);
++	strbuf_release(&path);
++	printf("\n");
++	fflush(stdout);
++	strbuf_reset(buf);
++}
++
+ static int push_dav(int nr_spec, const char **specs)
+ {
+ 	struct child_process child = CHILD_PROCESS_INIT;
+@@ -1549,9 +1576,14 @@ int cmd_main(int argc, const char **argv)
+ 				printf("unsupported\n");
+ 			fflush(stdout);
+ 
++		} else if (skip_prefix(buf.buf, "get ", &arg)) {
++			parse_get(&buf);
++			fflush(stdout);
++
+ 		} else if (!strcmp(buf.buf, "capabilities")) {
+ 			printf("stateless-connect\n");
+ 			printf("fetch\n");
++			printf("get\n");
+ 			printf("option\n");
+ 			printf("push\n");
+ 			printf("check-connectivity\n");
+-- 
+2.36.0.rc2.902.g60576bbc845
+

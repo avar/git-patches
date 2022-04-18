@@ -1,0 +1,94 @@
+From 7b4141763133813eace2c53fb916f3811b939413 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-15.23-7b414176313-20220418T165525Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Tue, 8 Feb 2022 11:22:36 -0500
+Subject: [RFC PATCH v2 15/23] bundle: only fetch bundles if timestamp is new
+
+If a bundle server is providing a table of contents with timestamps for
+the bundles, then we can store the most-recent timestamp and use that as
+a test if the bundle server has any new information. Teach 'git bundle
+fetch' to store the timestamp in the config file as
+'fetch.bundleTimestamp' and compare the existing value to the
+most-recent timestamp in the bundle server's table of contents. If the
+new timestamp is at most the stored timestamp, then exit early (with
+success). If the new timestamp is greater than the stored timestamp,
+then continue with the normal fetch logic of downloading the most-recent
+bundle until all missing objects are satisfied. Store that new timestamp
+in the config for next time.
+
+RFC-TODO: Update documentation of 'git bundle fetch' to match his new
+behavior.
+
+RFC-TODO: Add 'fetch.bundleTimestamp' to Documentation/config/
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ builtin/bundle.c | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/bundle.c b/builtin/bundle.c
+index 0135f09d4a5..e5685760a27 100644
+--- a/builtin/bundle.c
++++ b/builtin/bundle.c
+@@ -410,6 +410,9 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 	struct remote_bundle_info *stack = NULL;
+ 	struct hashmap toc = { 0 };
+ 	const char *filter = NULL;
++	const char *timestamp_key = "fetch.bundletimestamp";
++	timestamp_t stored_time = 0;
++	timestamp_t max_time = 0;
+ 
+ 	struct option options[] = {
+ 		OPT_BOOL(0, "progress", &progress,
+@@ -425,6 +428,8 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 	if (!startup_info->have_repository)
+ 		die(_("'fetch' requires a repository"));
+ 
++	git_config_get_timestamp(timestamp_key, &stored_time);
++
+ 	/*
+ 	 * Step 1: determine protocol for uri, and download contents to
+ 	 * a temporary location.
+@@ -446,7 +451,6 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 	} else {
+ 		struct hashmap_iter iter;
+ 		struct remote_bundle_info *info;
+-		timestamp_t max_time = 0;
+ 
+ 		/* populate a hashtable with all relevant bundles. */
+ 		used_hashmap = 1;
+@@ -477,6 +481,13 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 				max_time = info->timestamp;
+ 			}
+ 		}
++
++		trace2_data_intmax("bundle", the_repository, "max_time", max_time);
++		trace2_data_intmax("bundle", the_repository, "stored_time", stored_time);
++
++		/* Skip fetching bundles if data isn't new enough. */
++		if (max_time <= stored_time)
++			goto cleanup;
+ 	}
+ 
+ 	/*
+@@ -564,6 +575,14 @@ static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
+ 		stack = stack->stack_next;
+ 	}
+ 
++	if (max_time) {
++		struct strbuf tstr = STRBUF_INIT;
++		strbuf_addf(&tstr, "%"PRIuMAX"", max_time);
++		git_config_set_gently(timestamp_key, tstr.buf);
++		strbuf_release(&tstr);
++	}
++
++cleanup:
+ 	if (used_hashmap) {
+ 		struct hashmap_iter iter;
+ 		struct remote_bundle_info *info;
+-- 
+2.36.0.rc2.902.g60576bbc845
+

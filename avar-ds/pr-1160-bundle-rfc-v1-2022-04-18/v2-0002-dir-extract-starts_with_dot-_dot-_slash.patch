@@ -1,0 +1,109 @@
+From 025639390400fc6b128fcca950b7d89b989f7733 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-02.23-02563939040-20220418T165525Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Tue, 8 Feb 2022 10:02:15 -0500
+Subject: [RFC PATCH v2 02/23] dir: extract starts_with_dot[_dot]_slash()
+
+We will want to use this logic to assist checking if paths are absolute
+or relative, so extract it into a helpful place. This creates a
+collision with similar methods in builtin/fsck.c, but those methods have
+important differences. Prepend "fsck_" to those methods to emphasize
+that they are custom to the fsck builtin.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ builtin/submodule--helper.c | 10 ----------
+ dir.h                       | 11 +++++++++++
+ fsck.c                      | 14 +++++++-------
+ 3 files changed, 18 insertions(+), 17 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 2c87ef9364f..82e99dd8755 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -72,16 +72,6 @@ static char *get_default_remote(void)
+ 	return repo_get_default_remote(the_repository);
+ }
+ 
+-static int starts_with_dot_slash(const char *str)
+-{
+-	return str[0] == '.' && is_dir_sep(str[1]);
+-}
+-
+-static int starts_with_dot_dot_slash(const char *str)
+-{
+-	return str[0] == '.' && str[1] == '.' && is_dir_sep(str[2]);
+-}
+-
+ /*
+  * Returns 1 if it was the last chop before ':'.
+  */
+diff --git a/dir.h b/dir.h
+index 8e02dfb505d..5e38d1ba536 100644
+--- a/dir.h
++++ b/dir.h
+@@ -578,4 +578,15 @@ void connect_work_tree_and_git_dir(const char *work_tree,
+ void relocate_gitdir(const char *path,
+ 		     const char *old_git_dir,
+ 		     const char *new_git_dir);
++
++static inline int starts_with_dot_slash(const char *str)
++{
++	return str[0] == '.' && is_dir_sep(str[1]);
++}
++
++static inline int starts_with_dot_dot_slash(const char *str)
++{
++	return str[0] == '.' && str[1] == '.' && is_dir_sep(str[2]);
++}
++
+ #endif
+diff --git a/fsck.c b/fsck.c
+index 3ec500d707a..32cd3bc081f 100644
+--- a/fsck.c
++++ b/fsck.c
+@@ -976,31 +976,31 @@ int fsck_tag_standalone(const struct object_id *oid, const char *buffer,
+ }
+ 
+ /*
+- * Like builtin/submodule--helper.c's starts_with_dot_slash, but without
++ * Like dir.h's starts_with_dot_slash, but without
+  * relying on the platform-dependent is_dir_sep helper.
+  *
+  * This is for use in checking whether a submodule URL is interpreted as
+  * relative to the current directory on any platform, since \ is a
+  * directory separator on Windows but not on other platforms.
+  */
+-static int starts_with_dot_slash(const char *str)
++static int fsck_starts_with_dot_slash(const char *str)
+ {
+ 	return str[0] == '.' && (str[1] == '/' || str[1] == '\\');
+ }
+ 
+ /*
+- * Like starts_with_dot_slash, this is a variant of submodule--helper's
+- * helper of the same name with the twist that it accepts backslash as a
++ * Like fsck_starts_with_dot_slash, this is a variant of dir.h's
++ * helper with the twist that it accepts backslash as a
+  * directory separator even on non-Windows platforms.
+  */
+-static int starts_with_dot_dot_slash(const char *str)
++static int fsck_starts_with_dot_dot_slash(const char *str)
+ {
+-	return str[0] == '.' && starts_with_dot_slash(str + 1);
++	return str[0] == '.' && fsck_starts_with_dot_slash(str + 1);
+ }
+ 
+ static int submodule_url_is_relative(const char *url)
+ {
+-	return starts_with_dot_slash(url) || starts_with_dot_dot_slash(url);
++	return fsck_starts_with_dot_slash(url) || fsck_starts_with_dot_dot_slash(url);
+ }
+ 
+ /*
+-- 
+2.36.0.rc2.902.g60576bbc845
+

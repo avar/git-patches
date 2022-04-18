@@ -1,0 +1,340 @@
+From 5cbaa40b36571ae4e2b39d84cc80b4e292cfc5e3 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-07.23-5cbaa40b365-20220418T165525Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Mon, 31 Jan 2022 14:37:30 -0500
+Subject: [RFC PATCH v2 07/23] bundle: implement 'fetch' command for direct
+ bundles
+
+The 'git bundle fetch <uri>' command will be used to download one or
+more bundles from a specified '<uri>'. The implementation being added
+here focuses only on downloading a file from '<uri>' and unbundling it
+if it is a valid bundle file.
+
+If it is not a bundle file, then we currently die(), but a later change
+will attempt to interpret it as a table of contents with possibly
+multiple bundles listed, along with other metadata for each bundle.
+
+That explains a bit why cmd_bundle_fetch() has three steps carefully
+commented, including a "stack" that currently can only hold one bundle.
+We will later update this while loop to push onto the stack when
+necessary.
+
+RFC-TODO: Add documentation to Documentation/git-bundle.txt
+
+RFC-TODO: Add direct tests of 'git bundle fetch' when the URI is a
+bundle file.
+
+RFC-TODO: Split out the docs and subcommand boilerplate into its own
+commit.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ builtin/bundle.c | 261 +++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 261 insertions(+)
+
+diff --git a/builtin/bundle.c b/builtin/bundle.c
+index 2adad545a2e..6b6107d83cf 100644
+--- a/builtin/bundle.c
++++ b/builtin/bundle.c
+@@ -3,6 +3,10 @@
+ #include "parse-options.h"
+ #include "cache.h"
+ #include "bundle.h"
++#include "run-command.h"
++#include "hashmap.h"
++#include "object-store.h"
++#include "refs.h"
+ 
+ /*
+  * Basic handler for bundle files to connect repositories via sneakernet.
+@@ -14,6 +18,7 @@
+ static const char * const builtin_bundle_usage[] = {
+   N_("git bundle create [<options>] <file> <git-rev-list args>"),
+   N_("git bundle verify [<options>] <file>"),
++  N_("git bundle fetch [<options>] <uri>"),
+   N_("git bundle list-heads <file> [<refname>...]"),
+   N_("git bundle unbundle <file> [<refname>...]"),
+   NULL
+@@ -29,6 +34,11 @@ static const char * const builtin_bundle_verify_usage[] = {
+   NULL
+ };
+ 
++static const char * const builtin_bundle_fetch_usage[] = {
++	N_("git bundle fetch [--filter=<spec>] <uri>"),
++	NULL
++};
++
+ static const char * const builtin_bundle_list_heads_usage[] = {
+   N_("git bundle list-heads <file> [<refname>...]"),
+   NULL
+@@ -132,6 +142,255 @@ static int cmd_bundle_verify(int argc, const char **argv, const char *prefix) {
+ 	return ret;
+ }
+ 
++/**
++ * The remote_bundle_info struct contains the necessary data for
++ * the list of bundles advertised by a table of contents. If the
++ * bundle URI instead contains a single bundle, then this struct
++ * can represent a single bundle without a 'uri' but with a
++ * tempfile storing its current location on disk.
++ */
++struct remote_bundle_info {
++	struct hashmap_entry ent;
++
++	/**
++	 * The 'id' is a name given to the bundle for reference
++	 * by other bundle infos.
++	 */
++	char *id;
++
++	/**
++	 * The 'uri' is the location of the remote bundle so
++	 * it can be downloaded on-demand. This will be NULL
++	 * if there was no table of contents.
++	 */
++	char *uri;
++
++	/**
++	 * The 'next_id' string, if non-NULL, contains the 'id'
++	 * for a bundle that contains the prerequisites for this
++	 * bundle. Used by table of contents to allow fetching
++	 * a portion of a repository incrementally.
++	 */
++	char *next_id;
++
++	/**
++	 * A table of contents can include a timestamp for the
++	 * bundle as a heuristic for describing a list of bundles
++	 * in order of recency.
++	 */
++	timestamp_t timestamp;
++
++	/**
++	 * If the bundle has been downloaded, then 'file' is a
++	 * filename storing its contents. Otherwise, 'file' is
++	 * an empty string.
++	 */
++	struct strbuf file;
++
++	/**
++	 * The 'stack_next' pointer allows this struct to form
++	 * a stack.
++	 */
++	struct remote_bundle_info *stack_next;
++};
++
++static void download_uri_to_file(const char *uri, const char *file)
++{
++	struct child_process cp = CHILD_PROCESS_INIT;
++	FILE *child_in;
++
++	strvec_pushl(&cp.args, "git-remote-https", "origin", uri, NULL);
++	cp.in = -1;
++	cp.out = -1;
++
++	if (start_command(&cp))
++		die(_("failed to start remote helper"));
++
++	child_in = fdopen(cp.in, "w");
++	if (!child_in)
++		die(_("cannot write to child process"));
++
++	fprintf(child_in, "get %s %s\n\n", uri, file);
++	fclose(child_in);
++
++	if (finish_command(&cp))
++		die(_("remote helper failed"));
++}
++
++static void find_temp_filename(struct strbuf *name)
++{
++	int fd;
++	/*
++	 * Find a temporray filename that is available. This is briefly
++	 * racy, but unlikely to collide.
++	 */
++	fd = odb_mkstemp(name, "bundles/tmp_uri_XXXXXX");
++	if (fd < 0)
++		die(_("failed to create temporary file"));
++	close(fd);
++	unlink(name->buf);
++}
++
++static void unbundle_fetched_bundle(struct remote_bundle_info *info)
++{
++	struct child_process cp = CHILD_PROCESS_INIT;
++	FILE *f;
++	struct strbuf line = STRBUF_INIT;
++	struct strbuf bundle_ref = STRBUF_INIT;
++	size_t bundle_prefix_len;
++
++	strvec_pushl(&cp.args, "bundle", "unbundle",
++				info->file.buf, NULL);
++	cp.git_cmd = 1;
++	cp.out = -1;
++
++	if (start_command(&cp))
++		die(_("failed to start 'unbundle' process"));
++
++	strbuf_addstr(&bundle_ref, "refs/bundles/");
++	bundle_prefix_len = bundle_ref.len;
++
++	f = fdopen(cp.out, "r");
++	while (strbuf_getline(&line, f) != EOF) {
++		struct object_id oid, old_oid;
++		const char *refname, *branch_name, *end;
++		char *space;
++		int has_old;
++
++		strbuf_trim_trailing_newline(&line);
++
++		space = strchr(line.buf, ' ');
++
++		if (!space)
++			continue;
++
++		refname = space + 1;
++		*space = '\0';
++		parse_oid_hex(line.buf, &oid, &end);
++
++		if (!skip_prefix(refname, "refs/heads/", &branch_name))
++			continue;
++
++		strbuf_setlen(&bundle_ref, bundle_prefix_len);
++		strbuf_addstr(&bundle_ref, branch_name);
++
++		has_old = !read_ref(bundle_ref.buf, &old_oid);
++
++		update_ref("bundle fetch", bundle_ref.buf, &oid,
++				has_old ? &old_oid : NULL,
++				REF_SKIP_OID_VERIFICATION,
++				UPDATE_REFS_MSG_ON_ERR);
++	}
++
++	if (finish_command(&cp))
++		die(_("failed to unbundle bundle from '%s'"), info->uri);
++
++	unlink_or_warn(info->file.buf);
++}
++
++static int cmd_bundle_fetch(int argc, const char **argv, const char *prefix)
++{
++	int ret = 0;
++	int progress = isatty(2);
++	char *bundle_uri;
++	struct remote_bundle_info first_file = {
++		.file = STRBUF_INIT,
++	};
++	struct remote_bundle_info *stack = NULL;
++
++	struct option options[] = {
++		OPT_BOOL(0, "progress", &progress,
++			 N_("show progress meter")),
++		OPT_END()
++	};
++
++	argc = parse_options_cmd_bundle(argc, argv, prefix,
++			builtin_bundle_fetch_usage, options, &bundle_uri);
++
++	if (!startup_info->have_repository)
++		die(_("'fetch' requires a repository"));
++
++	/*
++	 * Step 1: determine protocol for uri, and download contents to
++	 * a temporary location.
++	 */
++	first_file.uri = bundle_uri;
++	find_temp_filename(&first_file.file);
++	download_uri_to_file(bundle_uri, first_file.file.buf);
++
++	/*
++	 * Step 2: Check if the file is a bundle (if so, add it to the
++	 * stack and move to step 3).
++	 */
++
++	if (is_bundle(first_file.file.buf, 1)) {
++		/* The simple case: only one file, no stack to worry about. */
++		stack = &first_file;
++	} else {
++		/* TODO: Expect and parse a table of contents. */
++		die(_("unexpected data at bundle URI"));
++	}
++
++	/*
++	 * Step 3: For each bundle in the stack:
++	 * 	i. If not downloaded to a temporary file, download it.
++	 * 	ii. Once downloaded, check that its prerequisites are in
++	 * 	    the object database. If not, then push its dependent
++	 * 	    bundle onto the stack. (Fail if no such bundle exists.)
++	 * 	iii. If all prerequisites are present, then unbundle the
++	 * 	     temporary file and pop the bundle from the stack.
++	 */
++	while (stack) {
++		int valid = 1;
++		int bundle_fd;
++		struct string_list_item *prereq;
++		struct bundle_header header = BUNDLE_HEADER_INIT;
++
++		if (!stack->file.len) {
++			find_temp_filename(&stack->file);
++			download_uri_to_file(stack->uri, stack->file.buf);
++			if (!is_bundle(stack->file.buf, 1))
++				die(_("file downloaded from '%s' is not a bundle"), stack->uri);
++		}
++
++		bundle_header_init(&header);
++		bundle_fd = read_bundle_header(stack->file.buf, &header);
++		if (bundle_fd < 0)
++			die(_("failed to read bundle from '%s'"), stack->uri);
++
++		for_each_string_list_item(prereq, &header.prerequisites) {
++			struct object_info info = OBJECT_INFO_INIT;
++			struct object_id *oid = prereq->util;
++
++			if (oid_object_info_extended(the_repository, oid, &info,
++						     OBJECT_INFO_QUICK)) {
++				valid = 0;
++				break;
++			}
++		}
++
++		close(bundle_fd);
++		bundle_header_release(&header);
++
++		if (valid) {
++			unbundle_fetched_bundle(stack);
++		} else if (stack->next_id) {
++			/*
++			 * Load the next bundle from the hashtable and
++			 * push it onto the stack.
++			 */
++		} else {
++			die(_("bundle from '%s' has missing prerequisites and no dependent bundle"),
++			    stack->uri);
++		}
++
++		stack = stack->stack_next;
++	}
++
++	free(bundle_uri);
++	return ret;
++}
++
+ static int cmd_bundle_list_heads(int argc, const char **argv, const char *prefix) {
+ 	struct bundle_header header = BUNDLE_HEADER_INIT;
+ 	int bundle_fd = -1;
+@@ -212,6 +471,8 @@ int cmd_bundle(int argc, const char **argv, const char *prefix)
+ 		result = cmd_bundle_create(argc, argv, prefix);
+ 	else if (!strcmp(argv[0], "verify"))
+ 		result = cmd_bundle_verify(argc, argv, prefix);
++	else if (!strcmp(argv[0], "fetch"))
++		result = cmd_bundle_fetch(argc, argv, prefix);
+ 	else if (!strcmp(argv[0], "list-heads"))
+ 		result = cmd_bundle_list_heads(argc, argv, prefix);
+ 	else if (!strcmp(argv[0], "unbundle"))
+-- 
+2.36.0.rc2.902.g60576bbc845
+

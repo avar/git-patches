@@ -1,0 +1,170 @@
+From b8044bb09f0ba5c20a1972a5dc74be3a0b8c6b35 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-21.23-b8044bb09f0-20220418T165525Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Tue, 8 Feb 2022 13:25:38 -0500
+Subject: [RFC PATCH v2 21/23] transport: add connections for 'features'
+ capability
+
+To allow 'git clone' to check the 'features' capability, we need to fill
+in some boilerplate methods that help detect if the capability exists
+and then to execute the get_recommended_features() method with the
+proper context. This involves jumping through some vtables.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ transport-helper.c   | 13 +++++++++++++
+ transport-internal.h |  9 +++++++++
+ transport.c          | 38 ++++++++++++++++++++++++++++++++++++++
+ transport.h          |  5 +++++
+ 4 files changed, 65 insertions(+)
+
+diff --git a/transport-helper.c b/transport-helper.c
+index 398712c76f3..782aa1f43a2 100644
+--- a/transport-helper.c
++++ b/transport-helper.c
+@@ -1160,6 +1160,18 @@ static int push_refs(struct transport *transport,
+ 	return -1;
+ }
+ 
++static int get_features(struct transport *transport,
++		      struct string_list *list)
++{
++	get_helper(transport);
++
++	if (process_connect(transport, 0)) {
++		do_take_over(transport);
++		return transport->vtable->get_features(transport, list);
++	}
++
++	return -1;
++}
+ 
+ static int has_attribute(const char *attrs, const char *attr)
+ {
+@@ -1285,6 +1297,7 @@ static struct transport_vtable vtable = {
+ 	.get_bundle_uri = get_bundle_uri,
+ 	.fetch_refs	= fetch_refs,
+ 	.push_refs	= push_refs,
++	.get_features	= get_features,
+ 	.connect	= connect_helper,
+ 	.disconnect	= release_helper
+ };
+diff --git a/transport-internal.h b/transport-internal.h
+index 90ea749e5cf..969cb30f510 100644
+--- a/transport-internal.h
++++ b/transport-internal.h
+@@ -5,6 +5,7 @@ struct ref;
+ struct transport;
+ struct strvec;
+ struct transport_ls_refs_options;
++struct string_list;
+ 
+ struct transport_vtable {
+ 	/**
+@@ -58,6 +59,14 @@ struct transport_vtable {
+ 	 * process involved generating new commits.
+ 	 **/
+ 	int (*push_refs)(struct transport *transport, struct ref *refs, int flags);
++
++	/**
++	 * get_features() requests a list of recommended features and
++	 * populates the given string_list with those 'key=value' pairs.
++	 */
++	int (*get_features)(struct transport *transport,
++			    struct string_list *list);
++
+ 	int (*connect)(struct transport *connection, const char *name,
+ 		       const char *executable, int fd[2]);
+ 
+diff --git a/transport.c b/transport.c
+index 7e5e1192f95..42a726dc066 100644
+--- a/transport.c
++++ b/transport.c
+@@ -205,6 +205,20 @@ struct git_transport_data {
+ 	struct oid_array shallow;
+ };
+ 
++static int get_features(struct transport *transport,
++		      struct string_list *list)
++{
++	struct git_transport_data *data = transport->data;
++	struct packet_reader reader;
++
++	packet_reader_init(&reader, data->fd[0], NULL, 0,
++			   PACKET_READ_CHOMP_NEWLINE |
++			   PACKET_READ_GENTLE_ON_EOF);
++
++	return get_recommended_features(data->fd[1], &reader, list,
++					transport->stateless_rpc);
++}
++
+ static int set_git_option(struct git_transport_options *opts,
+ 			  const char *name, const char *value)
+ {
+@@ -948,6 +962,7 @@ static struct transport_vtable taken_over_vtable = {
+ 	.get_bundle_uri = get_bundle_uri,
+ 	.fetch_refs	= fetch_refs_via_pack,
+ 	.push_refs	= git_transport_push,
++	.get_features	= get_features,
+ 	.disconnect	= disconnect_git
+ };
+ 
+@@ -1102,6 +1117,7 @@ static struct transport_vtable builtin_smart_vtable = {
+ 	.get_bundle_uri = get_bundle_uri,
+ 	.fetch_refs	= fetch_refs_via_pack,
+ 	.push_refs	= git_transport_push,
++	.get_features	= get_features,
+ 	.connect	= connect_git,
+ 	.disconnect	= disconnect_git
+ };
+@@ -1606,6 +1622,28 @@ void transport_unlock_pack(struct transport *transport, unsigned int flags)
+ 		string_list_clear(&transport->pack_lockfiles, 0);
+ }
+ 
++struct string_list *transport_remote_features(struct transport *transport)
++{
++	const struct transport_vtable *vtable = transport->vtable;
++	struct string_list *list = NULL;
++
++	if (!server_supports_v2("features", 0))
++		return NULL;
++
++	if (!vtable->get_features) {
++		warning(_("'features' not supported by this remote"));
++		return NULL;
++	}
++
++	CALLOC_ARRAY(list, 1);
++	string_list_init_dup(list);
++
++	if (vtable->get_features(transport, list))
++		warning(_("failed to get recommended features from remote"));
++
++	return list;
++}
++
+ int transport_connect(struct transport *transport, const char *name,
+ 		      const char *exec, int fd[2])
+ {
+diff --git a/transport.h b/transport.h
+index ed5ebcf1466..7afc02eb683 100644
+--- a/transport.h
++++ b/transport.h
+@@ -322,6 +322,11 @@ int transport_fetch_refs(struct transport *transport, struct ref *refs);
+  */
+ void transport_unlock_pack(struct transport *transport, unsigned int flags);
+ 
++/**
++ * Get recommended config from remote.
++ */
++struct string_list *transport_remote_features(struct transport *transport);
++
+ int transport_disconnect(struct transport *transport);
+ char *transport_anonymize_url(const char *url);
+ void transport_take_over(struct transport *transport,
+-- 
+2.36.0.rc2.902.g60576bbc845
+

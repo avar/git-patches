@@ -1,0 +1,80 @@
+From 3aa4d42d2ac6fc822bc620911c83213a8fdb6c27 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v2-22.23-3aa4d42d2ac-20220418T165525Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<RFC-cover-v2-00.23-00000000000-20220418T165525Z-avarab@gmail.com>
+From: Derrick Stolee <derrickstolee@github.com>
+Date: Tue, 8 Feb 2022 13:26:05 -0500
+Subject: [RFC PATCH v2 22/23] clone: use server-recommended bundle URI
+
+After the ref advertisement initializes the connection between the
+client and the remote, use the 'features' capability (if available) to
+get a list of recommended features from the server.
+
+In this change, we only update the bundle URI setting. The bundles are
+downloaded immediately afterwards if the bundle URI becomes non-null.
+
+RFC-TODO: don't overwrite a given --bundle-uri option.
+RFC-TODO: implement the other capabilities.
+RFC-TODO: guard this entire request behind opt-in config.
+RFC-TODO: prevent using an HTTP(S) URI when in an SSH clone.
+RFC-TODO: prevent using a local path for the bundle URI.
+
+Signed-off-by: Derrick Stolee <derrickstolee@github.com>
+---
+ builtin/clone.c | 25 +++++++++++++++++++------
+ 1 file changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index 27e6844b1ec..b43a844226d 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -890,6 +890,7 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 	int err = 0, complete_refs_before_fetch = 1;
+ 	int submodule_progress;
+ 	int filter_submodules = 0;
++	struct string_list *feature_list = NULL;
+ 
+ 	struct transport_ls_refs_options transport_ls_refs_options =
+ 		TRANSPORT_LS_REFS_OPTIONS_INIT;
+@@ -1241,11 +1242,23 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 
+ 	refs = transport_get_remote_refs(transport, &transport_ls_refs_options);
+ 
+-	/*
+-	 * NOTE: The bundle URI download takes place after transport_get_remote_refs()
+-	 * because a later change will introduce a check for recommended features,
+-	 * which might include a recommended bundle URI.
+-	 */
++	feature_list = transport_remote_features(transport);
++
++	if (feature_list) {
++		struct string_list_item *item;
++		for_each_string_list_item(item, feature_list) {
++			char *value;
++			char *equals = strchr(item->string, '=');
++
++			if (!equals)
++				continue;
++			*equals = '\0';
++			value = equals + 1;
++
++			if (!strcmp(item->string, "bundleuri"))
++				bundle_uri = value;
++		}
++	}
+ 
+ 	/*
+ 	 * Before fetching from the remote, download and install bundle
+@@ -1265,7 +1278,7 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 		if (filter)
+ 			git_config_set("fetch.bundlefilter", filter);
+ 
+-		if (!fetch_bundle_uri(bundle_uri, filter))
++		if (fetch_bundle_uri(bundle_uri, filter))
+ 			warning(_("failed to fetch objects from bundle URI '%s'"),
+ 				bundle_uri);
+ 	}
+-- 
+2.36.0.rc2.902.g60576bbc845
+
