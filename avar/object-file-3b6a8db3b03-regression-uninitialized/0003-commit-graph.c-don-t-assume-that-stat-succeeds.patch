@@ -1,0 +1,85 @@
+From fadaa08a3ff65fcb02a19526992b6f3d48271423 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.4-fadaa08a3ff-20220421T200733Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20220421T200733Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20220421T200733Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 12 Apr 2022 10:23:46 +0200
+Subject: [PATCH 3/4] commit-graph.c: don't assume that stat() succeeds
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix code added in 8d84097f965 (commit-graph: expire commit-graph
+files, 2019-06-18) to check the return value of the stat() system
+call. Not doing so caused us to use uninitialized memory in the "Bloom
+generation is limited by --max-new-filters" test in
+t4216-log-bloom.sh:
+
+	+ rm -f trace.event
+	+ pwd
+	+ GIT_TRACE2_EVENT=[...]/t/trash directory.t4216-log-bloom/limits/trace.event git commit-graph write --reachable --split=replace --changed-paths --max-new-filters=2
+	==24835== Syscall param utimensat(times[0].tv_sec) points to uninitialised byte(s)
+	==24835==    at 0x499E65A: __utimensat64_helper (utimensat.c:34)
+	==24835==    by 0x4999142: utime (utime.c:36)
+	==24835==    by 0x552BE0: mark_commit_graphs (commit-graph.c:2213)
+	==24835==    by 0x550822: write_commit_graph (commit-graph.c:2424)
+	==24835==    by 0x54E3A0: write_commit_graph_reachable (commit-graph.c:1681)
+	==24835==    by 0x4374BB: graph_write (commit-graph.c:269)
+	==24835==    by 0x436F7D: cmd_commit_graph (commit-graph.c:326)
+	==24835==    by 0x407B9A: run_builtin (git.c:465)
+	==24835==    by 0x406651: handle_builtin (git.c:719)
+	==24835==    by 0x407575: run_argv (git.c:786)
+	==24835==    by 0x406410: cmd_main (git.c:917)
+	==24835==    by 0x511F09: main (common-main.c:56)
+	==24835==  Address 0x1ffeffde70 is on thread 1's stack
+	==24835==  in frame #1, created by utime (utime.c:25)
+	==24835==  Uninitialised value was created by a stack allocation
+	==24835==    at 0x552B50: mark_commit_graphs (commit-graph.c:2201)
+	==24835==
+	[...]
+	error: last command exited with $?=126
+	not ok 137 - Bloom generation is limited by --max-new-filters
+
+This would happen as we stat'd the non-existing
+".git/objects/info/commit-graph" file. Let's fix mark_commit_graphs()
+to check the statu() return value, and while we're at it fix another
+case added in the same commit to do the same.
+
+The caller in expire_commit_graphs() would have been less likely to
+run into this, as it's operating on files it just got from readdir(),
+but it could still happen due to a race with e.g. a concurrent "rm
+-rf" of the commit-graph files.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ commit-graph.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/commit-graph.c b/commit-graph.c
+index 441b36016ba..2b528187316 100644
+--- a/commit-graph.c
++++ b/commit-graph.c
+@@ -2206,7 +2206,8 @@ static void mark_commit_graphs(struct write_commit_graph_context *ctx)
+ 		struct stat st;
+ 		struct utimbuf updated_time;
+ 
+-		stat(ctx->commit_graph_filenames_before[i], &st);
++		if (stat(ctx->commit_graph_filenames_before[i], &st) < 0)
++			continue;
+ 
+ 		updated_time.actime = st.st_atime;
+ 		updated_time.modtime = now;
+@@ -2247,7 +2248,8 @@ static void expire_commit_graphs(struct write_commit_graph_context *ctx)
+ 		strbuf_setlen(&path, dirnamelen);
+ 		strbuf_addstr(&path, de->d_name);
+ 
+-		stat(path.buf, &st);
++		if (stat(path.buf, &st) < 0)
++			continue;
+ 
+ 		if (st.st_mtime > expire_time)
+ 			continue;
+-- 
+2.36.0.879.gd068ac2c328
+

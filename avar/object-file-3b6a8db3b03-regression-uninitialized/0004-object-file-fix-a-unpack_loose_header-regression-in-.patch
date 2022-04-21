@@ -1,0 +1,116 @@
+From 7698c0f11a843ea30de9aff69a314030465d4762 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.4-7698c0f11a8-20220421T200733Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20220421T200733Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20220421T200733Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 11 Apr 2022 16:31:50 +0200
+Subject: [PATCH 4/4] object-file: fix a unpack_loose_header() regression in
+ 3b6a8db3b03
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in my 3b6a8db3b03 (object-file.c: use "enum" return
+type for unpack_loose_header(), 2021-10-01) revealed both by running
+the test suite with --valgrind, and with the amended "git fsck" test.
+
+In practice this regression in v2.34.0 caused us to claim that we
+couldn't parse the header, as opposed to not being able to unpack
+it. Before the change in the C code the test_cmp added here would emit:
+
+	-error: unable to unpack header of ./objects/e6/9de29bb2d1d6434b8b29ae775ad8c2e48c5391
+	+error: unable to parse header of ./objects/e6/9de29bb2d1d6434b8b29ae775ad8c2e48c5391
+
+I.e. we'd proceed to call parse_loose_header() on the uninitialized
+"hdr" value, and it would have been very unlikely for that
+uninitialized memory to be a valid git object.
+
+The other callers of unpack_loose_header() were already checking the
+enum values exhaustively. See 3b6a8db3b03 and
+5848fb11acd (object-file.c: return ULHR_TOO_LONG on "header too long",
+2021-10-01).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-file.c       |  8 ++++++--
+ t/t1006-cat-file.sh | 10 ++++++++--
+ t/t1450-fsck.sh     | 13 +++++++++++--
+ 3 files changed, 25 insertions(+), 6 deletions(-)
+
+diff --git a/object-file.c b/object-file.c
+index 5ffbf3d4fd4..b5d1d12b68a 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -2623,8 +2623,12 @@ int read_loose_object(const char *path,
+ 		goto out;
+ 	}
+ 
+-	if (unpack_loose_header(&stream, map, mapsize, hdr, sizeof(hdr),
+-				NULL) < 0) {
++	switch (unpack_loose_header(&stream, map, mapsize, hdr, sizeof(hdr),
++				    NULL)) {
++	case ULHR_OK:
++		break;
++	case ULHR_BAD:
++	case ULHR_TOO_LONG:
+ 		error(_("unable to unpack header of %s"), path);
+ 		goto out;
+ 	}
+diff --git a/t/t1006-cat-file.sh b/t/t1006-cat-file.sh
+index 1b852076944..dadf3b14583 100755
+--- a/t/t1006-cat-file.sh
++++ b/t/t1006-cat-file.sh
+@@ -681,7 +681,7 @@ test_expect_success 'cat-file -t and -s on corrupt loose object' '
+ 
+ 		# Setup and create the empty blob and its path
+ 		empty_path=$(git rev-parse --git-path objects/$(test_oid_to_path "$EMPTY_BLOB")) &&
+-		git hash-object -w --stdin </dev/null &&
++		empty_blob=$(git hash-object -w --stdin </dev/null) &&
+ 
+ 		# Create another blob and its path
+ 		echo other >other.blob &&
+@@ -722,7 +722,13 @@ test_expect_success 'cat-file -t and -s on corrupt loose object' '
+ 		# content out as-is. Try to make it zlib-invalid.
+ 		mv -f other.blob "$empty_path" &&
+ 		test_must_fail git fsck 2>err.fsck &&
+-		grep "^error: inflate: data stream error (" err.fsck
++		cat >expect <<-EOF &&
++		error: inflate: data stream error (incorrect header check)
++		error: unable to unpack header of ./$empty_path
++		error: $empty_blob: object corrupt or missing: ./$empty_path
++		EOF
++		grep "^error: " err.fsck >actual &&
++		test_cmp expect actual
+ 	)
+ '
+ 
+diff --git a/t/t1450-fsck.sh b/t/t1450-fsck.sh
+index de50c0ea018..ab7f31f1dcd 100755
+--- a/t/t1450-fsck.sh
++++ b/t/t1450-fsck.sh
+@@ -774,10 +774,19 @@ test_expect_success 'fsck finds problems in duplicate loose objects' '
+ 		# no "-d" here, so we end up with duplicates
+ 		git repack &&
+ 		# now corrupt the loose copy
+-		file=$(sha1_file "$(git rev-parse HEAD)") &&
++		oid="$(git rev-parse HEAD)" &&
++		file=$(sha1_file "$oid") &&
+ 		rm "$file" &&
+ 		echo broken >"$file" &&
+-		test_must_fail git fsck
++		test_must_fail git fsck 2>err &&
++
++		cat >expect <<-EOF &&
++		error: inflate: data stream error (incorrect header check)
++		error: unable to unpack header of $file
++		error: $oid: object corrupt or missing: $file
++		EOF
++		grep "^error: " err >actual &&
++		test_cmp expect actual
+ 	)
+ '
+ 
+-- 
+2.36.0.879.gd068ac2c328
+

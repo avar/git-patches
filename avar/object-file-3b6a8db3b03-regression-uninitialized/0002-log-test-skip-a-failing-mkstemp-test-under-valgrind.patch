@@ -1,0 +1,56 @@
+From 0f7d2622541fd620444913033c9a137d0938fec2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.4-0f7d2622541-20220421T200733Z-avarab@gmail.com>
+In-Reply-To: <cover-0.4-00000000000-20220421T200733Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20220421T200733Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 12 Apr 2022 09:38:54 +0200
+Subject: [PATCH 2/4] log test: skip a failing mkstemp() test under valgrind
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Skip a test added in f1e3df31699 (t: increase test coverage of
+signature verification output, 2020-03-04) when running under
+valgrind. Due to valgrind's interception of mkstemp() this test will
+fail with:
+
+	+ pwd
+	+ TMPDIR=[...]/t/trash directory.t4202-log/bogus git log --show-signature -n1 plain-fail
+	==7696== VG_(mkstemp): failed to create temp file: [...]/t/trash directory.t4202-log/bogus/valgrind_proc_7696_cmdline_d545ddcf
+	[... 10 more similar lines omitted ..]
+	valgrind: Startup or configuration error:
+	valgrind:    Can't create client cmdline file in [...]/t/trash directory.t4202-log/bogus/valgrind_proc_7696_cmdline_6e542d1d
+	valgrind: Unable to start up properly.  Giving up.
+	error: last command exited with $?=1
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4202-log.sh | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/t/t4202-log.sh b/t/t4202-log.sh
+index be07407f855..6e663525582 100755
+--- a/t/t4202-log.sh
++++ b/t/t4202-log.sh
+@@ -1992,10 +1992,13 @@ test_expect_success GPG 'log --show-signature for merged tag with GPG failure' '
+ 	git tag -s -m signed_tag_msg signed_tag_fail &&
+ 	git checkout plain-fail &&
+ 	git merge --no-ff -m msg signed_tag_fail &&
+-	TMPDIR="$(pwd)/bogus" git log --show-signature -n1 plain-fail >actual &&
+-	grep "^merged tag" actual &&
+-	grep "^No signature" actual &&
+-	! grep "^gpg: Signature made" actual
++	if ! test_have_prereq VALGRIND
++	then
++		TMPDIR="$(pwd)/bogus" git log --show-signature -n1 plain-fail >actual &&
++		grep "^merged tag" actual &&
++		grep "^No signature" actual &&
++		! grep "^gpg: Signature made" actual
++	fi
+ '
+ 
+ test_expect_success GPGSM 'log --graph --show-signature for merged tag x509' '
+-- 
+2.36.0.879.gd068ac2c328
+
