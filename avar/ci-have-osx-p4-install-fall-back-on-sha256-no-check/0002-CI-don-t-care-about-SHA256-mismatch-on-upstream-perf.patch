@@ -1,0 +1,59 @@
+From a1d128793849c2fe330a5dae96308483e666556f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-a1d12879384-20220421T123242Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20220421T123242Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220421T123242Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 20 Apr 2022 11:11:45 +0200
+Subject: [PATCH 2/2] CI: don't care about SHA256 mismatch on upstream
+ "perforce" package
+
+As can be seen in the commit history[1] of the upstream perforce.rb in
+homebrew-cask the upstream perforce package URL and its SHA-256 are
+aren't a unique pair. The upstream will start publishing an updated
+package at the same URL as the previous version, causing the CI to
+routinely fail with errors like:
+
+	==> Downloading https://cdist2.perforce.com/perforce/r21.2/bin.macosx1015x86_64/helix-core-server.tgz
+	Error: SHA256 mismatch
+	Expected: ffc757b9d4d0629b2594e2777edfb18097825e29c70d8f33a444c7482d622806
+	  Actual: 37bc306f0bdfd1d63cfcea113ada132d96f89d53cbb20c282735d51d06223054
+
+Once someone gets around to updating the perforce.rb the failure of
+git's CI will be cleared up, but in the meantime all osx-{gcc,clang}
+jobs will encounter hard failures.
+
+Let's not be so anal about this and fallback to a "sha256 :no_check"
+on failure. We are already downloading arbitrary binaries from
+perforce's servers, and the point of doing so is to run the
+t/*-git-p4-*.sh tests, not to validate the chain of custody between
+perforce.com and the homebrew-cask repository.
+
+1. https://github.com/Homebrew/homebrew-cask/commits/master/Casks/perforce.rb
+2. https://docs.brew.sh/Cask-Cookbook#required-stanzas
+---
+ ci/install-dependencies.sh | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/ci/install-dependencies.sh b/ci/install-dependencies.sh
+index 82fa87f97af..540deab4488 100755
+--- a/ci/install-dependencies.sh
++++ b/ci/install-dependencies.sh
+@@ -37,7 +37,13 @@ macos-latest)
+ 	test -z "$BREW_INSTALL_PACKAGES" ||
+ 	brew install $BREW_INSTALL_PACKAGES
+ 	brew link --force gettext
+-	brew install perforce
++	brew install perforce || {
++		echo Installing perforce failed, assuming and working around SHA256 mismatch >&2 &&
++
++		path=$(brew edit --print-path perforce) &&
++		sed -i -e 's/\(sha256.\).*/\1:no_check/' "$path" &&
++		brew install perforce
++	}
+ 
+ 	if test -n "$CC_PACKAGE"
+ 	then
+-- 
+2.36.0.893.g80a51c675f6
+
