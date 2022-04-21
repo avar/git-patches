@@ -4,12 +4,105 @@ In-Reply-To: <cover-v4-00.31-00000000000-20220418T132809Z-avarab@gmail.com>
 References: <cover-v4-00.31-00000000000-20220418T132809Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Thu, 21 Apr 2022 20:15:26 +0200
-Subject: [PATCH v5 00/29] *** SUBJECT HERE ***
+Subject: [PATCH v5 00/29] CI: run "make" in CI "steps", improve UX
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series changes CI "step" targets that are shellscripts that do N
+things to instead be single command invocations at the "step" level,
+driven by the CI recipe itself.
+
+To do that we need to pass state that we previously re-setup for every
+"step" via $GITHUB_ENV, whose state we then helpfully show (this is just
+a standard GitHub CI feature) in a drop-down at the start of every
+"step".
+
+I.e. at the tip of this series you can reliably look at that
+$GITHUB_ENV view to see what the full and relevant environment was for
+that "make", "make test" or whatever.
+
+Change since v4:
+
+ * Minor UX improvements for 29/29, e.g. "error: " prefixes for error
+   messages.
+ * Addressed feedback from Phillip Wood at
+   https://lore.kernel.org/git/1157a463-f6c6-1df5-59cd-419d73eed1df@gmail.com/:
+
+   - That bash-specific ${../../} syntax is gone
+   - The inverted "skip-test: no" is now a "skip-test: yes", as it should be.
+
+   - The new "trace" output from ci/lib.sh now doesn't have "SKIP"
+     lines, i.e. we just say what variables we do set, not what we
+     don't set. E.g.:
+     https://github.com/avar/git/runs/6093145633?check_suite_focus=true#step:4:13
+
+   - I looked at the "a lot of churn" comment, there's e.g. "CI:
+     export variables via a wrapper" where we first make a wrapper to
+     "export" variables, then make further use of it, some of which
+     involves touching the same lines again.
+
+     Likewise first invoking ci/lib.sh, then splitting that up into
+     ci/lib.sh --build and ci/lib.sh --test.
+
+     I looked at squashing some of that together, but I think it
+     really makes it harder to review & reason about to do N things at
+     the same time, even if the net diff size is bigger.
+ * Squashed together two commits that were adjusting bash syntax to be
+   POSIX syntax.
+ * For the pedantic job that skips tests the "ci/lib.sh --test" step
+   of setting up variables for it is now also skipped. See:
+   https://github.com/avar/git/runs/6093144782?check_suite_focus=true
+ * Made ci/select-test-slice.sh do the same "are we in GitHub CI?"
+   check as the rest of the scripts, it's now easier to run it
+   stand-alone for testing.
+ * Adjusted usage output, made it friendlier, moved those UX bits over
+   to a test_commit-like getopts parsing.
+ * Fixed a typo/commit message suggestion by Eric Sunshine.
+
+ * This series contained a regression fix for an issue already on
+   "master", which I've split out in
+   https://lore.kernel.org/git/patch-v2-1.1-92acf9420a9-20220421T174733Z-avarab@gmail.com/
+
+   When the two are merged there's a conflict that's resolved thusly,
+   per a --remerge-diff (which I snipped away with [...]). I.e. gcc-8
+   and gcc-9 need to be added to the linux-gcc and osx-gcc part of
+   ci/lib.sh:
+	
+	diff --git a/ci/lib.sh b/ci/lib.sh
+	remerge CONFLICT (content): Merge conflict in ci/lib.sh
+	index 407e994edcd..a4e9d51ad6c 100755
+	--- a/ci/lib.sh
+	+++ b/ci/lib.sh
+	@@ -30,126 +30,6 @@ usage() {
+	 	then
+	 		echo "$CI_TYPE_HELP" >&2
+	 	fi
+	-<<<<<<< ca24940186b (Merge branch 'avar/ci-have-osx-p4-install-fall-back-on-sha256-no-check' into build-master)
+	-=======
+	[...snipped ~100 lines ... ]
+	->>>>>>> 92acf9420a9 (CI: select CC based on CC_PACKAGE (again))
+	 	exit 1
+	 }
+	 
+	@@ -373,7 +253,7 @@ vs-test)
+	 	setenv --test MAKEFLAGS "$COMMON_MAKEFLAGS"
+	 	;;
+	 linux-gcc)
+	-	CC=gcc
+	+	CC=gcc-8
+	 	setenv --test GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME main
+	 	;;
+	 linux-gcc-default)
+	@@ -397,7 +277,7 @@ linux-TEST-vars)
+	 	;;
+	 osx-gcc)
+	 	MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=$(which python3)"
+	-	CC=gcc
+	+	CC=gcc-9
+	 	;;
+	 osx-clang)
+	 	MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=$(which python2)"
 
 Ævar Arnfjörð Bjarmason (29):
   CI: run "set -ex" early in ci/lib.sh
