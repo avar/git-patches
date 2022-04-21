@@ -1,0 +1,68 @@
+From d89ad4d5b7c011dd0b36d5c94c698e5c621f8927 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-d89ad4d5b7c-20220421T125607Z-avarab@gmail.com>
+In-Reply-To: <cover-0.1-00000000000-20220421T125607Z-avarab@gmail.com>
+References: <cover-0.1-00000000000-20220421T125607Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Apr 2022 12:09:04 +0200
+Subject: [PATCH 1/1] CI: select CC based on CC_PACKAGE (again)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in 707d2f2fe86 (CI: use "$runs_on_pool", not
+"$jobname" to select packages & config, 2021-11-23).
+
+In that commit I changed CC=gcc from CC=gcc-9, but on OSX the "gcc" in
+$PATH points to clang, we need to use gcc-9 instead. Likewise for the
+linux-gcc job CC=gcc-8 was changed to the implicit CC=gcc, which would
+select GCC 9.4.0 instead of GCC 8.4.0.
+
+Furthermore in 25715419bf4 (CI: don't run "make test" twice in one
+job, 2021-11-23) when the "linux-TEST-vars" job was split off from
+"linux-gcc" the "cc_package: gcc-8" line was copied along with
+it.
+
+That wasn't a bug per-se, as that "make test" would have run under GCC
+8 before the split into two jobs, but the point of selecting different
+compiler for these jobs is to get better coverage, and to narrow down
+any issues with a given compiler to the job that runs it. Since the
+"linux-TEST-vars" job is already special in other ways (in running
+with various GIT_TEST_* variables), and we've got the "linux-gcc" job
+covering gcc-8 let's have it used the default system compiler instead.
+
+Reported-by: Carlo Arenas <carenas@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml | 1 -
+ ci/lib.sh                  | 2 +-
+ 2 files changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index c35200defb9..f12819a00d7 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -236,7 +236,6 @@ jobs:
+           - jobname: linux-TEST-vars
+             cc: gcc
+             os: ubuntu
+-            cc_package: gcc-8
+             pool: ubuntu-latest
+           - jobname: osx-clang
+             cc: clang
+diff --git a/ci/lib.sh b/ci/lib.sh
+index cbc2f8f1caa..44007dcf93b 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -122,7 +122,7 @@ then
+ 	test macos != "$CI_OS_NAME" || CI_OS_NAME=osx
+ 	CI_REPO_SLUG="$GITHUB_REPOSITORY"
+ 	CI_JOB_ID="$GITHUB_RUN_ID"
+-	CC="${CC:-gcc}"
++	CC="${CC:-${CC_PACKAGE:-gcc}}"
+ 	DONT_SKIP_TAGS=t
+ 
+ 	cache_dir="$HOME/none"
+-- 
+2.36.0.876.g4bfefc07680
+
