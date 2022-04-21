@@ -1,0 +1,57 @@
+From 98c26c9917b959716f7b49d2789d6ddffd81d551 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.6-98c26c9917b-20220421T121236Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20220421T121236Z-avarab@gmail.com>
+References: <RFC-cover-v2-00.13-00000000000-20220311T155841Z-avarab@gmail.com>
+	<cover-0.6-00000000000-20220421T121236Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Apr 2022 12:21:25 +0200
+Subject: [PATCH 5/6] hook API: don't redundantly re-set "no_stdin" and
+ "stdout_to_stderr"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend code added in 96e7225b310 (hook: add 'run' subcommand,
+2021-12-22) top stop setting these two flags. We use the
+run_process_parallel() API added in c553c72eed6 (run-command: add an
+asynchronous parallel child processor, 2015-12-15), which always sets
+these in pp_start_one() (in addition to setting .err = -1).
+
+Note that an assert() to check that these values are already what
+we're setting them to here would fail. That's because in
+pp_start_one() we'll set these after calling this "get_next_task"
+callback (which we call pick_next_hook()). But the only case where we
+weren't setting these just after returning from this function was if
+we took the "return 0" path here, in which case we wouldn't have set
+these.
+
+So while this code wasn't wrong, it was entirely redundant. The
+run_process_parallel() also can't work with a generic "struct
+child_process", it needs one that's behaving in a way that it expects
+when it comes to stderr/stdout. So we shouldn't be changing these
+values, or in this case keeping around code that gives the impression
+that doing in the general case is OK.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ hook.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/hook.c b/hook.c
+index eadb2d58a7b..68ee4030551 100644
+--- a/hook.c
++++ b/hook.c
+@@ -53,9 +53,7 @@ static int pick_next_hook(struct child_process *cp,
+ 	if (!hook_path)
+ 		return 0;
+ 
+-	cp->no_stdin = 1;
+ 	strvec_pushv(&cp->env_array, hook_cb->options->env.v);
+-	cp->stdout_to_stderr = 1;
+ 	cp->trace2_hook_name = hook_cb->hook_name;
+ 	cp->dir = hook_cb->options->dir;
+ 
+-- 
+2.36.0.893.g80a51c675f6
+
