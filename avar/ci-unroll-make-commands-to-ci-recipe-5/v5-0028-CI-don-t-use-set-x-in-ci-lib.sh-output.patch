@@ -1,0 +1,130 @@
+From e35dff2bef3c62ae50e7ee0ce34632e1eeeb778f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-28.29-e35dff2bef3-20220421T160453Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.29-00000000000-20220421T160453Z-avarab@gmail.com>
+References: <cover-v4-00.31-00000000000-20220418T132809Z-avarab@gmail.com>
+	<cover-v5-00.29-00000000000-20220421T160453Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 21 Feb 2022 11:49:56 +0100
+Subject: [PATCH v5 28/29] CI: don't use "set -x" in "ci/lib.sh" output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the "set -x" from the "ci/lib.sh" output. Before preceding
+commits the logic in that file was much more complex, and likely to
+fail in some scenarios.
+
+Now we only task "ci/lib.sh" with setting various variables for
+subsequent steps in our jobs, so we can start emitting more tailored
+debugging output, which makes what it's doing easier to read.
+
+This change also changes the output of the "ci/print-test-failures.sh"
+script, since it's the only other user of "ci/lib-ci-type.sh". In that
+case it's also helpful to know what "$CI_TYPE" we're using, as that
+script doesn't "set -x" and will act differently depending on the
+$CI_TYPE.
+
+It's useful when developing this script to see what variables
+it *doesn't* set, but such output isn't useful to users, so let's hide
+the "SKIP" output behind a --debug option.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/lib.sh | 35 ++++++++++++++++++++++++++++++++---
+ 1 file changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/ci/lib.sh b/ci/lib.sh
+index f2f75901a9c..9e38c893890 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-set -ex
++set -e
+ 
+ # Helper libraries
+ . ${0%/*}/lib-ci-type.sh
+@@ -7,15 +7,22 @@ set -ex
+ # Parse options
+ mode_build=
+ mode_test=
++mode_debug=
+ while test $# != 0
+ do
+ 	case "$1" in
+ 	--build)
++		echo "MODE: $1" >&2
+ 		mode_build=t
+ 		;;
+ 	--test)
++		echo "MODE: $1" >&2
+ 		mode_test=t
+ 		;;
++	--debug)
++		echo "DEBUG: $1" >&2
++		mode_debug=t
++		;;
+ 	-*)
+ 		echo "error: invalid option: $1" >&2
+ 		exit 1
+@@ -41,21 +48,32 @@ then
+ 	exit 1
+ fi
+ 
++# Show our configuration
++echo "CONFIG: CI_TYPE=$CI_TYPE" >&2
++echo "CONFIG: jobname=$jobname" >&2
++echo "CONFIG: runs_on_pool=$runs_on_pool" >&2
++if test -n "$GITHUB_ENV"
++then
++	echo "CONFIG: GITHUB_ENV=$GITHUB_ENV" >&2
++fi
++echo >&2
++
+ # Helper functions
+ setenv () {
++	skip=
+ 	while test $# != 0
+ 	do
+ 		case "$1" in
+ 		--build)
+ 			if test -z "$mode_build"
+ 			then
+-				return 0
++				skip=t
+ 			fi
+ 			;;
+ 		--test)
+ 			if test -z "$mode_test"
+ 			then
+-				return 0
++				skip=t
+ 			fi
+ 			;;
+ 		-*)
+@@ -73,10 +91,21 @@ setenv () {
+ 	val=$2
+ 	shift 2
+ 
++	if test -n "$skip"
++	then
++		if test -n "$mode_debug"
++		then
++			echo "SKIP: '$key=$val'" >&2
++		fi
++		return 0
++	fi
++
+ 	if test -n "$GITHUB_ENV"
+ 	then
+ 		echo "$key=$val" >>"$GITHUB_ENV"
+ 	fi
++
++	echo "SET: '$key=$val'" >&2
+ }
+ 
+ # Clear variables that may come from the outside world.
+-- 
+2.36.0.878.g02ae16f6fb3
+

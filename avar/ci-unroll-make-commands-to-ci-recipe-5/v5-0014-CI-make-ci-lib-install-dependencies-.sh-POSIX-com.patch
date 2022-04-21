@@ -1,0 +1,127 @@
+From 533dbc50c4f4dae34877d8f0358fd69b8b80f77e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-14.29-533dbc50c4f-20220421T160453Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.29-00000000000-20220421T160453Z-avarab@gmail.com>
+References: <cover-v4-00.31-00000000000-20220418T132809Z-avarab@gmail.com>
+	<cover-v5-00.29-00000000000-20220421T160453Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Apr 2022 10:14:24 +0200
+Subject: [PATCH v5 14/29] CI: make ci/{lib,install-dependencies}.sh
+ POSIX-compatible
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the unportable constructs in the "ci/install-dependencies.sh"
+scripts to use POSIX replacements, and have it run under "/bin/sh"
+instead of "/usr/bin/env bash". We needed to:
+
+* Replace pushd/popd with a sub-shell.
+* Change "mkdir --parents" to "mkdir -p".
+* Use POSIX "export" syntax.
+
+This is in preparation for combining this script and
+"ci/install-docker-dependencies.sh", which doesn't have access to
+"bash".
+
+While we're at it change "if [" to "if test" in ci/lib.sh. This isn't
+strictly speaking a case of POSIX-incompatibility, but that syntax was
+being used there because this code was using idiomatic bash
+constructs. Let's have it use our usual style of "if test" instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/install-dependencies.sh | 27 +++++++++++++++++----------
+ ci/lib.sh                  |  4 ++--
+ 2 files changed, 19 insertions(+), 12 deletions(-)
+
+diff --git a/ci/install-dependencies.sh b/ci/install-dependencies.sh
+index 01006379fd0..1ad4dd7db39 100755
+--- a/ci/install-dependencies.sh
++++ b/ci/install-dependencies.sh
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env bash
++#!/bin/sh
+ #
+ # Install dependencies required to build and test Git on Linux and macOS
+ #
+@@ -21,7 +21,8 @@ ubuntu-latest)
+ 
+ 	P4_PATH="$HOME/custom/p4"
+ 	GIT_LFS_PATH="$HOME/custom/git-lfs"
+-	export PATH="$GIT_LFS_PATH:$P4_PATH:$PATH"
++	PATH="$GIT_LFS_PATH:$P4_PATH:$PATH"
++	export PATH
+ 	if test -n "$GITHUB_PATH"
+ 	then
+ 		echo "$PATH" >>"$GITHUB_PATH"
+@@ -33,22 +34,28 @@ ubuntu-latest)
+ 	sudo apt-get -q update
+ 	sudo apt-get -q -y install language-pack-is libsvn-perl apache2 \
+ 		$UBUNTU_COMMON_PKGS $CC_PACKAGE
+-	mkdir --parents "$P4_PATH"
+-	pushd "$P4_PATH"
++	mkdir -p "$P4_PATH"
++	(
++		cd "$P4_PATH"
+ 		wget --quiet "$P4WHENCE/bin.linux26x86_64/p4d"
+ 		wget --quiet "$P4WHENCE/bin.linux26x86_64/p4"
+ 		chmod u+x p4d
+ 		chmod u+x p4
+-	popd
+-	mkdir --parents "$GIT_LFS_PATH"
+-	pushd "$GIT_LFS_PATH"
++	)
++	mkdir -p "$GIT_LFS_PATH"
++	(
++		cd "$GIT_LFS_PATH"
+ 		wget --quiet "$LFSWHENCE/git-lfs-linux-amd64-$LINUX_GIT_LFS_VERSION.tar.gz"
+ 		tar --extract --gunzip --file "git-lfs-linux-amd64-$LINUX_GIT_LFS_VERSION.tar.gz"
+ 		cp git-lfs-$LINUX_GIT_LFS_VERSION/git-lfs .
+-	popd
++	)
+ 	;;
+ macos-latest)
+-	export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
++	HOMEBREW_NO_AUTO_UPDATE=1
++	export HOMEBREW_NO_AUTO_UPDATE
++	HOMEBREW_NO_INSTALL_CLEANUP=1
++	export HOMEBREW_NO_INSTALL_CLEANUP
++
+ 	# Uncomment this if you want to run perf tests:
+ 	# brew install gnu-time
+ 	brew link --force gettext
+@@ -62,7 +69,7 @@ macos-latest)
+ 
+ 	if test -n "$CC_PACKAGE"
+ 	then
+-		BREW_PACKAGE=${CC_PACKAGE/-/@}
++		BREW_PACKAGE=$(echo $CC_PACKAGE | tr '-' '@')
+ 		brew install "$BREW_PACKAGE"
+ 		brew link "$BREW_PACKAGE"
+ 	fi
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 43231862aa5..2fd022c94bc 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -94,7 +94,7 @@ ubuntu-latest)
+ 		break
+ 	fi
+ 
+-	if [ "$jobname" = linux-gcc ]
++	if test "$jobname" = linux-gcc
+ 	then
+ 		MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=/usr/bin/python3"
+ 	else
+@@ -104,7 +104,7 @@ ubuntu-latest)
+ 	setenv --test GIT_TEST_HTTPD true
+ 	;;
+ macos-latest)
+-	if [ "$jobname" = osx-gcc ]
++	if test "$jobname" = osx-gcc
+ 	then
+ 		MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=$(which python3)"
+ 	else
+-- 
+2.36.0.878.g02ae16f6fb3
+
