@@ -1,0 +1,99 @@
+From 879930b7a66f35a61f27b82aa4e54709e179b109 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.2-879930b7a66-20220421T152704Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.2-00000000000-20220421T152704Z-avarab@gmail.com>
+References: <225b410d-2d98-8c0b-c289-22f753c175d4@p1sec.com>
+	<cover-v3-0.2-00000000000-20220421T152704Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Apr 2022 16:54:54 +0200
+Subject: [PATCH v3 1/2] show-branch: refactor in preparation for next commit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the code in cmd_show_branch() that formats a reflog message for
+us into a function, and change the "flags" variable that we never
+change into a "const", in addition to moving it up a scope in
+preparation for the subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/show-branch.c | 34 +++++++++++++++++++++-------------
+ 1 file changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/builtin/show-branch.c b/builtin/show-branch.c
+index 330b0553b9d..499ef76a508 100644
+--- a/builtin/show-branch.c
++++ b/builtin/show-branch.c
+@@ -618,6 +618,24 @@ static int parse_reflog_param(const struct option *opt, const char *arg,
+ 	return 0;
+ }
+ 
++static char *fmt_reflog(char *const logmsg, const timestamp_t ts, const int tz,
++			const char *fmt)
++{
++	char *const end = strchr(logmsg, '\n');
++	const char *msg;
++	char *ret;
++
++	if (end)
++		*end = '\0';
++
++	msg = *logmsg ? logmsg : "(none)";
++
++	ret = xstrfmt(fmt, show_date(ts, tz, DATE_MODE(RELATIVE)), msg);
++	free(logmsg);
++
++	return ret;
++}
++
+ int cmd_show_branch(int ac, const char **av, const char *prefix)
+ {
+ 	struct commit *rev[MAX_REVS], *commit;
+@@ -640,6 +658,7 @@ int cmd_show_branch(int ac, const char **av, const char *prefix)
+ 	int topics = 0;
+ 	int dense = 1;
+ 	const char *reflog_base = NULL;
++	const unsigned int flags = 0;
+ 	struct option builtin_show_branch_options[] = {
+ 		OPT_BOOL('a', "all", &all_heads,
+ 			 N_("show remote-tracking and local branches")),
+@@ -720,7 +739,6 @@ int cmd_show_branch(int ac, const char **av, const char *prefix)
+ 		struct object_id oid;
+ 		char *ref;
+ 		int base = 0;
+-		unsigned int flags = 0;
+ 
+ 		if (ac == 0) {
+ 			static const char *fake_av[2];
+@@ -761,8 +779,6 @@ int cmd_show_branch(int ac, const char **av, const char *prefix)
+ 		for (i = 0; i < reflog; i++) {
+ 			char *logmsg;
+ 			char *nth_desc;
+-			const char *msg;
+-			char *end;
+ 			timestamp_t timestamp;
+ 			int tz;
+ 
+@@ -773,16 +789,8 @@ int cmd_show_branch(int ac, const char **av, const char *prefix)
+ 				break;
+ 			}
+ 
+-			end = strchr(logmsg, '\n');
+-			if (end)
+-				*end = '\0';
+-
+-			msg = (*logmsg == '\0') ? "(none)" : logmsg;
+-			reflog_msg[i] = xstrfmt("(%s) %s",
+-						show_date(timestamp, tz,
+-							  DATE_MODE(RELATIVE)),
+-						msg);
+-			free(logmsg);
++			reflog_msg[i] = fmt_reflog(logmsg, timestamp, tz,
++						   "(%s) %s");
+ 
+ 			nth_desc = xstrfmt("%s@{%d}", *av, base+i);
+ 			append_ref(nth_desc, &oid, 1);
+-- 
+2.36.0.876.g7efc8a7728c
+

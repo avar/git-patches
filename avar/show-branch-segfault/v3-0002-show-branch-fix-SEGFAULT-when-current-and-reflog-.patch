@@ -1,0 +1,111 @@
+From 396c33385332071d094918fd53db4dd5f7d04ec8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-2.2-396c3338533-20220421T152704Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.2-00000000000-20220421T152704Z-avarab@gmail.com>
+References: <225b410d-2d98-8c0b-c289-22f753c175d4@p1sec.com>
+	<cover-v3-0.2-00000000000-20220421T152704Z-avarab@gmail.com>
+From: Gregory David <gregory.david@p1sec.com>
+Date: Thu, 21 Apr 2022 17:07:36 +0200
+Subject: [PATCH v3 2/2] show-branch: fix SEGFAULT when `--current` and
+ `--reflog` together
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+If run `show-branch` with `--current` and `--reflog` simultaneously, a
+SEGFAULT appears.
+
+The bug is that we read over the end of the `reflog_msg` array after
+having `append_one_rev()` for the current branch without supplying a
+convenient message to it.
+
+It seems that it has been introduced in:
+Commit 1aa68d6735 (show-branch: --current includes the current branch.,
+2006-01-11)
+
+Signed-off-by: Gregory DAVID <gregory.david@p1sec.com>
+Thanks-to: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/show-branch.c  | 13 +++++++++++++
+ t/t3202-show-branch.sh | 43 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 56 insertions(+)
+
+diff --git a/builtin/show-branch.c b/builtin/show-branch.c
+index 499ef76a508..50c17fb5c31 100644
+--- a/builtin/show-branch.c
++++ b/builtin/show-branch.c
+@@ -821,6 +821,19 @@ int cmd_show_branch(int ac, const char **av, const char *prefix)
+ 		}
+ 		if (!has_head) {
+ 			const char *name = head;
++			struct object_id oid;
++			char *ref;
++			char *msg;
++			timestamp_t ts;
++			int tz;
++
++			if (!dwim_ref(*av, strlen(*av), &oid, &ref, 0))
++				die(_("no such ref %s"), *av);
++			read_ref_at(get_main_ref_store(the_repository), ref,
++				    flags, 0, i, &oid, &msg, &ts, &tz, NULL);
++
++			reflog_msg[ref_name_cnt] = fmt_reflog(msg, ts, tz,
++							      "(%s) (current) %s");
+ 			skip_prefix(name, "refs/heads/", &name);
+ 			append_one_rev(name);
+ 		}
+diff --git a/t/t3202-show-branch.sh b/t/t3202-show-branch.sh
+index 7a1be73ce87..7f6ffcf8a57 100755
+--- a/t/t3202-show-branch.sh
++++ b/t/t3202-show-branch.sh
+@@ -161,4 +161,47 @@ test_expect_success 'show branch --reflog=2' '
+ 	test_cmp actual expect
+ '
+ 
++test_expect_success 'show branch --reflog=2 --current' '
++	sed "s/^>	//" >expect <<-\EOF &&
++	>	! [refs/heads/branch10@{0}] (4 years, 5 months ago) commit: branch10
++	>	 ! [refs/heads/branch10@{1}] (4 years, 5 months ago) commit: branch10
++	>	  * [branch10] (4 years, 5 months ago) (current) branch: Created from initial
++	>	---
++	>	+ * [refs/heads/branch10@{0}] branch10
++	>	++* [refs/heads/branch10@{1}] initial
++	EOF
++	git show-branch --reflog=2 --current >actual &&
++	test_cmp actual expect
++'
++
++test_expect_success 'show branch --current' '
++	sed "s/^>	//" >expect <<-\EOF &&
++	>	! [branch1] branch1
++	>	 ! [branch2] branch2
++	>	  ! [branch3] branch3
++	>	   ! [branch4] branch4
++	>	    ! [branch5] branch5
++	>	     ! [branch6] branch6
++	>	      ! [branch7] branch7
++	>	       ! [branch8] branch8
++	>	        ! [branch9] branch9
++	>	         * [branch10] branch10
++	>	          ! [master] initial
++	>	-----------
++	>	         *  [branch10] branch10
++	>	        +   [branch9] branch9
++	>	       +    [branch8] branch8
++	>	      +     [branch7] branch7
++	>	     +      [branch6] branch6
++	>	    +       [branch5] branch5
++	>	   +        [branch4] branch4
++	>	  +         [branch3] branch3
++	>	 +          [branch2] branch2
++	>	+           [branch1] branch1
++	>	+++++++++*+ [master] initial
++	EOF
++	git show-branch --current >actual &&
++	test_cmp actual expect
++'
++
+ test_done
+-- 
+2.36.0.876.g7efc8a7728c
+
