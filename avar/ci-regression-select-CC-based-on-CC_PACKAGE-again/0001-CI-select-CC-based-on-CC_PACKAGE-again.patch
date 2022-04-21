@@ -1,5 +1,5 @@
 From d89ad4d5b7c011dd0b36d5c94c698e5c621f8927 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-1.1-d89ad4d5b7c-20220421T125725Z-avarab@gmail.com>
+Message-Id: <patch-1.1-d89ad4d5b7c-20220421T125828Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Mon, 18 Apr 2022 12:09:04 +0200
@@ -32,6 +32,92 @@ covering gcc-8 let's have it used the default system compiler instead.
 Reported-by: Carlo Arenas <carenas@gmail.com>
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+Range-diff:
+1:  6501059c594 ! 1:  d89ad4d5b7c CI: set PYTHON_PATH setting for osx-{clang,gcc} into "$jobname" case
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    CI: set PYTHON_PATH setting for osx-{clang,gcc} into "$jobname" case
+    +    CI: select CC based on CC_PACKAGE (again)
+     
+    -    Move the setting of "PYTHON_PATH=[...]" to the "$jobname" case
+    -    statement. This partially backs out of my 707d2f2fe86 (CI: use
+    -    "$runs_on_pool", not "$jobname" to select packages & config,
+    -    2021-11-23), now that we have a "osx-{clang,gcc}" anyway for setting
+    -    "$CC" we might as well do away with this part of the "$runs_on_pool"
+    -    case.
+    +    Fix a regression in 707d2f2fe86 (CI: use "$runs_on_pool", not
+    +    "$jobname" to select packages & config, 2021-11-23).
+     
+    +    In that commit I changed CC=gcc from CC=gcc-9, but on OSX the "gcc" in
+    +    $PATH points to clang, we need to use gcc-9 instead. Likewise for the
+    +    linux-gcc job CC=gcc-8 was changed to the implicit CC=gcc, which would
+    +    select GCC 9.4.0 instead of GCC 8.4.0.
+    +
+    +    Furthermore in 25715419bf4 (CI: don't run "make test" twice in one
+    +    job, 2021-11-23) when the "linux-TEST-vars" job was split off from
+    +    "linux-gcc" the "cc_package: gcc-8" line was copied along with
+    +    it.
+    +
+    +    That wasn't a bug per-se, as that "make test" would have run under GCC
+    +    8 before the split into two jobs, but the point of selecting different
+    +    compiler for these jobs is to get better coverage, and to narrow down
+    +    any issues with a given compiler to the job that runs it. Since the
+    +    "linux-TEST-vars" job is already special in other ways (in running
+    +    with various GIT_TEST_* variables), and we've got the "linux-gcc" job
+    +    covering gcc-8 let's have it used the default system compiler instead.
+    +
+    +    Reported-by: Carlo Arenas <carenas@gmail.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    + ## .github/workflows/main.yml ##
+    +@@ .github/workflows/main.yml: jobs:
+    +           - jobname: linux-TEST-vars
+    +             cc: gcc
+    +             os: ubuntu
+    +-            cc_package: gcc-8
+    +             pool: ubuntu-latest
+    +           - jobname: osx-clang
+    +             cc: clang
+    +
+      ## ci/lib.sh ##
+    -@@ ci/lib.sh: ubuntu-latest)
+    - 
+    - 	setenv --test GIT_TEST_HTTPD true
+    - 	;;
+    --macos-latest)
+    --	if test "$jobname" = osx-gcc
+    --	then
+    --		MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=$(which python3)"
+    --	else
+    --		MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=$(which python2)"
+    --	fi
+    --	;;
+    - esac
+    +@@ ci/lib.sh: then
+    + 	test macos != "$CI_OS_NAME" || CI_OS_NAME=osx
+    + 	CI_REPO_SLUG="$GITHUB_REPOSITORY"
+    + 	CI_JOB_ID="$GITHUB_RUN_ID"
+    +-	CC="${CC:-gcc}"
+    ++	CC="${CC:-${CC_PACKAGE:-gcc}}"
+    + 	DONT_SKIP_TAGS=t
+      
+    - case "$jobname" in
+    -@@ ci/lib.sh: linux-TEST-vars)
+    - 	setenv --test GIT_TEST_CHECKOUT_WORKERS 2
+    - 	;;
+    - osx-gcc)
+    -+	MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=$(which python3)"
+    - 	CC=gcc
+    - 	;;
+    - osx-clang)
+    -+	MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=$(which python2)"
+    - 	CC=clang
+    - 	;;
+    - linux-clang)
+    + 	cache_dir="$HOME/none"
+
  .github/workflows/main.yml | 1 -
  ci/lib.sh                  | 2 +-
  2 files changed, 1 insertion(+), 2 deletions(-)
