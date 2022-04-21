@@ -1,0 +1,197 @@
+From 6b278194f9ae9c3034735090087fdb391c8f4ac4 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v4-0.6-00000000000-20220413T195514Z-avarab@gmail.com>
+References: <RFC-cover-v4-0.6-00000000000-20220413T195514Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 21 Apr 2022 20:30:01 +0200
+Subject: [RFC PATCH v5 00/10] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Johannes Schindelin (6):
+  ci: make it easier to find failed tests' logs in the GitHub workflow
+  tests: refactor --write-junit-xml code
+  test(junit): avoid line feeds in XML attributes
+  ci: optionally mark up output in the GitHub workflow
+  ci: use `--github-workflow-markup` in the GitHub workflow
+  ci: call `finalize_test_case_output` a little later
+
+Ævar Arnfjörð Bjarmason (4):
+  CI: don't "cd" in ci/print-test-failures.sh
+  CI: add --exit-code to ci/print-test-failures.sh
+  CI: don't include "test-results/" in ci/print-test-failures.sh output
+  CI: stop setting FAILED_TEST_ARTIFACTS N times
+
+ .github/workflows/main.yml           |  20 +---
+ ci/lib.sh                            |   2 +-
+ ci/print-test-failures.sh            |  89 ++++++++++++++----
+ t/test-lib-functions.sh              |   4 +-
+ t/test-lib-github-workflow-markup.sh |  50 ++++++++++
+ t/test-lib-junit.sh                  | 132 +++++++++++++++++++++++++++
+ t/test-lib.sh                        | 128 ++++----------------------
+ 7 files changed, 282 insertions(+), 143 deletions(-)
+ create mode 100644 t/test-lib-github-workflow-markup.sh
+ create mode 100644 t/test-lib-junit.sh
+
+Range-diff against v4:
+ -:  ----------- >  1:  56910df26e7 CI: don't "cd" in ci/print-test-failures.sh
+ -:  ----------- >  2:  caec0b1089a CI: add --exit-code to ci/print-test-failures.sh
+ -:  ----------- >  3:  577a5be34f4 CI: don't include "test-results/" in ci/print-test-failures.sh output
+ -:  ----------- >  4:  1482f840f64 CI: stop setting FAILED_TEST_ARTIFACTS N times
+ 1:  cc137c69ee1 !  5:  4291892fbd3 ci: make it easier to find failed tests' logs in the GitHub workflow
+    @@ .github/workflows/main.yml: jobs:
+     -      if: failure()
+     -      shell: bash
+     -      run: ci/print-test-failures.sh
+    -+      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+    ++      run: . /etc/profile && make -C t -e || ci/print-test-failures.sh
+          - name: Upload failed tests' directories
+            if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+            uses: actions/upload-artifact@v2
+    @@ .github/workflows/main.yml: jobs:
+            if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+            uses: actions/upload-artifact@v2
+     @@ .github/workflows/main.yml: jobs:
+    -     - run: ci/lib.sh --build
+          - run: make
+          - run: ci/lib.sh --test
+    +       if: success() && matrix.vector.skip-tests != 'yes'
+     -    - run: make test
+     +    - run: make test || ci/print-test-failures-github.sh
+    -       if: success() && matrix.vector.skip-tests != 'no'
+    +       if: success() && matrix.vector.skip-tests != 'yes'
+     -    - run: ci/print-test-failures.sh
+    --      if: failure() && matrix.vector.skip-tests != 'no'
+    +-      if: failure() && matrix.vector.skip-tests != 'yes'
+          - name: Upload failed tests' directories
+            if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+            uses: actions/upload-artifact@v1
+     
+    - ## ci/print-test-failures-github.sh (new) ##
+    -@@
+    -+#!/bin/sh
+    -+
+    -+. ${0%/*}/lib-ci-type.sh
+    -+
+    -+set -e
+    -+
+    + ## ci/print-test-failures.sh ##
+    +@@ ci/print-test-failures.sh: set -e
+    + . ${0%/*}/lib-ci-type.sh
+    + . ${0%/*}/lib-tput.sh
+    + 
+    +-exit_code=
+     +case "$CI_TYPE" in
+     +github-actions)
+    -+	handle_failed_tests () {
+    -+		mkdir -p t/failed-test-artifacts
+    -+		echo "FAILED_TEST_ARTIFACTS=t/failed-test-artifacts" >>$GITHUB_ENV
+    -+
+    -+		for test_exit in t/test-results/*.exit
+    -+		do
+    -+			test 0 != "$(cat "$test_exit")" || continue
+    -+
+    -+			test_name="${test_exit%.exit}"
+    -+			test_name="${test_name##*/}"
+    -+			printf "\\e[33m\\e[1m=== Failed test: ${test_name} ===\\e[m\\n"
+    -+			cat "t/test-results/$test_name.out"
+    -+
+    -+			trash_dir="t/trash directory.$test_name"
+    -+			cp "t/test-results/$test_name.out" t/failed-test-artifacts/
+    -+			tar czf t/failed-test-artifacts/"$test_name".trash.tar.gz "$trash_dir"
+    -+		done
+    -+		return 1
+    -+	}
+    ++	exit_code=t
+    ++	github_workflow_markup=t
+     +	;;
+     +*)
+    -+	echo "Unhandled CI type: $CI_TYPE" >&2
+    -+	exit 1
+    ++	exit_code=
+    ++	github_workflow_markup=
+     +	;;
+     +esac
+     +
+    -+handle_failed_tests
+    + while test $# != 0
+    + do
+    + 	case "$1" in
+    + 	--exit-code)
+    + 		exit_code=t
+    + 		;;
+    ++	--no-exit-code)
+    ++		exit_code=
+    ++		;;
+    ++	--github-workflow-markup)
+    ++		github_workflow_markup=t
+    ++		;;
+    ++	--no-github-workflow-markup)
+    ++		github_workflow_markup=
+    ++		;;
+    + 	*)
+    + 		echo "BUG: invalid $0 argument: $1" >&2
+    + 		exit 1
+    +@@ ci/print-test-failures.sh: do
+    + 		TEST_OUT="${TEST_NAME}.out"
+    + 		TEST_MARKUP="${TEST_NAME}.markup"
+    + 
+    +-		echo "------------------------------------------------------------------------"
+    +-		echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+    +-		echo "------------------------------------------------------------------------"
+    ++		if test -n "$github_workflow_markup"
+    ++		then
+    ++			printf "\\e[33m\\e[1m=== Failed test: ${TEST_NAME} ===\\e[m\\n"
+    ++		else
+    ++			echo "------------------------------------------------------------------------"
+    ++			echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+    ++			echo "------------------------------------------------------------------------"
+    ++		fi
+    + 		cat "t/test-results/${TEST_OUT}"
+    + 
+    + 		trash_dir="trash directory.$TEST_NAME"
+ 2:  91f96c4f210 =  6:  d9b7d5ddf5a tests: refactor --write-junit-xml code
+ 3:  84c722969d5 =  7:  2d233bbdc22 test(junit): avoid line feeds in XML attributes
+ 4:  8acaa800d3a =  8:  5dd43a1624b ci: optionally mark up output in the GitHub workflow
+ 5:  4499f743dd1 !  9:  877edff3b4d ci: use `--github-workflow-markup` in the GitHub workflow
+    @@ ci/lib.sh: MAKEFLAGS="$MAKEFLAGS SKIP_DASHED_BUILT_INS=$SKIP_DASHED_BUILT_INS"
+      	setenv --test GIT_PROVE_OPTS "--timer --jobs $NPROC"
+     -	GIT_TEST_OPTS="--verbose-log -x"
+     +	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+    -+	MAKEFLAGS="$MAKEFLAGS --jobs=10"
+      	test Windows != "$RUNNER_OS" ||
+      	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+      	setenv --test GIT_TEST_OPTS "$GIT_TEST_OPTS"
+     
+    - ## ci/print-test-failures-github.sh ##
+    -@@ ci/print-test-failures-github.sh: github-actions)
+    - 			test_name="${test_exit%.exit}"
+    - 			test_name="${test_name##*/}"
+    - 			printf "\\e[33m\\e[1m=== Failed test: ${test_name} ===\\e[m\\n"
+    --			cat "t/test-results/$test_name.out"
+    -+			cat "t/test-results/$test_name.markup"
+    + ## ci/print-test-failures.sh ##
+    +@@ ci/print-test-failures.sh: do
+    + 		if test -n "$github_workflow_markup"
+    + 		then
+    + 			printf "\\e[33m\\e[1m=== Failed test: ${TEST_NAME} ===\\e[m\\n"
+    ++			cat "t/test-results/$TEST_MARKUP"
+    + 		else
+    + 			echo "------------------------------------------------------------------------"
+    + 			echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+    + 			echo "------------------------------------------------------------------------"
+    ++			cat "t/test-results/${TEST_OUT}"
+    + 		fi
+    +-		cat "t/test-results/${TEST_OUT}"
+      
+    - 			trash_dir="t/trash directory.$test_name"
+    - 			cp "t/test-results/$test_name.out" t/failed-test-artifacts/
+    + 		trash_dir="trash directory.$TEST_NAME"
+    + 		case "$CI_TYPE" in
+ 6:  b291f64821c = 10:  6b278194f9a ci: call `finalize_test_case_output` a little later
+-- 
+2.36.0.879.g3659959fcca
+

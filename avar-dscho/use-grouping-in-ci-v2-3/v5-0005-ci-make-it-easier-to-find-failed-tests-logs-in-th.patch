@@ -1,0 +1,167 @@
+From 4291892fbd30210543bd26ad4eafd04e92043adb Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v5-05.10-4291892fbd3-20220421T183001Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+References: <RFC-cover-v4-0.6-00000000000-20220413T195514Z-avarab@gmail.com>
+	<RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Sun, 16 Jan 2022 12:33:38 +0100
+Subject: [RFC PATCH v5 05/10] ci: make it easier to find failed tests' logs in
+ the GitHub workflow
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When investigating a test failure, the time that matters most is the
+time it takes from getting aware of the failure to displaying the output
+of the failing test case.
+
+You currently have to know a lot of implementation details when
+investigating test failures in the CI runs. The first step is easy: the
+failed job is marked quite clearly, but when opening it, the failed step
+is expanded, which in our case is the one running
+`ci/run-build-and-tests.sh`. This step, most notably, only offers a
+high-level view of what went wrong: it prints the output of `prove`
+which merely tells the reader which test script failed.
+
+The actually interesting part is in the detailed log of said failed
+test script. But that log is shown in the CI run's step that runs
+`ci/print-test-failures.sh`. And that step is _not_ expanded in the web
+UI by default. It is even marked as "successful", which makes it very
+easy to miss that there is useful information hidden in there.
+
+Let's help the reader by showing the failed tests' detailed logs in the
+step that is expanded automatically, i.e. directly after the test suite
+failed.
+
+This also helps the situation where the _build_ failed and the
+`print-test-failures` step was executed under the assumption that the
+_test suite_ failed, and consequently failed to find any failed tests.
+
+An alternative way to implement this patch would be to source
+`ci/print-test-failures.sh` in the `handle_test_failures` function to
+show these logs. However, over the course of the next few commits, we
+want to introduce some grouping which would be harder to achieve that
+way (for example, we do want a leaner, and colored, preamble for each
+failed test script, and it would be trickier to accommodate the lack of
+nested groupings in GitHub workflows' output).
+
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml | 20 ++++----------------
+ ci/print-test-failures.sh  | 32 ++++++++++++++++++++++++++++----
+ 2 files changed, 32 insertions(+), 20 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 6835e942280..aa31c78d4c2 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -129,11 +129,7 @@ jobs:
+       shell: bash
+     - name: test
+       shell: bash
+-      run: . /etc/profile && make -C t -e
+-    - name: ci/print-test-failures.sh
+-      if: failure()
+-      shell: bash
+-      run: ci/print-test-failures.sh
++      run: . /etc/profile && make -C t -e || ci/print-test-failures.sh
+     - name: Upload failed tests' directories
+       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+       uses: actions/upload-artifact@v2
+@@ -218,11 +214,7 @@ jobs:
+       shell: bash
+     - name: test
+       shell: bash
+-      run: . /etc/profile && make -C t -e
+-    - name: ci/print-test-failures.sh
+-      if: failure()
+-      shell: bash
+-      run: ci/print-test-failures.sh
++      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+     - name: Upload failed tests' directories
+       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+       uses: actions/upload-artifact@v2
+@@ -265,10 +257,8 @@ jobs:
+     - run: ci/lib.sh --build
+     - run: make
+     - run: ci/lib.sh --test
+-    - run: make test
++    - run: make test || ci/print-test-failures-github.sh
+       if: success()
+-    - run: ci/print-test-failures.sh
+-      if: failure()
+     - name: Upload failed tests' directories
+       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+       uses: actions/upload-artifact@v2
+@@ -302,10 +292,8 @@ jobs:
+     - run: make
+     - run: ci/lib.sh --test
+       if: success() && matrix.vector.skip-tests != 'yes'
+-    - run: make test
++    - run: make test || ci/print-test-failures-github.sh
+       if: success() && matrix.vector.skip-tests != 'yes'
+-    - run: ci/print-test-failures.sh
+-      if: failure() && matrix.vector.skip-tests != 'yes'
+     - name: Upload failed tests' directories
+       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+       uses: actions/upload-artifact@v1
+diff --git a/ci/print-test-failures.sh b/ci/print-test-failures.sh
+index 27df5081f8b..814c7799b68 100755
+--- a/ci/print-test-failures.sh
++++ b/ci/print-test-failures.sh
+@@ -8,13 +8,32 @@ set -e
+ . ${0%/*}/lib-ci-type.sh
+ . ${0%/*}/lib-tput.sh
+ 
+-exit_code=
++case "$CI_TYPE" in
++github-actions)
++	exit_code=t
++	github_workflow_markup=t
++	;;
++*)
++	exit_code=
++	github_workflow_markup=
++	;;
++esac
++
+ while test $# != 0
+ do
+ 	case "$1" in
+ 	--exit-code)
+ 		exit_code=t
+ 		;;
++	--no-exit-code)
++		exit_code=
++		;;
++	--github-workflow-markup)
++		github_workflow_markup=t
++		;;
++	--no-github-workflow-markup)
++		github_workflow_markup=
++		;;
+ 	*)
+ 		echo "BUG: invalid $0 argument: $1" >&2
+ 		exit 1
+@@ -40,9 +59,14 @@ do
+ 		TEST_OUT="${TEST_NAME}.out"
+ 		TEST_MARKUP="${TEST_NAME}.markup"
+ 
+-		echo "------------------------------------------------------------------------"
+-		echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+-		echo "------------------------------------------------------------------------"
++		if test -n "$github_workflow_markup"
++		then
++			printf "\\e[33m\\e[1m=== Failed test: ${TEST_NAME} ===\\e[m\\n"
++		else
++			echo "------------------------------------------------------------------------"
++			echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
++			echo "------------------------------------------------------------------------"
++		fi
+ 		cat "t/test-results/${TEST_OUT}"
+ 
+ 		trash_dir="trash directory.$TEST_NAME"
+-- 
+2.36.0.879.g3659959fcca
+

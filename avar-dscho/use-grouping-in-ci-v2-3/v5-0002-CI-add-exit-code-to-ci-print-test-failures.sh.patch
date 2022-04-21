@@ -1,0 +1,75 @@
+From caec0b1089ad41f6caba9679332e59e6f5b9713b Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-v5-02.10-caec0b1089a-20220421T183001Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+References: <RFC-cover-v4-0.6-00000000000-20220413T195514Z-avarab@gmail.com>
+	<RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Apr 2022 16:15:15 +0200
+Subject: [RFC PATCH v5 02/10] CI: add --exit-code to ci/print-test-failures.sh
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The ci/print-test-failures.sh scripts will exit 0 when there's failed
+tests, let's teach it --exit-code to have it exit non-zero in those
+cases.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/print-test-failures.sh | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+diff --git a/ci/print-test-failures.sh b/ci/print-test-failures.sh
+index f6736f424e0..d00cd0e4944 100755
+--- a/ci/print-test-failures.sh
++++ b/ci/print-test-failures.sh
+@@ -8,16 +8,33 @@ set -e
+ . ${0%/*}/lib-ci-type.sh
+ . ${0%/*}/lib-tput.sh
+ 
++exit_code=
++while test $# != 0
++do
++	case "$1" in
++	--exit-code)
++		exit_code=t
++		;;
++	*)
++		echo "BUG: invalid $0 argument: $1" >&2
++		exit 1
++		;;
++	esac
++	shift
++done
++
+ if ! ls t/test-results/*.exit >/dev/null 2>/dev/null
+ then
+ 	echo "Build job failed before the tests could have been run"
+ 	exit
+ fi
+ 
++failed=
+ for TEST_EXIT in t/test-results/*.exit
+ do
+ 	if [ "$(cat "$TEST_EXIT")" != "0" ]
+ 	then
++		failed=t
+ 		TEST_NAME="${TEST_EXIT%.exit}"
+ 		TEST_NAME="${TEST_NAME##*/}"
+ 		TEST_OUT="${TEST_NAME}.out"
+@@ -42,3 +59,11 @@ do
+ 		esac
+ 	fi
+ done
++
++if test -n "$failed"
++then
++	if test -n "$exit_code"
++	then
++		exit 1
++	fi
++fi
+-- 
+2.36.0.879.g3659959fcca
+
