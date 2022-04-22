@@ -1,9 +1,9 @@
 From 3fdd54aa8dff90e38d36dbf7c9588f9994f7c9f6 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-0.3-00000000000-20220422T085906Z-avarab@gmail.com>
+Message-Id: <cover-v2-0.3-00000000000-20220422T085928Z-avarab@gmail.com>
 In-Reply-To: <cover-0.2-00000000000-20220421T124225Z-avarab@gmail.com>
 References: <cover-0.2-00000000000-20220421T124225Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Fri, 22 Apr 2022 10:59:06 +0200
+Date: Fri, 22 Apr 2022 10:59:28 +0200
 Subject: [PATCH v2 0/3] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -19,6 +19,82 @@ Content-Transfer-Encoding: 8bit
  ci/install-dependencies.sh | 17 +++++++++--------
  1 file changed, 9 insertions(+), 8 deletions(-)
 
+Range-diff against v1:
+-:  ----------- > 1:  dcedf03c2d7 CI: run "brew install perforce" without past workarounds
+1:  28208bac859 ! 2:  2805e89623c CI: don't care about SHA256 mismatch on upstream "perforce" package
+    @@ Commit message
+         jobs will encounter hard failures.
+     
+         Let's not be so anal about this and fallback to a "sha256 :no_check"
+    -    on failure. We are already downloading arbitrary binaries from
+    -    perforce's servers, and the point of doing so is to run the
+    -    t/*-git-p4-*.sh tests, not to validate the chain of custody between
+    -    perforce.com and the homebrew-cask repository.
+    +    on failure. For the "ubuntu-latest" jobs just a few lines earlier we
+    +    "wget" and chmod binaries from http://filehost.perforce.com (no
+    +    https!).
+     
+    -    In the obscure (but unlikely to ever happen) that the failure is
+    -    specifically because perforce.com published a bad updated package, and
+    -    it a failure that their testing wouldn't have caught, but whoever's
+    -    updating the homebrew SHA-256 recipe would have caught, we will have a
+    -    failure in our p4 tests that we wouldn't have otherwise had.
+    +    We're already trusting the DNS in the CI to do the right thing here,
+    +    and for there not to be any MitM attacks between the CI and
+    +    filehost.perforce.com. Even if someone managed to get in the middle
+    +    the worst they could do is run arbitrary code in the CI environment.
+     
+    -    But I think that's so unlikely that we don't need to worry about it,
+    -    whereas seeing failures due to the homebrew recipe lagging upstream is
+    -    a real issue. E.g. "seen"'s latest push-out has such a failure: [3]
+    +    The only thing we were getting out of the SHA-256 check was to serve
+    +    as a canary that the homebrew-cask repository itself was drifting out
+    +    of date. It seems sensible to just cut it out as a middle-man
+    +    entirely (as the ubuntu-latest jobs do). We want to run the
+    +    t/*-git-p4-*.sh tests, not to validate the chain of custody between
+    +    perforce.com and the homebrew-cask repository.
+     
+    -    Note: It's probably possible to embed this "sed" one-liner directly in
+    -    the HOMEBREW_EDITOR variable, i.e.:
+    +    See [2] for the "no_check" syntax, and [3] for an example of a failure
+    +    in "seen" before this change.
+     
+    -        HOMEBREW_EDITOR='...' brew edit perforce
+    +    It's been suggested as an alternative [4] to simply disable the p4
+    +    tests if we can't install the package from homebrew. While I don't
+    +    really care, I think that would be strictly worse. Before this change
+    +    we've either run the p4 tests or failed, and we'll still fail now if
+    +    we can't run the p4 tests.
+     
+    -    But my attempts to do so were unsuccessful, particularly since I don't
+    -    have access to a Mac OS X machine other than via by round-tripping
+    -    through the CI. This version of getting the path via --print-path
+    -    works, and is arguably easier to reason about and debug than a cute
+    -    one-liner.
+    +    Whereas skipping them entirely as [4] does is introducing the caveat
+    +    that our test coverage in these jobs today might be different than the
+    +    coverage tomorrow. If we do want to introduce such dynamic runs to CI
+    +    I think they should use the relevant "needs" or "if" features, so that
+    +    the UX can make it obvious what was or wasn't dynamically skipped.
+     
+         1. https://github.com/Homebrew/homebrew-cask/commits/master/Casks/perforce.rb
+         2. https://docs.brew.sh/Cask-Cookbook#required-stanzas
+         3. https://github.com/git/git/runs/6104156856?check_suite_focus=true
+    +    4. https://lore.kernel.org/git/20220421225515.6316-1-carenas@gmail.com/
+     
+      ## ci/install-dependencies.sh ##
+     @@ ci/install-dependencies.sh: macos-latest)
+    @@ ci/install-dependencies.sh: macos-latest)
+     +		echo Installing perforce failed, assuming and working around SHA256 mismatch >&2 &&
+     +
+     +		path=$(brew edit --print-path perforce) &&
+    -+		sed -i -e 's/\(sha256.\).*/\1:no_check/' "$path" &&
+    ++		sed 's/\(sha256.\).*/\1:no_check/' <"$path" >"$path".tmp &&
+    ++		mv "$path".tmp "$path" &&
+     +		brew install perforce
+     +	}
+      
+-:  ----------- > 3:  3fdd54aa8df CI: use https, not http to download binaries from perforce.com
 -- 
 2.36.0.879.g56a83971f3f
 
