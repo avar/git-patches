@@ -1,0 +1,105 @@
+From 3650345b0abe0ce4e6291c00fd3aa640bddf9800 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.1-3650345b0ab-20220422T091706Z-avarab@gmail.com>
+In-Reply-To: <patch-v2-1.1-92acf9420a9-20220421T174733Z-avarab@gmail.com>
+References: <patch-v2-1.1-92acf9420a9-20220421T174733Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Apr 2022 12:09:04 +0200
+Subject: [PATCH v3] CI: select CC based on CC_PACKAGE (again)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in 707d2f2fe86 (CI: use "$runs_on_pool", not
+"$jobname" to select packages & config, 2021-11-23).
+
+In that commit I changed CC=gcc from CC=gcc-9, but on OSX the "gcc" in
+$PATH points to clang, we need to use gcc-9 instead. Likewise for the
+linux-gcc job CC=gcc-8 was changed to the implicit CC=gcc, which would
+select GCC 9.4.0 instead of GCC 8.4.0.
+
+As a table, this is what's changed by this commit, i.e. it only
+affects the linux-gcc and osx-gcc jobs:
+
+	|-------------------+-----------+-------------------+-------+-------|
+	| jobname           | vector.cc | vector.cc_package | old   | new   |
+	|-------------------+-----------+-------------------+-------+-------|
+	| linux-clang       | clang     | -                 | clang | clang |
+	| linux-sha256      | clang     | -                 | clang | clang |
+	| linux-gcc         | gcc       | gcc-8             | gcc   | gcc-8 |
+	| osx-clang         | clang     | -                 | clang | clang |
+	| osx-gcc           | gcc       | gcc-9             | clang | gcc-9 |
+	| linux-gcc-default | gcc       | -                 | gcc   | gcc   |
+	|-------------------+-----------+-------------------+-------+-------|
+
+Reported-by: Carlo Arenas <carenas@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff against v2:
+1:  92acf9420a9 ! 1:  3650345b0ab CI: select CC based on CC_PACKAGE (again)
+    @@ Commit message
+         linux-gcc job CC=gcc-8 was changed to the implicit CC=gcc, which would
+         select GCC 9.4.0 instead of GCC 8.4.0.
+     
+    -    Furthermore in 25715419bf4 (CI: don't run "make test" twice in one
+    -    job, 2021-11-23) when the "linux-TEST-vars" job was split off from
+    -    "linux-gcc" the "cc_package: gcc-8" line was copied along with
+    -    it.
+    -
+    -    That wasn't a bug per-se, as that "make test" would have run under GCC
+    -    8 before the split into two jobs, but the point of selecting different
+    -    compiler for these jobs is to get better coverage, and to narrow down
+    -    any issues with a given compiler to the job that runs it. Since the
+    -    "linux-TEST-vars" job is already special in other ways (in running
+    -    with various GIT_TEST_* variables), and we've got the "linux-gcc" job
+    -    covering gcc-8 let's have it used the default system compiler instead.
+    +    As a table, this is what's changed by this commit, i.e. it only
+    +    affects the linux-gcc and osx-gcc jobs:
+    +
+    +            |-------------------+-----------+-------------------+-------+-------|
+    +            | jobname           | vector.cc | vector.cc_package | old   | new   |
+    +            |-------------------+-----------+-------------------+-------+-------|
+    +            | linux-clang       | clang     | -                 | clang | clang |
+    +            | linux-sha256      | clang     | -                 | clang | clang |
+    +            | linux-gcc         | gcc       | gcc-8             | gcc   | gcc-8 |
+    +            | osx-clang         | clang     | -                 | clang | clang |
+    +            | osx-gcc           | gcc       | gcc-9             | clang | gcc-9 |
+    +            | linux-gcc-default | gcc       | -                 | gcc   | gcc   |
+    +            |-------------------+-----------+-------------------+-------+-------|
+     
+         Reported-by: Carlo Arenas <carenas@gmail.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## .github/workflows/main.yml ##
+    -@@ .github/workflows/main.yml: jobs:
+    -           - jobname: linux-TEST-vars
+    -             cc: gcc
+    -             os: ubuntu
+    --            cc_package: gcc-8
+    -             pool: ubuntu-latest
+    -           - jobname: osx-clang
+    -             cc: clang
+    -
+      ## ci/lib.sh ##
+     @@ ci/lib.sh: then
+      	test macos != "$CI_OS_NAME" || CI_OS_NAME=osx
+
+ ci/lib.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ci/lib.sh b/ci/lib.sh
+index cbc2f8f1caa..86e37da9bc5 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -122,7 +122,7 @@ then
+ 	test macos != "$CI_OS_NAME" || CI_OS_NAME=osx
+ 	CI_REPO_SLUG="$GITHUB_REPOSITORY"
+ 	CI_JOB_ID="$GITHUB_RUN_ID"
+-	CC="${CC:-gcc}"
++	CC="${CC_PACKAGE:-${CC:-gcc}}"
+ 	DONT_SKIP_TAGS=t
+ 
+ 	cache_dir="$HOME/none"
+-- 
+2.36.0.879.g56a83971f3f
+
