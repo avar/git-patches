@@ -1,0 +1,89 @@
+From 2805e89623ccc513917346cb586dcb4fb42ab84f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.3-2805e89623c-20220422T085906Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.3-00000000000-20220422T085906Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220421T124225Z-avarab@gmail.com>
+	<cover-v2-0.3-00000000000-20220422T085906Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 20 Apr 2022 11:11:45 +0200
+Subject: [PATCH v2 2/3] CI: don't care about SHA256 mismatch on upstream
+ "perforce" package
+
+As can be seen in the commit history[1] of the upstream perforce.rb in
+homebrew-cask the upstream perforce package URL and its SHA-256 are
+aren't a unique pair. The upstream will start publishing an updated
+package at the same URL as the previous version, causing the CI to
+routinely fail with errors like:
+
+	==> Downloading https://cdist2.perforce.com/perforce/r21.2/bin.macosx1015x86_64/helix-core-server.tgz
+	Error: SHA256 mismatch
+	Expected: ffc757b9d4d0629b2594e2777edfb18097825e29c70d8f33a444c7482d622806
+	  Actual: 37bc306f0bdfd1d63cfcea113ada132d96f89d53cbb20c282735d51d06223054
+
+Once someone gets around to updating the perforce.rb the failure of
+git's CI will be cleared up, but in the meantime all osx-{gcc,clang}
+jobs will encounter hard failures.
+
+Let's not be so anal about this and fallback to a "sha256 :no_check"
+on failure. For the "ubuntu-latest" jobs just a few lines earlier we
+"wget" and chmod binaries from http://filehost.perforce.com (no
+https!).
+
+We're already trusting the DNS in the CI to do the right thing here,
+and for there not to be any MitM attacks between the CI and
+filehost.perforce.com. Even if someone managed to get in the middle
+the worst they could do is run arbitrary code in the CI environment.
+
+The only thing we were getting out of the SHA-256 check was to serve
+as a canary that the homebrew-cask repository itself was drifting out
+of date. It seems sensible to just cut it out as a middle-man
+entirely (as the ubuntu-latest jobs do). We want to run the
+t/*-git-p4-*.sh tests, not to validate the chain of custody between
+perforce.com and the homebrew-cask repository.
+
+See [2] for the "no_check" syntax, and [3] for an example of a failure
+in "seen" before this change.
+
+It's been suggested as an alternative [4] to simply disable the p4
+tests if we can't install the package from homebrew. While I don't
+really care, I think that would be strictly worse. Before this change
+we've either run the p4 tests or failed, and we'll still fail now if
+we can't run the p4 tests.
+
+Whereas skipping them entirely as [4] does is introducing the caveat
+that our test coverage in these jobs today might be different than the
+coverage tomorrow. If we do want to introduce such dynamic runs to CI
+I think they should use the relevant "needs" or "if" features, so that
+the UX can make it obvious what was or wasn't dynamically skipped.
+
+1. https://github.com/Homebrew/homebrew-cask/commits/master/Casks/perforce.rb
+2. https://docs.brew.sh/Cask-Cookbook#required-stanzas
+3. https://github.com/git/git/runs/6104156856?check_suite_focus=true
+4. https://lore.kernel.org/git/20220421225515.6316-1-carenas@gmail.com/
+---
+ ci/install-dependencies.sh | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/ci/install-dependencies.sh b/ci/install-dependencies.sh
+index 82fa87f97af..cab6e04a358 100755
+--- a/ci/install-dependencies.sh
++++ b/ci/install-dependencies.sh
+@@ -37,7 +37,14 @@ macos-latest)
+ 	test -z "$BREW_INSTALL_PACKAGES" ||
+ 	brew install $BREW_INSTALL_PACKAGES
+ 	brew link --force gettext
+-	brew install perforce
++	brew install perforce || {
++		echo Installing perforce failed, assuming and working around SHA256 mismatch >&2 &&
++
++		path=$(brew edit --print-path perforce) &&
++		sed 's/\(sha256.\).*/\1:no_check/' <"$path" >"$path".tmp &&
++		mv "$path".tmp "$path" &&
++		brew install perforce
++	}
+ 
+ 	if test -n "$CC_PACKAGE"
+ 	then
+-- 
+2.36.0.879.g56a83971f3f
+
