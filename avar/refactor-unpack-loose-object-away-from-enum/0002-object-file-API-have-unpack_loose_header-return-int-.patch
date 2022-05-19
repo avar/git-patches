@@ -1,0 +1,235 @@
+From af0dfd017afdaf2efbfe5b8525520b2ca07be36e Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-2.2-af0dfd017af-20220519T195055Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.2-00000000000-20220519T195055Z-avarab@gmail.com>
+References: <377be0e9-8a0f-4a86-0a66-3b08c0284dae@github.com>
+	<RFC-cover-0.2-00000000000-20220519T195055Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 17 May 2022 10:42:50 +0200
+Subject: [RFC PATCH 2/2] object-file API: have unpack_loose_header() return
+ "int" again
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Revert the API change in my 5848fb11acd (object-file.c: return
+ULHR_TOO_LONG on "header too long", 2021-10-01) in favor of having
+unpack_loose_header() return a simple negative value on error.
+
+The more complex API was needed to give us flexibility that we didn't
+really need. We only used the ULHR_TOO_LONG return case for headers
+which "cat-file --allow-unknown-type" is needed for. Let's instead
+error() on those unconditionally.
+
+The slight change in the "error" message is that we won't include the
+OID in the error in that case, but we will include it in the "unable
+to unpack" error emitted by loose_object_info().
+
+As noted in the preceding commit we were mishandling the case where
+we'll now error() with "could not find end of corrupt long header".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ cache.h             | 22 ++++------------------
+ object-file.c       | 46 +++++++++++++++++----------------------------
+ streaming.c         | 11 +++--------
+ t/t1006-cat-file.sh |  6 ++++--
+ 4 files changed, 28 insertions(+), 57 deletions(-)
+
+diff --git a/cache.h b/cache.h
+index aa24d5a609f..629c4a84b90 100644
+--- a/cache.h
++++ b/cache.h
+@@ -1330,13 +1330,7 @@ int git_open_cloexec(const char *name, int flags);
+ 
+ /**
+  * unpack_loose_header() initializes the data stream needed to unpack
+- * a loose object header.
+- *
+- * Returns:
+- *
+- * - ULHR_OK on success
+- * - ULHR_BAD on error
+- * - ULHR_TOO_LONG if the header was too long
++ * a loose object header. A negative value indicates an error.
+  *
+  * It will only parse up to MAX_HEADER_LEN bytes unless an optional
+  * "hdrbuf" argument is non-NULL. This is intended for use with
+@@ -1344,17 +1338,9 @@ int git_open_cloexec(const char *name, int flags);
+  * reporting. The full header will be extracted to "hdrbuf" for use
+  * with parse_loose_header().
+  */
+-enum unpack_loose_header_result {
+-	ULHR_OK,
+-	ULHR_BAD,
+-	ULHR_TOO_LONG,
+-};
+-enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+-						    unsigned char *map,
+-						    unsigned long mapsize,
+-						    void *buffer,
+-						    unsigned long bufsiz,
+-						    struct strbuf *hdrbuf);
++int unpack_loose_header(git_zstream *stream, unsigned char *map,
++			unsigned long mapsize, void *buffer,
++			unsigned long bufsiz, struct strbuf *header);
+ 
+ /**
+  * parse_loose_header() parses the starting "<type> <len>\0" of an
+diff --git a/object-file.c b/object-file.c
+index 1babe9791f6..1d2901d0e78 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -1245,12 +1245,9 @@ void *map_loose_object(struct repository *r,
+ 	return map_loose_object_1(r, NULL, oid, size);
+ }
+ 
+-enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+-						    unsigned char *map,
+-						    unsigned long mapsize,
+-						    void *buffer,
+-						    unsigned long bufsiz,
+-						    struct strbuf *header)
++int unpack_loose_header(git_zstream *stream, unsigned char *map,
++			unsigned long mapsize, void *buffer,
++			unsigned long bufsiz, struct strbuf *header)
+ {
+ 	int status;
+ 
+@@ -1266,13 +1263,13 @@ enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+ 	status = git_inflate(stream, 0);
+ 	obj_read_lock();
+ 	if (status < Z_OK)
+-		return ULHR_BAD;
++		return -1;
+ 
+ 	/*
+ 	 * Check if entire header is unpacked in the first iteration.
+ 	 */
+ 	if (memchr(buffer, '\0', stream->next_out - (unsigned char *)buffer))
+-		return ULHR_OK;
++		return 0;
+ 
+ 	/*
+ 	 * We have a header longer than MAX_HEADER_LEN. The "header"
+@@ -1280,7 +1277,8 @@ enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+ 	 * --allow-unknown-type".
+ 	 */
+ 	if (!header)
+-		return ULHR_TOO_LONG;
++		return error(_("header too long, exceeds %d bytes"),
++			     MAX_HEADER_LEN);
+ 
+ 	/*
+ 	 * buffer[0..bufsiz] was not large enough.  Copy the partial
+@@ -1301,7 +1299,7 @@ enum unpack_loose_header_result unpack_loose_header(git_zstream *stream,
+ 		stream->next_out = buffer;
+ 		stream->avail_out = bufsiz;
+ 	} while (status != Z_STREAM_END);
+-	return ULHR_BAD;
++	return error(_("could not find end of corrupt long header"));
+ }
+ 
+ static void *unpack_loose_rest(git_zstream *stream,
+@@ -1466,32 +1464,26 @@ static int loose_object_info(struct repository *r,
+ 	if (oi->disk_sizep)
+ 		*oi->disk_sizep = mapsize;
+ 
+-	switch (unpack_loose_header(&stream, map, mapsize, hdr, sizeof(hdr),
+-				    allow_unknown ? &hdrbuf : NULL)) {
+-	case ULHR_OK:
++	if (unpack_loose_header(&stream, map, mapsize, hdr, sizeof(hdr),
++				allow_unknown ? &hdrbuf : NULL) < 0) {
++		status = error(_("unable to unpack %s header"),
++			       oid_to_hex(oid));
++	} else {
+ 		if (parse_loose_header(hdrbuf.len ? hdrbuf.buf : hdr, oi) < 0)
+ 			status = error(_("unable to parse %s header"), oid_to_hex(oid));
+ 		else if (!allow_unknown && *oi->typep < 0)
+ 			die(_("invalid object type"));
+ 
+ 		if (!oi->contentp)
+-			break;
++			goto inflate_end;
+ 		*oi->contentp = unpack_loose_rest(&stream, hdr, *oi->sizep, oid);
+ 		if (*oi->contentp)
+ 			goto cleanup;
+ 
+ 		status = -1;
+-		break;
+-	case ULHR_BAD:
+-		status = error(_("unable to unpack %s header"),
+-			       oid_to_hex(oid));
+-		break;
+-	case ULHR_TOO_LONG:
+-		status = error(_("header for %s too long, exceeds %d bytes"),
+-			       oid_to_hex(oid), MAX_HEADER_LEN);
+-		break;
+ 	}
+ 
++inflate_end:
+ 	git_inflate_end(&stream);
+ cleanup:
+ 	munmap(map, mapsize);
+@@ -2623,12 +2615,8 @@ int read_loose_object(const char *path,
+ 		goto out;
+ 	}
+ 
+-	switch (unpack_loose_header(&stream, map, mapsize, hdr, sizeof(hdr),
+-				    NULL)) {
+-	case ULHR_OK:
+-		break;
+-	case ULHR_BAD:
+-	case ULHR_TOO_LONG:
++	if (unpack_loose_header(&stream, map, mapsize, hdr, sizeof(hdr),
++				NULL) < 0) {
+ 		error(_("unable to unpack header of %s"), path);
+ 		goto out;
+ 	}
+diff --git a/streaming.c b/streaming.c
+index fe54665d86e..4456a60348b 100644
+--- a/streaming.c
++++ b/streaming.c
+@@ -230,15 +230,10 @@ static int open_istream_loose(struct git_istream *st, struct repository *r,
+ 	st->u.loose.mapped = map_loose_object(r, oid, &st->u.loose.mapsize);
+ 	if (!st->u.loose.mapped)
+ 		return -1;
+-	switch (unpack_loose_header(&st->z, st->u.loose.mapped,
+-				    st->u.loose.mapsize, st->u.loose.hdr,
+-				    sizeof(st->u.loose.hdr), NULL)) {
+-	case ULHR_OK:
+-		break;
+-	case ULHR_BAD:
+-	case ULHR_TOO_LONG:
++	if (unpack_loose_header(&st->z, st->u.loose.mapped,
++				st->u.loose.mapsize, st->u.loose.hdr,
++				sizeof(st->u.loose.hdr), NULL) < 0)
+ 		goto error;
+-	}
+ 	if (parse_loose_header(st->u.loose.hdr, &oi) < 0 || *type < 0)
+ 		goto error;
+ 
+diff --git a/t/t1006-cat-file.sh b/t/t1006-cat-file.sh
+index dadf3b14583..d742697d3bf 100755
+--- a/t/t1006-cat-file.sh
++++ b/t/t1006-cat-file.sh
+@@ -536,12 +536,14 @@ do
+ 			if test "$arg2" = "-p"
+ 			then
+ 				cat >expect <<-EOF
+-				error: header for $bogus_long_sha1 too long, exceeds 32 bytes
++				error: header too long, exceeds 32 bytes
++				error: unable to unpack $bogus_long_sha1 header
+ 				fatal: Not a valid object name $bogus_long_sha1
+ 				EOF
+ 			else
+ 				cat >expect <<-EOF
+-				error: header for $bogus_long_sha1 too long, exceeds 32 bytes
++				error: header too long, exceeds 32 bytes
++				error: unable to unpack $bogus_long_sha1 header
+ 				fatal: git cat-file: could not get object info
+ 				EOF
+ 			fi &&
+-- 
+2.36.1.957.g2c13267e09b
+
