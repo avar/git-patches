@@ -1,0 +1,54 @@
+From dbb89609b71956fd4330a8124d678ee9f3dc17af Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.5-dbb89609b71-20220520T154803Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20220520T154803Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220520T154803Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 9 Nov 2021 14:31:16 +0100
+Subject: [PATCH 5/5] cache-tree.c: use bug() and BUG_if_bug()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change "BUG" output originally added in a97e4075a16 (Keep
+rename/rename conflicts of intermediate merges while doing recursive
+merge, 2007-03-31), and later made to say it was a "BUG" in
+19c6a4f8369 (merge-recursive: do not return NULL only to cause
+segfault, 2010-01-21) to use the new bug() function.
+
+This gets the same job done with less code, this changes the output a
+bit, but since we're emitting BUG output let's say it's OK to prefix
+every line with the "unmerged index entry" message, instead of
+optimizing for readability. doing it this way gets rid of any state
+management in the loop itself in favor of BUG_if_bug().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ cache-tree.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/cache-tree.c b/cache-tree.c
+index 6752f69d515..9e96097500d 100644
+--- a/cache-tree.c
++++ b/cache-tree.c
+@@ -692,14 +692,13 @@ struct tree* write_in_core_index_as_tree(struct repository *repo) {
+ 	ret = write_index_as_tree_internal(&o, index_state, was_valid, 0, NULL);
+ 	if (ret == WRITE_TREE_UNMERGED_INDEX) {
+ 		int i;
+-		fprintf(stderr, "BUG: There are unmerged index entries:\n");
+ 		for (i = 0; i < index_state->cache_nr; i++) {
+ 			const struct cache_entry *ce = index_state->cache[i];
+ 			if (ce_stage(ce))
+-				fprintf(stderr, "BUG: %d %.*s\n", ce_stage(ce),
+-					(int)ce_namelen(ce), ce->name);
++				bug("unmerged index entry on in-memory index write: %d %.*s",
++				    ce_stage(ce), (int)ce_namelen(ce), ce->name);
+ 		}
+-		BUG("unmerged index entries when writing inmemory index");
++		BUG_if_bug();
+ 	}
+ 
+ 	return lookup_tree(repo, &index_state->cache_tree->oid);
+-- 
+2.36.1.960.g7a4e2fc85c9
+
