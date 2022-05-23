@@ -1,0 +1,97 @@
+From f7fd645468cb05acdba1f7c7e59a66cac4929232 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-f7fd645468c-20220523T182728Z-avarab@gmail.com>
+In-Reply-To: <cover-0.1-00000000000-20220523T182728Z-avarab@gmail.com>
+References: <a6a14213-bc82-d6fb-43dd-5a423c40a4f8@web.de>
+	<cover-0.1-00000000000-20220523T182728Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 23 May 2022 12:53:07 +0200
+Subject: [PATCH 1/1] diff: fix a segfault in >2 tree -I<regex> and
+ --output=<file>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a regression in c45dc9cf30 (diff: plug memory leak from regcomp()
+on {log,diff} -I, 2021-02-11), as noted in [1] there was a logic error
+where we'd free the regex too soon.
+
+Now we'll ensure that diff_free() can be called repeatedly
+instead. We'd ultimately like to do away with the "no_free" confusion
+surrounding it, and to attempt to free() things only once, as outlined
+in [2]. But in the meantime this will fix the segfault.
+
+Since the rest of diff_free() was already safe re-invoke this only
+affected the -I<regex> and --output=<file> options. In both cases our
+behavior before wasn't very sensible. When producing a combined diff
+we'll go through combined-diff.c, which doesn't handle many of the
+options that the corresponding diff.c codepaths do.
+
+Thus we're here testing that -I<regex> is ignored in this case, and
+likewise for --output=<file>, but since this is what we were doing
+before c45dc9cf30 let's accept it for now.
+
+1. https://lore.kernel.org/git/a6a14213-bc82-d6fb-43dd-5a423c40a4f8@web.de/
+2. https://lore.kernel.org/git/220520.86pmk81a9z.gmgdl@evledraar.gmail.com/
+
+Reported-by: René Scharfe <l.s.r@web.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff.c                  |  9 ++++++---
+ t/t4013-diff-various.sh | 15 +++++++++++++++
+ 2 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/diff.c b/diff.c
+index e71cf758861..183c9f21305 100644
+--- a/diff.c
++++ b/diff.c
+@@ -6432,8 +6432,10 @@ static void diff_flush_patch_all_file_pairs(struct diff_options *o)
+ 
+ static void diff_free_file(struct diff_options *options)
+ {
+-	if (options->close_file)
+-		fclose(options->file);
++	if (!options->close_file)
++		return;
++	options->close_file = 0;
++	fclose(options->file);
+ }
+ 
+ static void diff_free_ignore_regex(struct diff_options *options)
+@@ -6444,7 +6446,8 @@ static void diff_free_ignore_regex(struct diff_options *options)
+ 		regfree(options->ignore_regex[i]);
+ 		free(options->ignore_regex[i]);
+ 	}
+-	free(options->ignore_regex);
++	options->ignore_regex_nr = 0;
++	FREE_AND_NULL(options->ignore_regex);
+ }
+ 
+ void diff_free(struct diff_options *options)
+diff --git a/t/t4013-diff-various.sh b/t/t4013-diff-various.sh
+index 056e922164d..b556d185f53 100755
+--- a/t/t4013-diff-various.sh
++++ b/t/t4013-diff-various.sh
+@@ -614,4 +614,19 @@ test_expect_success 'diff -I<regex>: detect malformed regex' '
+ 	test_i18ngrep "invalid regex given to -I: " error
+ '
+ 
++test_expect_success 'diff -I<regex>: combined diff does not segfault' '
++	revs="HEAD~2 HEAD~ HEAD" &&
++	git diff $revs >expect &&
++	git diff -I . $revs >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'diff --output=<file>: combined diff does not segfault' '
++	revs="HEAD~2 HEAD~ HEAD" &&
++	git diff --output=expect.file $revs >expect.out &&
++	git diff $revs >actual &&
++	test_cmp expect.out actual &&
++	test_must_be_empty expect.file
++'
++
+ test_done
+-- 
+2.36.1.1038.gde12b200317
+
