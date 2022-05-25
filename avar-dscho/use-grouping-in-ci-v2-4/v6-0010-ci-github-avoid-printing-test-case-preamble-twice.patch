@@ -1,0 +1,113 @@
+From 90a152d79f985d0b8fc69246a86f9af2f6937325 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-10.14-90a152d79f9-20220525T100743Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.14-00000000000-20220525T100743Z-avarab@gmail.com>
+References: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+	<cover-v6-00.14-00000000000-20220525T100743Z-avarab@gmail.com>
+From: Victoria Dye <vdye@github.com>
+Date: Tue, 22 Mar 2022 14:08:07 -0700
+Subject: [PATCH v6 10/14] ci(github): avoid printing test case preamble twice
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We want to mark up the test case preamble when presenting test output in
+Git's GitHub workflow. Let's suppress the non-marked-up version in that
+case. Any information it would contain is included in the marked-up
+variant already.
+
+This change has the side-effect of not making the full logs available
+to us in the *.out files anymore. E.g. in the case of running a test
+where all tests are successful, we ran run this sequence of commands
+in t/:
+
+	test=t0013-sha1dc.sh;
+	rm -rf test-results*;
+	./$test --verbose-log -x;
+	mv test-results{,.old};
+	./$test --verbose-log -x --github-workflow-markup;
+	diff -ru test-results{.old,}; file test-results/*markup
+
+Which will emit:
+
+	ok 1 - test-sha1 detects shattered pdf
+	# passed all 1 test(s)
+	1..1
+	ok 1 - test-sha1 detects shattered pdf
+	# passed all 1 test(s)
+	1..1
+	Only in test-results: t0013-sha1dc.markup
+	diff -ru test-results.old/t0013-sha1dc.out test-results/t0013-sha1dc.out
+	--- test-results.old/t0013-sha1dc.out   2022-05-24 19:12:14.106339385 +0200
+	+++ test-results/t0013-sha1dc.out       2022-05-24 19:12:14.154338965 +0200
+	@@ -1,9 +1,4 @@
+	 Initialized empty Git repository in /home/avar/g/git/t/trash directory.t0013-sha1dc/.git/
+	-expecting success of 0013.1 'test-sha1 detects shattered pdf':
+	-       test_must_fail test-tool sha1 <"$TEST_DATA/shattered-1.pdf" 2>err &&
+	-       test_i18ngrep collision err &&
+	-       grep 38762cf7f55934b34d179ae6a4c80cadccbb7f0a err
+	-
+	 + test_must_fail test-tool sha1
+	 + _test_ok=
+	 + test_must_fail_acceptable test-tool sha1
+	test-results/t0013-sha1dc.markup: empty
+
+This is because the the "test_skip_test_preamble" variable being set
+here has a global effect. Perhaps it's acceptable to munge the *.out
+output for now, as this will only kick in under
+--github-workflow-markup, but ideally we'd implement
+--github-workflow-markup in such a way that it doesn't change the
+normal --verbose-log output.
+
+Because of this change it's now harder to make sense of the
+--verbose-log output when viewing the full log output, as some of the
+context for test boundaries will be missing. Note that we shill have
+the "ok" or "not ok" TAP lines, so we can still infer the test
+boundaries. The output that suffers the most from this is the
+"--verbose-log -x" output, i.e. we won't have the test source to go
+along with the "-x" output.
+
+Signed-off-by: Victoria Dye <vdye@github.com>
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Tested-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib-functions.sh              | 2 ++
+ t/test-lib-github-workflow-markup.sh | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index af4831a54c6..89a5e146b7a 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -803,6 +803,7 @@ test_expect_failure () {
+ 	export test_prereq
+ 	if ! test_skip "$@"
+ 	then
++		test -n "$test_skip_test_preamble" ||
+ 		say >&3 "checking known breakage of $TEST_NUMBER.$test_count '$1': $2"
+ 		if test_run_ "$2" expecting_failure
+ 		then
+@@ -823,6 +824,7 @@ test_expect_success () {
+ 	export test_prereq
+ 	if ! test_skip "$@"
+ 	then
++		test -n "$test_skip_test_preamble" ||
+ 		say >&3 "expecting success of $TEST_NUMBER.$test_count '$1': $2"
+ 		if test_run_ "$2"
+ 		then
+diff --git a/t/test-lib-github-workflow-markup.sh b/t/test-lib-github-workflow-markup.sh
+index bad3ebafdb7..2267fba947c 100644
+--- a/t/test-lib-github-workflow-markup.sh
++++ b/t/test-lib-github-workflow-markup.sh
+@@ -20,6 +20,8 @@
+ # workflows; these functions will then override (empty) functions
+ # that are are called at the appropriate times during the test runs.
+ 
++test_skip_test_preamble=t
++
+ start_test_output () {
+ 	test -n "$GIT_TEST_TEE_OUTPUT_FILE" ||
+ 	die "--github-workflow-markup requires --verbose-log"
+-- 
+2.36.1.1045.gf356b5617dd
+

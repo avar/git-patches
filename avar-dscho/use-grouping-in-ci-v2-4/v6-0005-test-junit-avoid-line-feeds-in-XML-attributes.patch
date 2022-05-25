@@ -1,0 +1,71 @@
+From 5b709dde86a0750886f6d8f61c177a7b0e1e28b4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-05.14-5b709dde86a-20220525T100743Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.14-00000000000-20220525T100743Z-avarab@gmail.com>
+References: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+	<cover-v6-00.14-00000000000-20220525T100743Z-avarab@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Sun, 16 Jan 2022 09:37:51 +0100
+Subject: [PATCH v6 05/14] test(junit): avoid line feeds in XML attributes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the test case's output, we do want newline characters, but in the XML
+attributes we do not want them.
+
+However, the `xml_attr_encode` function always adds a Line Feed at the
+end (which are then encoded as `&#x0a;`, even for XML attributes.
+
+This seems not to faze Azure Pipelines' XML parser, but it still is
+incorrect, so let's fix it.
+
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib-junit.sh | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/t/test-lib-junit.sh b/t/test-lib-junit.sh
+index 9d55d74d764..c959183c7e2 100644
+--- a/t/test-lib-junit.sh
++++ b/t/test-lib-junit.sh
+@@ -50,7 +50,7 @@ finalize_test_case_output () {
+ 		;;
+ 	failure)
+ 		junit_insert="<failure message=\"not ok $test_count -"
+-		junit_insert="$junit_insert $(xml_attr_encode "$1")\">"
++		junit_insert="$junit_insert $(xml_attr_encode --no-lf "$1")\">"
+ 		junit_insert="$junit_insert $(xml_attr_encode \
+ 			"$(if test -n "$GIT_TEST_TEE_OUTPUT_FILE"
+ 			   then
+@@ -74,12 +74,12 @@ finalize_test_case_output () {
+ 		set "$* (known breakage)"
+ 		;;
+ 	skip)
+-		message="$(xml_attr_encode "$skipped_reason")"
++		message="$(xml_attr_encode --no-lf "$skipped_reason")"
+ 		set "$1" "      <skipped message=\"$message\" />"
+ 		;;
+ 	esac
+ 
+-	junit_attrs="name=\"$(xml_attr_encode "$this_test.$test_count $1")\""
++	junit_attrs="name=\"$(xml_attr_encode --no-lf "$this_test.$test_count $1")\""
+ 	shift
+ 	junit_attrs="$junit_attrs classname=\"$this_test\""
+ 	junit_attrs="$junit_attrs time=\"$(test-tool \
+@@ -122,5 +122,11 @@ write_junit_xml () {
+ }
+ 
+ xml_attr_encode () {
+-	printf '%s\n' "$@" | test-tool xml-encode
++	if test "x$1" = "x--no-lf"
++	then
++		shift
++		printf '%s' "$*" | test-tool xml-encode
++	else
++		printf '%s\n' "$@" | test-tool xml-encode
++	fi
+ }
+-- 
+2.36.1.1045.gf356b5617dd
+

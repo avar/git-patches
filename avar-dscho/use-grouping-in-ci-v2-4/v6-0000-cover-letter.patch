@@ -1,0 +1,632 @@
+From 0b02b186c87f3805c404193d6b57cd4af2ca3640 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v6-00.14-00000000000-20220525T100743Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+References: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 25 May 2022 12:07:43 +0200
+Subject: [PATCH v6 00/14] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Johannes Schindelin (6):
+  tests: refactor --write-junit-xml code
+  test(junit): avoid line feeds in XML attributes
+  ci: optionally mark up output in the GitHub workflow
+  ci(github): skip the logs of the successful test cases
+  ci(github): mention where the full logs can be found
+  ci: call `finalize_test_case_output` a little later
+
+Victoria Dye (1):
+  ci(github): avoid printing test case preamble twice
+
+Ævar Arnfjörð Bjarmason (7):
+  CI: don't "cd" in ci/print-test-failures.sh
+  CI: don't include "test-results/" in ci/print-test-failures.sh output
+  CI: stop setting FAILED_TEST_ARTIFACTS N times
+  ci: make it easier to find failed tests' logs in the GitHub workflow
+  ci(github): skip "skip" tests in --github-workflow-markup
+  CI: make --github-workflow-markup ci-config, off by default
+  CI: make the --github-workflow-markup "github" output the default
+
+ .github/workflows/main.yml           |  24 +++++
+ ci/lib.sh                            |  12 +++
+ ci/print-test-failures.sh            | 100 ++++++++++++++++----
+ t/test-lib-functions.sh              |   6 +-
+ t/test-lib-github-workflow-markup.sh |  56 ++++++++++++
+ t/test-lib-junit.sh                  | 132 +++++++++++++++++++++++++++
+ t/test-lib.sh                        | 128 ++++----------------------
+ 7 files changed, 332 insertions(+), 126 deletions(-)
+ create mode 100644 t/test-lib-github-workflow-markup.sh
+ create mode 100644 t/test-lib-junit.sh
+
+Range-diff against v5:
+ 1:  56910df26e7 =  1:  c10a11fdae8 CI: don't "cd" in ci/print-test-failures.sh
+ 3:  577a5be34f4 =  2:  1d07ca58322 CI: don't include "test-results/" in ci/print-test-failures.sh output
+ 4:  1482f840f64 !  3:  fdc5b534644 CI: stop setting FAILED_TEST_ARTIFACTS N times
+    @@ ci/print-test-failures.sh: do
+      			cp "t/test-results/${TEST_OUT}" t/failed-test-artifacts/
+      			(
+      				cd t &&
+    -@@ ci/print-test-failures.sh: done
+    - 
+    - if test -n "$failed"
+    - then
+    +@@ ci/print-test-failures.sh: do
+    + 		esac
+    + 	fi
+    + done
+    ++
+    ++if test -n "$failed"
+    ++then
+     +	if test -n "$GITHUB_ENV"
+     +	then
+     +		echo "FAILED_TEST_ARTIFACTS=t/failed-test-artifacts" >>$GITHUB_ENV
+     +	fi
+    -+
+    - 	if test -n "$exit_code"
+    - 	then
+    - 		exit 1
+    ++fi
+ 6:  d9b7d5ddf5a =  4:  a75846a12f2 tests: refactor --write-junit-xml code
+ 7:  2d233bbdc22 =  5:  5b709dde86a test(junit): avoid line feeds in XML attributes
+ 8:  5dd43a1624b =  6:  f5b39f1660d ci: optionally mark up output in the GitHub workflow
+ 2:  caec0b1089a !  7:  e713ca6041b CI: add --exit-code to ci/print-test-failures.sh
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    CI: add --exit-code to ci/print-test-failures.sh
+    +    ci: make it easier to find failed tests' logs in the GitHub workflow
+     
+    -    The ci/print-test-failures.sh scripts will exit 0 when there's failed
+    -    tests, let's teach it --exit-code to have it exit non-zero in those
+    -    cases.
+    +    When investigating a test failure, the time that matters most is the
+    +    time it takes from getting aware of the failure to displaying the output
+    +    of the failing test case.
+     
+    +    You currently have to know a lot of implementation details when
+    +    investigating test failures in the CI runs. The first step is easy: the
+    +    failed job is marked quite clearly, but when opening it, the failed step
+    +    is expanded, which in our case is the one running
+    +    `make` or 'make test`. When failing in the latter we only show a
+    +    high-level view of what went wrong: it prints the output of `prove`
+    +    which merely tells the reader which test script failed, along with the failed
+    +    test numbers.
+    +
+    +    To diagnose those failures in detail the user has then had to know
+    +    that they should expand the subsequent "Run ci/print-test-failures.sh"
+    +    step. Because that step always exits successfully it's not expanded by
+    +    default (the GitHub CI only expands the last failing step), making it
+    +    easy to miss that there is useful information hidden in there.
+    +
+    +    This change does a couple of things to improve the situation:
+    +
+    +     * We now make use of the "exit code" feature of
+    +       ci/print-test-failures.sh added in a preceding commit, thus if "make
+    +       test" fails we'll pick up that we have failing tests, and fail in
+    +       ci/print-test-failures.sh too.
+    +
+    +       Note that we still exit successfully from ci/print-test-failures.sh
+    +       if we don't have logs of any failed tests in t/test-results. Thus
+    +       if we fail in "make" (i.e. when building), or even in "make test"
+    +       in a way that doesn't yield a failed test (e.g. the t/Makefile
+    +       itself failing) we'll correctly "zoom in" on the (hopefully
+    +       failing) "make test" instead.
+    +
+    +       As before if there was no previously failed step the
+    +       ci/print-test-failures.sh step is skipped entirely (see
+    +       .github/workflows/main.yml)
+    +
+    +       To make the script DWYM the ci/print-test-failures.sh defaults to
+    +       an "auto" mode. Thus since we turn on --github-workflow-markup in
+    +       ci/lib.sh we'll write *.markup files, and will pick up on that in
+    +       ci/print-test-failures.sh.
+    +
+    +       The "$github_workflow_markup" being "auto" (or "t") on failure is
+    +       also what makes us exit non-zero. We could also add
+    +       --[no-]exit-code arguments, but at this point we only need this for
+    +       the "*.markup" mode, so let's leave that for now.
+    +
+    +       By having this be "auto" well pick up on whatever the GIT_TEST_OPTS
+    +       setting is, which as we'll see in a subsequent commit will be
+    +       useful if we'd like to configure the CI to emit it only some of the
+    +       time.
+    +
+    +     * The ci/print-test-failures.sh now makes use of the GitHub markdown
+    +       introduced for t/test-lib.sh in the preceding commit. I.e. in GitHub
+    +       CI we'll now run with --github-workflow-markup in GIT_TEST_OPTS,
+    +       which causes our "--verbose" output in
+    +       "t/test-results/$TEST_OUT.markup" to be in the GitHub CI-specific
+    +       Markdown format.
+    +
+    +    The new output is easier to read since it makes use of collapsible grouping.
+    +    Initially, readers will see the high-level view of what actually happened.
+    +    To drill down, the "group" for the specific failing test(s) can be expanded.
+    +
+    +    Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    + ## ci/lib.sh ##
+    +@@ ci/lib.sh: MAKEFLAGS="$MAKEFLAGS SKIP_DASHED_BUILT_INS=$SKIP_DASHED_BUILT_INS"
+    + case "$CI_TYPE" in
+    + github-actions)
+    + 	setenv --test GIT_PROVE_OPTS "--timer --jobs $NPROC"
+    +-	GIT_TEST_OPTS="--verbose-log -x"
+    ++	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+    + 	test Windows != "$RUNNER_OS" ||
+    + 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+    + 	setenv --test GIT_TEST_OPTS "$GIT_TEST_OPTS"
+    +
+      ## ci/print-test-failures.sh ##
+     @@ ci/print-test-failures.sh: set -e
+      . ${0%/*}/lib-ci-type.sh
+      . ${0%/*}/lib-tput.sh
+      
+    -+exit_code=
+    ++github_workflow_markup=auto
+    ++case "$CI_TYPE" in
+    ++github-actions)
+    ++	github_workflow_markup=t
+    ++	;;
+    ++esac
+    ++
+     +while test $# != 0
+     +do
+     +	case "$1" in
+    -+	--exit-code)
+    -+		exit_code=t
+    ++	--github-workflow-markup)
+    ++		github_workflow_markup=t
+    ++		;;
+    ++	--no-github-workflow-markup)
+    ++		github_workflow_markup=
+     +		;;
+     +	*)
+     +		echo "BUG: invalid $0 argument: $1" >&2
+    @@ ci/print-test-failures.sh: set -e
+      		TEST_NAME="${TEST_EXIT%.exit}"
+      		TEST_NAME="${TEST_NAME##*/}"
+      		TEST_OUT="${TEST_NAME}.out"
+    -@@ ci/print-test-failures.sh: do
+    - 		esac
+    + 		TEST_MARKUP="${TEST_NAME}.markup"
+    + 
+    +-		echo "------------------------------------------------------------------------"
+    +-		echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+    +-		echo "------------------------------------------------------------------------"
+    +-		cat "t/test-results/${TEST_OUT}"
+    ++		do_markup=
+    ++		case "$github_workflow_markup" in
+    ++		t)
+    ++			do_markup=t
+    ++			;;
+    ++		auto)
+    ++			if test -f "t/test-results/$TEST_MARKUP"
+    ++			then
+    ++				do_markup=t
+    ++			fi
+    ++			;;
+    ++		esac
+    ++
+    ++		if test -n "$do_markup"
+    ++		then
+    ++			printf "\\e[33m\\e[1m=== Failed test: ${TEST_NAME} ===\\e[m\\n"
+    ++			cat "t/test-results/$TEST_MARKUP"
+    ++		else
+    ++			echo "------------------------------------------------------------------------"
+    ++			echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+    ++			echo "------------------------------------------------------------------------"
+    ++			cat "t/test-results/${TEST_OUT}"
+    ++		fi
+    + 
+    + 		trash_dir="trash directory.$TEST_NAME"
+    + 		case "$CI_TYPE" in
+    +@@ ci/print-test-failures.sh: then
+    + 	then
+    + 		echo "FAILED_TEST_ARTIFACTS=t/failed-test-artifacts" >>$GITHUB_ENV
+      	fi
+    - done
+     +
+    -+if test -n "$failed"
+    -+then
+    -+	if test -n "$exit_code"
+    -+	then
+    ++	case "$github_workflow_markup" in
+    ++	t|auto)
+     +		exit 1
+    -+	fi
+    -+fi
+    ++		;;
+    ++	'')
+    ++		exit 0
+    ++		;;
+    ++	esac
+    + fi
+ -:  ----------- >  8:  9c9fd24fffa ci(github): skip the logs of the successful test cases
+ -:  ----------- >  9:  03d7b54d68b ci(github): skip "skip" tests in --github-workflow-markup
+ -:  ----------- > 10:  90a152d79f9 ci(github): avoid printing test case preamble twice
+ 9:  877edff3b4d ! 11:  68eed85162b ci: use `--github-workflow-markup` in the GitHub workflow
+    @@ Metadata
+     Author: Johannes Schindelin <Johannes.Schindelin@gmx.de>
+     
+      ## Commit message ##
+    -    ci: use `--github-workflow-markup` in the GitHub workflow
+    +    ci(github): mention where the full logs can be found
+     
+    -    [Ævar: due to re-structuring on top of my series the {begin,end}_group
+    -    in CI isn't needed at all to get "group" output for the test
+    -    suite. This commit includes the now-squashed "ci/run-build-and-tests:
+    -    add some structure to the GitHub workflow output":]
+    -
+    -    The current output of Git's GitHub workflow can be quite confusing,
+    -    especially for contributors new to the project.
+    -
+    -    To make it more helpful, let's introduce some collapsible grouping.
+    -    Initially, readers will see the high-level view of what actually
+    -    happened (did the build fail, or the test suite?). To drill down, the
+    -    respective group can be expanded.
+    -
+    -    Note: sadly, workflow output currently cannot contain any nested groups
+    -    (see https://github.com/actions/runner/issues/802 for details),
+    -    therefore we take pains to ensure to end any previous group before
+    -    starting a new one.
+    -
+    -    [Ævar: The above comment isn't true anymore, as that limitation has
+    -    been removed by basing this on my patches to run "make" and "make
+    -    test" directly from the top-level of main.yml.
+    -
+    -    Those are now effectively their own "group", effectively giving this
+    -    stage another group "level" to use. This means that the equivalent of
+    -    "make test" won't be on the same level as an individual test failure.
+    -
+    -    We no longer take any pains to ensure balanced group output as a
+    -    result (which was a caveat the previous ci/lib.sh implementation had
+    -    to deal with., We just need to "cat" the generated *.markup]
+    +    The full logs are contained in the `failed-tests-*.zip` artifacts that
+    +    are attached to the failed CI run. Since this is not immediately
+    +    obvious to the well-disposed reader, let's mention it explicitly.
+     
+    +    Suggested-by: Victoria Dye <vdye@github.com>
+         Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## ci/lib.sh ##
+    -@@ ci/lib.sh: MAKEFLAGS="$MAKEFLAGS SKIP_DASHED_BUILT_INS=$SKIP_DASHED_BUILT_INS"
+    - case "$CI_TYPE" in
+    - github-actions)
+    - 	setenv --test GIT_PROVE_OPTS "--timer --jobs $NPROC"
+    --	GIT_TEST_OPTS="--verbose-log -x"
+    -+	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+    - 	test Windows != "$RUNNER_OS" ||
+    - 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+    - 	setenv --test GIT_TEST_OPTS "$GIT_TEST_OPTS"
+    -
+      ## ci/print-test-failures.sh ##
+     @@ ci/print-test-failures.sh: do
+    - 		if test -n "$github_workflow_markup"
+    + 		if test -n "$do_markup"
+      		then
+      			printf "\\e[33m\\e[1m=== Failed test: ${TEST_NAME} ===\\e[m\\n"
+    -+			cat "t/test-results/$TEST_MARKUP"
+    ++			echo "The full logs are in the artifacts attached to this run."
+    + 			cat "t/test-results/$TEST_MARKUP"
+      		else
+      			echo "------------------------------------------------------------------------"
+    - 			echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+    - 			echo "------------------------------------------------------------------------"
+    -+			cat "t/test-results/${TEST_OUT}"
+    - 		fi
+    --		cat "t/test-results/${TEST_OUT}"
+    - 
+    - 		trash_dir="trash directory.$TEST_NAME"
+    - 		case "$CI_TYPE" in
+10:  6b278194f9a = 12:  11dab84b0dc ci: call `finalize_test_case_output` a little later
+ 5:  4291892fbd3 ! 13:  fbe0d99c6b3 ci: make it easier to find failed tests' logs in the GitHub workflow
+    @@
+      ## Metadata ##
+    -Author: Johannes Schindelin <Johannes.Schindelin@gmx.de>
+    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    ci: make it easier to find failed tests' logs in the GitHub workflow
+    -
+    -    When investigating a test failure, the time that matters most is the
+    -    time it takes from getting aware of the failure to displaying the output
+    -    of the failing test case.
+    -
+    -    You currently have to know a lot of implementation details when
+    -    investigating test failures in the CI runs. The first step is easy: the
+    -    failed job is marked quite clearly, but when opening it, the failed step
+    -    is expanded, which in our case is the one running
+    -    `ci/run-build-and-tests.sh`. This step, most notably, only offers a
+    -    high-level view of what went wrong: it prints the output of `prove`
+    -    which merely tells the reader which test script failed.
+    -
+    -    The actually interesting part is in the detailed log of said failed
+    -    test script. But that log is shown in the CI run's step that runs
+    -    `ci/print-test-failures.sh`. And that step is _not_ expanded in the web
+    -    UI by default. It is even marked as "successful", which makes it very
+    -    easy to miss that there is useful information hidden in there.
+    -
+    -    Let's help the reader by showing the failed tests' detailed logs in the
+    -    step that is expanded automatically, i.e. directly after the test suite
+    -    failed.
+    -
+    -    This also helps the situation where the _build_ failed and the
+    -    `print-test-failures` step was executed under the assumption that the
+    -    _test suite_ failed, and consequently failed to find any failed tests.
+    -
+    -    An alternative way to implement this patch would be to source
+    -    `ci/print-test-failures.sh` in the `handle_test_failures` function to
+    -    show these logs. However, over the course of the next few commits, we
+    -    want to introduce some grouping which would be harder to achieve that
+    -    way (for example, we do want a leaner, and colored, preamble for each
+    -    failed test script, and it would be trickier to accommodate the lack of
+    -    nested groupings in GitHub workflows' output).
+    -
+    -    Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+    +    CI: make --github-workflow-markup ci-config, off by default
+    +
+    +    In preceding commits the --github-workflow-markup output was made the
+    +    default under GitHub CI.
+    +
+    +    There's a few outstanding issues with that new output target however:
+    +
+    +    A. As noted in [1] it's much slower in some common cases, i.e. the
+    +       page rendering time (under Firefox & Chrome debugging) goes from ~20s
+    +       to on the order of 60-80s (less pronounced when not debugging, but
+    +       still in that ballpark). See also [2] for tests on an earlier iteration
+    +       of the series.
+    +
+    +    B. Preceding commits in this series to omit non-failing test output
+    +       may have mitigated that somewhat, i.e. skipping "ok" and "skip" tests
+    +       in the *.markup files (although [1] is a benchmark with that "ok"
+    +       change).
+    +
+    +       Per [3] there are some CI users that prefer to see only the full
+    +       verbose output, i.e. we can't in the general case assume that we
+    +       can emit only the trace output for the failing test, and that's
+    +       going to give us the information we need to debug the test. It
+    +       might be failing because of earlier setup, or from trace output
+    +       outside of any test (i.e. in the main body of the file).
+    +
+    +       Users such as [3] could still just consult the *.out output, but
+    +       then we'd make them download the archive instead of viewing the
+    +       output in the web UX.
+    +
+    +    C. Per B above and [3] an earlier change in this series modified
+    +       the *.out output to change the *.out output inadvertently while trying
+    +       to modify the *.markup output. See the commit message of "ci(github):
+    +       avoid printing test case preamble twice" earlier in this series.
+    +
+    +    It thus make sense for now to make the "ci/print-test-failures.sh"
+    +    output be the "raw" one. I.e. the *.out output we'd get before
+    +    --github-workflow-markup was implemented.
+    +
+    +    To make it use ci/print-test-failures.sh we can create a
+    +    "ci/config/print-test-failures-output-type" script on the "ci-config"
+    +    branch that does e.g.:
+    +
+    +            #!/bin/sh
+    +            echo github
+    +
+    +    That script will (like the existing "check-ref") get the ref as an
+    +    argument, so we can in the future turn this on experimentally for
+    +    "seen", and flip the default in the future. The script can also emit
+    +    nothing to get whatever our idea is of the default (currently "raw").
+    +
+    +    Note the corresponding change to ci/print-test-failures.sh, i.e. we'll
+    +    do the right thing vis-a-vis what we "zoom in" to depending on the
+    +    setting. If it's "raw" we'd like a failed "make test" to "zoom in" to
+    +    that step, if it's "github" we'd like the to open the subsequent
+    +    "ci/print-test-failures.sh" step instead.
+    +
+    +    1. https://lore.kernel.org/git/220523.86ee0kzjix.gmgdl@evledraar.gmail.com/
+    +    2. https://lore.kernel.org/git/220222.86tucr6kz5.gmgdl@evledraar.gmail.com/
+    +    3. https://lore.kernel.org/git/20210309175249.GE3590451@szeder.dev/
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## .github/workflows/main.yml ##
+     @@ .github/workflows/main.yml: jobs:
+    +     runs-on: ubuntu-latest
+    +     outputs:
+    +       enabled: ${{ steps.check-ref.outputs.enabled }}${{ steps.skip-if-redundant.outputs.enabled }}
+    ++      print-test-failures-output-type: ${{ steps.print-test-failures-output-type.outputs.type }}
+    +     steps:
+    +       - name: try to clone ci-config branch
+    +         run: |
+    +@@ .github/workflows/main.yml: jobs:
+    +             config-repo &&
+    +           cd config-repo &&
+    +           git checkout HEAD -- ci/config || : ignore
+    ++      - id: print-test-failures-output-type
+    ++        name: check what output type ci/print-test-failures.sh uses
+    ++        run: |
+    ++          type_default=raw
+    ++          type=$type_default
+    ++
+    ++          if test -x config-repo/ci/config/print-test-failures-output-type
+    ++          then
+    ++            type=$(config-repo/ci/config/print-test-failures-output-type '${{ github.ref }}')
+    ++            if test -z "$type"
+    ++            then
+    ++              type=$type_default
+    ++            fi
+    ++          fi
+    ++          echo "::set-output name=type::$type"
+    +       - id: check-ref
+    +         name: check whether CI is enabled for ref
+    +         run: |
+    +@@ .github/workflows/main.yml: jobs:
+    +     - uses: git-for-windows/setup-git-for-windows-sdk@v1
+    +     - run: ci/lib.sh --test
+            shell: bash
+    -     - name: test
+    ++      env:
+    ++        GIT_CI_PTF_OUTPUT_TYPE: ${{needs.ci-config.outputs.print-test-failures-output-type}}
+    +     - name: select tests
+    +       run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
+            shell: bash
+    --      run: . /etc/profile && make -C t -e
+    --    - name: ci/print-test-failures.sh
+    --      if: failure()
+    --      shell: bash
+    --      run: ci/print-test-failures.sh
+    -+      run: . /etc/profile && make -C t -e || ci/print-test-failures.sh
+    -     - name: Upload failed tests' directories
+    -       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+    -       uses: actions/upload-artifact@v2
+     @@ .github/workflows/main.yml: jobs:
+    +       run: tar xf artifacts.tar.gz && tar xf tracked.tar.gz
+    +     - run: ci/lib.sh --test
+            shell: bash
+    -     - name: test
+    ++      env:
+    ++        GIT_CI_PTF_OUTPUT_TYPE: ${{needs.ci-config.outputs.print-test-failures-output-type}}
+    +     - name: select tests
+    +       run: . /etc/profile && ci/select-test-slice.sh ${{matrix.nr}} 10
+            shell: bash
+    --      run: . /etc/profile && make -C t -e
+    --    - name: ci/print-test-failures.sh
+    --      if: failure()
+    --      shell: bash
+    --      run: ci/print-test-failures.sh
+    -+      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+    -     - name: Upload failed tests' directories
+    -       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+    -       uses: actions/upload-artifact@v2
+     @@ .github/workflows/main.yml: jobs:
+          - run: ci/lib.sh --build
+          - run: make
+          - run: ci/lib.sh --test
+    --    - run: make test
+    -+    - run: make test || ci/print-test-failures-github.sh
+    ++      env:
+    ++        GIT_CI_PTF_OUTPUT_TYPE: ${{needs.ci-config.outputs.print-test-failures-output-type}}
+    +     - run: make test
+            if: success()
+    --    - run: ci/print-test-failures.sh
+    --      if: failure()
+    -     - name: Upload failed tests' directories
+    -       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+    -       uses: actions/upload-artifact@v2
+    +     - run: ci/print-test-failures.sh
+     @@ .github/workflows/main.yml: jobs:
+          - run: make
+          - run: ci/lib.sh --test
+            if: success() && matrix.vector.skip-tests != 'yes'
+    --    - run: make test
+    -+    - run: make test || ci/print-test-failures-github.sh
+    ++      env:
+    ++        GIT_CI_PTF_OUTPUT_TYPE: ${{needs.ci-config.outputs.print-test-failures-output-type}}
+    +     - run: make test
+            if: success() && matrix.vector.skip-tests != 'yes'
+    --    - run: ci/print-test-failures.sh
+    --      if: failure() && matrix.vector.skip-tests != 'yes'
+    -     - name: Upload failed tests' directories
+    -       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
+    -       uses: actions/upload-artifact@v1
+    +     - run: ci/print-test-failures.sh
+    +
+    + ## ci/lib.sh ##
+    +@@ ci/lib.sh: if test -n "$GITHUB_ENV"
+    + then
+    + 	echo "CONFIG: GITHUB_ENV=$GITHUB_ENV" >&2
+    + fi
+    ++echo "CONFIG: GIT_CI_PTF_OUTPUT_TYPE=$GIT_CI_PTF_OUTPUT_TYPE" >&2
+    + echo >&2
+    + 
+    + # Helper functions
+    +@@ ci/lib.sh: MAKEFLAGS="$MAKEFLAGS SKIP_DASHED_BUILT_INS=$SKIP_DASHED_BUILT_INS"
+    + case "$CI_TYPE" in
+    + github-actions)
+    + 	setenv --test GIT_PROVE_OPTS "--timer --jobs $NPROC"
+    +-	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+    ++	GIT_TEST_OPTS="--verbose-log -x"
+    ++	if test -n "$GIT_CI_PTF_OUTPUT_TYPE"
+    ++	then
+    ++		# For later use in ci/print-test-failures.sh
+    ++		setenv --test GIT_CI_PTF_OUTPUT_TYPE "$GIT_CI_PTF_OUTPUT_TYPE"
+    ++
+    ++		case "$GIT_CI_PTF_OUTPUT_TYPE" in
+    ++		github)
+    ++			GIT_TEST_OPTS="$GIT_TEST_OPTS --github-workflow-markup"
+    ++			;;
+    ++		esac
+    ++	fi
+    + 	test Windows != "$RUNNER_OS" ||
+    + 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+    + 	setenv --test GIT_TEST_OPTS "$GIT_TEST_OPTS"
+     
+      ## ci/print-test-failures.sh ##
+     @@ ci/print-test-failures.sh: set -e
+    - . ${0%/*}/lib-ci-type.sh
+      . ${0%/*}/lib-tput.sh
+      
+    --exit_code=
+    -+case "$CI_TYPE" in
+    -+github-actions)
+    -+	exit_code=t
+    -+	github_workflow_markup=t
+    -+	;;
+    -+*)
+    -+	exit_code=
+    + github_workflow_markup=auto
+    +-case "$CI_TYPE" in
+    +-github-actions)
+    ++case "$GIT_CI_PTF_OUTPUT_TYPE" in
+    ++github)
+    + 	github_workflow_markup=t
+    + 	;;
+    ++raw)
+     +	github_workflow_markup=
+     +	;;
+    -+esac
+    -+
+    - while test $# != 0
+    - do
+    - 	case "$1" in
+    - 	--exit-code)
+    - 		exit_code=t
+    - 		;;
+    -+	--no-exit-code)
+    -+		exit_code=
+    -+		;;
+    -+	--github-workflow-markup)
+    -+		github_workflow_markup=t
+    -+		;;
+    -+	--no-github-workflow-markup)
+    -+		github_workflow_markup=
+    -+		;;
+    - 	*)
+    - 		echo "BUG: invalid $0 argument: $1" >&2
+    - 		exit 1
+    -@@ ci/print-test-failures.sh: do
+    - 		TEST_OUT="${TEST_NAME}.out"
+    - 		TEST_MARKUP="${TEST_NAME}.markup"
+    - 
+    --		echo "------------------------------------------------------------------------"
+    --		echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+    --		echo "------------------------------------------------------------------------"
+    -+		if test -n "$github_workflow_markup"
+    -+		then
+    -+			printf "\\e[33m\\e[1m=== Failed test: ${TEST_NAME} ===\\e[m\\n"
+    -+		else
+    -+			echo "------------------------------------------------------------------------"
+    -+			echo "$(tput setaf 1)${TEST_OUT}...$(tput sgr0)"
+    -+			echo "------------------------------------------------------------------------"
+    -+		fi
+    - 		cat "t/test-results/${TEST_OUT}"
+    + esac
+      
+    - 		trash_dir="trash directory.$TEST_NAME"
+    + while test $# != 0
+ -:  ----------- > 14:  0b02b186c87 CI: make the --github-workflow-markup "github" output the default
+-- 
+2.36.1.1045.gf356b5617dd
+
