@@ -1,0 +1,104 @@
+From 7925b2610fc46bc8b2ccf08747115bb14c8df28e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-18.29-7925b2610fc-20220525T094123Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.29-00000000000-20220525T094123Z-avarab@gmail.com>
+References: <cover-v5-00.29-00000000000-20220421T181526Z-avarab@gmail.com>
+	<cover-v6-00.29-00000000000-20220525T094123Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 Jan 2022 20:25:16 +0100
+Subject: [PATCH v6 18/29] CI: combine ci/install{,-docker}-dependencies.sh
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Combine the "ci/install-dependencies.sh" and
+"ci/install-docker-dependencies.sh" into one script. The "case"
+statement in the latter only cared about "$jobname", and can be folded
+into the same "case" statement in the former.
+
+The reason they split up is historical, until a preceding commit
+"ci/lib.sh" required "bash", which might not have been available in
+"docker".
+
+This also fixes issue in "ci/install-docker-dependencies.sh" where
+we'd hide errors due to not using "set -e". Now that we include
+"ci/lib.sh" we won't have that potential issue.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml        |  2 +-
+ ci/install-dependencies.sh        | 15 +++++++++++++++
+ ci/install-docker-dependencies.sh | 22 ----------------------
+ 3 files changed, 16 insertions(+), 23 deletions(-)
+ delete mode 100755 ci/install-docker-dependencies.sh
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 88eb2ef2dad..42944020436 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -311,7 +311,7 @@ jobs:
+     container: ${{matrix.vector.image}}
+     steps:
+     - uses: actions/checkout@v1
+-    - run: ci/install-docker-dependencies.sh
++    - run: ci/install-dependencies.sh
+     - run: ci/lib.sh
+     - run: make
+     - run: make test
+diff --git a/ci/install-dependencies.sh b/ci/install-dependencies.sh
+index 3e05d38d4ab..cc7fd3bd7f8 100755
+--- a/ci/install-dependencies.sh
++++ b/ci/install-dependencies.sh
+@@ -99,6 +99,21 @@ linux-gcc-default)
+ 	sudo apt-get -q update
+ 	sudo apt-get -q -y install $UBUNTU_COMMON_PKGS
+ 	;;
++linux32)
++	linux32 --32bit i386 sh -c '
++		apt update >/dev/null &&
++		apt install -y build-essential libcurl4-openssl-dev \
++			libssl-dev libexpat-dev gettext python >/dev/null
++	'
++	;;
++linux-musl)
++	apk add --update build-base curl-dev openssl-dev expat-dev gettext \
++		pcre2-dev python3 musl-libintl perl-utils ncurses >/dev/null
++	;;
++pedantic)
++	dnf -yq update >/dev/null &&
++	dnf -yq install make gcc findutils diffutils perl python3 gettext zlib-devel expat-devel openssl-devel curl-devel pcre2-devel >/dev/null
++	;;
+ esac
+ 
+ if type p4d >/dev/null 2>&1 && type p4 >/dev/null 2>&1
+diff --git a/ci/install-docker-dependencies.sh b/ci/install-docker-dependencies.sh
+deleted file mode 100755
+index 78b7e326da6..00000000000
+--- a/ci/install-docker-dependencies.sh
++++ /dev/null
+@@ -1,22 +0,0 @@
+-#!/bin/sh
+-#
+-# Install dependencies required to build and test Git inside container
+-#
+-
+-case "$jobname" in
+-linux32)
+-	linux32 --32bit i386 sh -c '
+-		apt update >/dev/null &&
+-		apt install -y build-essential libcurl4-openssl-dev \
+-			libssl-dev libexpat-dev gettext python >/dev/null
+-	'
+-	;;
+-linux-musl)
+-	apk add --update build-base curl-dev openssl-dev expat-dev gettext \
+-		pcre2-dev python3 musl-libintl perl-utils ncurses >/dev/null
+-	;;
+-pedantic)
+-	dnf -yq update >/dev/null &&
+-	dnf -yq install make gcc findutils diffutils perl python3 gettext zlib-devel expat-devel openssl-devel curl-devel pcre2-devel >/dev/null
+-	;;
+-esac
+-- 
+2.36.1.1045.gf356b5617dd
+
