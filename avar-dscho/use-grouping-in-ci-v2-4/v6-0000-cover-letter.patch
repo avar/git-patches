@@ -4,12 +4,196 @@ In-Reply-To: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
 References: <RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Wed, 25 May 2022 12:07:43 +0200
-Subject: [PATCH v6 00/14] *** SUBJECT HERE ***
+Subject: [PATCH v6 00/14] CI: js/ci-github-workflow-markup rebased on "use $GITHUB_ENV"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This non-RFC re-roll of [1] is based on the just-re-rolled [2]
+(hereafter "base") and proposes to replace [3]. It incorporates the
+relevant parts of [3] that were new in that re-roll.
+
+Before getting into the details it's helpful to open the following
+links:
+
+  master: https://github.com/avar/git/actions/runs/2377697338
+  js: https://github.com/avar/git/actions/runs/2377281297
+  base: https://github.com/avar/git/actions/runs/2377257487
+  this: https://github.com/avar/git/actions/runs/2383110429
+  this with 'raw': https://github.com/avar/git/actions/runs/2383134850
+
+These are all versions of the relevant branches in play with the same
+commit on top to trigger CI failures. The "master" and "base" are the
+same as those noted in [2], the "js" is [3] (but rebased on master),
+and "this" is this topic. The "this with 'raw'" is this topic, but
+configured to omit the new GitHub CI Markdown output (see 13/14 and
+14/14).
+
+Having these open allows us to compare the output and performance of
+these different proposed CI topics. Here clicking on e.g. linux-sha256
+(which has a verbose test failure) will on these topics on in the
+Chrome debugger[4].
+
+  master: https://github.com/avar/git/runs/6573058614?check_suite_focus=true
+  262 ms  Loading
+  3977 ms  Scripting
+  1632 ms  Rendering
+  641 ms  Painting
+  934 ms  System
+  920 ms  Idle
+  8366 ms  Total
+
+  js: https://github.com/avar/git/runs/6571972194?check_suite_focus=true
+  170 ms  Loading
+  12934 ms  Scripting
+  7364 ms  Rendering
+  6940 ms  Painting
+  5489 ms  System
+  5940 ms  Idle
+  38836 ms  Total
+
+  base: https://github.com/avar/git/runs/6571804381?check_suite_focus=true
+  215 ms  Loading
+  3270 ms  Scripting
+  1171 ms  Rendering
+  649 ms  Painting
+  941 ms  System
+  731 ms  Idle
+  6976 ms  Total
+
+  this: https://github.com/avar/git/runs/6588407676?check_suite_focus=true
+  201 ms  Loading
+  9192 ms  Scripting
+  6104 ms  Rendering
+  5553 ms  Painting
+  4684 ms  System
+  6184 ms  Idle
+  31917 ms  Total
+
+  this with 'raw': https://github.com/avar/git/runs/6588579493?check_suite_focus=true
+  173 ms  Loading
+  3036 ms  Scripting
+  1110 ms  Rendering
+  617 ms  Painting
+  1028 ms  System
+  714 ms  Idle
+  6678 ms  Total
+
+As noted in previous performance testing [5] what these results
+indicate is that the more output you put under GitHub CI's "groups"
+the slower it will get. With the "js" variant in particular it can be
+seen to struggle to render as you're watching it.
+
+It's faster with "this" because there's less rendering to be done. Due
+to the changes in the "base" topic to make "make" and "make test"
+top-level commands we can run there's less data in the step where we
+need to print failures in detail.
+
+So re: [6] this shows how the two serieses are complimentary and make
+the overall CI UX better when combined than stand-alone.
+
+Changes since the RFC v5:
+
+ * Incorporated the v3[3] of js/ci-github-workflow-markup.
+
+ * Applied fix-up to get rid of broken
+   ci/print-test-failures-github.sh (which didn't exist anymore)
+
+ * The v5 of this series had an issue where we'd "zoom in" on the
+   "make test" output, instead of the new GitHub CI markdown
+   output. We now combine the best of both worlds. We'll have a "make
+   test" and "ci/print-test-failures.sh" steps, both of which fail,
+   but we'll "zoom in" on the latter, which contains the new output.
+
+ * As before this series applied some DRY principles to the code [7]
+   proposed to add, i.e. the "handle_failed_tests" was a
+   near-duplication of the code in
+   ci/print-test-failures-github.sh. The 01-03/14 here allow us to
+   unify the two & share the code instead.
+
+   My RFC v5 had some options we didn't need (--exit-code and
+   --no-exit-code) that I removed. It furthermore defaults to "auto"
+   discovering if we should emit the GitHub CI *.markup output based
+   on if we find those files in t/test-results, which as we'll see in
+   13-14/14 makes configuring the output simpler.
+
+ * Due to the above and other changes here being smaller the "ci: make
+   it easier to find failed tests' logs in the GitHub workflow" here
+   is now a squashed version of changes done in several steps in
+   [3]. We now add the ability to emit GitHub CI markup in one commit,
+   and enable it in another.
+
+ * In the latest "js" topic the "ok" tests were skipped, but we'd
+   still include "skip" tests, i.e. "not ok .. TODO" tests. These
+   should be considered "ok" for the purposes of the output, so a new
+   09/14 here excludes them too.
+
+ * An updated commit message for 10/14 notes a subtle and presumably
+   unintended side-effect/bug in "ci(github): avoid printing test case
+   preamble twice" new in the v3 of [3]. In tweaking the *.markup
+   files we also change the output in the *.out files (i.e. the raw
+   logs).
+
+   You thus won't get the same output in *.out (the raw logs) with the
+   new output.
+
+ * New 13/14 and 14/14 commits here make the CI output type
+   configurable using the same "ci-config" method we use for the
+   existing "check-ref". As explained in 14/14 this is what I'm using
+   to produce "this with 'raw'" output the same commit as "this". I
+   push to a branch whose name ends with "_CI_OUT_RAW".
+
+   This allows users (such as me, or per 13/14 probably SZEDER too) to
+   configure our output to avoid this GitHub markdown in our
+   ci-config.
+
+ * As 13/14 argues for I think a better thing to do would be to avoid
+   14/14 for now and take this series without making the new "github"
+   output the default.
+
+   But in the interest of not conflating that with this proposed
+   re-roll 14/14 changes the default from "raw" to "github" again,
+   thus making the output [3] is proposing the default here too.
+
+   We can always revert 14/14 later if we think that was premature,
+   which as shown there is now a one-line change.
+
+To continue from the last note above: This series also allows for
+combining the new & old output in a way where we can have our cake &
+eat it too. If we load the "this" output and "zoom in" on the failed
+"make test" step instead of the subsequent "ci/print-test-failures.sh"
+step we'll load the page in around 1/6 the time, or:
+
+  this (zoomed in on 'make test'): https://github.com/avar/git/runs/6588407676?check_suite_focus=true#step:7:1437
+  149 ms  Loading
+  2559 ms  Scripting
+  934 ms  Rendering
+  591 ms  Painting
+  845 ms  System
+  605 ms  Idle
+  5684 ms  Total
+
+Clicking on the "ci/print-test-failures.sh" will then take just as
+long. I haven't implemented this as a configurable feature is just a
+matter of making ci/print-test-failures.sh exit with 0 where it now
+exits with 1 (as we always "zoom in" on the last failed step, which
+then will be "make test").
+
+1. https://lore.kernel.org/git/RFC-cover-v5-00.10-00000000000-20220421T183001Z-avarab@gmail.com/
+2. https://lore.kernel.org/git/cover-v6-00.29-00000000000-20220525T094123Z-avarab@gmail.com/
+3. https://lore.kernel.org/git/pull.1117.v3.git.1653171536.gitgitgadget@gmail.com/
+4. Version 101.0.4951.54 (Official Build) (64-bit). Opening the
+   debugger in an empty tab (F12), going to "Performance" and
+   recording a trace (Ctrl+E) (note: *not* Ctrl+Shift+E, as that would
+   end it after network load, but before rendering is done & the page
+   is ready to interact with).
+
+   The "Total" times here are "real" and don't very with how fast I am
+   to "stop" the trace (tested by leaving it lingering for a long
+   time).
+5. https://lore.kernel.org/git/220523.86ee0kzjix.gmgdl@evledraar.gmail.com/
+6. https://lore.kernel.org/git/nycvar.QRO.7.76.6.2205232040130.352@tvgsbejvaqbjf.bet/
+7. https://lore.kernel.org/git/417f702a2454316f0bdc5b66eb16751272ff2989.1653171536.git.gitgitgadget@gmail.com/
 
 Johannes Schindelin (6):
   tests: refactor --write-junit-xml code
