@@ -1,0 +1,166 @@
+From 6d21c43a4a9578c6d7d946035c04eeeb5310049a Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-2.3-6d21c43a4a9-20220525T234908Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.3-00000000000-20220525T234908Z-avarab@gmail.com>
+References: <RFC-cover-0.3-00000000000-20220525T234908Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 26 May 2022 00:42:10 +0200
+Subject: [RFC PATCH 2/3] refs API: rename "abort" callback to avoid macro
+ clash
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In a subsequent commit we'll add an abort() macro to wrap the abort(3)
+function, unfortunately due to C syntax semantics having such a macro
+would be a compilation error as long as we're invoking callbacks named
+"abort()".
+
+So let's rename the callback "abort" callback added in
+3bc581b9406 (refs: introduce an iterator interface, 2016-06-18) to
+"end", which is the alternate naming that commit itself discusses,
+i.e. it says:
+
+    * ref_iterator_advance(): move to the next reference in the iteration
+    * ref_iterator_abort(): end the iteration before it is exhausted
+    * ref_iterator_peel(): peel the reference currently being looked at
+
+Just as "peel=peel we can change that "abort=end" pair to be
+"end=end", let's leave "advance=move".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ refs/debug.c          | 4 ++--
+ refs/files-backend.c  | 4 ++--
+ refs/iterator.c       | 8 ++++----
+ refs/packed-backend.c | 2 +-
+ refs/ref-cache.c      | 2 +-
+ refs/refs-internal.h  | 2 +-
+ 6 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/refs/debug.c b/refs/debug.c
+index eed8bc94b04..3364a7fb261 100644
+--- a/refs/debug.c
++++ b/refs/debug.c
+@@ -214,7 +214,7 @@ static int debug_ref_iterator_abort(struct ref_iterator *ref_iterator)
+ {
+ 	struct debug_ref_iterator *diter =
+ 		(struct debug_ref_iterator *)ref_iterator;
+-	int res = diter->iter->vtable->abort(diter->iter);
++	int res = diter->iter->vtable->end(diter->iter);
+ 	trace_printf_key(&trace_refs, "iterator_abort: %d\n", res);
+ 	return res;
+ }
+@@ -222,7 +222,7 @@ static int debug_ref_iterator_abort(struct ref_iterator *ref_iterator)
+ static struct ref_iterator_vtable debug_ref_iterator_vtable = {
+ 	.advance = debug_ref_iterator_advance,
+ 	.peel = debug_ref_iterator_peel,
+-	.abort = debug_ref_iterator_abort,
++	.end = debug_ref_iterator_abort,
+ };
+ 
+ static struct ref_iterator *
+diff --git a/refs/files-backend.c b/refs/files-backend.c
+index 8db7882aacb..3f0dde4ae10 100644
+--- a/refs/files-backend.c
++++ b/refs/files-backend.c
+@@ -824,7 +824,7 @@ static int files_ref_iterator_abort(struct ref_iterator *ref_iterator)
+ static struct ref_iterator_vtable files_ref_iterator_vtable = {
+ 	.advance = files_ref_iterator_advance,
+ 	.peel = files_ref_iterator_peel,
+-	.abort = files_ref_iterator_abort,
++	.end = files_ref_iterator_abort,
+ };
+ 
+ static struct ref_iterator *files_ref_iterator_begin(
+@@ -2224,7 +2224,7 @@ static int files_reflog_iterator_abort(struct ref_iterator *ref_iterator)
+ static struct ref_iterator_vtable files_reflog_iterator_vtable = {
+ 	.advance = files_reflog_iterator_advance,
+ 	.peel = files_reflog_iterator_peel,
+-	.abort = files_reflog_iterator_abort,
++	.end = files_reflog_iterator_abort,
+ };
+ 
+ static struct ref_iterator *reflog_iterator_begin(struct ref_store *ref_store,
+diff --git a/refs/iterator.c b/refs/iterator.c
+index b2e56bae1c6..f4a9546adb6 100644
+--- a/refs/iterator.c
++++ b/refs/iterator.c
+@@ -21,7 +21,7 @@ int ref_iterator_peel(struct ref_iterator *ref_iterator,
+ 
+ int ref_iterator_abort(struct ref_iterator *ref_iterator)
+ {
+-	return ref_iterator->vtable->abort(ref_iterator);
++	return ref_iterator->vtable->end(ref_iterator);
+ }
+ 
+ void base_ref_iterator_init(struct ref_iterator *iter,
+@@ -66,7 +66,7 @@ static int empty_ref_iterator_abort(struct ref_iterator *ref_iterator)
+ static struct ref_iterator_vtable empty_ref_iterator_vtable = {
+ 	.advance = empty_ref_iterator_advance,
+ 	.peel = empty_ref_iterator_peel,
+-	.abort = empty_ref_iterator_abort,
++	.end = empty_ref_iterator_abort,
+ };
+ 
+ struct ref_iterator *empty_ref_iterator_begin(void)
+@@ -203,7 +203,7 @@ static int merge_ref_iterator_abort(struct ref_iterator *ref_iterator)
+ static struct ref_iterator_vtable merge_ref_iterator_vtable = {
+ 	.advance = merge_ref_iterator_advance,
+ 	.peel = merge_ref_iterator_peel,
+-	.abort = merge_ref_iterator_abort,
++	.end = merge_ref_iterator_abort,
+ };
+ 
+ struct ref_iterator *merge_ref_iterator_begin(
+@@ -380,7 +380,7 @@ static int prefix_ref_iterator_abort(struct ref_iterator *ref_iterator)
+ static struct ref_iterator_vtable prefix_ref_iterator_vtable = {
+ 	.advance = prefix_ref_iterator_advance,
+ 	.peel = prefix_ref_iterator_peel,
+-	.abort = prefix_ref_iterator_abort,
++	.end = prefix_ref_iterator_abort,
+ };
+ 
+ struct ref_iterator *prefix_ref_iterator_begin(struct ref_iterator *iter0,
+diff --git a/refs/packed-backend.c b/refs/packed-backend.c
+index 97b68377673..ad23f734b0f 100644
+--- a/refs/packed-backend.c
++++ b/refs/packed-backend.c
+@@ -913,7 +913,7 @@ static int packed_ref_iterator_abort(struct ref_iterator *ref_iterator)
+ static struct ref_iterator_vtable packed_ref_iterator_vtable = {
+ 	.advance = packed_ref_iterator_advance,
+ 	.peel = packed_ref_iterator_peel,
+-	.abort = packed_ref_iterator_abort
++	.end = packed_ref_iterator_abort
+ };
+ 
+ static struct ref_iterator *packed_ref_iterator_begin(
+diff --git a/refs/ref-cache.c b/refs/ref-cache.c
+index 32afd8a40b0..b4acaac2fb5 100644
+--- a/refs/ref-cache.c
++++ b/refs/ref-cache.c
+@@ -458,7 +458,7 @@ static int cache_ref_iterator_abort(struct ref_iterator *ref_iterator)
+ static struct ref_iterator_vtable cache_ref_iterator_vtable = {
+ 	.advance = cache_ref_iterator_advance,
+ 	.peel = cache_ref_iterator_peel,
+-	.abort = cache_ref_iterator_abort
++	.end = cache_ref_iterator_abort
+ };
+ 
+ struct ref_iterator *cache_ref_iterator_begin(struct ref_cache *cache,
+diff --git a/refs/refs-internal.h b/refs/refs-internal.h
+index 69f93b0e2ac..7f462273fba 100644
+--- a/refs/refs-internal.h
++++ b/refs/refs-internal.h
+@@ -478,7 +478,7 @@ typedef int ref_iterator_abort_fn(struct ref_iterator *ref_iterator);
+ struct ref_iterator_vtable {
+ 	ref_iterator_advance_fn *advance;
+ 	ref_iterator_peel_fn *peel;
+-	ref_iterator_abort_fn *abort;
++	ref_iterator_abort_fn *end;
+ };
+ 
+ /*
+-- 
+2.36.1.1046.g586767a6996
+

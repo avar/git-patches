@@ -1,0 +1,164 @@
+From 78431bdc8f0f002a37f5714284a86674cd17a2bf Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-1.3-78431bdc8f0-20220525T234908Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.3-00000000000-20220525T234908Z-avarab@gmail.com>
+References: <RFC-cover-0.3-00000000000-20220525T234908Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 26 May 2022 01:04:28 +0200
+Subject: [RFC PATCH 1/3] test-tool: don't fake up BUG() exits as code 99
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the BUG() function invoked be "test-tool" to be the "real" one,
+instead of one that avoids producing core files. In
+a86303cb5d5 (test-tool: help verifying BUG() code paths, 2018-05-02)
+to test the (then recently added) BUG() function we faked up the
+abort() in favor of an exit with code 99.
+
+However, in doing so we've been fooling ourselves when it comes to
+what trace2 events we log. The events tested for in
+0a9dde4a04c (usage: trace2 BUG() invocations, 2021-02-05) are not the
+real ones, but those that we emit only from the "test-tool".
+
+Let's just stop faking it, and call abort(). As a86303cb5d5 notes this
+will produce core files on some OS's, but as the default behavior for
+that is to dump them in the current directory they'll be placed in the
+trash directory that we'll shortly me "rm -rf"-ing.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-tool.c           |  1 -
+ t/t0210-trace2-normal.sh       |  4 +---
+ t/t1406-submodule-ref-store.sh | 10 +++++-----
+ t/test-lib-functions.sh        | 13 +++++++++++++
+ usage.c                        |  5 -----
+ 5 files changed, 19 insertions(+), 14 deletions(-)
+
+diff --git a/t/helper/test-tool.c b/t/helper/test-tool.c
+index 0424f7adf5d..99a10f294f5 100644
+--- a/t/helper/test-tool.c
++++ b/t/helper/test-tool.c
+@@ -110,7 +110,6 @@ int cmd_main(int argc, const char **argv)
+ 		OPT_END()
+ 	};
+ 
+-	BUG_exit_code = 99;
+ 	argc = parse_options(argc, argv, NULL, options, test_tool_usage,
+ 			     PARSE_OPT_STOP_AT_NON_OPTION |
+ 			     PARSE_OPT_KEEP_ARGV0);
+diff --git a/t/t0210-trace2-normal.sh b/t/t0210-trace2-normal.sh
+index 37c359bd5a2..910a6af8058 100755
+--- a/t/t0210-trace2-normal.sh
++++ b/t/t0210-trace2-normal.sh
+@@ -155,15 +155,13 @@ test_expect_success 'normal stream, error event' '
+ 
+ test_expect_success 'BUG messages are written to trace2' '
+ 	test_when_finished "rm trace.normal actual expect" &&
+-	test_must_fail env GIT_TRACE2="$(pwd)/trace.normal" test-tool trace2 007bug &&
++	test_must_BUG env GIT_TRACE2="$(pwd)/trace.normal" test-tool trace2 007bug &&
+ 	perl "$TEST_DIRECTORY/t0210/scrub_normal.perl" <trace.normal >actual &&
+ 	cat >expect <<-EOF &&
+ 		version $V
+ 		start _EXE_ trace2 007bug
+ 		cmd_name trace2 (trace2)
+ 		error the bug message
+-		exit elapsed:_TIME_ code:99
+-		atexit elapsed:_TIME_ code:99
+ 	EOF
+ 	test_cmp expect actual
+ '
+diff --git a/t/t1406-submodule-ref-store.sh b/t/t1406-submodule-ref-store.sh
+index e6a7f7334b6..6f9a16b7355 100755
+--- a/t/t1406-submodule-ref-store.sh
++++ b/t/t1406-submodule-ref-store.sh
+@@ -25,15 +25,15 @@ test_expect_success 'pack_refs() not allowed' '
+ '
+ 
+ test_expect_success 'create_symref() not allowed' '
+-	test_must_fail $RUN create-symref FOO refs/heads/main nothing
++	test_must_BUG $RUN create-symref FOO refs/heads/main nothing
+ '
+ 
+ test_expect_success 'delete_refs() not allowed' '
+-	test_must_fail $RUN delete-refs 0 nothing FOO refs/tags/new-tag
++	test_must_BUG $RUN delete-refs 0 nothing FOO refs/tags/new-tag
+ '
+ 
+ test_expect_success 'rename_refs() not allowed' '
+-	test_must_fail $RUN rename-ref refs/heads/main refs/heads/new-main
++	test_must_BUG $RUN rename-ref refs/heads/main refs/heads/new-main
+ '
+ 
+ test_expect_success 'for_each_ref(refs/heads/)' '
+@@ -89,11 +89,11 @@ test_expect_success 'reflog_exists(HEAD)' '
+ '
+ 
+ test_expect_success 'delete_reflog() not allowed' '
+-	test_must_fail $RUN delete-reflog HEAD
++	test_must_BUG $RUN delete-reflog HEAD
+ '
+ 
+ test_expect_success 'create-reflog() not allowed' '
+-	test_must_fail $RUN create-reflog HEAD
++	test_must_BUG $RUN create-reflog HEAD
+ '
+ 
+ test_done
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 93c03380d44..61f1f03c099 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -1167,6 +1167,9 @@ test_must_fail () {
+ 	then
+ 		echo >&4 "test_must_fail: command succeeded: $*"
+ 		return 1
++	elif test_match_signal 6 $exit_code && list_contains "$_test_ok" sigabrt
++	then
++		return 0
+ 	elif test_match_signal 13 $exit_code && list_contains "$_test_ok" sigpipe
+ 	then
+ 		return 0
+@@ -1186,6 +1189,16 @@ test_must_fail () {
+ 	return 0
+ } 7>&2 2>&4
+ 
++# The test_must_BUG() function is a wrapper for test_must_fail which
++# checks that we BUG() out.
++#
++# Currently this checks that we exit with abort(), but in the future
++# we might e.g. check the trace2 logging itself, or otherwise make
++# sure that we used BUG() in particular.
++test_must_BUG () {
++	test_must_fail ok=sigabrt "$@"
++} 7>&2 2>&4
++
+ # Similar to test_must_fail, but tolerates success, too.  This is
+ # meant to be used in contexts like:
+ #
+diff --git a/usage.c b/usage.c
+index b738dd178b3..bf868b5be1f 100644
+--- a/usage.c
++++ b/usage.c
+@@ -287,9 +287,6 @@ void warning(const char *warn, ...)
+ 	va_end(params);
+ }
+ 
+-/* Only set this, ever, from t/helper/, when verifying that bugs are caught. */
+-int BUG_exit_code;
+-
+ static NORETURN void BUG_vfl(const char *file, int line, const char *fmt, va_list params)
+ {
+ 	char prefix[256];
+@@ -309,8 +306,6 @@ static NORETURN void BUG_vfl(const char *file, int line, const char *fmt, va_lis
+ 
+ 	trace2_cmd_error_va(fmt, params_copy);
+ 
+-	if (BUG_exit_code)
+-		exit(BUG_exit_code);
+ 	abort();
+ }
+ 
+-- 
+2.36.1.1046.g586767a6996
+
