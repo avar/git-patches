@@ -1,0 +1,328 @@
+From 849109e9f7cec41f7e77b0cc23703bc6cfec5976 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.5-849109e9f7c-20220531T160730Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20220531T160730Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220521T170939Z-avarab@gmail.com>
+	<cover-v2-0.5-00000000000-20220531T160730Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 27 Mar 2021 19:03:07 +0100
+Subject: [PATCH v2 2/5] usage.c: add a non-fatal bug() function to go with
+ BUG()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a bug() function to use in cases where we'd like to indicate a
+runtime BUG(), but would like to defer the BUG() call because we're
+possibly accumulating more bug() callers to exhaustively indicate what
+went wrong.
+
+We already have this sort of facility in various parts of the
+codebase, just in the form of ad-hoc re-inventions of the
+functionality that this new API provides. E.g. this will be used to
+replace optbug() in parse-options.c, and the 'error("BUG:[...]' we do
+in a loop in builtin/receive-pack.c.
+
+Unlike the code this replaces we'll log to trace2 with this new bug()
+function (as with other usage.c functions, including BUG()), we'll
+also be able to avoid calls to xstrfmt() in some cases, as the bug()
+function itself accepts variadic sprintf()-like arguments.
+
+Any caller to bug() should follow up such calls with BUG_if_bug(),
+which will BUG() out (i.e. abort()) if there were any preceding calls
+to bug(). As the tests and documentation here show we'll catch missing
+BUG_if_bug() invocations in our exit() wrapper.
+
+I'd previously proposed this as part of another series[1], in that
+use-case we ended thinking a BUG() would be better (and eventually
+96e41f58fe1 (fsck: report invalid object type-path combinations,
+2021-10-01) ended up with neither). Here though we'll end up
+converting various existing code that was already doing what we're
+doing better with this new API.
+
+1. https://lore.kernel.org/git/YGRXomWwRYPdXZi3@coredump.intra.peff.net/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .../technical/api-error-handling.txt          | 19 ++++++-
+ Documentation/technical/api-trace2.txt        |  4 +-
+ common-main.c                                 | 11 ++++
+ git-compat-util.h                             | 12 +++++
+ t/helper/test-trace2.c                        | 22 +++++++-
+ t/t0210-trace2-normal.sh                      | 52 +++++++++++++++++++
+ usage.c                                       | 30 +++++++++--
+ 7 files changed, 140 insertions(+), 10 deletions(-)
+
+diff --git a/Documentation/technical/api-error-handling.txt b/Documentation/technical/api-error-handling.txt
+index 8be4f4d0d6a..c4131dc3a2c 100644
+--- a/Documentation/technical/api-error-handling.txt
++++ b/Documentation/technical/api-error-handling.txt
+@@ -1,12 +1,29 @@
+ Error reporting in git
+ ======================
+ 
+-`BUG`, `die`, `usage`, `error`, and `warning` report errors of
++`BUG`, `bug`, `die`, `usage`, `error`, and `warning` report errors of
+ various kinds.
+ 
+ - `BUG` is for failed internal assertions that should never happen,
+   i.e. a bug in git itself.
+ 
++- `bug` (lower-case, not `BUG`) is supposed to be used like `BUG` but
++  prints a "BUG" message instead of calling `abort()`.
+++
++A call to `bug()` will then result in a "real" call to the `BUG()`
++function, either explicitly by invoking `BUG_if_bug()` after call(s)
++to `bug()`, or implicitly at `exit()` time where we'll check if we
++encountered any outstanding `bug()` invocations.
+++
++If there were no prior calls to `bug()` before invoking `BUG_if_bug()`
++the latter is a NOOP. The `BUG_if_bug()` function takes the same
++arguments as `BUG()` itself. Calling `BUG_if_bug()` explicitly isn't
++necessary, but ensures that we die as soon as possible.
+++
++This is for the convenience of APIs who'd like to potentially report
++more than one "bug", such as the optbug() validation in
++parse-options.c.
++
+ - `die` is for fatal application errors.  It prints a message to
+   the user and exits with status 128.
+ 
+diff --git a/Documentation/technical/api-trace2.txt b/Documentation/technical/api-trace2.txt
+index f4a8a690878..77a150b30ee 100644
+--- a/Documentation/technical/api-trace2.txt
++++ b/Documentation/technical/api-trace2.txt
+@@ -465,8 +465,8 @@ completed.)
+ ------------
+ 
+ `"error"`::
+-	This event is emitted when one of the `BUG()`, `error()`, `die()`,
+-	`warning()`, or `usage()` functions are called.
++	This event is emitted when one of the `BUG()`, `bug()`, `error()`,
++	`die()`, `warning()`, or `usage()` functions are called.
+ +
+ ------------
+ {
+diff --git a/common-main.c b/common-main.c
+index bb0100f6024..39678535836 100644
+--- a/common-main.c
++++ b/common-main.c
+@@ -63,6 +63,16 @@ int main(int argc, const char **argv)
+ 	exit(result);
+ }
+ 
++static void check_bug_if_BUG(void)
++{
++	if (!bug_called_must_BUG)
++		return;
++
++	/* BUG_vfl() calls exit(), which calls us again */
++	bug_called_must_BUG = 0;
++	BUG("on exit(): had bug() call(s) in this process without BUG_if_bug()");
++}
++
+ int common_exit(const char *file, int line, int code)
+ {
+ 	/*
+@@ -73,6 +83,7 @@ int common_exit(const char *file, int line, int code)
+ 	 */
+ 	code &= 0xff;
+ 
++	check_bug_if_BUG();
+ 	trace2_cmd_exit_fl(file, line, code);
+ 
+ 	return code;
+diff --git a/git-compat-util.h b/git-compat-util.h
+index a446a363de2..a80079a06fe 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -1320,9 +1320,21 @@ static inline int regexec_buf(const regex_t *preg, const char *buf, size_t size,
+ /* usage.c: only to be used for testing BUG() implementation (see test-tool) */
+ extern int BUG_exit_code;
+ 
++/* usage.c: if bug() is called we should have a BUG_if_bug() afterwards */
++extern int bug_called_must_BUG;
++
+ __attribute__((format (printf, 3, 4))) NORETURN
+ void BUG_fl(const char *file, int line, const char *fmt, ...);
+ #define BUG(...) BUG_fl(__FILE__, __LINE__, __VA_ARGS__)
++__attribute__((format (printf, 3, 4)))
++void bug_fl(const char *file, int line, const char *fmt, ...);
++#define bug(...) bug_fl(__FILE__, __LINE__, __VA_ARGS__)
++#define BUG_if_bug(...) do { \
++	if (bug_called_must_BUG) { \
++		bug_called_must_BUG = 0; \
++		BUG_fl(__FILE__, __LINE__, __VA_ARGS__); \
++	} \
++} while (0)
+ 
+ #ifdef __APPLE__
+ #define FSYNC_METHOD_DEFAULT FSYNC_METHOD_WRITEOUT_ONLY
+diff --git a/t/helper/test-trace2.c b/t/helper/test-trace2.c
+index 59b124bb5f1..5d2510aac53 100644
+--- a/t/helper/test-trace2.c
++++ b/t/helper/test-trace2.c
+@@ -198,7 +198,7 @@ static int ut_006data(int argc, const char **argv)
+ 	return 0;
+ }
+ 
+-static int ut_007bug(int argc, const char **argv)
++static int ut_007BUG(int argc, const char **argv)
+ {
+ 	/*
+ 	 * Exercise BUG() to ensure that the message is printed to trace2.
+@@ -206,6 +206,22 @@ static int ut_007bug(int argc, const char **argv)
+ 	BUG("the bug message");
+ }
+ 
++static int ut_008bug(int argc, const char **argv)
++{
++	bug("a bug message");
++	bug("another bug message");
++	BUG_if_bug("a BUG should always come after after bug() invocations");
++	return 0;
++}
++
++static int ut_009bug_BUG(int argc, const char **argv)
++{
++	bug("a bug message");
++	bug("another bug message");
++	/* The BUG_if_bug(...) is missing here! */
++	return 0;
++}
++
+ /*
+  * Usage:
+  *     test-tool trace2 <ut_name_1> <ut_usage_1>
+@@ -222,7 +238,9 @@ static struct unit_test ut_table[] = {
+ 	{ ut_004child,    "004child",  "[<child_command_line>]" },
+ 	{ ut_005exec,     "005exec",   "<git_command_args>" },
+ 	{ ut_006data,     "006data",   "[<category> <key> <value>]+" },
+-	{ ut_007bug,      "007bug",    "" },
++	{ ut_007BUG,      "007bug",    "" },
++	{ ut_008bug,      "008bug",    "" },
++	{ ut_009bug_BUG,  "009bug_BUG","" },
+ };
+ /* clang-format on */
+ 
+diff --git a/t/t0210-trace2-normal.sh b/t/t0210-trace2-normal.sh
+index 37c359bd5a2..2301ba341a2 100755
+--- a/t/t0210-trace2-normal.sh
++++ b/t/t0210-trace2-normal.sh
+@@ -168,6 +168,58 @@ test_expect_success 'BUG messages are written to trace2' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'bug messages with BUG_if_bug() are written to trace2' '
++	test_when_finished "rm trace.normal actual expect" &&
++	test_expect_code 99 env GIT_TRACE2="$(pwd)/trace.normal" \
++		test-tool trace2 008bug 2>err &&
++	cat >expect <<-\EOF &&
++	a bug message
++	another bug message
++	a BUG should always come after after bug() invocations
++	EOF
++	sed "s/^.*: //" <err >actual &&
++	test_cmp expect actual &&
++
++	perl "$TEST_DIRECTORY/t0210/scrub_normal.perl" <trace.normal >actual &&
++	cat >expect <<-EOF &&
++		version $V
++		start _EXE_ trace2 008bug
++		cmd_name trace2 (trace2)
++		error a bug message
++		error another bug message
++		error a BUG should always come after after bug() invocations
++		exit elapsed:_TIME_ code:99
++		atexit elapsed:_TIME_ code:99
++	EOF
++	test_cmp expect actual
++'
++
++test_expect_success 'bug messages without BUG_if_bug() are written to trace2' '
++	test_when_finished "rm trace.normal actual expect" &&
++	test_expect_code 99 env GIT_TRACE2="$(pwd)/trace.normal" \
++		test-tool trace2 009bug_BUG 2>err &&
++	cat >expect <<-\EOF &&
++	a bug message
++	another bug message
++	had bug() call(s) in this process without BUG_if_bug()
++	EOF
++	sed "s/^.*: //" <err >actual &&
++	test_cmp expect actual &&
++
++	perl "$TEST_DIRECTORY/t0210/scrub_normal.perl" <trace.normal >actual &&
++	cat >expect <<-EOF &&
++		version $V
++		start _EXE_ trace2 009bug_BUG
++		cmd_name trace2 (trace2)
++		error a bug message
++		error another bug message
++		error on exit(): had bug() call(s) in this process without BUG_if_bug()
++		exit elapsed:_TIME_ code:99
++		atexit elapsed:_TIME_ code:99
++	EOF
++	test_cmp expect actual
++'
++
+ sane_unset GIT_TRACE2_BRIEF
+ 
+ # Now test without environment variables and get all Trace2 settings
+diff --git a/usage.c b/usage.c
+index b738dd178b3..c37b94f1a40 100644
+--- a/usage.c
++++ b/usage.c
+@@ -290,18 +290,24 @@ void warning(const char *warn, ...)
+ /* Only set this, ever, from t/helper/, when verifying that bugs are caught. */
+ int BUG_exit_code;
+ 
+-static NORETURN void BUG_vfl(const char *file, int line, const char *fmt, va_list params)
++static void BUG_vfl_common(const char *file, int line, const char *fmt,
++			   va_list params)
+ {
+ 	char prefix[256];
+-	va_list params_copy;
+-	static int in_bug;
+-
+-	va_copy(params_copy, params);
+ 
+ 	/* truncation via snprintf is OK here */
+ 	snprintf(prefix, sizeof(prefix), "BUG: %s:%d: ", file, line);
+ 
+ 	vreportf(prefix, fmt, params);
++}
++
++static NORETURN void BUG_vfl(const char *file, int line, const char *fmt, va_list params)
++{
++	va_list params_copy;
++	static int in_bug;
++
++	va_copy(params_copy, params);
++	BUG_vfl_common(file, line, fmt, params);
+ 
+ 	if (in_bug)
+ 		abort();
+@@ -322,6 +328,20 @@ NORETURN void BUG_fl(const char *file, int line, const char *fmt, ...)
+ 	va_end(ap);
+ }
+ 
++int bug_called_must_BUG;
++void bug_fl(const char *file, int line, const char *fmt, ...)
++{
++	va_list ap, cp;
++
++	bug_called_must_BUG = 1;
++
++	va_copy(cp, ap);
++	va_start(ap, fmt);
++	BUG_vfl_common(file, line, fmt, ap);
++	va_end(ap);
++	trace2_cmd_error_va(fmt, cp);
++}
++
+ #ifdef SUPPRESS_ANNOTATED_LEAKS
+ void unleak_memory(const void *ptr, size_t len)
+ {
+-- 
+2.36.1.1100.g16130010d07
+

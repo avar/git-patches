@@ -1,0 +1,301 @@
+From de7fe2ca3271d40f1e9d02f5730de4f869b31284 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.5-00000000000-20220531T160730Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20220521T170939Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220521T170939Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 31 May 2022 18:07:30 +0200
+Subject: [PATCH v2 0/5] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (5):
+  common-main.o: move non-trace2 exit() behavior out of trace2.c
+  usage.c: add a non-fatal bug() function to go with BUG()
+  parse-options.c: use new bug() API for optbug()
+  parse-options.c: use optbug() instead of BUG() "opts" check
+  receive-pack: use bug() and BUG_if_bug()
+
+ .../technical/api-error-handling.txt          | 19 +++++-
+ Documentation/technical/api-trace2.txt        |  4 +-
+ builtin/receive-pack.c                        | 16 ++---
+ common-main.c                                 | 30 ++++++++-
+ git-compat-util.h                             | 24 ++++++-
+ parse-options.c                               | 67 ++++++++++---------
+ t/helper/test-trace2.c                        | 22 +++++-
+ t/t0210-trace2-normal.sh                      | 52 ++++++++++++++
+ trace2.c                                      |  8 +--
+ trace2.h                                      |  8 +--
+ usage.c                                       | 30 +++++++--
+ 11 files changed, 213 insertions(+), 67 deletions(-)
+
+Range-diff against v1:
+-:  ----------- > 1:  d446e4679d4 common-main.o: move non-trace2 exit() behavior out of trace2.c
+1:  faa1c708a79 ! 2:  849109e9f7c usage.c: add a non-fatal bug() function to go with BUG()
+    @@ Commit message
+         usage.c: add a non-fatal bug() function to go with BUG()
+     
+         Add a bug() function to use in cases where we'd like to indicate a
+    -    runtime BUG(), but would like to deref the BUG() call because we're
+    +    runtime BUG(), but would like to defer the BUG() call because we're
+         possibly accumulating more bug() callers to exhaustively indicate what
+         went wrong.
+     
+    @@ Documentation/technical/api-error-handling.txt
+        i.e. a bug in git itself.
+      
+     +- `bug` (lower-case, not `BUG`) is supposed to be used like `BUG` but
+    -+  prints a "BUG" message instead of calling `abort()`. We then expect
+    -+  `BUG_if_bug()` to be called to `abort()` if there were any calls to
+    -+  `bug()`. If there weren't any a call to `BUG_if_bug()` is a NOOP.
+    ++  prints a "BUG" message instead of calling `abort()`.
+    +++
+    ++A call to `bug()` will then result in a "real" call to the `BUG()`
+    ++function, either explicitly by invoking `BUG_if_bug()` after call(s)
+    ++to `bug()`, or implicitly at `exit()` time where we'll check if we
+    ++encountered any outstanding `bug()` invocations.
+    +++
+    ++If there were no prior calls to `bug()` before invoking `BUG_if_bug()`
+    ++the latter is a NOOP. The `BUG_if_bug()` function takes the same
+    ++arguments as `BUG()` itself. Calling `BUG_if_bug()` explicitly isn't
+    ++necessary, but ensures that we die as soon as possible.
+     ++
+     +This is for the convenience of APIs who'd like to potentially report
+     +more than one "bug", such as the optbug() validation in
+     +parse-options.c.
+    -++
+    -+We call `BUG_if_bug()` ourselves at `exit()` time (via a wrapper, not
+    -+`atexit()`), which guarantees that we'll catch cases where we forgot
+    -+to invoke `BUG_if_bug()` after calls to `bug()`. Thus calling
+    -+`BUG_if_bug()` isn't strictly necessary, but ensures that we die as
+    -+soon as possible.
+     +
+      - `die` is for fatal application errors.  It prints a message to
+        the user and exits with status 128.
+    @@ Documentation/technical/api-trace2.txt: completed.)
+      ------------
+      {
+     
+    + ## common-main.c ##
+    +@@ common-main.c: int main(int argc, const char **argv)
+    + 	exit(result);
+    + }
+    + 
+    ++static void check_bug_if_BUG(void)
+    ++{
+    ++	if (!bug_called_must_BUG)
+    ++		return;
+    ++
+    ++	/* BUG_vfl() calls exit(), which calls us again */
+    ++	bug_called_must_BUG = 0;
+    ++	BUG("on exit(): had bug() call(s) in this process without BUG_if_bug()");
+    ++}
+    ++
+    + int common_exit(const char *file, int line, int code)
+    + {
+    + 	/*
+    +@@ common-main.c: int common_exit(const char *file, int line, int code)
+    + 	 */
+    + 	code &= 0xff;
+    + 
+    ++	check_bug_if_BUG();
+    + 	trace2_cmd_exit_fl(file, line, code);
+    + 
+    + 	return code;
+    +
+      ## git-compat-util.h ##
+     @@ git-compat-util.h: static inline int regexec_buf(const regex_t *preg, const char *buf, size_t size,
+      /* usage.c: only to be used for testing BUG() implementation (see test-tool) */
+    @@ git-compat-util.h: static inline int regexec_buf(const regex_t *preg, const char
+     +__attribute__((format (printf, 3, 4)))
+     +void bug_fl(const char *file, int line, const char *fmt, ...);
+     +#define bug(...) bug_fl(__FILE__, __LINE__, __VA_ARGS__)
+    -+#define BUG_if_bug() do { \
+    ++#define BUG_if_bug(...) do { \
+     +	if (bug_called_must_BUG) { \
+     +		bug_called_must_BUG = 0; \
+    -+		BUG_fl(__FILE__, __LINE__, "see bug() output above"); \
+    ++		BUG_fl(__FILE__, __LINE__, __VA_ARGS__); \
+     +	} \
+     +} while (0)
+      
+    @@ t/helper/test-trace2.c: static int ut_007bug(int argc, const char **argv)
+     +{
+     +	bug("a bug message");
+     +	bug("another bug message");
+    -+	BUG_if_bug();
+    ++	BUG_if_bug("a BUG should always come after after bug() invocations");
+     +	return 0;
+     +}
+     +
+    @@ t/helper/test-trace2.c: static int ut_007bug(int argc, const char **argv)
+     +{
+     +	bug("a bug message");
+     +	bug("another bug message");
+    ++	/* The BUG_if_bug(...) is missing here! */
+     +	return 0;
+     +}
+     +
+    @@ t/t0210-trace2-normal.sh: test_expect_success 'BUG messages are written to trace
+     +	cat >expect <<-\EOF &&
+     +	a bug message
+     +	another bug message
+    -+	see bug() output above
+    ++	a BUG should always come after after bug() invocations
+     +	EOF
+     +	sed "s/^.*: //" <err >actual &&
+     +	test_cmp expect actual &&
+    @@ t/t0210-trace2-normal.sh: test_expect_success 'BUG messages are written to trace
+     +		cmd_name trace2 (trace2)
+     +		error a bug message
+     +		error another bug message
+    -+		error see bug() output above
+    ++		error a BUG should always come after after bug() invocations
+     +		exit elapsed:_TIME_ code:99
+     +		atexit elapsed:_TIME_ code:99
+     +	EOF
+    @@ t/t0210-trace2-normal.sh: test_expect_success 'BUG messages are written to trace
+     +	cat >expect <<-\EOF &&
+     +	a bug message
+     +	another bug message
+    -+	had bug() output above, in addition missed BUG_if_bug() call
+    ++	had bug() call(s) in this process without BUG_if_bug()
+     +	EOF
+     +	sed "s/^.*: //" <err >actual &&
+     +	test_cmp expect actual &&
+    @@ t/t0210-trace2-normal.sh: test_expect_success 'BUG messages are written to trace
+     +		cmd_name trace2 (trace2)
+     +		error a bug message
+     +		error another bug message
+    -+		error had bug() output above, in addition missed BUG_if_bug() call
+    ++		error on exit(): had bug() call(s) in this process without BUG_if_bug()
+     +		exit elapsed:_TIME_ code:99
+     +		atexit elapsed:_TIME_ code:99
+     +	EOF
+    @@ t/t0210-trace2-normal.sh: test_expect_success 'BUG messages are written to trace
+      
+      # Now test without environment variables and get all Trace2 settings
+     
+    - ## trace2.c ##
+    -@@ trace2.c: int trace2_cmd_exit_fl(const char *file, int line, int code)
+    - 
+    - 	code &= 0xff;
+    - 
+    -+	if (bug_called_must_BUG) {
+    -+		/* BUG_vfl() calls exit(), which calls us again */
+    -+		bug_called_must_BUG = 0;
+    -+		BUG("had bug() output above, in addition missed BUG_if_bug() call");
+    -+	}
+    -+
+    - 	if (!trace2_enabled)
+    - 		return code;
+    - 
+    -
+      ## usage.c ##
+     @@ usage.c: void warning(const char *warn, ...)
+      /* Only set this, ever, from t/helper/, when verifying that bugs are caught. */
+2:  a599cd015a3 ! 3:  7326479938e parse-options.c: use new bug() API for optbug()
+    @@ Commit message
+         been using optbug() that aren't being changed here. That'll be done in
+         a subsequent commit. This only changes the optbug() callers.
+     
+    +    Since this will invoke BUG() the previous exit(128) code will be
+    +    changed, but in this case that's what we want, i.e. to have
+    +    encountering a BUG() return the specific "BUG" exit code.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## parse-options.c ##
+    @@ parse-options.c: static void parse_options_check(const struct option *opts)
+      	}
+     -	if (err)
+     -		exit(128);
+    -+	BUG_if_bug();
+    ++	BUG_if_bug("invalid 'struct option'");
+      }
+      
+      static void parse_options_start_1(struct parse_opt_ctx_t *ctx,
+3:  5a3e7609854 ! 4:  c5d086a15d3 parse-options.c: use optbug() instead of BUG() "opts" check
+    @@ Commit message
+     
+      ## parse-options.c ##
+     @@ parse-options.c: static void parse_options_check(const struct option *opts)
+    + 				optbug(opts, "should not accept an argument");
+      			break;
+      		case OPTION_CALLBACK:
+    - 			if (!opts->callback && !opts->ll_callback)
+    +-			if (!opts->callback && !opts->ll_callback)
+     -				BUG("OPTION_CALLBACK needs one callback");
+    -+				optbug(opts, "OPTION_CALLBACK needs one callback");
+    - 			if (opts->callback && opts->ll_callback)
+    +-			if (opts->callback && opts->ll_callback)
+     -				BUG("OPTION_CALLBACK can't have two callbacks");
+    ++			if (!opts->callback && !opts->ll_callback) {
+    ++				optbug(opts, "OPTION_CALLBACK needs one callback");
+    ++				break;
+    ++			}
+    ++			if (opts->callback && opts->ll_callback) {
+     +				optbug(opts, "OPTION_CALLBACK can't have two callbacks");
+    ++				break;
+    ++			}
+      			break;
+      		case OPTION_LOWLEVEL_CALLBACK:
+    - 			if (!opts->ll_callback)
+    +-			if (!opts->ll_callback)
+     -				BUG("OPTION_LOWLEVEL_CALLBACK needs a callback");
+    -+				optbug(opts, "OPTION_LOWLEVEL_CALLBACK needs a callback");
+    - 			if (opts->callback)
+    +-			if (opts->callback)
+     -				BUG("OPTION_LOWLEVEL_CALLBACK needs no high level callback");
+    ++			if (!opts->ll_callback) {
+    ++				optbug(opts, "OPTION_LOWLEVEL_CALLBACK needs a callback");
+    ++				break;
+    ++			}
+    ++			if (opts->callback) {
+     +				optbug(opts, "OPTION_LOWLEVEL_CALLBACK needs no high level callback");
+    ++				break;
+    ++			}
+      			break;
+      		case OPTION_ALIAS:
+     -			BUG("OPT_ALIAS() should not remain at this point. "
+    @@ parse-options.c: static void parse_options_check(const struct option *opts)
+     +			optbug(opts, "OPT_ALIAS() should not remain at this point. "
+     +			       "Are you using parse_options_step() directly?\n"
+     +			       "That case is not supported yet.");
+    ++			break;
+      		default:
+      			; /* ok. (usually accepts an argument) */
+      		}
+4:  c590f4273c0 ! 5:  de7fe2ca327 receive-pack: use bug() and BUG_if_bug()
+    @@ Commit message
+         Amend code added in a6a84319686 (receive-pack.c: shorten the
+         execute_commands loop over all commands, 2015-01-07) and amended to
+         hard die in b6a4788586d (receive-pack.c: die instead of error in case
+    -    of possible future bug, 2015-01-07) to the new bug() function instead.
+    +    of possible future bug, 2015-01-07) to use the new bug() function
+    +    instead.
+     
+         Let's also rename the warn_if_*() function that code is in to
+         BUG_if_*(), its name became outdated in b6a4788586d.
+    @@ builtin/receive-pack.c: static int should_process_cmd(struct command *cmd)
+     -			      cmd->ref_name);
+     -			checked_connectivity = 0;
+     -		}
+    -+		if (!should_process_cmd(cmd) && si->shallow_ref[cmd->index])
+    ++		if (should_process_cmd(cmd) && si->shallow_ref[cmd->index])
+     +			bug("connectivity check has not been run on ref %s",
+     +			    cmd->ref_name);
+      	}
+     -	if (!checked_connectivity)
+     -		BUG("connectivity check skipped???");
+    -+	BUG_if_bug();
+    ++	BUG_if_bug("connectivity check skipped???");
+      }
+      
+      static void execute_commands_non_atomic(struct command *commands,
+5:  bb5a53f3b73 < -:  ----------- cache-tree.c: use bug() and BUG_if_bug()
+-- 
+2.36.1.1100.g16130010d07
+

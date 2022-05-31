@@ -1,0 +1,161 @@
+From d446e4679d4dddc3ab216c04c482d380f1d24c54 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.5-d446e4679d4-20220531T160730Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20220531T160730Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220521T170939Z-avarab@gmail.com>
+	<cover-v2-0.5-00000000000-20220531T160730Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 30 May 2022 14:40:35 +0200
+Subject: [PATCH v2 1/5] common-main.o: move non-trace2 exit() behavior out of
+ trace2.c
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the exit() wrapper added in ee4512ed481 (trace2: create new
+combined trace facility, 2019-02-22) so that we'll split up the trace2
+logging concerns from wanting to wrap the "exit()" function itself for
+other purposes.
+
+This makes more sense structurally, as we won't seem to conflate
+non-trace2 behavior with the trace2 code. I'd previously added an
+explanation for this in 368b5843158 (common-main.c: call exit(), don't
+return, 2021-12-07), that comment is being adjusted here.
+
+Now the only thing we'll do if we're not using trace2 is to truncate
+the "code" argument to the lowest 8 bits.
+
+We only need to do that truncation on non-POSIX systems, but in
+ee4512ed481 that "if defined(__MINGW32__)" code added in
+47e3de0e796 (MinGW: truncate exit()'s argument to lowest 8 bits,
+2009-07-05) was made to run everywhere. It might be good for clarify
+to narrow that down by an "ifdef" again, but I'm not certain that in
+the interim we haven't had some other non-POSIX systems rely the
+behavior. On a POSIX system taking the lowest 8 bits is implicit, see
+exit(3)[1] and wait(2)[2]. Let's leave a comment about that instead.
+
+1. https://man7.org/linux/man-pages/man3/exit.3.html
+2. https://man7.org/linux/man-pages/man2/wait.2.html
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ common-main.c     | 19 +++++++++++++++++--
+ git-compat-util.h | 12 ++++++++++--
+ trace2.c          |  8 ++------
+ trace2.h          |  8 +-------
+ 4 files changed, 30 insertions(+), 17 deletions(-)
+
+diff --git a/common-main.c b/common-main.c
+index 29fb7452f8a..bb0100f6024 100644
+--- a/common-main.c
++++ b/common-main.c
+@@ -56,9 +56,24 @@ int main(int argc, const char **argv)
+ 	result = cmd_main(argc, argv);
+ 
+ 	/*
+-	 * We define exit() to call trace2_cmd_exit_fl() in
+-	 * git-compat-util.h. Whether we reach this or exit()
++	 * We define exit() to call common_exit(), which will in turn
++	 * call trace2_cmd_exit_fl(). Whether we reach this or exit()
+ 	 * elsewhere we'll always run our trace2 exit handler.
+ 	 */
+ 	exit(result);
+ }
++
++int common_exit(const char *file, int line, int code)
++{
++	/*
++	 * For non-POSIX systems: Take the lowest 8 bits of the "code"
++	 * to e.g. turn -1 into 255. On a POSIX system this is
++	 * redundant, see exit(3) and wait(2), but as it doesn't harm
++	 * anything there we don't need to guard this with an "ifdef".
++	 */
++	code &= 0xff;
++
++	trace2_cmd_exit_fl(file, line, code);
++
++	return code;
++}
+diff --git a/git-compat-util.h b/git-compat-util.h
+index 96293b6c43a..a446a363de2 100644
+--- a/git-compat-util.h
++++ b/git-compat-util.h
+@@ -1447,12 +1447,20 @@ static inline int is_missing_file_error(int errno_)
+ 
+ int cmd_main(int, const char **);
+ 
++/**
++ * The exit() function is defined as common_exit() in
++ * git-compat-util.h.
++ *
++ * Intercepting the exit() allows us to hook in at-exit behavior, such
++ * emitting trace2 logging before calling the real exit().
++ */
++int common_exit(const char *file, int line, int code);
++
+ /*
+  * Intercept all calls to exit() and route them to trace2 to
+  * optionally emit a message before calling the real exit().
+  */
+-int trace2_cmd_exit_fl(const char *file, int line, int code);
+-#define exit(code) exit(trace2_cmd_exit_fl(__FILE__, __LINE__, (code)))
++#define exit(code) exit(common_exit(__FILE__, __LINE__, (code)))
+ 
+ /*
+  * You can mark a stack variable with UNLEAK(var) to avoid it being
+diff --git a/trace2.c b/trace2.c
+index e01cf77f1a8..0c0a11e07d5 100644
+--- a/trace2.c
++++ b/trace2.c
+@@ -202,17 +202,15 @@ void trace2_cmd_start_fl(const char *file, int line, const char **argv)
+ 					    argv);
+ }
+ 
+-int trace2_cmd_exit_fl(const char *file, int line, int code)
++void trace2_cmd_exit_fl(const char *file, int line, int code)
+ {
+ 	struct tr2_tgt *tgt_j;
+ 	int j;
+ 	uint64_t us_now;
+ 	uint64_t us_elapsed_absolute;
+ 
+-	code &= 0xff;
+-
+ 	if (!trace2_enabled)
+-		return code;
++		return;
+ 
+ 	trace_git_fsync_stats();
+ 	trace2_collect_process_info(TRACE2_PROCESS_INFO_EXIT);
+@@ -226,8 +224,6 @@ int trace2_cmd_exit_fl(const char *file, int line, int code)
+ 		if (tgt_j->pfn_exit_fl)
+ 			tgt_j->pfn_exit_fl(file, line, us_elapsed_absolute,
+ 					   code);
+-
+-	return code;
+ }
+ 
+ void trace2_cmd_error_va_fl(const char *file, int line, const char *fmt,
+diff --git a/trace2.h b/trace2.h
+index 1b109f57d0a..88d906ea830 100644
+--- a/trace2.h
++++ b/trace2.h
+@@ -101,14 +101,8 @@ void trace2_cmd_start_fl(const char *file, int line, const char **argv);
+ 
+ /*
+  * Emit an 'exit' event.
+- *
+- * Write the exit-code that will be passed to exit() or returned
+- * from main().
+- *
+- * Use this prior to actually calling exit().
+- * See "#define exit()" in git-compat-util.h
+  */
+-int trace2_cmd_exit_fl(const char *file, int line, int code);
++void trace2_cmd_exit_fl(const char *file, int line, int code);
+ 
+ #define trace2_cmd_exit(code) (trace2_cmd_exit_fl(__FILE__, __LINE__, (code)))
+ 
+-- 
+2.36.1.1100.g16130010d07
+
