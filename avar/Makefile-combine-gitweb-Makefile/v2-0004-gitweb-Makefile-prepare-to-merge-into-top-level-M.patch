@@ -1,0 +1,114 @@
+From 02e26ca8ce2cf95bfd6954d5413ad36185734570 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.7-02e26ca8ce2-20220531T173737Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.7-00000000000-20220531T173737Z-avarab@gmail.com>
+References: <220527.861qwf489s.gmgdl@evledraar.gmail.com>
+	<cover-v2-0.7-00000000000-20220531T173737Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 27 May 2022 12:47:28 +0200
+Subject: [PATCH v2 4/7] gitweb/Makefile: prepare to merge into top-level
+ Makefile
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since the "gitweb/Makefile" was split out from the top-level Makefile
+in 62331ef1637 (gitweb: Makefile improvements, 2010-01-30) we've kept
+the inter-dependencies between the two, and worse have dealt with a
+lot of duplication as a result.
+
+In preparation for merging the two again add a MAK_DIR_GITWEB variable
+to various rules in it. This will allow us to set this variable to
+"gitweb/" as we include it in the top-level Makefile, which will
+minimize the size of the subsequent diff.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ gitweb/Makefile | 29 ++++++++++++++++++-----------
+ 1 file changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/gitweb/Makefile b/gitweb/Makefile
+index a8752c1f11c..74e896767e9 100644
+--- a/gitweb/Makefile
++++ b/gitweb/Makefile
+@@ -2,6 +2,8 @@
+ all::
+ .PHONY: all
+ 
++MAK_DIR_GITWEB =
++
+ # Define V=1 to have a more verbose compile.
+ #
+ # Define JSMIN to point to JavaScript minifier that functions as
+@@ -106,8 +108,9 @@ GITWEB_PROGRAMS = gitweb.cgi
+ GITWEB_JS_MIN = static/gitweb.min.js
+ ifdef JSMIN
+ GITWEB_JS = $(GITWEB_JS_MIN)
+-all:: $(GITWEB_JS_MIN)
+-$(GITWEB_JS_MIN): $(GITWEB_JS_IN) GITWEB-BUILD-OPTIONS
++all:: $(MAK_DIR_GITWEB)$(GITWEB_JS_MIN)
++$(MAK_DIR_GITWEB)$(GITWEB_JS_MIN): $(MAK_DIR_GITWEB)GITWEB-BUILD-OPTIONS
++$(MAK_DIR_GITWEB)$(GITWEB_JS_MIN): $(MAK_DIR_GITWEB)$(GITWEB_JS_IN)
+ 	$(QUIET_GEN)$(JSMIN) <$< >$@
+ endif
+ GITWEB_FILES += $(GITWEB_JS)
+@@ -115,8 +118,9 @@ GITWEB_FILES += $(GITWEB_JS)
+ GITWEB_CSS_MIN = static/gitweb.min.css
+ ifdef CSSMIN
+ GITWEB_CSS = $(GITWEB_CSS_MIN)
+-all:: $(GITWEB_CSS_MIN)
+-$(GITWEB_CSS_MIN): $(GITWEB_CSS_IN) GITWEB-BUILD-OPTIONS
++all:: $(MAK_DIR_GITWEB)$(GITWEB_CSS_MIN)
++$(MAK_DIR_GITWEB)$(GITWEB_CSS_MIN): $(MAK_DIR_GITWEB)GITWEB-BUILD-OPTIONS
++$(MAK_DIR_GITWEB)$(GITWEB_CSS_MIN): $(MAK_DIR_GITWEB)$(GITWEB_CSS_IN)
+ 	$(QUIET_GEN)$(CSSMIN) <$< >$@
+ endif
+ GITWEB_FILES += $(GITWEB_CSS)
+@@ -161,19 +165,20 @@ GITWEB_REPLACE = \
+ 	-e 's|++HIGHLIGHT_BIN++|$(HIGHLIGHT_BIN)|g'
+ 
+ .PHONY: FORCE
+-GITWEB-BUILD-OPTIONS: FORCE
++$(MAK_DIR_GITWEB)GITWEB-BUILD-OPTIONS: FORCE
+ 	@rm -f $@+
+ 	@echo "x" '$(PERL_PATH_SQ)' $(GITWEB_REPLACE) "$(JSMIN)|$(CSSMIN)" >$@+
+ 	@cmp -s $@+ $@ && rm -f $@+ || mv -f $@+ $@
+ 
+-gitweb.cgi: gitweb.perl GITWEB-BUILD-OPTIONS
++$(MAK_DIR_GITWEB)gitweb.cgi: $(MAK_DIR_GITWEB)GITWEB-BUILD-OPTIONS
++$(MAK_DIR_GITWEB)gitweb.cgi: $(MAK_DIR_GITWEB)gitweb.perl
+ 	$(QUIET_GEN)$(RM) $@ $@+ && \
+ 	sed -e '1s|#!.*perl|#!$(PERL_PATH_SQ)|' \
+ 		$(GITWEB_REPLACE) $< >$@+ && \
+ 	chmod +x $@+ && \
+ 	mv $@+ $@
+ 
+-static/gitweb.js: $(GITWEB_JSLIB_FILES)
++$(MAK_DIR_GITWEB)static/gitweb.js: $(addprefix $(MAK_DIR_GITWEB),$(GITWEB_JSLIB_FILES))
+ 	$(QUIET_GEN)$(RM) $@ $@+ && \
+ 	cat $^ >$@+ && \
+ 	mv $@+ $@
+@@ -194,14 +199,16 @@ test-installed:
+ .PHONY: install
+ install: all
+ 	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(gitwebdir_SQ)'
+-	$(INSTALL) -m 755 $(GITWEB_PROGRAMS) '$(DESTDIR_SQ)$(gitwebdir_SQ)'
++	$(INSTALL) -m 755 $(addprefix $(MAK_DIR_GITWEB),$(GITWEB_PROGRAMS)) \
++		'$(DESTDIR_SQ)$(gitwebdir_SQ)'
+ 	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(gitwebstaticdir_SQ)'
+-	$(INSTALL) -m 644 $(GITWEB_FILES) '$(DESTDIR_SQ)$(gitwebstaticdir_SQ)'
++	$(INSTALL) -m 644 $(addprefix $(MAK_DIR_GITWEB),$(GITWEB_FILES)) \
++		'$(DESTDIR_SQ)$(gitwebstaticdir_SQ)'
+ 
+ ### Cleaning rules
+ 
+ .PHONY: clean
+ clean:
+-	$(RM) gitweb.cgi $(GITWEB_JS_IN) \
++	$(RM) $(addprefix $(MAK_DIR_GITWEB),gitweb.cgi $(GITWEB_JS_IN) \
+ 		$(GITWEB_JS_MIN) $(GITWEB_CSS_MIN) \
+-		GITWEB-BUILD-OPTIONS
++		GITWEB-BUILD-OPTIONS)
+-- 
+2.36.1.1103.g036c05811b0
+
