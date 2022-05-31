@@ -1,59 +1,28 @@
-From fe5c3926675b33145bcae80fb00b994dcc7d429f Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-0.5-00000000000-20220531T162619Z-avarab@gmail.com>
+From cbbe0276966e8cb29b8778cf91f73de57ea4b649 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.6-00000000000-20220531T164806Z-avarab@gmail.com>
 In-Reply-To: <cover-0.5-00000000000-20220521T170939Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20220521T170939Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 31 May 2022 18:26:19 +0200
-Subject: [PATCH v2 0/5] usage API: add and use a bug() + BUG_if_bug()
+Date: Tue, 31 May 2022 18:48:06 +0200
+Subject: [PATCH v2 0/6] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-This series adds a bug() (lower-case) function to go along with
-BUG(). As seen in 3-5/5 this makes it much easier to handle the cases
-such as parse-options.c where we'd like to call BUG(), but would like
-to first exhaustively accumulate the N issues we spot before doing so,
-and not merely BUG() out on the first one.
+*** BLURB HERE ***
 
-Changes since v1
-(https://lore.kernel.org/git/cover-0.5-00000000000-20220521T170939Z-avarab@gmail.com/):
-
- * Move the exit() wrapper to common-main.c, I tried to add a
-   "common-exit.c" or just rename "common-main.c" to "common.c", but
-   due to how the CMake build system declares it those changes would
-   result in a lot of churn, so for now just adding it to
-   common-main.c makes more sense.
-
- * Typo/grammar fixes in commit messages, as pointed out in review.
-
- * The BUG_if_bug() function is now optional, and the docs have been
-   updated to reflect that.
-
- * The BUG_if_bug() function now takes a va_args like BUG() to
-   indicate what the problem was.
-
- * Updated 3/5 to note that the exit(128) code changes with a
-   migration to BUG().
-
- * Fix logic error in 4/5: We now "break" after calling bug(), to
-   behave as the previous code did.
-
- * Fix logic error in 5/5, which now makes use of the new argument(s)
-   to BUG_if_bug().
-
- * Ejected the previous cache-tree.c change, as suggested in review
-   club.
-
-Ævar Arnfjörð Bjarmason (5):
+Ævar Arnfjörð Bjarmason (6):
   common-main.o: move non-trace2 exit() behavior out of trace2.c
   usage.c: add a non-fatal bug() function to go with BUG()
   parse-options.c: use new bug() API for optbug()
   parse-options.c: use optbug() instead of BUG() "opts" check
   receive-pack: use bug() and BUG_if_bug()
+  cache-tree.c: use bug() and BUG_if_bug()
 
  .../technical/api-error-handling.txt          | 19 +++++-
  Documentation/technical/api-trace2.txt        |  4 +-
  builtin/receive-pack.c                        | 16 ++---
+ cache-tree.c                                  |  8 +--
  common-main.c                                 | 30 ++++++++-
  git-compat-util.h                             | 24 ++++++-
  parse-options.c                               | 67 ++++++++++---------
@@ -62,7 +31,7 @@ Changes since v1
  trace2.c                                      |  8 +--
  trace2.h                                      |  8 +--
  usage.c                                       | 30 +++++++--
- 11 files changed, 213 insertions(+), 67 deletions(-)
+ 12 files changed, 217 insertions(+), 71 deletions(-)
 
 Range-diff against v1:
 -:  ----------- > 1:  d446e4679d4 common-main.o: move non-trace2 exit() behavior out of trace2.c
@@ -351,7 +320,48 @@ Range-diff against v1:
       }
       
       static void execute_commands_non_atomic(struct command *commands,
-5:  bb5a53f3b73 < -:  ----------- cache-tree.c: use bug() and BUG_if_bug()
+5:  bb5a53f3b73 ! 6:  cbbe0276966 cache-tree.c: use bug() and BUG_if_bug()
+    @@ Commit message
+         19c6a4f8369 (merge-recursive: do not return NULL only to cause
+         segfault, 2010-01-21) to use the new bug() function.
+     
+    -    This gets the same job done with less code, this changes the output a
+    -    bit, but since we're emitting BUG output let's say it's OK to prefix
+    -    every line with the "unmerged index entry" message, instead of
+    -    optimizing for readability. doing it this way gets rid of any state
+    -    management in the loop itself in favor of BUG_if_bug().
+    +    This gets the same job done with slightly less code, as we won't need
+    +    to prefix lines with "BUG: ". More importantly we'll now log the full
+    +    set of messages via trace2, before this we'd only log the one BUG()
+    +    invocation.
+    +
+    +    While we're at it let's replace "There" with "there" in the message,
+    +    i.e. not start a message with a capital letter, per the
+    +    CodingGuidelines.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ cache-tree.c: struct tree* write_in_core_index_as_tree(struct repository *repo)
+      	if (ret == WRITE_TREE_UNMERGED_INDEX) {
+      		int i;
+     -		fprintf(stderr, "BUG: There are unmerged index entries:\n");
+    ++		bug("there are unmerged index entries:");
+      		for (i = 0; i < index_state->cache_nr; i++) {
+      			const struct cache_entry *ce = index_state->cache[i];
+      			if (ce_stage(ce))
+     -				fprintf(stderr, "BUG: %d %.*s\n", ce_stage(ce),
+     -					(int)ce_namelen(ce), ce->name);
+    -+				bug("unmerged index entry on in-memory index write: %d %.*s",
+    -+				    ce_stage(ce), (int)ce_namelen(ce), ce->name);
+    ++				bug("%d %.*s", ce_stage(ce),
+    ++				    (int)ce_namelen(ce), ce->name);
+      		}
+     -		BUG("unmerged index entries when writing inmemory index");
+    -+		BUG_if_bug();
+    ++		bug("unmerged index entries when writing inmemory index");
+      	}
+      
+      	return lookup_tree(repo, &index_state->cache_tree->oid);
 -- 
 2.36.1.1100.g16130010d07
 
