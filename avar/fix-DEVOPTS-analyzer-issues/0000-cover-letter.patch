@@ -2,29 +2,87 @@ From 16bd2270b4c57927a0fac4750cedace3a9206818 Mon Sep 17 00:00:00 2001
 Message-Id: <RFC-cover-00.15-00000000000-20220603T165745Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Fri, 3 Jun 2022 18:57:45 +0200
-Subject: [RFC PATCH 00/15] *** SUBJECT HERE ***
+Subject: [RFC PATCH 00/15] Fix GCC -fanalyzer warnings & add -fanalyzer DEVOPTS mode
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+The -fanalyzer mode in GCC v12 is much better about reporting real
+issues. This RFC series currently conflicts with "next", but I thought
+sending it for comment sooner than later made sense. Comments on
+individual sets of patches below:
+
+With this series applied you can run:
+
+    make DEVOPTS=analyzer
+
+Which will turn all of these into warnings even under -Werror, we can
+also:
+
+    make DEVOPTS="analyzer no-suppress-analyzer"
+
+This works on both GCC 12 and GCC 11, but the former will yield better
+results. We need to quiet some issues on GCC 11. GCC 10 ships with
+"-fanalyzer", but it has so many false positives that we'll $(error)
+out if you try to run it with DEVOPTS=fanalyzer.
 
 Ævar Arnfjörð Bjarmason (15):
   remote.c: don't dereference NULL in freeing loop
   pull.c: don't feed NULL to strcmp() on get_rebase_fork_point() path
   reftable: don't memset() a NULL from failed malloc()
+
+These are all real bugs, in rough order of more to less severe.
+
   diff-lib.c: don't dereference NULL in oneway_diff()
   refs/packed-backend.c: add a BUG() if iter is NULL
   ref-filter.c: BUG() out on show_ref() with NULL refname
+
+These may or may not be real bugs, I'm pretty sure they are...
+
   strbuf.c: placate -fanalyzer in strbuf_grow()
+
+The first of cases where -fanalyzer isn't "wrong", but it is in the
+sense that the error it points out is a hard constraint that we
+(hopefully) ensure elsewhere in various APIs.
+
   strbuf.c: use st_add3(), not unsigned_add_overflows()
+
+A while-we're-at-it for code spotted in the last commit.
+
   add-patch: assert parse_diff() expectations with BUG()
   reftable: don't have reader_get_block() confuse -fanalyzer
   blame.c: clarify the state of "final_commit" for -fanalyzer
   pack.h: wrap write_*file*() functions
   pack-write API: pass down "verify" not arbitrary flags
+
+These are all cases where -fanalyzer flags "genuine" issues, but on
+closer inspection it's because we're passing the equivalent of two
+variables we know go hand-in-hand, but probably no compiler can be
+smart enough to spot that.
+
+E.g. the first one here is a case where "git add -p" would segfault if
+fed diffs that aren't in the format "git diff" would emit, but since
+we control both sides it doesn't happen in practice.
+
+Regardless, sprinkling assertions and BUG() guards in that code seems
+prudent.
+
   config.mak.dev: add a DEVOPTS=analyzer mode to use GCC's -fanalyzer
+
+Add the new DEVOPTS mode and quiet some issues that need -Wno-error=*.
+
   config.mak.dev: add and use ASSERT_FOR_FANALYZER() macro
+
+Quiet some outstanding issues, the main reason these aren't in commits
+like the above is because I didn't get to them yet, and may not any
+time soon. They may be genuine bugs, false alarms etc.
+
+Even if we don't get to these I think having a CI mode with -fanalyzer
+and a whitelist of current issues would be an improment, since we'd
+error on *new* isssues.
+
+This series doesn't add such a CI mode yet, due to conflicts with CI
+work in "next"..
 
  Makefile                | 14 +++++++++
  add-patch.c             |  7 ++++-
