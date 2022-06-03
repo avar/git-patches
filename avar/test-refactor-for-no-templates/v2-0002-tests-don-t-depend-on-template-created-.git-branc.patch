@@ -1,0 +1,186 @@
+From c4d0e6c684bbf0bd56b263999091ae4634f64a2e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.7-c4d0e6c684b-20220603T110333Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.7-00000000000-20220603T110333Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20211212T201308Z-avarab@gmail.com>
+	<cover-v2-0.7-00000000000-20220603T110333Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 6 Dec 2021 15:38:52 +0100
+Subject: [PATCH v2 2/7] tests: don't depend on template-created .git/branches
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in c8a58ac5a52 (Revert "Don't create the $GIT_DIR/branches
+directory on init", 2009-10-31) there was an attempt long ago in
+0cc5691a8b0 (Don't create the $GIT_DIR/branches directory on init,
+2009-10-30) to get rid of the legacy "branches" directory.
+
+We should probably get rid of its creation by removing the
+"templates/branches--" file. But whatever our default behavior, our
+tests should be tightened up to explicitly create the .git/branches
+directory if they rely on our default templates, to make the
+dependency on those templates clear.
+
+So let's amend the two tests that would fail if .git/branches wasn't
+created. To do this introduce a new "TEST_CREATE_REPO_NO_TEMPLATE"
+variable, which we'll set before sourcing test-lib.sh, and change the
+"git clone" and "git init" commands in the tests themselves to
+explicitly pass "--template=".
+
+This way they won't get a .git/branches in either their top-level
+.git, or in the ones they create. We can then amend the tests that
+rely on the ".git/branches" directory existing to create it
+explicitly, and to remove it after its creation.
+
+This new "TEST_CREATE_REPO_NO_TEMPLATE" variable is a less
+heavy-handed version of the "NO_SET_GIT_TEMPLATE_DIR" variable. See
+a94d305bf80 (t/t0001-init.sh: add test for 'init with init.templatedir
+set', 2010-02-26) for its implementation.
+
+Unlike "TEST_CREATE_REPO_NO_TEMPLATE", this new
+"TEST_CREATE_REPO_NO_TEMPLATE" variable is narrowly scoped to what the
+"git init" in test-lib.sh does, as opposed to the global effect of
+"NO_SET_GIT_TEMPLATE_DIR" and the setting of "GIT_TEMPLATE_DIR" in
+wrap-for-bin.sh.
+
+I experimented with adding a new "GIT_WRAP_FOR_BIN_VIA_TEST_LIB"
+variable set in test-lib.sh, which would cause wrap-for-bin.sh to not
+set GIT_TEMPLATE_DIR, GITPERLLIB etc, as we set those in
+test-lib.sh. I think that's a viable approach, but it would interact
+e.g. with the appending feature of GITPERLLIB added in
+8bade1e12e2 (wrap-for-bin: make bin-wrappers chainable, 2013-07-04).
+
+Doing so would allow us to convert the tests in t0001-init.sh that now
+use "NO_SET_GIT_TEMPLATE_DIR" to simply unset "GIT_TEMPLATE_DIR" in a
+sub-shell before invoking "git init" or "git clone". I think that
+approach is worth pursuing, but let's table it for now. Some future
+wrap-for-bin.sh refactoring can try to address it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5505-remote.sh     |  6 ++++--
+ t/t5516-fetch-push.sh | 16 ++++++++++++++--
+ t/test-lib.sh         |  4 +++-
+ 3 files changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/t/t5505-remote.sh b/t/t5505-remote.sh
+index fff14e13ed4..cfb47509e3f 100755
+--- a/t/t5505-remote.sh
++++ b/t/t5505-remote.sh
+@@ -957,11 +957,12 @@ test_expect_success 'migrate a remote from named file in $GIT_DIR/remotes' '
+ '
+ 
+ test_expect_success 'migrate a remote from named file in $GIT_DIR/branches' '
+-	git clone one six &&
++	git clone --template= one six &&
+ 	origin_url=$(pwd)/one &&
+ 	(
+ 		cd six &&
+ 		git remote rm origin &&
++		mkdir .git/branches &&
+ 		echo "$origin_url#main" >.git/branches/origin &&
+ 		git remote rename origin origin &&
+ 		test_path_is_missing .git/branches/origin &&
+@@ -972,10 +973,11 @@ test_expect_success 'migrate a remote from named file in $GIT_DIR/branches' '
+ '
+ 
+ test_expect_success 'migrate a remote from named file in $GIT_DIR/branches (2)' '
+-	git clone one seven &&
++	git clone --template= one seven &&
+ 	(
+ 		cd seven &&
+ 		git remote rm origin &&
++		mkdir .git/branches &&
+ 		echo "quux#foom" > .git/branches/origin &&
+ 		git remote rename origin origin &&
+ 		test_path_is_missing .git/branches/origin &&
+diff --git a/t/t5516-fetch-push.sh b/t/t5516-fetch-push.sh
+index 4dfb080433e..5d3054eeb89 100755
+--- a/t/t5516-fetch-push.sh
++++ b/t/t5516-fetch-push.sh
+@@ -17,6 +17,7 @@ This test checks the following functionality:
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ D=$(pwd)
+@@ -25,7 +26,8 @@ mk_empty () {
+ 	repo_name="$1"
+ 	test_when_finished "rm -rf \"$repo_name\"" &&
+ 	test_path_is_missing "$repo_name" &&
+-	git init "$repo_name" &&
++	git init --template= "$repo_name" &&
++	mkdir "$repo_name"/.git/hooks &&
+ 	git -C "$repo_name" config receive.denyCurrentBranch warn
+ }
+ 
+@@ -77,7 +79,7 @@ mk_test_with_hooks() {
+ 
+ mk_child() {
+ 	test_when_finished "rm -rf \"$2\"" &&
+-	git clone "$1" "$2"
++	git clone --template= "$1" "$2"
+ }
+ 
+ check_push_result () {
+@@ -916,6 +918,7 @@ test_expect_success 'fetch with branches' '
+ 	mk_empty testrepo &&
+ 	git branch second $the_first_commit &&
+ 	git checkout second &&
++	mkdir testrepo/.git/branches &&
+ 	echo ".." > testrepo/.git/branches/branch1 &&
+ 	(
+ 		cd testrepo &&
+@@ -929,6 +932,7 @@ test_expect_success 'fetch with branches' '
+ 
+ test_expect_success 'fetch with branches containing #' '
+ 	mk_empty testrepo &&
++	mkdir testrepo/.git/branches &&
+ 	echo "..#second" > testrepo/.git/branches/branch2 &&
+ 	(
+ 		cd testrepo &&
+@@ -943,7 +947,11 @@ test_expect_success 'fetch with branches containing #' '
+ test_expect_success 'push with branches' '
+ 	mk_empty testrepo &&
+ 	git checkout second &&
++
++	test_when_finished "rm -rf .git/branches" &&
++	mkdir .git/branches &&
+ 	echo "testrepo" > .git/branches/branch1 &&
++
+ 	git push branch1 &&
+ 	(
+ 		cd testrepo &&
+@@ -955,7 +963,11 @@ test_expect_success 'push with branches' '
+ 
+ test_expect_success 'push with branches containing #' '
+ 	mk_empty testrepo &&
++
++	test_when_finished "rm -rf .git/branches" &&
++	mkdir .git/branches &&
+ 	echo "testrepo#branch3" > .git/branches/branch2 &&
++
+ 	git push branch2 &&
+ 	(
+ 		cd testrepo &&
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 8ba5ca15345..144f14cc142 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1529,7 +1529,9 @@ remove_trash_directory "$TRASH_DIRECTORY" || {
+ remove_trash=t
+ if test -z "$TEST_NO_CREATE_REPO"
+ then
+-	git init "$TRASH_DIRECTORY" >&3 2>&4 ||
++	git init \
++	    ${TEST_CREATE_REPO_NO_TEMPLATE:+--template=} \
++	    "$TRASH_DIRECTORY" >&3 2>&4 ||
+ 	error "cannot run git init"
+ else
+ 	mkdir -p "$TRASH_DIRECTORY"
+-- 
+2.36.1.1119.g5a713b43bd4
+

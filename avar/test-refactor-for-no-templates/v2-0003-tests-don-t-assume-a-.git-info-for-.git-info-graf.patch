@@ -1,0 +1,177 @@
+From 967762b46709c6494a3ae3b781c6c4d76b9403b7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.7-967762b4670-20220603T110333Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.7-00000000000-20220603T110333Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20211212T201308Z-avarab@gmail.com>
+	<cover-v2-0.7-00000000000-20220603T110333Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 24 Jan 2022 11:58:01 +0100
+Subject: [PATCH v2 3/7] tests: don't assume a .git/info for .git/info/grafts
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change those tests that assumed that a .git/info directory would be
+created for them when writing .git/info/grafts to explicitly create
+the directory.
+
+Do this using the new "TEST_CREATE_REPO_NO_TEMPLATE" facility, and use
+"mkdir" instead of "mkdir -p" to assert that we don't have the
+.git/info already. An exception to this is the "with grafts" test in
+"t6001-rev-list-graft.sh". There we're modifying our ".git" state in a
+for-loop, in lieu of refactoring that more extensively let's use
+"mkdir -p" there.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/annotate-tests.sh          | 3 ++-
+ t/t2400-worktree-add.sh      | 4 ++++
+ t/t5318-commit-graph.sh      | 3 ++-
+ t/t6001-rev-list-graft.sh    | 1 +
+ t/t6101-rev-parse-parents.sh | 2 ++
+ t/t8001-annotate.sh          | 1 +
+ t/t8002-blame.sh             | 1 +
+ t/t8012-blame-colors.sh      | 1 +
+ 8 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/t/annotate-tests.sh b/t/annotate-tests.sh
+index cc01d891504..f1b9a6ce4da 100644
+--- a/t/annotate-tests.sh
++++ b/t/annotate-tests.sh
+@@ -153,7 +153,7 @@ test_expect_success 'blame evil merge' '
+ 
+ test_expect_success 'blame huge graft' '
+ 	test_when_finished "git checkout branch2" &&
+-	test_when_finished "rm -f .git/info/grafts" &&
++	test_when_finished "rm -rf .git/info" &&
+ 	graft= &&
+ 	for i in 0 1 2
+ 	do
+@@ -168,6 +168,7 @@ test_expect_success 'blame huge graft' '
+ 			graft="$graft$commit " || return 1
+ 		done
+ 	done &&
++	mkdir .git/info &&
+ 	printf "%s " $graft >.git/info/grafts &&
+ 	check_count -h 00 01 1 10 1
+ '
+diff --git a/t/t2400-worktree-add.sh b/t/t2400-worktree-add.sh
+index 2f564d533d0..f3242fef6b6 100755
+--- a/t/t2400-worktree-add.sh
++++ b/t/t2400-worktree-add.sh
+@@ -5,6 +5,7 @@ test_description='test git worktree add'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ . "$TEST_DIRECTORY"/lib-rebase.sh
+@@ -229,6 +230,7 @@ test_expect_success 'checkout with grafts' '
+ 	SHA1=$(git rev-parse HEAD) &&
+ 	test_commit def &&
+ 	test_commit xyz &&
++	mkdir .git/info &&
+ 	echo "$(git rev-parse HEAD) $SHA1" >.git/info/grafts &&
+ 	cat >expected <<-\EOF &&
+ 	xyz
+@@ -559,6 +561,8 @@ test_expect_success 'git worktree --no-guess-remote option overrides config' '
+ '
+ 
+ post_checkout_hook () {
++	test_when_finished "rm -rf .git/hooks" &&
++	mkdir .git/hooks &&
+ 	test_hook -C "$1" post-checkout <<-\EOF
+ 	{
+ 		echo $*
+diff --git a/t/t5318-commit-graph.sh b/t/t5318-commit-graph.sh
+index fbf0d64578c..be0b5641ffc 100755
+--- a/t/t5318-commit-graph.sh
++++ b/t/t5318-commit-graph.sh
+@@ -361,13 +361,14 @@ test_expect_success 'replace-objects invalidates commit-graph' '
+ test_expect_success 'commit grafts invalidate commit-graph' '
+ 	cd "$TRASH_DIRECTORY" &&
+ 	test_when_finished rm -rf graft &&
+-	git clone full graft &&
++	git clone --template= full graft &&
+ 	(
+ 		cd graft &&
+ 		git commit-graph write --reachable &&
+ 		test_path_is_file .git/objects/info/commit-graph &&
+ 		H1=$(git rev-parse --verify HEAD~1) &&
+ 		H3=$(git rev-parse --verify HEAD~3) &&
++		mkdir .git/info &&
+ 		echo "$H1 $H3" >.git/info/grafts &&
+ 		git -c core.commitGraph=false log >expect &&
+ 		git -c core.commitGraph=true log >actual &&
+diff --git a/t/t6001-rev-list-graft.sh b/t/t6001-rev-list-graft.sh
+index 7294147334a..16635ecc33e 100755
+--- a/t/t6001-rev-list-graft.sh
++++ b/t/t6001-rev-list-graft.sh
+@@ -99,6 +99,7 @@ do
+ 	"
+ 
+ 	test_expect_success 'with grafts' "
++		mkdir -p .git/info &&
+ 		echo '$B0 $A2' >.git/info/grafts &&
+ 		check $type $B2 -- $B2 $B1 $B0 $A2 $A1 $A0
+ 	"
+diff --git a/t/t6101-rev-parse-parents.sh b/t/t6101-rev-parse-parents.sh
+index c571fa51797..5f55ab98d35 100755
+--- a/t/t6101-rev-parse-parents.sh
++++ b/t/t6101-rev-parse-parents.sh
+@@ -8,6 +8,7 @@ test_description='Test git rev-parse with different parent options'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ test_cmp_rev_output () {
+@@ -25,6 +26,7 @@ test_expect_success 'setup' '
+ 	git merge -m next --allow-unrelated-histories start2 &&
+ 	test_commit final &&
+ 
++	mkdir .git/info &&
+ 	test_seq 40 |
+ 	while read i
+ 	do
+diff --git a/t/t8001-annotate.sh b/t/t8001-annotate.sh
+index a536a621b24..d7167f55397 100755
+--- a/t/t8001-annotate.sh
++++ b/t/t8001-annotate.sh
+@@ -4,6 +4,7 @@ test_description='git annotate'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ PROG='git annotate'
+diff --git a/t/t8002-blame.sh b/t/t8002-blame.sh
+index ee4fdd8f18d..0147de304b4 100755
+--- a/t/t8002-blame.sh
++++ b/t/t8002-blame.sh
+@@ -4,6 +4,7 @@ test_description='git blame'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ PROG='git blame -c'
+diff --git a/t/t8012-blame-colors.sh b/t/t8012-blame-colors.sh
+index 90c75dbb283..c3a5f6d01ff 100755
+--- a/t/t8012-blame-colors.sh
++++ b/t/t8012-blame-colors.sh
+@@ -4,6 +4,7 @@ test_description='colored git blame'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ PROG='git blame -c'
+-- 
+2.36.1.1119.g5a713b43bd4
+

@@ -1,0 +1,259 @@
+From 64292c20c84e9d04e51e04262967a5a72f5dc888 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.7-64292c20c84-20220603T110333Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.7-00000000000-20220603T110333Z-avarab@gmail.com>
+References: <cover-00.13-00000000000-20211212T201308Z-avarab@gmail.com>
+	<cover-v2-0.7-00000000000-20220603T110333Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 24 Jan 2022 11:58:01 +0100
+Subject: [PATCH v2 4/7] tests: don't assume a .git/info for
+ .git/info/attributes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change those tests that assumed that a .git/info directory would be
+created for them when writing .git/info/attributes to explicitly
+create the directory by setting "TEST_CREATE_REPO_NO_TEMPLATE=1"
+before sourcing test-lib.sh, and using the "--template=" argument to
+"git clone".
+
+The change here in here in t7814-grep-recurse-submodules.sh would
+continue "succeeding" with only the "TEST_CREATE_REPO_NO_TEMPLATE=1"
+part of this change. That's because those tests use
+"test_expect_failure", so they'd "pass" without this change, as
+"test_expect_failure" by design isn't discerning about what failure
+conditions it'll accept.
+
+But as we're fixing these sorts of issues across the test suite let's
+fix this one too. This issue was spotted with a local merge with
+another topic of mine[1], which introduces a stricter alternative to
+"test_expect_failure".
+
+1. https://lore.kernel.org/git/cover-0.7-00000000000-20220318T002951Z-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0003-attributes.sh              | 5 ++++-
+ t/t0028-working-tree-encoding.sh   | 2 ++
+ t/t5000-tar-tree.sh                | 5 ++++-
+ t/t5001-archive-attr.sh            | 5 ++++-
+ t/t5002-archive-attr-pattern.sh    | 5 ++++-
+ t/t5003-archive-zip.sh             | 5 ++++-
+ t/t7814-grep-recurse-submodules.sh | 8 ++++++--
+ 7 files changed, 28 insertions(+), 7 deletions(-)
+
+diff --git a/t/t0003-attributes.sh b/t/t0003-attributes.sh
+index 143f1005179..f7ee2f2ff0e 100755
+--- a/t/t0003-attributes.sh
++++ b/t/t0003-attributes.sh
+@@ -3,6 +3,7 @@
+ test_description=gitattributes
+ 
+ TEST_PASSES_SANITIZE_LEAK=true
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ attr_check_basic () {
+@@ -284,7 +285,7 @@ test_expect_success 'using --git-dir and --work-tree' '
+ '
+ 
+ test_expect_success 'setup bare' '
+-	git clone --bare . bare.git
++	git clone --template= --bare . bare.git
+ '
+ 
+ test_expect_success 'bare repository: check that .gitattribute is ignored' '
+@@ -315,6 +316,7 @@ test_expect_success 'bare repository: check that --cached honors index' '
+ test_expect_success 'bare repository: test info/attributes' '
+ 	(
+ 		cd bare.git &&
++		mkdir info &&
+ 		(
+ 			echo "f	test=f" &&
+ 			echo "a/i test=a/i"
+@@ -360,6 +362,7 @@ test_expect_success SYMLINKS 'symlinks respected in core.attributesFile' '
+ 
+ test_expect_success SYMLINKS 'symlinks respected in info/attributes' '
+ 	test_when_finished "rm .git/info/attributes" &&
++	mkdir .git/info &&
+ 	ln -s ../../attr .git/info/attributes &&
+ 	attr_check file set
+ '
+diff --git a/t/t0028-working-tree-encoding.sh b/t/t0028-working-tree-encoding.sh
+index 82905a2156f..7140960e1a3 100755
+--- a/t/t0028-working-tree-encoding.sh
++++ b/t/t0028-working-tree-encoding.sh
+@@ -5,6 +5,7 @@ test_description='working-tree-encoding conversion via gitattributes'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ . "$TEST_DIRECTORY/lib-encoding.sh"
+ 
+@@ -69,6 +70,7 @@ test_expect_success 'check $GIT_DIR/info/attributes support' '
+ 	test_when_finished "rm -f test.utf32.git" &&
+ 	test_when_finished "git reset --hard HEAD" &&
+ 
++	mkdir .git/info &&
+ 	echo "*.utf32 text working-tree-encoding=utf-32" >.git/info/attributes &&
+ 	git add test.utf32 &&
+ 
+diff --git a/t/t5000-tar-tree.sh b/t/t5000-tar-tree.sh
+index 7f8d2ab0a72..de192b52c47 100755
+--- a/t/t5000-tar-tree.sh
++++ b/t/t5000-tar-tree.sh
+@@ -24,6 +24,7 @@ commit id embedding:
+ 
+ '
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ SUBSTFORMAT=%H%n
+@@ -143,6 +144,7 @@ test_expect_success 'populate workdir' '
+ test_expect_success \
+     'add ignored file' \
+     'echo ignore me >a/ignored &&
++     mkdir .git/info &&
+      echo ignored export-ignore >.git/info/attributes'
+ 
+ test_expect_success 'add files to repository' '
+@@ -157,7 +159,8 @@ test_expect_success 'setup export-subst' '
+ '
+ 
+ test_expect_success 'create bare clone' '
+-	git clone --bare . bare.git &&
++	git clone --template= --bare . bare.git &&
++	mkdir bare.git/info &&
+ 	cp .git/info/attributes bare.git/info/attributes
+ '
+ 
+diff --git a/t/t5001-archive-attr.sh b/t/t5001-archive-attr.sh
+index 712ae522994..2f6eef5e372 100755
+--- a/t/t5001-archive-attr.sh
++++ b/t/t5001-archive-attr.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git archive attribute tests'
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ SUBSTFORMAT='%H (%h)%n'
+@@ -20,6 +21,7 @@ extract_tar_to_dir () {
+ 
+ test_expect_success 'setup' '
+ 	echo ignored >ignored &&
++	mkdir .git/info &&
+ 	echo ignored export-ignore >>.git/info/attributes &&
+ 	git add ignored &&
+ 
+@@ -46,7 +48,8 @@ test_expect_success 'setup' '
+ 
+ 	git commit -m. &&
+ 
+-	git clone --bare . bare &&
++	git clone --template= --bare . bare &&
++	mkdir bare/info &&
+ 	cp .git/info/attributes bare/info/attributes
+ '
+ 
+diff --git a/t/t5002-archive-attr-pattern.sh b/t/t5002-archive-attr-pattern.sh
+index a66b5ba27e8..78ab75f1bc2 100755
+--- a/t/t5002-archive-attr-pattern.sh
++++ b/t/t5002-archive-attr-pattern.sh
+@@ -3,6 +3,7 @@
+ test_description='git archive attribute pattern tests'
+ 
+ TEST_PASSES_SANITIZE_LEAK=true
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ test_expect_exists() {
+@@ -15,6 +16,7 @@ test_expect_missing() {
+ 
+ test_expect_success 'setup' '
+ 	echo ignored >ignored &&
++	mkdir .git/info &&
+ 	echo ignored export-ignore >>.git/info/attributes &&
+ 	git add ignored &&
+ 
+@@ -54,7 +56,8 @@ test_expect_success 'setup' '
+ 
+ 	git commit -m. &&
+ 
+-	git clone --bare . bare &&
++	git clone --template= --bare . bare &&
++	mkdir bare/info &&
+ 	cp .git/info/attributes bare/info/attributes
+ '
+ 
+diff --git a/t/t5003-archive-zip.sh b/t/t5003-archive-zip.sh
+index d726964307c..a7bbfcb7f75 100755
+--- a/t/t5003-archive-zip.sh
++++ b/t/t5003-archive-zip.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git archive --format=zip test'
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ SUBSTFORMAT=%H%n
+@@ -121,6 +122,7 @@ test_expect_success 'prepare file list' '
+ test_expect_success \
+     'add ignored file' \
+     'echo ignore me >a/ignored &&
++     mkdir .git/info &&
+      echo ignored export-ignore >.git/info/attributes'
+ 
+ test_expect_success 'add files to repository' '
+@@ -139,7 +141,8 @@ test_expect_success 'setup export-subst and diff attributes' '
+ '
+ 
+ test_expect_success 'create bare clone' '
+-	git clone --bare . bare.git &&
++	git clone --template= --bare . bare.git &&
++	mkdir bare.git/info &&
+ 	cp .git/info/attributes bare.git/info/attributes &&
+ 	# Recreate our changes to .git/config rather than just copying it, as
+ 	# we do not want to clobber core.bare or other settings.
+diff --git a/t/t7814-grep-recurse-submodules.sh b/t/t7814-grep-recurse-submodules.sh
+index a4476dc4922..3ad80526c4c 100755
+--- a/t/t7814-grep-recurse-submodules.sh
++++ b/t/t7814-grep-recurse-submodules.sh
+@@ -6,6 +6,7 @@ This test verifies the recurse-submodules feature correctly greps across
+ submodules.
+ '
+ 
++TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+ GIT_TEST_FATAL_REGISTER_SUBMODULE_ODB=1
+@@ -471,8 +472,10 @@ test_expect_failure 'grep --textconv: superproject .gitattributes (from index) d
+ test_expect_failure 'grep --textconv: superproject .git/info/attributes does not affect submodules' '
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x.textconv "sed -e \"s/d/x/\"" &&
+-	super_attr="$(git rev-parse --git-path info/attributes)" &&
++	super_info="$(git rev-parse --git-path info)" &&
++	super_attr="$super_info/attributes" &&
+ 	test_when_finished "rm -f \"$super_attr\"" &&
++	mkdir "$super_info" &&
+ 	echo "a diff=d2x" >"$super_attr" &&
+ 
+ 	cat >expect <<-\EOF &&
+@@ -516,7 +519,8 @@ test_expect_failure 'grep --textconv correctly reads submodule .git/info/attribu
+ 	reset_and_clean &&
+ 	test_config_global diff.d2x.textconv "sed -e \"s/d/x/\"" &&
+ 
+-	submodule_attr="$(git -C submodule rev-parse --path-format=absolute --git-path info/attributes)" &&
++	submodule_info="$(git -C submodule rev-parse --path-format=absolute --git-path info)" &&
++	submodule_attr="$submodule_info/attributes" &&
+ 	test_when_finished "rm -f \"$submodule_attr\"" &&
+ 	echo "a diff=d2x" >"$submodule_attr" &&
+ 
+-- 
+2.36.1.1119.g5a713b43bd4
+
