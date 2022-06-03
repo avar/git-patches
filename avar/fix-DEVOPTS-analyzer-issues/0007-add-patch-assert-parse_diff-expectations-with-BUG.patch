@@ -1,0 +1,57 @@
+From c603fa6f95aeddedefb5b5a8c334933aab1e4717 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-07.14-c603fa6f95a-20220603T162512Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+References: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 3 Jun 2022 14:03:41 +0200
+Subject: [RFC PATCH 07/14] add-patch: assert parse_diff() expectations with
+ BUG()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Assert that this code added in [1], [2] and other related commits
+expects that once we see a "diff " line we should have a non-NULL
+"file_diff" and "hunk".
+
+In practice this would have always been the case, as we are parsing
+our own "diff" output, but e.g. GCC v12's -fanalyzer doesn't know
+that, and will alert us that in the "else if" and below in this
+function we could be dereferencing NULL if we were processing anything
+except our expected input.
+
+1. f6aa7ecc343 (built-in add -i: start implementing the `patch`
+   functionality in C, 2019-12-13)
+2. 80399aec5ab (built-in add -p: support multi-file diffs, 2019-12-13)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ add-patch.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/add-patch.c b/add-patch.c
+index 55d719f7845..087bf317b07 100644
+--- a/add-patch.c
++++ b/add-patch.c
+@@ -478,11 +478,16 @@ static int parse_diff(struct add_p_state *s, const struct pathspec *ps)
+ 	while (p != pend) {
+ 		char *eol = memchr(p, '\n', pend - p);
+ 		const char *deleted = NULL, *mode_change = NULL;
++		const char *const diff_l = "diff ";
++		int is_diff_line = starts_with(p, diff_l);
+ 
+ 		if (!eol)
+ 			eol = pend;
+ 
+-		if (starts_with(p, "diff ")) {
++		if (!is_diff_line && (!file_diff || !hunk))
++			BUG("expected '%s' line to follow a '%s' line", p, diff_l);
++
++		if (is_diff_line) {
+ 			complete_file(marker, hunk);
+ 			ALLOC_GROW_BY(s->file_diff, s->file_diff_nr, 1,
+ 				   file_diff_alloc);
+-- 
+2.36.1.1122.g5c3e018b1ae
+

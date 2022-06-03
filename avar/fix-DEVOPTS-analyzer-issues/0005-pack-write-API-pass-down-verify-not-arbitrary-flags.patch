@@ -1,0 +1,365 @@
+From b668573e4f8a1ae444a5064dafa9f32f500a8121 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-05.14-b668573e4f8-20220603T162512Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+References: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 8 Sep 2021 12:12:45 +0200
+Subject: [RFC PATCH 05/14] pack-write API: pass down "verify" not arbitrary
+ flags
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the pack-write API to accept a boolean "verify" parameter
+instead of passing down the "struct pack_idx_option" flags directly.
+
+This simplifies the code for both humans and machines, e.g. GCC's
+-fanalyzer would correctly note that there were potential paths
+through this code where we'd deference NULL, but in reality we
+wouldn't hit them because certain flags would always go hand-in-hand.
+
+Let's instead separate the underlying API from the total set of flags,
+and stop passing the flags down to functions that don't need the full
+set of flags, they'll just get the specific state they need.
+
+See e37d0b8730b (builtin/index-pack.c: write reverse indexes,
+2021-01-25) for the initial implementation, and [1] for the initial
+WIP version of this commit on the ML.
+
+1. https://lore.kernel.org/git/87v93bidhn.fsf@evledraar.gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/fast-import.c  |  2 +-
+ builtin/index-pack.c   | 35 ++++++++++++++---------------------
+ builtin/pack-objects.c |  9 +++------
+ midx.c                 |  2 +-
+ pack-write.c           | 38 +++++++++++++++++---------------------
+ pack.h                 | 15 ++++++---------
+ 6 files changed, 42 insertions(+), 59 deletions(-)
+
+diff --git a/builtin/fast-import.c b/builtin/fast-import.c
+index 28d3193c380..7cd2a3b8203 100644
+--- a/builtin/fast-import.c
++++ b/builtin/fast-import.c
+@@ -787,7 +787,7 @@ static const char *create_index(void)
+ 		die("internal consistency error creating the index");
+ 
+ 	tmpfile = write_idx_file(NULL, idx, object_count, &pack_idx_opts,
+-				 pack_data->hash);
++				 pack_data->hash, 0);
+ 	free(idx);
+ 	return tmpfile;
+ }
+diff --git a/builtin/index-pack.c b/builtin/index-pack.c
+index 3e385b48002..6691c5836e4 100644
+--- a/builtin/index-pack.c
++++ b/builtin/index-pack.c
+@@ -1589,12 +1589,9 @@ static int git_index_pack_config(const char *k, const char *v, void *cb)
+ 		}
+ 		return 0;
+ 	}
+-	if (!strcmp(k, "pack.writereverseindex")) {
+-		if (git_config_bool(k, v))
+-			opts->flags |= WRITE_REV;
+-		else
+-			opts->flags &= ~WRITE_REV;
+-	}
++	if (!strcmp(k, "pack.writereverseindex"))
++		opts->write_rev = git_config_bool(k, v);
++
+ 	return git_default_config(k, v, cb);
+ }
+ 
+@@ -1713,7 +1710,7 @@ static void show_pack_info(int stat_only)
+ 
+ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ {
+-	int i, fix_thin_pack = 0, verify = 0, stat_only = 0, rev_index;
++	int i, fix_thin_pack = 0, verify = 0, stat_only = 0;
+ 	const char *curr_index;
+ 	const char *curr_rev_index = NULL;
+ 	const char *index_name = NULL, *pack_name = NULL, *rev_index_name = NULL;
+@@ -1747,10 +1744,8 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 	if (prefix && chdir(prefix))
+ 		die(_("Cannot come back to cwd"));
+ 
+-	if (git_env_bool(GIT_TEST_WRITE_REV_INDEX, 0))
+-		rev_index = 1;
+-	else
+-		rev_index = !!(opts.flags & (WRITE_REV_VERIFY | WRITE_REV));
++	opts.write_rev = git_env_bool(GIT_TEST_WRITE_REV_INDEX,
++				       opts.write_rev);
+ 
+ 	for (i = 1; i < argc; i++) {
+ 		const char *arg = argv[i];
+@@ -1835,9 +1830,9 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 					die(_("unknown hash algorithm '%s'"), arg);
+ 				repo_set_hash_algo(the_repository, hash_algo);
+ 			} else if (!strcmp(arg, "--rev-index")) {
+-				rev_index = 1;
++				opts.write_rev = 1;
+ 			} else if (!strcmp(arg, "--no-rev-index")) {
+-				rev_index = 0;
++				opts.write_rev = 0;
+ 			} else
+ 				usage(index_pack_usage);
+ 			continue;
+@@ -1859,9 +1854,7 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 	if (!index_name && pack_name)
+ 		index_name = derive_filename(pack_name, "pack", "idx", &index_name_buf);
+ 
+-	opts.flags &= ~(WRITE_REV | WRITE_REV_VERIFY);
+-	if (rev_index) {
+-		opts.flags |= verify ? WRITE_REV_VERIFY : WRITE_REV;
++	if (opts.write_rev) {
+ 		if (index_name)
+ 			rev_index_name = derive_filename(index_name,
+ 							 "idx", "rev",
+@@ -1872,10 +1865,9 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 		if (!index_name)
+ 			die(_("--verify with no packfile name given"));
+ 		read_idx_option(&opts, index_name);
+-		opts.flags |= WRITE_IDX_VERIFY | WRITE_IDX_STRICT;
+ 	}
+ 	if (strict)
+-		opts.flags |= WRITE_IDX_STRICT;
++		opts.write_idx_strict = 1;
+ 
+ 	if (HAVE_THREADS && !nr_threads) {
+ 		nr_threads = online_cpus();
+@@ -1919,11 +1911,12 @@ int cmd_index_pack(int argc, const char **argv, const char *prefix)
+ 	ALLOC_ARRAY(idx_objects, nr_objects);
+ 	for (i = 0; i < nr_objects; i++)
+ 		idx_objects[i] = &objects[i].idx;
+-	curr_index = write_idx_file(index_name, idx_objects, nr_objects, &opts, pack_hash);
+-	if (rev_index)
++	curr_index = write_idx_file(index_name, idx_objects, nr_objects, &opts,
++				    pack_hash, verify);
++	if (opts.write_rev)
+ 		curr_rev_index = write_rev_file(rev_index_name, idx_objects,
+ 						nr_objects, pack_hash,
+-						opts.flags);
++						verify);
+ 	free(idx_objects);
+ 
+ 	if (!verify)
+diff --git a/builtin/pack-objects.c b/builtin/pack-objects.c
+index 014dcd4bc98..6aeaad8560f 100644
+--- a/builtin/pack-objects.c
++++ b/builtin/pack-objects.c
+@@ -3160,10 +3160,7 @@ static int git_pack_config(const char *k, const char *v, void *cb)
+ 		return 0;
+ 	}
+ 	if (!strcmp(k, "pack.writereverseindex")) {
+-		if (git_config_bool(k, v))
+-			pack_idx_opts.flags |= WRITE_REV;
+-		else
+-			pack_idx_opts.flags &= ~WRITE_REV;
++		pack_idx_opts.write_rev = git_config_bool(k, v);
+ 		return 0;
+ 	}
+ 	if (!strcmp(k, "uploadpack.blobpackfileuri")) {
+@@ -4007,8 +4004,8 @@ int cmd_pack_objects(int argc, const char **argv, const char *prefix)
+ 
+ 	reset_pack_idx_option(&pack_idx_opts);
+ 	git_config(git_pack_config, NULL);
+-	if (git_env_bool(GIT_TEST_WRITE_REV_INDEX, 0))
+-		pack_idx_opts.flags |= WRITE_REV;
++	pack_idx_opts.write_rev = git_env_bool(GIT_TEST_WRITE_REV_INDEX,
++					       pack_idx_opts.write_rev);
+ 
+ 	progress = isatty(2);
+ 	argc = parse_options(argc, argv, prefix, pack_objects_options,
+diff --git a/midx.c b/midx.c
+index 3db0e47735f..f0bb56b2c64 100644
+--- a/midx.c
++++ b/midx.c
+@@ -905,7 +905,7 @@ static void write_midx_reverse_index(char *midx_name, unsigned char *midx_hash,
+ 	strbuf_addf(&buf, "%s-%s.rev", midx_name, hash_to_hex(midx_hash));
+ 
+ 	tmp_file = write_rev_file_order(NULL, ctx->pack_order, ctx->entries_nr,
+-					midx_hash, WRITE_REV);
++					midx_hash, 0);
+ 
+ 	if (finalize_object_file(tmp_file, buf.buf))
+ 		die(_("cannot store reverse index file"));
+diff --git a/pack-write.c b/pack-write.c
+index 51812cb1299..7973aa75579 100644
+--- a/pack-write.c
++++ b/pack-write.c
+@@ -44,7 +44,7 @@ static int need_large_offset(off_t offset, const struct pack_idx_option *opts)
+  */
+ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objects,
+ 			   int nr_objects, const struct pack_idx_option *opts,
+-			   const unsigned char *sha1)
++			   const unsigned char *sha1, int verify)
+ {
+ 	struct hashfile *f;
+ 	struct pack_idx_entry **sorted_by_sha, **list, **last;
+@@ -65,7 +65,7 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
+ 	else
+ 		sorted_by_sha = list = last = NULL;
+ 
+-	if (opts->flags & WRITE_IDX_VERIFY) {
++	if (verify) {
+ 		assert(index_name);
+ 		f = hashfd_check(index_name);
+ 	} else {
+@@ -117,7 +117,7 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
+ 		if (index_version < 2)
+ 			hashwrite_be32(f, obj->offset);
+ 		hashwrite(f, obj->oid.hash, the_hash_algo->rawsz);
+-		if ((opts->flags & WRITE_IDX_STRICT) &&
++		if (opts->write_idx_strict &&
+ 		    (i && oideq(&list[-2]->oid, &obj->oid)))
+ 			die("The same object %s appears twice in the pack",
+ 			    oid_to_hex(&obj->oid));
+@@ -159,9 +159,10 @@ const char *write_idx_file(const char *index_name, struct pack_idx_entry **objec
+ 	}
+ 
+ 	hashwrite(f, sha1, the_hash_algo->rawsz);
++
+ 	finalize_hashfile(f, NULL, FSYNC_COMPONENT_PACK_METADATA,
+ 			  CSUM_HASH_IN_STREAM | CSUM_CLOSE |
+-			  ((opts->flags & WRITE_IDX_VERIFY) ? 0 : CSUM_FSYNC));
++			  (verify ? 0 : CSUM_FSYNC));
+ 	return index_name;
+ }
+ 
+@@ -216,22 +217,19 @@ const char *write_rev_file(const char *rev_name,
+ 			   struct pack_idx_entry **objects,
+ 			   uint32_t nr_objects,
+ 			   const unsigned char *hash,
+-			   unsigned flags)
++			   int verify)
+ {
+ 	uint32_t *pack_order;
+ 	uint32_t i;
+ 	const char *ret;
+ 
+-	if (!(flags & WRITE_REV) && !(flags & WRITE_REV_VERIFY))
+-		return NULL;
+-
+ 	ALLOC_ARRAY(pack_order, nr_objects);
+ 	for (i = 0; i < nr_objects; i++)
+ 		pack_order[i] = i;
+ 	QSORT_S(pack_order, nr_objects, pack_order_cmp, objects);
+ 
+ 	ret = write_rev_file_order(rev_name, pack_order, nr_objects, hash,
+-				   flags);
++				   verify);
+ 
+ 	free(pack_order);
+ 
+@@ -242,15 +240,12 @@ const char *write_rev_file_order(const char *rev_name,
+ 				 uint32_t *pack_order,
+ 				 uint32_t nr_objects,
+ 				 const unsigned char *hash,
+-				 unsigned flags)
++				 int verify)
+ {
+ 	struct hashfile *f;
+ 	int fd;
+ 
+-	if ((flags & WRITE_REV) && (flags & WRITE_REV_VERIFY))
+-		die(_("cannot both write and verify reverse index"));
+-
+-	if (flags & WRITE_REV) {
++	if (!verify) {
+ 		if (!rev_name) {
+ 			struct strbuf tmp_file = STRBUF_INIT;
+ 			fd = odb_mkstemp(&tmp_file, "pack/tmp_rev_XXXXXX");
+@@ -260,7 +255,7 @@ const char *write_rev_file_order(const char *rev_name,
+ 			fd = xopen(rev_name, O_CREAT|O_EXCL|O_WRONLY, 0600);
+ 		}
+ 		f = hashfd(fd, rev_name);
+-	} else if (flags & WRITE_REV_VERIFY) {
++	} else {
+ 		struct stat statbuf;
+ 		if (stat(rev_name, &statbuf)) {
+ 			if (errno == ENOENT) {
+@@ -270,8 +265,7 @@ const char *write_rev_file_order(const char *rev_name,
+ 				die_errno(_("could not stat: %s"), rev_name);
+ 		}
+ 		f = hashfd_check(rev_name);
+-	} else
+-		return NULL;
++	}
+ 
+ 	write_rev_header(f);
+ 
+@@ -283,7 +277,8 @@ const char *write_rev_file_order(const char *rev_name,
+ 
+ 	finalize_hashfile(f, NULL, FSYNC_COMPONENT_PACK_METADATA,
+ 			  CSUM_HASH_IN_STREAM | CSUM_CLOSE |
+-			  ((flags & WRITE_IDX_VERIFY) ? 0 : CSUM_FSYNC));
++			  (verify ? 0 : CSUM_FSYNC));
++
+ 
+ 	return rev_name;
+ }
+@@ -494,12 +489,13 @@ void stage_tmp_packfiles(struct strbuf *name_buffer,
+ 		die_errno("unable to make temporary pack file readable");
+ 
+ 	*idx_tmp_name = (char *)write_idx_file(NULL, written_list, nr_written,
+-					       pack_idx_opts, hash);
++					       pack_idx_opts, hash, 0);
+ 	if (adjust_shared_perm(*idx_tmp_name))
+ 		die_errno("unable to make temporary index file readable");
+ 
+-	rev_tmp_name = write_rev_file(NULL, written_list, nr_written, hash,
+-				      pack_idx_opts->flags);
++	if (pack_idx_opts->write_rev)
++		rev_tmp_name = write_rev_file(NULL, written_list, nr_written, hash,
++					      0);
+ 
+ 	rename_tmp_packfile(name_buffer, pack_tmp_name, "pack");
+ 	if (rev_tmp_name)
+diff --git a/pack.h b/pack.h
+index 802c047efe6..ccc4c129b0c 100644
+--- a/pack.h
++++ b/pack.h
+@@ -38,12 +38,8 @@ struct pack_header {
+ #define PACK_IDX_SIGNATURE 0xff744f63	/* "\377tOc" */
+ 
+ struct pack_idx_option {
+-	unsigned flags;
+-	/* flag bits */
+-#define WRITE_IDX_VERIFY 01 /* verify only, do not write the idx file */
+-#define WRITE_IDX_STRICT 02
+-#define WRITE_REV 04
+-#define WRITE_REV_VERIFY 010
++	unsigned int write_idx_strict:1,
++		     write_rev:1;
+ 
+ 	uint32_t version;
+ 	uint32_t off32_limit;
+@@ -84,7 +80,8 @@ typedef int (*verify_fn)(const struct object_id *, enum object_type, unsigned lo
+ const char *write_idx_file(const char *index_name,
+ 			   struct pack_idx_entry **objects, int nr_objects,
+ 			   const struct pack_idx_option *opts,
+-			   const unsigned char *sha1);
++			   const unsigned char *sha1,
++			   int verify);
+ int check_pack_crc(struct packed_git *p, struct pack_window **w_curs, off_t offset, off_t len, unsigned int nr);
+ int verify_pack_index(struct packed_git *);
+ int verify_pack(struct repository *, struct packed_git *, verify_fn fn, struct progress *, uint32_t);
+@@ -99,11 +96,11 @@ void write_promisor_file(const char *promisor_name, struct ref **sought, int nr_
+ const char *write_rev_file(const char *rev_name,
+ 			   struct pack_idx_entry **objects,
+ 			   uint32_t nr_objects,
+-			   const unsigned char *hash, unsigned flags);
++			   const unsigned char *hash, int verify);
+ const char *write_rev_file_order(const char *rev_name, uint32_t *pack_order,
+ 				 uint32_t nr_objects,
+ 				 const unsigned char *hash,
+-				 unsigned flags);
++				 int verify);
+ 
+ /*
+  * The "hdr" output buffer should be at least this big, which will handle sizes
+-- 
+2.36.1.1122.g5c3e018b1ae
+

@@ -1,0 +1,46 @@
+From 61f978b0f75ce06c6af76806408a218d15b997bb Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-02.14-61f978b0f75-20220603T162512Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+References: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 15 Apr 2022 09:58:34 +0200
+Subject: [RFC PATCH 02/14] reftable: don't memset() a NULL from failed
+ malloc()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Return NULL instead of possibly feeding a NULL to memset() in
+reftable_calloc(). This issue was noted by GCC 12's -fanalyzer:
+
+	reftable/publicbasics.c: In function ‘reftable_calloc’:
+	reftable/publicbasics.c:43:9: error: use of possibly-NULL ‘p’ where non-null expected [CWE-690] [-Werror=analyzer-possible-null-argument]
+	   43 |         memset(p, 0, sz);
+	      |         ^~~~~~~~~~~~~~~~
+	[...]
+
+This bug has been with us ever since this code was added in
+ef8a6c62687 (reftable: utility functions, 2021-10-07).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ reftable/publicbasics.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/reftable/publicbasics.c b/reftable/publicbasics.c
+index 0ad7d5c0ff2..a18167f5ab7 100644
+--- a/reftable/publicbasics.c
++++ b/reftable/publicbasics.c
+@@ -40,6 +40,8 @@ void reftable_free(void *p)
+ void *reftable_calloc(size_t sz)
+ {
+ 	void *p = reftable_malloc(sz);
++	if (!p)
++		return NULL;
+ 	memset(p, 0, sz);
+ 	return p;
+ }
+-- 
+2.36.1.1122.g5c3e018b1ae
+

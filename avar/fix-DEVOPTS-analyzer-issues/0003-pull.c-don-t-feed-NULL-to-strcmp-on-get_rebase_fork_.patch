@@ -1,0 +1,60 @@
+From cb78a20c8d11148e0cd181d54557aeaaaf6a09a6 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-03.14-cb78a20c8d1-20220603T162512Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+References: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 15 Apr 2022 12:39:50 +0200
+Subject: [RFC PATCH 03/14] pull.c: don't feed NULL to strcmp() on
+ get_rebase_fork_point() path
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix an issue with feeding NULL to strcmp() noted by GCC's -fanalyzer,
+this fixes a bug in 1678b81ecce (pull: teach git pull about --rebase,
+2015-06-18).
+
+In cmd_pull() we could go through the function without initializing
+the "repo" argument (the -fanalyzer output shows how exactly), we'd
+then call get_rebase_fork_point (), which would in turn call
+get_tracking_branch() with that "NULL" repo argument.
+
+Let's avoid this potential issue by returning NULL in this case, which
+will have get_rebase_fork_point() return -1 in turn.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/pull.c | 14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/pull.c b/builtin/pull.c
+index 01155ba67b2..ed8df004028 100644
+--- a/builtin/pull.c
++++ b/builtin/pull.c
+@@ -756,14 +756,16 @@ static const char *get_tracking_branch(const char *remote, const char *refspec)
+ 		starts_with(spec_src, "remotes/"))
+ 		spec_src = "";
+ 
+-	if (*spec_src) {
+-		if (!strcmp(remote, "."))
+-			merge_branch = mkpath("refs/heads/%s", spec_src);
+-		else
+-			merge_branch = mkpath("refs/remotes/%s/%s", remote, spec_src);
+-	} else
++	if ((*spec_src && !remote) || !*spec_src) {
+ 		merge_branch = NULL;
++		goto cleanup;
++	}
+ 
++	if (!strcmp(remote, "."))
++		merge_branch = mkpath("refs/heads/%s", spec_src);
++	else
++		merge_branch = mkpath("refs/remotes/%s/%s", remote, spec_src);
++cleanup:
+ 	refspec_item_clear(&spec);
+ 	return merge_branch;
+ }
+-- 
+2.36.1.1122.g5c3e018b1ae
+

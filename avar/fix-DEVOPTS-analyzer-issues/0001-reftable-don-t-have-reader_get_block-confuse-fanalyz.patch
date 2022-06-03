@@ -1,0 +1,130 @@
+From 1aa293d2a5aec751a7a8d8d6149eebe6bc7791c5 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-01.14-1aa293d2a5a-20220603T162512Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+References: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 15 Apr 2022 11:20:05 +0200
+Subject: [RFC PATCH 01/14] reftable: don't have reader_get_block() confuse
+ -fanalyzer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the control flow in reftable code add in 46bc0e731a7 (reftable:
+read reftable files, 2021-10-07) to work around a false positive
+spotted by GCC's -fanalyzer option[1]. The code was added in
+46bc0e731a7 (reftable: read reftable files, 2021-10-07).
+
+Usually we'd just leave such false positives alone, but having looked
+at it the control flow was also odd and confusing to humans, so let's
+change it.
+
+What -fanalyzer complained about was:
+
+	|......
+	|  294 |         if (next_off >= r_size)
+	|      |            ~
+	|      |            |
+	|      |            (24) following ‘false’ branch (when ‘next_off < r_size’)...
+	|......
+	|  294 |         if (next_off >= r_size)
+	|      |            ~
+	|      |            |
+	|      |            (24) following ‘false’ branch (when ‘next_off < r_size’)...
+	|......
+	|  297 |         err = reader_get_block(r, &block, next_off, guess_block_size, r->size);
+	|      |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	|      |               |
+	|      |               (25) ...to here
+	|      |               (26) calling ‘reader_get_block’ from ‘reader_init_block_reader’
+	|
+	+--> ‘reader_get_block’: events 27-29
+	       |
+	       |   59 | static int reader_get_block(struct reftable_reader *r,
+	       |      |            ^~~~~~~~~~~~~~~~
+	       |      |            |
+	       |      |            (27) entry to ‘reader_get_block’
+	       |......
+	       |   63 |         if (off >= r_size)
+	       |      |            ~
+	       |      |            |
+	       |      |            (28) following ‘true’ branch (when ‘off >= r_size’)...
+	       |   64 |                 return 0;
+	       |      |                        ~
+	       |      |                        |
+	       |      |                        (29) ...to here
+	       [...]
+	       |  275 |         *typ = data[0];
+	       |      |                ~~~~~~~
+	       |      |                    |
+	       |      |                    (37) ...to here
+	       |      |                    (38) dereference of NULL ‘data’
+
+I.e. it thought that we could take the "return 0" in
+reader_get_block() due to "(off >= r->size)", which followed the
+identical "(next_off >= r_size)" check in reader_init_block_reader()
+just before reader_get_block() was called.
+
+But whatever GCC's -fanalyzer thinks it's confusing that we're
+checking this twice, and making it look as though these parameters
+might change within the reader_init_block_reader() function, but they
+won't. So let's just do the check once early, and use "const" types to
+assert that they'll be constant throughout.
+
+1. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105285
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ reftable/reader.c | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/reftable/reader.c b/reftable/reader.c
+index 54b4025105c..e1649929b30 100644
+--- a/reftable/reader.c
++++ b/reftable/reader.c
+@@ -58,9 +58,9 @@ reader_offsets_for(struct reftable_reader *r, uint8_t typ)
+ 
+ static int reader_get_block(struct reftable_reader *r,
+ 			    struct reftable_block *dest, uint64_t off,
+-			    uint32_t sz)
++			    uint32_t sz, uint64_t r_size)
+ {
+-	if (off >= r->size)
++	if (off >= r_size)
+ 		return 0;
+ 
+ 	if (off + sz > r->size) {
+@@ -281,6 +281,7 @@ static int32_t extract_block_size(uint8_t *data, uint8_t *typ, uint64_t off,
+ int reader_init_block_reader(struct reftable_reader *r, struct block_reader *br,
+ 			     uint64_t next_off, uint8_t want_typ)
+ {
++	const uint64_t r_size = r->size;
+ 	int32_t guess_block_size = r->block_size ? r->block_size :
+ 							 DEFAULT_BLOCK_SIZE;
+ 	struct reftable_block block = { NULL };
+@@ -289,10 +290,10 @@ int reader_init_block_reader(struct reftable_reader *r, struct block_reader *br,
+ 	uint32_t header_off = next_off ? 0 : header_size(r->version);
+ 	int32_t block_size = 0;
+ 
+-	if (next_off >= r->size)
++	if (next_off >= r_size)
+ 		return 1;
+ 
+-	err = reader_get_block(r, &block, next_off, guess_block_size);
++	err = reader_get_block(r, &block, next_off, guess_block_size, r_size);
+ 	if (err < 0)
+ 		goto done;
+ 
+@@ -309,7 +310,7 @@ int reader_init_block_reader(struct reftable_reader *r, struct block_reader *br,
+ 
+ 	if (block_size > guess_block_size) {
+ 		reftable_block_done(&block);
+-		err = reader_get_block(r, &block, next_off, block_size);
++		err = reader_get_block(r, &block, next_off, block_size, r_size);
+ 		if (err < 0) {
+ 			goto done;
+ 		}
+-- 
+2.36.1.1122.g5c3e018b1ae
+

@@ -1,0 +1,97 @@
+From ee5821f07b8f0f8e69ac833df0d893e8957fd8d2 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-06.14-ee5821f07b8-20220603T162512Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+References: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 15 Apr 2022 13:00:53 +0200
+Subject: [RFC PATCH 06/14] diff-lib.c: don't dereference NULL in oneway_diff()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a control flow issue dating back to d1f2d7e8ca6 (Make
+run_diff_index() use unpack_trees(), not read_tree(), 2008-01-19)
+where we'd assume "tree" must be non-NULL if idx was NULL. As
+-fanalyzer shows we'd end up dereferencing "tree" in that case in
+ce_path_match():
+
+dir.h:541:41: warning: dereference of NULL ‘ce’ [CWE-476] [-Wanalyzer-null-dereference]
+  541 |                               S_ISDIR(ce->ce_mode) || S_ISGITLINK(ce->ce_mode));
+      |                                         ^
+  ‘oneway_diff’: events 1-2
+    |
+    |diff-lib.c:493:12:
+    |  493 | static int oneway_diff(const struct cache_entry * const *src,
+    |      |            ^~~~~~~~~~~
+    |      |            |
+    |      |            (1) entry to ‘oneway_diff’
+    |......
+    |  506 |         if (tree == o->df_conflict_entry)
+    |      |            ~
+    |      |            |
+    |      |            (2) following ‘true’ branch...
+    |
+  ‘oneway_diff’: event 3
+    |
+    |  507 |                 tree = NULL;
+    |      |                      ^
+    |      |                      |
+    |      |                      (3) ...to here
+    |
+  ‘oneway_diff’: events 4-8
+    |
+    |  507 |                 tree = NULL;
+    |      |                      ^
+    |      |                      |
+    |      |                      (4) ‘tree’ is NULL
+    |  508 |
+    |  509 |         if (ce_path_match(revs->diffopt.repo->index,
+    |      |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    |      |             |
+    |      |             (5) following ‘false’ branch (when ‘idx’ is NULL)...
+    |      |             (6) ...to here
+    |      |             (7) ‘tree’ is NULL
+    |      |             (8) calling ‘ce_path_match’ from ‘oneway_diff’
+    |  510 |                           idx ? idx : tree,
+    |      |                           ~~~~~~~~~~~~~~~~~
+    |  511 |                           &revs->prune_data, NULL)) {
+    |      |                           ~~~~~~~~~~~~~~~~~~~~~~~~
+    |
+    +--> ‘ce_path_match’: event 9
+           |
+           |dir.h:535:19:
+           |  535 | static inline int ce_path_match(struct index_state *istate,
+           |      |                   ^~~~~~~~~~~~~
+           |      |                   |
+           |      |                   (9) entry to ‘ce_path_match’
+           |
+         ‘ce_path_match’: event 10
+           |
+           |  541 |                               S_ISDIR(ce->ce_mode) || S_ISGITLINK(ce->ce_mode));
+           |      |                                         ^
+           |      |                                         |
+           |      |                                         (10) dereference of NULL ‘ce
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ diff-lib.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/diff-lib.c b/diff-lib.c
+index ca085a03efc..8373ad7e3ea 100644
+--- a/diff-lib.c
++++ b/diff-lib.c
+@@ -506,6 +506,9 @@ static int oneway_diff(const struct cache_entry * const *src,
+ 	if (tree == o->df_conflict_entry)
+ 		tree = NULL;
+ 
++	if (!idx && !tree)
++		return 0;
++
+ 	if (ce_path_match(revs->diffopt.repo->index,
+ 			  idx ? idx : tree,
+ 			  &revs->prune_data, NULL)) {
+-- 
+2.36.1.1122.g5c3e018b1ae
+

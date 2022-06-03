@@ -1,0 +1,151 @@
+From ef22b420a5b443de92d0715d3ca0404dd1bea99e Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-13.14-ef22b420a5b-20220603T162512Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+References: <RFC-cover-00.14-00000000000-20220603T162512Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 14 Apr 2022 11:06:04 +0200
+Subject: [RFC PATCH 13/14] config.mak.dev: add a DEVOPTS=analyzer mode to use
+ GCC's -fanalyzer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add an option to compile with GCC's -fanalyzer, which as noted in [1]
+and [2] has become much more useful in the recently released GCC v12
+series.
+
+Here we're quieting a few outstanding -fanalyzer issues that require
+us to use -Wno-error=* on an entire file:
+
+ * range-diff.c, because it involves loop variables and would be
+   painfully verbose to instrument with the ASSERT_FOR_FANALYZER() macro
+   introduced in the subsequent commit.
+
+ * http-fetch.c and fsmonitor-settings.c, because those aren't issues
+   where we're referencing NULL, and therefore we can't quiet it with an
+   assert().
+
+For non-GCC compilers I considered wrapping the DEVOPTS logic in:
+
+	ifneq ($(filter gcc10,$(COMPILER_FEATURES)),)
+	endif
+
+Which would make it OK to specify DEVOPTS=analyzer under other
+compilers, or on older GCC. But then we'd silently ignore the option
+on those. Let's instead trust the compiler to error out if it doesn't
+support -fanalyzer.
+
+There are various limitations and bugs in the analyzer engine, e.g. I
+filed [3] for a false positive in builtin/merge-file.c before GCC v12
+was released, which was subsequently fixed in GCC 12 trunk in [4], but
+many other issues remain.
+
+1. https://developers.redhat.com/articles/2022/04/12/state-static-analysis-gcc-12-compiler
+2. https://gcc.gnu.org/gcc-12/changes.html
+3. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105264
+4. https://gcc.gnu.org/git/gitweb.cgi?p=gcc.git;h=a358e4b60815b41e27f3508014ceb592f86b9b45
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile       | 14 ++++++++++++
+ config.mak.dev | 61 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 75 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index 18ca6744a50..129d55f5992 100644
+--- a/Makefile
++++ b/Makefile
+@@ -507,6 +507,20 @@ include shared.mak
+ #    no-pedantic:
+ #
+ #        Disable -pedantic compilation.
++#
++#    analyzer:
++#
++#        Compile with GCC's -fanalyzer, this analysis is much more
++#        expensive than other GCC warnings.
++#
++#        The set of analysis flags is curated based on known issues
++#        and compiler version. Known issues are made into non-fatal
++#        warnings (even "no-error" isn't set).
++#
++#    no-suppress-analyzer:
++#
++#        When using "analyzer" disable the suppression of known
++#        -fanalyzer issues.
+ 
+ GIT-VERSION-FILE: FORCE
+ 	@$(SHELL_PATH) ./GIT-VERSION-GEN
+diff --git a/config.mak.dev b/config.mak.dev
+index c3104f400b2..d6f5be92297 100644
+--- a/config.mak.dev
++++ b/config.mak.dev
+@@ -72,3 +72,64 @@ DEVELOPER_CFLAGS += -Wno-error=dangling-pointer
+ endif
+ 
+ GIT_TEST_PERL_FATAL_WARNINGS = YesPlease
++
++# GCC's -fanalyzer mode
++ifeq ($(filter analyzer,$(DEVOPTS)),analyzer)
++
++ifeq ($(filter gcc1,$(COMPILER_FEATURES)),)
++$(error you must be using a new-ish version of GCC for DEVOPTS=analyzer, your \
++$(CC) is not GCC at all!)
++endif
++
++DEVELOPER_CFLAGS += -fanalyzer
++
++## -fanalyzer exists exists as of gcc10, but versions older than gcc12
++## have a lot of false positives.
++ifeq ($(filter gcc12,$(COMPILER_FEATURES)),)
++DEVELOPER_CFLAGS += -Wno-analyzer-double-free
++DEVELOPER_CFLAGS += -Wno-analyzer-free-of-non-heap
++endif
++
++## Helper templates to whitelist existing issues
++define fn_disable_analyzer_tmpl
++$(1).sp $(1).s $(1).o: EXTRA_CPPFLAGS += $(2)
++
++endef
++
++define fn_disable_analyzer
++$(foreach f,$(2),$(call fn_disable_analyzer_tmpl,$(f),$(1)))
++endef
++
++## -Wno-error=analyzer-null-dereference
++$(eval $(call fn_disable_analyzer, \
++	-Wno-error=analyzer-null-dereference, \
++	range-diff \
++))
++## -Wno-error=analyzer-malloc-leak
++$(eval $(call fn_disable_analyzer, \
++	-Wno-error=analyzer-malloc-leak, \
++	fsmonitor-settings \
++))
++## per-GCC version annotations
++### -Wno-error=analyzer-use-of-uninitialized-value: gcc >= 12
++ifneq ($(filter gcc12,$(COMPILER_FEATURES)),)
++$(eval $(call fn_disable_analyzer, \
++	-Wno-error=analyzer-use-of-uninitialized-value, \
++	http-fetch \
++))
++else # gcc < 12
++### -Wno-error=analyzer-null-dereference: gcc == 11
++ifneq ($(filter gcc11,$(COMPILER_FEATURES)),)
++$(eval $(call fn_disable_analyzer, \
++	-Wno-error=analyzer-null-dereference, \
++	merge \
++	xdiff/xemit \
++	reftable/reader \
++))
++else
++$(error Your GCC version is too old for -fanalyze, or you are using \
++gcc10 which has it, but has too many false positives!)
++endif
++endif # gcc < 12
++
++endif
+-- 
+2.36.1.1122.g5c3e018b1ae
+
