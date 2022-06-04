@@ -1,0 +1,131 @@
+From 5bc8fa9bc8d1b8365a74f1e365f782377083deea Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v13-0.7-00000000000-20220604T095113Z-avarab@gmail.com>
+In-Reply-To: <cover-v12-0.8-00000000000-20220329T135446Z-avarab@gmail.com>
+References: <cover-v12-0.8-00000000000-20220329T135446Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Sat, 4 Jun 2022 11:51:13 +0200
+Subject: [PATCH v13 0/7] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Han Xin (4):
+  unpack-objects: low memory footprint for get_data() in dry_run mode
+  object-file.c: refactor write_loose_object() to several steps
+  object-file.c: add "stream_loose_object()" to handle large object
+  unpack-objects: use stream_loose_object() to unpack large objects
+
+Ævar Arnfjörð Bjarmason (3):
+  object-file.c: do fsync() and close() before post-write die()
+  object-file.c: factor out deflate part of write_loose_object()
+  core doc: modernize core.bigFileThreshold documentation
+
+ Documentation/config/core.txt   |  33 +++--
+ builtin/unpack-objects.c        | 103 ++++++++++++--
+ object-file.c                   | 237 +++++++++++++++++++++++++++-----
+ object-store.h                  |   8 ++
+ t/t5351-unpack-large-objects.sh |  61 ++++++++
+ 5 files changed, 387 insertions(+), 55 deletions(-)
+ create mode 100755 t/t5351-unpack-large-objects.sh
+
+Range-diff against v12:
+1:  e95f6a1cfb6 = 1:  12873fc9915 unpack-objects: low memory footprint for get_data() in dry_run mode
+2:  54060eb8c6b ! 2:  b3568f0c5c0 object-file.c: do fsync() and close() before post-write die()
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## object-file.c ##
+    -@@ object-file.c: void hash_object_file(const struct git_hash_algo *algo, const void *buf,
+    - 	hash_object_file_literally(algo, buf, len, type_name(type), oid);
+    - }
+    - 
+    --/* Finalize a file on disk, and close it. */
+    -+/*
+    -+ * We already did a write_buffer() to the "fd", let's fsync()
+    -+ * and close().
+    -+ *
+    -+ * Finalize a file on disk, and close it. We might still die() on a
+    -+ * subsequent sanity check, but let's not add to that confusion by not
+    -+ * flushing any outstanding writes to disk first.
+    -+ */
+    - static void close_loose_object(int fd)
+    - {
+    - 	if (the_repository->objects->odb->will_destroy)
+     @@ object-file.c: static int write_loose_object(const struct object_id *oid, char *hdr,
+      		die(_("deflateEnd on object %s failed (%d)"), oid_to_hex(oid),
+      		    ret);
+      	the_hash_algo->final_oid_fn(&parano_oid, &c);
+    -+	close_loose_object(fd);
+    ++	close_loose_object(fd, tmp_file.buf);
+     +
+      	if (!oideq(oid, &parano_oid))
+      		die(_("confused by unstable object source data for %s"),
+      		    oid_to_hex(oid));
+      
+    --	close_loose_object(fd);
+    +-	close_loose_object(fd, tmp_file.buf);
+     -
+      	if (mtime) {
+      		struct utimbuf utb;
+3:  3dcaa5d6589 ! 3:  9dc0f56878a object-file.c: refactor write_loose_object() to several steps
+    @@ object-file.c: static int write_loose_object(const struct object_id *oid, char *
+     -		    ret);
+     -	the_hash_algo->final_oid_fn(&parano_oid, &c);
+     +		die(_("deflateEnd on object %s failed (%d)"), oid_to_hex(oid), ret);
+    - 	close_loose_object(fd);
+    + 	close_loose_object(fd, tmp_file.buf);
+      
+      	if (!oideq(oid, &parano_oid))
+4:  03f4e91ac89 = 4:  a0434835fe7 object-file.c: factor out deflate part of write_loose_object()
+5:  3d64cf1cf33 ! 5:  0b07b29836b object-file.c: add "stream_loose_object()" to handle large object
+    @@ object-file.c: static int freshen_packed_object(const struct object_id *oid)
+     +	ret = end_loose_object_common(&c, &stream, oid);
+     +	if (ret != Z_OK)
+     +		die(_("deflateEnd on stream object failed (%d)"), ret);
+    -+	close_loose_object(fd);
+    ++	close_loose_object(fd, tmp_file.buf);
+     +
+     +	if (freshen_packed_object(oid) || freshen_loose_object(oid)) {
+     +		unlink_or_warn(tmp_file.buf);
+6:  33ffcbbc1f0 = 6:  5ed79c58b18 core doc: modernize core.bigFileThreshold documentation
+7:  11f7aa026b4 < -:  ----------- unpack-objects: refactor away unpack_non_delta_entry()
+8:  34ee6a28a54 ! 7:  5bc8fa9bc8d unpack-objects: use stream_loose_object() to unpack large objects
+    @@ Documentation/config/core.txt: usage, at the slight expense of increased disk us
+      	Specifies the pathname to the file that contains patterns to
+     
+      ## builtin/unpack-objects.c ##
+    -@@ builtin/unpack-objects.c: static void added_object(unsigned nr, enum object_type type,
+    - 	}
+    +@@ builtin/unpack-objects.c: static void unpack_non_delta_entry(enum object_type type, unsigned long size,
+    + 		write_object(nr, type, buf, size);
+      }
+      
+     +struct input_zstream_data {
+    @@ builtin/unpack-objects.c: static void added_object(unsigned nr, enum object_type
+      				void *delta_data, unsigned long delta_size)
+      {
+     @@ builtin/unpack-objects.c: static void unpack_one(unsigned nr)
+    + 	}
+      
+      	switch (type) {
+    - 	case OBJ_BLOB:
+    ++	case OBJ_BLOB:
+     +		if (!dry_run && size > big_file_threshold) {
+     +			stream_blob(size, nr);
+     +			return;
+    @@ builtin/unpack-objects.c: static void unpack_one(unsigned nr)
+     +		/* fallthrough */
+      	case OBJ_COMMIT:
+      	case OBJ_TREE:
+    +-	case OBJ_BLOB:
+      	case OBJ_TAG:
+    + 		unpack_non_delta_entry(type, size, nr);
+    + 		return;
+     
+      ## t/t5351-unpack-large-objects.sh ##
+     @@ t/t5351-unpack-large-objects.sh: test_description='git unpack-objects with large objects'
+-- 
+2.36.1.1124.g52838f02905
+
