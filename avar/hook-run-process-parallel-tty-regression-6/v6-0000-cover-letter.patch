@@ -1,0 +1,83 @@
+From 1c32bca9755abda066222d8030f791e8db718344 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v6-0.2-00000000000-20220606T101816Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.2-00000000000-20220602T131858Z-avarab@gmail.com>
+References: <cover-v5-0.2-00000000000-20220602T131858Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 6 Jun 2022 12:18:16 +0200
+Subject: [PATCH v6 0/2] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (2):
+  run-command: add an "ungroup" option to run_process_parallel()
+  hook API: fix v2.36.0 regression: hooks should be connected to a TTY
+
+ hook.c                      |  1 +
+ run-command.c               | 70 +++++++++++++++++++++++++++----------
+ run-command.h               | 30 ++++++++++++----
+ t/helper/test-run-command.c | 22 ++++++++++--
+ t/t0061-run-command.sh      | 30 ++++++++++++++++
+ t/t1800-hook.sh             | 34 ++++++++++++++++++
+ 6 files changed, 158 insertions(+), 29 deletions(-)
+
+Range-diff against v5:
+1:  d018b7c4441 = 1:  45248c786d7 run-command: add an "ungroup" option to run_process_parallel()
+2:  b0f0dc7492a ! 2:  1c32bca9755 hook API: fix v2.36.0 regression: hooks should be connected to a TTY
+    @@ t/t1800-hook.sh: test_expect_success 'git -c core.hooksPath=<PATH> hook run' '
+      '
+      
+     +test_hook_tty() {
+    -+	local fd="$1" &&
+    -+
+     +	cat >expect &&
+     +
+     +	test_when_finished "rm -rf repo" &&
+     +	git init repo &&
+     +
+    -+	test_hook -C repo pre-commit <<-EOF &&
+    -+	{
+    -+		test -t 1 && echo >&$fd STDOUT TTY || echo >&$fd STDOUT NO TTY &&
+    -+		test -t 2 && echo >&$fd STDERR TTY || echo >&$fd STDERR NO TTY
+    -+	} $fd>actual
+    -+	EOF
+    -+
+     +	test_commit -C repo A &&
+     +	test_commit -C repo B &&
+     +	git -C repo reset --soft HEAD^ &&
+    -+	test_terminal git -C repo commit -m"B.new" &&
+    ++
+    ++	test_hook -C repo pre-commit <<-EOF &&
+    ++	test -t 1 && echo STDOUT TTY >>actual || echo STDOUT NO TTY >>actual &&
+    ++	test -t 2 && echo STDERR TTY >>actual || echo STDERR NO TTY >>actual
+    ++	EOF
+    ++
+    ++	test_terminal git "$@" &&
+     +	test_cmp expect repo/actual
+     +}
+     +
+    -+test_expect_success TTY 'git hook run: stdout and stderr are connected to a TTY: STDOUT redirect' '
+    -+	test_hook_tty 1 <<-\EOF
+    -+	STDOUT NO TTY
+    ++test_expect_success TTY 'git hook run: stdout and stderr are connected to a TTY' '
+    ++	test_hook_tty -C repo hook run pre-commit <<-\EOF
+    ++	STDOUT TTY
+     +	STDERR TTY
+     +	EOF
+     +'
+     +
+    -+test_expect_success TTY 'git hook run: stdout and stderr are connected to a TTY: STDERR redirect' '
+    -+	test_hook_tty 2 <<-\EOF
+    ++test_expect_success TTY 'git commit: stdout and stderr are connected to a TTY' '
+    ++	test_hook_tty -C repo commit -m"B.new" <<-\EOF
+     +	STDOUT TTY
+    -+	STDERR NO TTY
+    ++	STDERR TTY
+     +	EOF
+     +'
+     +
+-- 
+2.36.1.1124.g52838f02905
+
