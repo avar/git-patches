@@ -1,0 +1,49 @@
+From 0e258c230f6a0514ff7a4c0468a872889a852ecc Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.3-0e258c230f6-20220607T154420Z-avarab@gmail.com>
+In-Reply-To: <cover-0.3-00000000000-20220607T154420Z-avarab@gmail.com>
+References: <RFC-cover-00.15-00000000000-20220603T183608Z-avarab@gmail.com>
+	<cover-0.3-00000000000-20220607T154420Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 3 Jun 2022 15:02:38 +0200
+Subject: [PATCH 2/3] remote.c: don't dereference NULL in freeing loop
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a bug in fd3cb0501e1 (remote: move static variables into
+per-repository struct, 2021-11-17) where we'd free(remote->pushurl[i])
+after having NULL'd out remote->pushurl. itself. We free
+"remote->pushurl" in the next "for"-loop, so doing this appears to
+have been a copy/paste error.
+
+Before this change GCC 12's -fanalyzer would correctly note that we'd
+dereference NULL in this case, this change fixes that:
+
+	remote.c: In function ‘remote_clear’:
+	remote.c:153:17: error: dereference of NULL ‘*remote.pushurl’ [CWE-476] [-Werror=analyzer-null-dereference]
+	  153 |                 free((char *)remote->pushurl[i]);
+	      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	      [...]
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ remote.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/remote.c b/remote.c
+index 3e75db7bb4f..0b243b090d9 100644
+--- a/remote.c
++++ b/remote.c
+@@ -147,7 +147,7 @@ static void remote_clear(struct remote *remote)
+ 
+ 	for (i = 0; i < remote->url_nr; i++)
+ 		free((char *)remote->url[i]);
+-	FREE_AND_NULL(remote->pushurl);
++	FREE_AND_NULL(remote->url);
+ 
+ 	for (i = 0; i < remote->pushurl_nr; i++)
+ 		free((char *)remote->pushurl[i]);
+-- 
+2.36.1.1178.g0c3594a0ba5
+
