@@ -1,0 +1,126 @@
+From 20db979a0943d8062c7cd8141b0f545d5adb1e6c Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-13.20-20db979a094-20220610T011725Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.20-00000000000-20220610T011725Z-avarab@gmail.com>
+References: <pull.1275.git.git.1654820781.gitgitgadget@gmail.com>
+	<RFC-cover-00.20-00000000000-20220610T011725Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 Jun 2022 16:26:17 +0200
+Subject: [RFC PATCH 13/20] submodule--helper: understand --checkout, --merge
+ and --rebase synonyms
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Understand --checkout, --merge and --rebase synonyms for
+--update={checkout,merge,rebase}, as well as the short options that
+'git submodule' itself understands.
+
+This removes a difference between the CLI API of "git submodule" and
+"git submodule--helper", making it easier to make the latter an alias
+for the former. See 48308681b07 (git submodule update: have a
+dedicated helper for cloning, 2016-02-29) for the initial addition of
+--update.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 17 +++++++++++++++++
+ git-submodule.sh            | 14 +++++++++-----
+ 2 files changed, 26 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index f1f5c6b84c6..64d7c5d7ba4 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2583,6 +2583,7 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 	struct update_data opt = UPDATE_DATA_INIT;
+ 	struct list_objects_filter_options filter_options;
+ 	int ret;
++	enum submodule_update_type update_type = SM_UPDATE_UNSPECIFIED;
+ 
+ 	struct option module_update_options[] = {
+ 		OPT__FORCE(&opt.force, N_("force checkout updates"), 0),
+@@ -2604,6 +2605,15 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 		OPT_STRING(0, "update", &opt.update_default,
+ 			   N_("string"),
+ 			   N_("rebase, merge, checkout or none")),
++		OPT_SET_INT(0, "checkout", &update_type,
++			N_("use the 'checkout' update strategy (default)"),
++			SM_UPDATE_CHECKOUT),
++		OPT_SET_INT('m', "merge", &update_type,
++			N_("use the 'merge' update strategy"),
++			SM_UPDATE_MERGE),
++		OPT_SET_INT('r', "rebase", &update_type,
++			N_("use the 'rebase' update strategy"),
++			SM_UPDATE_MERGE),
+ 		OPT_STRING_LIST(0, "reference", &opt.references, N_("repo"),
+ 			   N_("reference repository")),
+ 		OPT_BOOL(0, "dissociate", &opt.dissociate,
+@@ -2653,6 +2663,13 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 
+ 	opt.filter_options = &filter_options;
+ 
++	if (update_type == SM_UPDATE_CHECKOUT)
++		opt.update_default = "checkout";
++	else if (update_type == SM_UPDATE_MERGE)
++		opt.update_default = "merge";
++	else if (update_type == SM_UPDATE_REBASE)
++		opt.update_default = "rebase";
++
+ 	if (opt.update_default)
+ 		if (parse_submodule_update_strategy(opt.update_default,
+ 						    &opt.update_strategy) < 0)
+diff --git a/git-submodule.sh b/git-submodule.sh
+index 43fe3bcb00b..d8abdd8e8ad 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -38,7 +38,9 @@ init=
+ require_init=
+ remote=
+ nofetch=
+-update=
++rebase=
++merge=
++checkout=
+ depth=
+ progress=
+ dissociate=
+@@ -83,7 +85,7 @@ cmd_update()
+ 			force=$1
+ 			;;
+ 		-r|--rebase)
+-			update="rebase"
++			rebase=1
+ 			;;
+ 		--reference)
+ 			case "$2" in '') usage ;; esac
+@@ -97,13 +99,13 @@ cmd_update()
+ 			dissociate=1
+ 			;;
+ 		-m|--merge)
+-			update="merge"
++			merge=1
+ 			;;
+ 		--recursive)
+ 			recursive=1
+ 			;;
+ 		--checkout)
+-			update="checkout"
++			checkout=1
+ 			;;
+ 		--recommend-shallow)
+ 			recommend_shallow="--recommend-shallow"
+@@ -164,7 +166,9 @@ cmd_update()
+ 		${init:+--init} \
+ 		${nofetch:+--no-fetch} \
+ 		${wt_prefix:+--prefix "$wt_prefix"} \
+-		${update:+--update "$update"} \
++		${rebase:+--rebase} \
++		${merge:+--merge} \
++		${checkout:+--checkout} \
+ 		${reference:+"$reference"} \
+ 		${dissociate:+"--dissociate"} \
+ 		${depth:+"$depth"} \
+-- 
+2.36.1.1178.gb5b1747c546
+
