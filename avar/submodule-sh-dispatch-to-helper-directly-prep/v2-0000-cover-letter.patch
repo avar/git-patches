@@ -4,12 +4,299 @@ In-Reply-To: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
 References: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Tue, 14 Jun 2022 00:01:50 +0200
-Subject: [PATCH v2 00/12] *** SUBJECT HERE ***
+Subject: [PATCH v2 00/12] submodule: make "git submodule--helper" behave like "git submodule"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series:
+
+ * Removes dead code from git-submodule.sh, or dead code where it was
+   the last user.
+
+ * Simplifies CLI parsing in git-submodule.sh, where it was doing
+   something overly complex for no reason.
+
+ * Brings "git submodule--helper" in line with the CLI interface of
+   "git-submodule.sh", for a follow-up series to remove the latter, as
+   we'll be able to make a new "git submodule" in C dispatch directly
+   to our new "git submodule--helper" code.
+
+ * Removes the "-v" option to "git submodule", which has been
+   supported, but was a) never documented b) never did anything
+   anyway, except as a way to negate an earlier "--quiet" option, as
+   "verbose" was always the default.
+
+ * The last couple of patches are cleanup that isn't strictly
+   neccesary for the end-goal of "git submodule" in C, but cleans up
+   some more shellscript code.
+
+   The "say" function is removed from "git-sh-setup.sh", now that
+   "git-submodule.sh" doesn't use it anymore (which happened before
+   this series) we can replace the couple of remaining uses with
+   "echo", and by having "git-subtree.sh" own the code that used to
+   live in "git-sh-setup.sh".
+
+The approach here was to combine bits of the two RFC series' Glen and
+I sent out:
+
+ - https://lore.kernel.org/git/pull.1275.git.git.1654820781.gitgitgadget@gmail.com/
+ - https://lore.kernel.org/git/RFC-cover-00.20-00000000000-20220610T011725Z-avarab@gmail.com/
+
+My branch for this (and passing CI) are at:
+https://github.com/avar/git/tree/avar/submodule-sh-dispatch-to-helper-directly-prep
+
+The rest here is a reply to
+https://lore.kernel.org/git/kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com/:
+
+On Mon, Jun 13 2022, Glen Choo wrote:
+
+> Ævar Arnfjörð Bjarmason <avarab@gmail.com> writes:
+>
+>>> [...]
+>> That's quite the timing coincidence. I hacked this up yesterday,
+>> thinking that the submodule topic had been too quiet for a while, and
+>> wondering how hard it was to convert the rest of git-submodule.sh.
+>>
+>> It's more than 2x the length of yours, but gets to the point where we
+>> can "git rm git-submodule.sh".
+>
+> Very cool. I've skimmed through all of the patches, which mostly look
+> good except for ~1-2 things.
+>
+> Your series shows that there isn't any prohibitively difficult work left
+> to finish the conversion, which is great! The real problem IMO is the
+> potential for mechanical errors given how many lines this touches.
+
+Yes, and as I've discovered in some further poking at the follow-up
+work (not included here) we again lack quite a bit of testing.
+
+> Here's a way of breaking apart the work that makes sense to me:
+>
+> - Reuse the patches that prepare git-submodule.sh for the conversion,
+>   particularly 1-7/20 (create a "case" dispatch statement and its
+>   preceding patches).
+> - Keep my series that prepares "update", since that's the most tedious
+>   one to convert. If I don't dispatch to the "case" statement, I don't
+>   think it will even conflict with the preparatory series.
+>
+>   Some of your patches make more sense than mine, and I'll incorporate
+>   them as necessary :)
+> - Dispatch subcommands using the "case" dispatch, including "update". We
+>   might have to do this slowly if we want things to be easy to eyeball.
+> - "git rm git-submodule.sh"!
+
+Hopefully there's no stepping on toes here, but I thought I'd send
+this out now (I went back to the laptop) to avoid the duplicate work,
+since I'd already attempted combining the two, and this is the result.
+
+Obviously you may have different ideas about it, and I wouldn't at all
+mind a v3 that goes in a different direction if you think it's needed.
+
+As noted in the CL above I think this is more palatable for an initial
+iteration, i.e. it's not doing any of the migration work yet, but
+merely doing small changes to bring git-submodule.sh and "git
+submodule--helper" in line with one another.
+
+>>>   submodule--helper update: use one param per type
+>>
+>> Same as my 13/20, but I ended up doing it in a more narrow/smaller
+>> way. I tried your way and ran into some bug, then figured I'd do it
+>> more narrowly instead of debugging it.
+>
+> Yeah your approach is easier to eyeball, so I'll do this instead.
+
+Hopefully you'll like the change I made here, I kept my commit which
+narrowlry changes it so that we pass --checkout, --merge and --rebase
+from git-submodule.sh.
+
+Then after that comes a commit extracted from your change where we
+make "git submodule--helper" use the same interface for passing
+options to itself.
+
+Both are good changes to make, but I think it makes sense to split
+them up. One is needed for "git submodule" in C, the other is just
+janitorial work in the "git submodule--helper" code.
+
+I think it makes sense to do both, but splitting up the concerns makes
+it a lot easier to review them IMO.
+
+>>>   submodule update: remove -v, pass --quiet
+>> [...]
+>> I think at this point I've talked myself into "let's just remove it",
+>> but maybe...
+>
+> On hindsight, what I did is definitely cheating ;)
+
+Your removal of "-v" is in this series. I rewrote the commit message
+to note exactly what we're changing, why it's thought to be OK etc.
+
+> My series also breaks the way we'd handle --quiet in "git submodule",
+> i.e.
+>
+>    git submodule --quiet update
+>
+> should be quiet, but isn't.
+>
+> Your approach actually handles --quiet as per the original shell script,
+> which is a good enough reason to do it your way. We can think about
+> removing it later.
+
+We have some of these unfortunate "top-level" CLI options in other
+places, e.g. "git commit-graph", it's probably not worth it to remove
+them, as they're easy enough to support, and have been documented for
+a long time.
+
+>> Brief commentary on my patches, details in commit messages:
+>>
+>> Ævar Arnfjörð Bjarmason (20):
+>>   git-submodule.sh: remove unused sanitize_submodule_env()
+>>   git-submodule.sh: remove unused $prefix variable
+>>   git-submodule.sh: remove unused --super-prefix logic
+>>
+>> I removed a bit more dead code here than yours.
+>>
+>>   git-submodule.sh: normalize parsing of "--branch"
+>>   git-submodule.sh: normalize parsing of --cached
+>>
+>> This & various other prep commits (hereafter "easy prep") make
+>> subsequent one-time conversions of whole cmd_*() easier.
+>>
+>>   submodule--helper: rename "absorb-git-dirs" to "absorbgitdirs"
+>>   git-submodule.sh: create a "case" dispatch statement
+>>
+>> easy prep
+>
+> This would all make sense in a preparatory series, with the exception of 
+> 3/20 git-submodule.sh: remove unused --super-prefix logic.
+>
+> We have several instances where we invoke submodule--helper directly
+> with --super-prefix, e.g. inside sync_submodule():
+>     
+>     if (flags & OPT_RECURSIVE) {
+>       struct child_process cpr = CHILD_PROCESS_INIT;
+>
+>       cpr.git_cmd = 1;
+>       cpr.dir = path;
+>       prepare_submodule_repo_env(&cpr.env_array);
+>
+>       strvec_push(&cpr.args, "--super-prefix"); /* Here */
+>
+> I even have a (as of now private) patch that replaces "update"'s
+> --recursive-prefix with --super-prefix.
+>
+> This probably wasn't caught in the tests because this only affects how
+> we calculate the submodule 'displayname'.
+
+This is still in this series as 02/12. I think you've misunderstood
+that code, it *is* invoking "git submodule--helper" with
+"--super-prefix", but the option is passed as:
+
+    git --super-prefix <path> submodule--helper
+
+And not as:
+
+    git submodule--helper --super-prefix <path>
+
+This is thus handled by other code before builtin/submodule--helper.c,
+and it doesn't need to handle it.
+
+But anyway, this is confusing, so I updated the commit message (seen
+in the range-diff below)>
+
+>>   submodule--helper: pretend to be "git submodule" in "-h" output
+>>
+>> easy prep & bug fix for existing (on master) output bugs.
+>>
+>>   git-submodule.sh: dispatch "sync" to helper
+>>   git-submodule.sh: dispatch directly to helper
+>>   git-submodule.sh: dispatch "foreach" to helper
+>>
+>> These are easy conversions as the options 1=1 map after the above
+>> prep.
+>
+> Yes, these are pretty easy. I'm worried about the number of lines
+> changed and the potential for mechanical errors, but we can roll these
+> more slowly if necessary.
+
+All of this is left out here for now. FWIW I don't think it's hard to
+review due to the line count, yes e.g. the 2nd patch there is ~300
+lines changed, but it's just 5 lines removed/added if we omit the
+mechanical deletion of the now-unused functions.
+
+Maybe it would be better to omit that and do just one "git rm" at the
+end? FWIW I thought doing it atomically so that we were left with no
+dead code after each step made it easier to review.
+
+>>   submodule--helper: have --require-init imply --init
+>>   submodule--helper: understand --checkout, --merge and --rebase
+>>     synonyms
+>>   git-submodule doc: document the -v" option to "update"
+>>   submodule--helper: understand -v option for "update"
+>>
+>> not-so-easy prep for "cmd_update()"
+>>
+>>   git-submodule.sh: dispatch "update" to helper
+>>
+>> Full cmd_update() migration in one go.
+>
+> Yeah, and since it's not-so-easy, it probably makes sense to continue to
+> keep my series around. I'll borrow some of these patches if that's ok :)
+
+The proposal in *this series* is to leave this aside for now, but
+generally I wonder what part of it you find not-so-easy.
+
+Personally I find it much harder to carefully review the way you
+proposed to do it, i.e. to "buffer up" options that we "don't handle",
+but actually need to sort-of handle, as we'd still like to die if we
+have unknown options.
+
+Particularly since shellscript quoting etc. is a pain with that sort
+of thing, as it doesn't have any real list or key-value
+datastructures.
+
+Whereas getting it to the point where we're clearly just passing
+options as-is through beforehand, and then simply dropping the wrapper
+is, I think, much easier to review. You only need to trust or check
+that e.g. "git submodule--helper update" also supports a "--progress"
+option or whatever, and/or that we've got coverage for it.
+
+>> [...]
+>> Wait, a useBuiltin setting to switch between two built-ins? Yeah,
+>> maybe it makes little sense, but here we get rid of the run_command()
+>> overhead, and could generally use the built-in to experiment with
+>> deeper integration between the two.
+>>
+>> ...
+>
+> Interesting approach. It looks ok to me, but if we break up this series,
+> maybe this will be stale by the time we integrate the rest of the
+> changes?
+
+Yes, I think it's probably best to drop this idea of a useBuiltin
+setting in this case entirely.
+
+The reason we did it for "stash", "git add --interactive" etc. is that
+we were (or are) dispatching to drastically different code, i.e. we
+had or have an entire all-at-once re-implementation of the command or
+feature.
+
+Whereas for "git submodule" we've been doing it incrementally already,
+and complexity-wise I think previous rounds to migrate to "git
+submodule--helper" were much more likely have subtle breakages than
+the relatively straightforward migration we've got left.
+
+B.t.w. here is my WIP re-roll of the full thing, on top of these
+patches:
+https://github.com/avar/git/tree/avar/submodule-sh-dispatch-to-helper-directly-2
+
+As covered in amended commits & tests there the v1 RFC (but not the
+parts re-rolled here, just the later stuff) had some subtle behavior
+changes. See the new "submodule tests: test usage behavior" commit
+there & follow-ups to that.
+
+I haven't found any bad bugs yet, but just obscure edge cases in
+e.g. how we handle "git submodule --" before/after.
 
 Glen Choo (2):
   submodule update: remove "-v" option
