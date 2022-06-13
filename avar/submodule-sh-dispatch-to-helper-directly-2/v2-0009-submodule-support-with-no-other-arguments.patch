@@ -1,0 +1,93 @@
+From 1aa78eec9a923c27171e4a2e64d0203ddfc7659b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-09.11-1aa78eec9a9-20220613T215714Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20220613T215714Z-avarab@gmail.com>
+References: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
+	<cover-v2-00.11-00000000000-20220613T215714Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Jun 2022 16:27:53 +0200
+Subject: [PATCH v2 09/11] submodule: support "--" with no other arguments
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Address an edge case in the *.sh to *.c migration of "git
+submodule". We didn't support the "--" delimiter in the argument-less
+invocation. Let's not bend over backwards to behave unusually in this
+scenario, simply accepting "--" is harmless.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-submodule.txt |  2 +-
+ builtin/submodule.c             | 12 ++----------
+ t/t7400-submodule-basic.sh      |  4 ++--
+ 3 files changed, 5 insertions(+), 13 deletions(-)
+
+diff --git a/Documentation/git-submodule.txt b/Documentation/git-submodule.txt
+index 4d3ab6b9f92..345ebcafb9c 100644
+--- a/Documentation/git-submodule.txt
++++ b/Documentation/git-submodule.txt
+@@ -9,7 +9,7 @@ git-submodule - Initialize, update or inspect submodules
+ SYNOPSIS
+ --------
+ [verse]
+-'git submodule' [--quiet] [--cached]
++'git submodule' [--quiet] [--cached] [--]
+ 'git submodule' [--quiet] add [<options>] [--] <repository> [<path>]
+ 'git submodule' [--quiet] status [--cached] [--recursive] [--] [<path>...]
+ 'git submodule' [--quiet] init [--] [<path>...]
+diff --git a/builtin/submodule.c b/builtin/submodule.c
+index 0a694ae5011..6ed0a7de93f 100644
+--- a/builtin/submodule.c
++++ b/builtin/submodule.c
+@@ -8,7 +8,7 @@
+ #include "strvec.h"
+ 
+ #define BUILTIN_SUBMODULE_USAGE \
+-	"git submodule [--quiet] [--cached]"
++	"git submodule [--quiet] [--cached] [--]"
+ 
+ #define BUILTIN_SUBMODULE_ADD_USAGE \
+ 	N_("git submodule [--quiet] add [-b <branch>] [-f | --force] [--name <name>]\n" \
+@@ -91,14 +91,6 @@ static void setup_helper_args(int argc, const char **argv, const char *prefix,
+ 	argv++;
+ 	argc--;
+ 
+-	/*
+-	  * This is stupid, but don't support "[--]" to
+-	 * subcommand-less "git-submodule" for now.
+-	 */
+-	if (!strcmp(cmd, "--") || !strcmp(cmd, "--end-of-options"))
+-		usage_msg_optf(_("need explicit sub-command name to delimit with '%s'"),
+-			       git_submodule_usage, options, cmd);
+-
+ 	/* Options that need to go before user-supplied options */
+ 	if (!strcmp(cmd, "absorbgitdirs"))
+ 		do_quiet_cache = 0;
+@@ -134,7 +126,7 @@ int cmd_submodule(int argc, const char **argv, const char *prefix)
+ 	int ret;
+ 
+ 	argc = parse_options(argc, argv, prefix, options, git_submodule_usage,
+-			     PARSE_OPT_STOP_AT_NON_OPTION | PARSE_OPT_KEEP_DASHDASH);
++			     PARSE_OPT_STOP_AT_NON_OPTION);
+ 
+ 	/*
+ 	 * Tell the rest of git that any URLs we get don't come
+diff --git a/t/t7400-submodule-basic.sh b/t/t7400-submodule-basic.sh
+index 3632282d8fe..b9004a8ac69 100755
+--- a/t/t7400-submodule-basic.sh
++++ b/t/t7400-submodule-basic.sh
+@@ -25,8 +25,8 @@ test_expect_success 'submodule usage: --recursive' '
+ '
+ 
+ test_expect_success 'submodule usage: status --' '
+-	test_expect_code 129 git submodule -- &&
+-	test_expect_code 129 git submodule --end-of-options
++	git submodule -- &&
++	git submodule --end-of-options
+ '
+ 
+ for opt in '--quiet'
+-- 
+2.36.1.1239.gfba91521d90
+

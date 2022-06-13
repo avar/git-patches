@@ -1,0 +1,207 @@
+From d41a6ba91755575ef2d850c4de1738af68e3e854 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-05.11-d41a6ba9175-20220613T215714Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20220613T215714Z-avarab@gmail.com>
+References: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
+	<cover-v2-00.11-00000000000-20220613T215714Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 Jun 2022 13:54:31 +0200
+Subject: [PATCH v2 05/11] git-submodule.sh: dispatch "update" to helper
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Dispatch the "update" command directly to "git submodule--helper
+update", rather than doing our own argument parsing in
+git-submodule.sh. As this is the last cmd_*() function to be removed
+from git-submodule.sh we can do some larger cleanup of that file as a
+result.
+
+As noted in a preceding commit the only behavior change here should be
+the desirable change of better "-h" output, and that this
+implementation understands the "--verbose" synonym for "-v". Let's
+update the documentation to reflect the new "--verbose" synonym.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-submodule.sh | 156 +----------------------------------------------
+ 1 file changed, 2 insertions(+), 154 deletions(-)
+
+diff --git a/git-submodule.sh b/git-submodule.sh
+index 7874e33beea..ac2f95c1285 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -31,160 +31,7 @@ export GIT_PROTOCOL_FROM_USER
+ 
+ command=
+ quiet=
+-force=
+-reference=
+ cached=
+-recursive=
+-init=
+-require_init=
+-remote=
+-nofetch=
+-rebase=
+-merge=
+-checkout=
+-depth=
+-progress=
+-dissociate=
+-single_branch=
+-jobs=
+-recommend_shallow=
+-filter=
+-
+-#
+-# Update each submodule path to correct revision, using clone and checkout as needed
+-#
+-# $@ = requested paths (default to all)
+-#
+-cmd_update()
+-{
+-	# parse $args after "submodule ... update".
+-	while test $# -ne 0
+-	do
+-		case "$1" in
+-		-q|--quiet)
+-			quiet=1
+-			;;
+-		--progress)
+-			progress=1
+-			;;
+-		-i|--init)
+-			init=1
+-			;;
+-		--require-init)
+-			require_init=1
+-			;;
+-		--remote)
+-			remote=1
+-			;;
+-		-N|--no-fetch)
+-			nofetch=1
+-			;;
+-		-f|--force)
+-			force=$1
+-			;;
+-		-r|--rebase)
+-			rebase=1
+-			;;
+-		--reference)
+-			case "$2" in '') usage ;; esac
+-			reference="--reference=$2"
+-			shift
+-			;;
+-		--reference=*)
+-			reference="$1"
+-			;;
+-		--dissociate)
+-			dissociate=1
+-			;;
+-		-m|--merge)
+-			merge=1
+-			;;
+-		--recursive)
+-			recursive=1
+-			;;
+-		--checkout)
+-			checkout=1
+-			;;
+-		--recommend-shallow)
+-			recommend_shallow="--recommend-shallow"
+-			;;
+-		--no-recommend-shallow)
+-			recommend_shallow="--no-recommend-shallow"
+-			;;
+-		--depth)
+-			case "$2" in '') usage ;; esac
+-			depth="--depth=$2"
+-			shift
+-			;;
+-		--depth=*)
+-			depth=$1
+-			;;
+-		-j|--jobs)
+-			case "$2" in '') usage ;; esac
+-			jobs="--jobs=$2"
+-			shift
+-			;;
+-		--jobs=*)
+-			jobs=$1
+-			;;
+-		--single-branch)
+-			single_branch="--single-branch"
+-			;;
+-		--no-single-branch)
+-			single_branch="--no-single-branch"
+-			;;
+-		--filter)
+-			case "$2" in '') usage ;; esac
+-			filter="--filter=$2"
+-			shift
+-			;;
+-		--filter=*)
+-			filter="$1"
+-			;;
+-		--)
+-			shift
+-			break
+-			;;
+-		-*)
+-			usage
+-			;;
+-		*)
+-			break
+-			;;
+-		esac
+-		shift
+-	done
+-
+-	git ${wt_prefix:+-C "$wt_prefix"} submodule--helper update \
+-		${quiet:+--quiet} \
+-		${force:+--force} \
+-		${progress:+"--progress"} \
+-		${remote:+--remote} \
+-		${recursive:+--recursive} \
+-		${init:+--init} \
+-		${nofetch:+--no-fetch} \
+-		${wt_prefix:+--prefix "$wt_prefix"} \
+-		${rebase:+--rebase} \
+-		${merge:+--merge} \
+-		${checkout:+--checkout} \
+-		${reference:+"$reference"} \
+-		${dissociate:+"--dissociate"} \
+-		${depth:+"$depth"} \
+-		${require_init:+--require-init} \
+-		${dissociate:+"--dissociate"} \
+-		$single_branch \
+-		$recommend_shallow \
+-		$jobs \
+-		$filter \
+-		-- \
+-		"$@"
+-}
+-
+-# This loop parses the command line arguments to find the
+-# subcommand name to dispatch.  Parsing of the subcommand specific
+-# options are primarily done by the subcommand implementations.
+-# Subcommand specific options such as --branch and --cached are
+-# parsed here as well, for backward compatibility.
+ 
+ while test $# != 0 && test -z "$command"
+ do
+@@ -233,7 +80,8 @@ absorbgitdirs)
+ 	git submodule--helper "$command" --prefix "$wt_prefix" "$@"
+ 	;;
+ update)
+-	cmd_update "$@"
++	git ${wt_prefix:+-C "$wt_prefix"} submodule--helper "$command" \
++		${quiet:+--quiet} ${wt_prefix:+--prefix "$wt_prefix"} "$@"
+ 	;;
+ add | foreach | init | deinit | set-branch | set-url | status | summary | sync)
+ 	git ${wt_prefix:+-C "$wt_prefix"} submodule--helper "$command" \
+-- 
+2.36.1.1239.gfba91521d90
+

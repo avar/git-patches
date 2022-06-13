@@ -1,0 +1,98 @@
+From 89cb62696cd9d05ede37bae8d4fd157e57da801b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-04.11-89cb62696cd-20220613T215714Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20220613T215714Z-avarab@gmail.com>
+References: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
+	<cover-v2-00.11-00000000000-20220613T215714Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 Jun 2022 11:40:58 +0200
+Subject: [PATCH v2 04/11] git-submodule.sh: dispatch "foreach" to helper
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Dispatch the "git submodule foreach" command directly to "git
+submodule--helper foreach". This case requires the addition of the
+PARSE_OPT_STOP_AT_NON_OPTION flag, since the shellscript was
+unconditionally adding "--" to the "git submodule--helper"
+command-line.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c |  3 ++-
+ git-submodule.sh            | 37 +++----------------------------------
+ 2 files changed, 5 insertions(+), 35 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 65cf4b915df..d0678ce803f 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -449,7 +449,8 @@ static int module_foreach(int argc, const char **argv, const char *prefix)
+ 	};
+ 
+ 	argc = parse_options(argc, argv, prefix, module_foreach_options,
+-			     git_submodule_helper_usage, 0);
++			     git_submodule_helper_usage,
++			     PARSE_OPT_STOP_AT_NON_OPTION);
+ 
+ 	if (module_list_compute(0, NULL, prefix, &pathspec, &list) < 0)
+ 		return 1;
+diff --git a/git-submodule.sh b/git-submodule.sh
+index 2bdff5119c1..7874e33beea 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -50,37 +50,6 @@ jobs=
+ recommend_shallow=
+ filter=
+ 
+-
+-# Execute an arbitrary command sequence in each checked out
+-# submodule
+-#
+-# $@ = command to execute
+-#
+-cmd_foreach()
+-{
+-	# parse $args after "submodule ... foreach".
+-	while test $# -ne 0
+-	do
+-		case "$1" in
+-		-q|--quiet)
+-			quiet=1
+-			;;
+-		--recursive)
+-			recursive=1
+-			;;
+-		-*)
+-			usage
+-			;;
+-		*)
+-			break
+-			;;
+-		esac
+-		shift
+-	done
+-
+-	git ${wt_prefix:+-C "$wt_prefix"} submodule--helper foreach ${quiet:+--quiet} ${recursive:+--recursive} -- "$@"
+-}
+-
+ #
+ # Update each submodule path to correct revision, using clone and checkout as needed
+ #
+@@ -263,10 +232,10 @@ case "$command" in
+ absorbgitdirs)
+ 	git submodule--helper "$command" --prefix "$wt_prefix" "$@"
+ 	;;
+-foreach | update)
+-	"cmd_$command" "$@"
++update)
++	cmd_update "$@"
+ 	;;
+-add | init | deinit | set-branch | set-url | status | summary | sync)
++add | foreach | init | deinit | set-branch | set-url | status | summary | sync)
+ 	git ${wt_prefix:+-C "$wt_prefix"} submodule--helper "$command" \
+ 		${quiet:+--quiet} ${cached:+--cached} "$@"
+ 	;;
+-- 
+2.36.1.1239.gfba91521d90
+

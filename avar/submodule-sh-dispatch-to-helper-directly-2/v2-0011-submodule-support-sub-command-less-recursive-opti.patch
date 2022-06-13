@@ -1,0 +1,131 @@
+From 8427d9c2bcc5205500eaef6e87f3d5983bfd193d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-11.11-8427d9c2bcc-20220613T215714Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20220613T215714Z-avarab@gmail.com>
+References: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
+	<cover-v2-00.11-00000000000-20220613T215714Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Jun 2022 16:52:21 +0200
+Subject: [PATCH v2 11/11] submodule: support sub-command-less "--recursive"
+ option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The inability to specify "--recursive" when we're not providing a
+sub-command name appears to have been an omission in 15fc56a8536 (git
+submodule foreach: Add --recursive to recurse into nested submodules,
+2009-08-19). Let's support it along with the other "status" options.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-submodule.txt |  2 +-
+ builtin/submodule.c             | 17 ++++++++++++++---
+ t/t7400-submodule-basic.sh      |  6 +-----
+ 3 files changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/Documentation/git-submodule.txt b/Documentation/git-submodule.txt
+index 345ebcafb9c..0c918390f2f 100644
+--- a/Documentation/git-submodule.txt
++++ b/Documentation/git-submodule.txt
+@@ -9,7 +9,7 @@ git-submodule - Initialize, update or inspect submodules
+ SYNOPSIS
+ --------
+ [verse]
+-'git submodule' [--quiet] [--cached] [--]
++'git submodule' [--quiet] [--cached] [--recursive] [--]
+ 'git submodule' [--quiet] add [<options>] [--] <repository> [<path>]
+ 'git submodule' [--quiet] status [--cached] [--recursive] [--] [<path>...]
+ 'git submodule' [--quiet] init [--] [<path>...]
+diff --git a/builtin/submodule.c b/builtin/submodule.c
+index 9723a7e161b..4bc7020fcb6 100644
+--- a/builtin/submodule.c
++++ b/builtin/submodule.c
+@@ -65,7 +65,8 @@ static const char * const git_submodule_usage[] = {
+ };
+ 
+ static void setup_helper_args(int argc, const char **argv, const char *prefix,
+-			      int quiet, int cached, struct strvec *args,
++			      int quiet, int cached, int recursive,
++			      struct strvec *args,
+ 			      const struct option *options)
+ {
+ 	const char *cmd;
+@@ -80,10 +81,13 @@ static void setup_helper_args(int argc, const char **argv, const char *prefix,
+ 		return;
+ 	}
+ 
+-	/* Did we get --cached with a command? */
++	/* Did we get a forbidden top-level option with a command? */
+ 	if (cached)
+ 		usage_msg_optf(_("'%s' option is only supported with explicit 'status'"),
+ 			       git_submodule_usage, options, "--cached");
++	if (recursive)
++		usage_msg_optf(_("'%s' option is only supported with explicit 'status'"),
++			       git_submodule_usage, options, "--recursive");
+ 
+ 
+ 	/* Either a valid command, or submodule--helper will barf! */
+@@ -93,6 +97,9 @@ static void setup_helper_args(int argc, const char **argv, const char *prefix,
+ 	argc--;
+ 
+ 	/* Options that need to go before user-supplied options */
++	if (!strcmp(cmd, "status") && recursive)
++		strvec_push(args, "--recursive");
++
+ 	if (!strcmp(cmd, "absorbgitdirs"))
+ 		do_quiet_cache = 0;
+ 	else if (!strcmp(cmd, "update"))
+@@ -131,12 +138,15 @@ int cmd_submodule(int argc, const char **argv, const char *prefix)
+ {
+ 	int opt_quiet = 0;
+ 	int opt_cached = 0;
++	int opt_recursive = 0;
+ 	struct child_process cp = CHILD_PROCESS_INIT;
+ 	struct strvec args = STRVEC_INIT;
+ 	struct option options[] = {
+ 		OPT__QUIET(&opt_quiet, N_("be quiet")),
+ 		OPT_BOOL(0, "cached", &opt_cached,
+ 			 N_("print the OID of submodules")),
++		OPT_BOOL(0, "recursive", &opt_recursive,
++			 N_("recurse into nested submodules")),
+ 		OPT_END()
+ 	};
+ 	const int use_builtin = get_use_builtin();
+@@ -155,7 +165,8 @@ int cmd_submodule(int argc, const char **argv, const char *prefix)
+ 		strvec_push(&cp.env, "GIT_PROTOCOL_FROM_USER=0");
+ 
+ 	setup_helper_args(argc, argv, prefix, opt_quiet, opt_cached,
+-			  use_builtin ? &args : &cp.args, options);
++			  opt_recursive, use_builtin ? &args : &cp.args,
++			  options);
+ 
+ 	if (use_builtin) {
+ 		ret = cmd_submodule__helper(args.nr, args.v, prefix);
+diff --git a/t/t7400-submodule-basic.sh b/t/t7400-submodule-basic.sh
+index b9004a8ac69..cb2d526c916 100755
+--- a/t/t7400-submodule-basic.sh
++++ b/t/t7400-submodule-basic.sh
+@@ -20,10 +20,6 @@ test_expect_success 'submodule usage: -h' '
+ 	test_must_be_empty err
+ '
+ 
+-test_expect_success 'submodule usage: --recursive' '
+-	test_expect_code 129 git submodule --recursive
+-'
+-
+ test_expect_success 'submodule usage: status --' '
+ 	git submodule -- &&
+ 	git submodule --end-of-options
+@@ -38,7 +34,7 @@ do
+ 	'
+ done
+ 
+-for opt in '--cached'
++for opt in '--cached' '--recursive'
+ do
+ 	test_expect_success "submodule usage: status $opt" '
+ 		git submodule $opt &&
+-- 
+2.36.1.1239.gfba91521d90
+
