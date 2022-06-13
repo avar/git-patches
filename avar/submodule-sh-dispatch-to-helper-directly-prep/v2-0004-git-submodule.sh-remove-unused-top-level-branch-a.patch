@@ -1,0 +1,81 @@
+From fd328329b68046c8c17d4b90dcb0d52bc268eceb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-04.12-fd328329b68-20220613T220132Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.12-00000000000-20220613T220132Z-avarab@gmail.com>
+References: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
+	<cover-v2-00.12-00000000000-20220613T220132Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 Jun 2022 17:11:17 +0200
+Subject: [PATCH v2 04/12] git-submodule.sh: remove unused top-level "--branch"
+ argument
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In 5c08dbbdf1a (git-submodule: fix subcommand parser, 2008-01-15) the
+"--branch" option was supported as an option to "git submodule"
+itself, i.e. "git submodule --branch" as a side-effect of its
+implementation.
+
+Then in b57e8119e6e (submodule: teach set-branch subcommand,
+2019-02-08) when the "set-branch" subcommand was added the assertion
+that we shouldn't have "--branch" anywhere except as an argument to
+"add" and "set-branch" was copy/pasted from the adjacent check for
+"--cache" added (or rather modified) in 496eeeb19b9 (git-submodule.sh:
+avoid "test <cond> -a/-o <cond>", 2014-06-10).
+
+But there's been a logic error in that check, which at a glance looked
+like it should be supporting:
+
+    git submodule --branch <branch> (add | set-branch) [<options>]
+
+But due to "||" in the condition (as opposed to "&&" for "--cache") if
+we have "--branch" here already we'll emit usage, even for "add" and
+"set-branch".
+
+So in addition to never having documented this form it hasn't worked
+since b57e8119e6e was released with v2.22.0 it's safe to remove this
+code. I.e. we don't want to support the form noted above, but only:
+
+    git submodule (add | set-branch) --branch <branch> [<options>]
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-submodule.sh | 14 --------------
+ 1 file changed, 14 deletions(-)
+
+diff --git a/git-submodule.sh b/git-submodule.sh
+index b99a00d9f84..20fc1b620fa 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -574,14 +574,6 @@ do
+ 	-q|--quiet)
+ 		GIT_QUIET=1
+ 		;;
+-	-b|--branch)
+-		case "$2" in
+-		'')
+-			usage
+-			;;
+-		esac
+-		branch="$2"; shift
+-		;;
+ 	--cached)
+ 		cached=1
+ 		;;
+@@ -609,12 +601,6 @@ then
+     fi
+ fi
+ 
+-# "-b branch" is accepted only by "add" and "set-branch"
+-if test -n "$branch" && (test "$command" != add || test "$command" != set-branch)
+-then
+-	usage
+-fi
+-
+ # "--cached" is accepted only by "status" and "summary"
+ if test -n "$cached" && test "$command" != status && test "$command" != summary
+ then
+-- 
+2.36.1.1239.gfba91521d90
+

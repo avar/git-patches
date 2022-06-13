@@ -1,0 +1,72 @@
+From ef3265a588e3200c3320d887c727c93e7f6fde13 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-05.12-ef3265a588e-20220613T220132Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.12-00000000000-20220613T220132Z-avarab@gmail.com>
+References: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
+	<cover-v2-00.12-00000000000-20220613T220132Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 Jun 2022 14:08:19 +0200
+Subject: [PATCH v2 05/12] submodule--helper: have --require-init imply --init
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adjust code added in 0060fd1511b (clone --recurse-submodules: prevent
+name squatting on Windows, 2019-09-12) to have the internal
+--require-init option imply --init, rather than having
+"git-submodule.sh" add it implicitly.
+
+This change doesn't make any difference now, but eliminates another
+special-case where "git submodule--helper update"'s behavior was
+different from "git submodule update". This will make it easier to
+eventually replace the cmd_update() function in git-submodule.sh.
+
+We'll still need to keep the distinction between "--init" and
+"--require-init" in git-submodule.sh. Once cmd_update() gets
+re-implemented in C we'll be able to variables and other code related
+to that, but not yet.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 5 ++++-
+ git-submodule.sh            | 1 -
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 9d3642290f3..7bcb76cea6a 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2618,7 +2618,7 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 		OPT_BOOL(0, "progress", &opt.progress,
+ 			    N_("force cloning progress")),
+ 		OPT_BOOL(0, "require-init", &opt.require_init,
+-			   N_("disallow cloning into non-empty directory")),
++			   N_("disallow cloning into non-empty directory, implies --init")),
+ 		OPT_BOOL(0, "single-branch", &opt.single_branch,
+ 			 N_("clone only one branch, HEAD or --branch")),
+ 		OPT_PARSE_LIST_OBJECTS_FILTER(&filter_options),
+@@ -2642,6 +2642,9 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 	argc = parse_options(argc, argv, prefix, module_update_options,
+ 			     git_submodule_helper_usage, 0);
+ 
++	if (opt.require_init)
++		opt.init = 1;
++
+ 	if (filter_options.choice && !opt.init) {
+ 		usage_with_options(git_submodule_helper_usage,
+ 				   module_update_options);
+diff --git a/git-submodule.sh b/git-submodule.sh
+index 20fc1b620fa..5b9683bf766 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -251,7 +251,6 @@ cmd_update()
+ 			init=1
+ 			;;
+ 		--require-init)
+-			init=1
+ 			require_init=1
+ 			;;
+ 		--remote)
+-- 
+2.36.1.1239.gfba91521d90
+
