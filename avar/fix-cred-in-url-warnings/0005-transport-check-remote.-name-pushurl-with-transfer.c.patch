@@ -1,0 +1,123 @@
+From 6cafd6368a2a0906b2610372b601ad65b225c966 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-5.5-6cafd6368a2-20220615T104503Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.5-00000000000-20220615T104503Z-avarab@gmail.com>
+References: <RFC-cover-0.5-00000000000-20220615T104503Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 14 Jun 2022 20:41:46 +0200
+Subject: [RFC PATCH 5/5] transport: check remote.<name>pushurl with
+ transfer.credentialsInUrl
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Expand the checks added in 6dcbdc0d661 (remote: create
+fetch.credentialsInUrl config, 2022-06-06) to also check the
+remote.<name>.pushurl setting. Before this it would only check the
+remote.<name>.url setting, and would thus miss potential passwords in
+the config.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ remote.c              | 63 ++++++++++++++++++++++++-------------------
+ t/t5516-fetch-push.sh |  3 ++-
+ 2 files changed, 37 insertions(+), 29 deletions(-)
+
+diff --git a/remote.c b/remote.c
+index 61add35be2f..d4dcc02a827 100644
+--- a/remote.c
++++ b/remote.c
+@@ -642,6 +642,37 @@ enum credentials_in_url get_credentials_in_url(void)
+ 	return cred_in_url;
+ }
+ 
++static void validate_one_remote_url(enum credentials_in_url cfg,
++				    const char *url, struct strbuf *redacted)
++{
++	struct url_info url_info = { 0 };
++
++	if (!url_normalize(url, &url_info) || !url_info.passwd_off)
++		goto cleanup;
++
++	strbuf_reset(redacted);
++	strbuf_add(redacted, url_info.url, url_info.passwd_off);
++	strbuf_addstr(redacted, "<redacted>");
++	strbuf_addstr(redacted, url_info.url + url_info.passwd_off +
++		      url_info.passwd_len);
++
++	switch (cfg) {
++	case CRED_IN_URL_WARN:
++		warning(_("URL '%s' uses plaintext credentials"), redacted->buf);
++		break;
++	case CRED_IN_URL_DIE:
++		die(_("URL '%s' uses plaintext credentials"), redacted->buf);
++		break;
++	case CRED_IN_URL_ALLOW:
++	case CRED_IN_URL_UNKNOWN:
++		BUG("unreachable");
++		break;
++	}
++cleanup:
++	free(url_info.url);
++}
++
++
+ static void validate_remote_url(struct remote *remote)
+ {
+ 	int i;
+@@ -653,34 +684,10 @@ static void validate_remote_url(struct remote *remote)
+ 	if (cfg == CRED_IN_URL_ALLOW)
+ 		goto done;
+ 
+-	for (i = 0; i < remote->url_nr; i++) {
+-		struct url_info url_info = { 0 };
+-
+-		if (!url_normalize(remote->url[i], &url_info) ||
+-		    !url_info.passwd_off)
+-			goto loop_cleanup;
+-
+-		strbuf_reset(&redacted);
+-		strbuf_add(&redacted, url_info.url, url_info.passwd_off);
+-		strbuf_addstr(&redacted, "<redacted>");
+-		strbuf_addstr(&redacted,
+-			      url_info.url + url_info.passwd_off + url_info.passwd_len);
+-
+-		switch (cfg) {
+-		case CRED_IN_URL_WARN:
+-			warning(_("URL '%s' uses plaintext credentials"), redacted.buf);
+-			break;
+-		case CRED_IN_URL_DIE:
+-			die(_("URL '%s' uses plaintext credentials"), redacted.buf);
+-			break;
+-		case CRED_IN_URL_ALLOW:
+-		case CRED_IN_URL_UNKNOWN:
+-			BUG("unreachable");
+-			break;
+-		}
+-	loop_cleanup:
+-		free(url_info.url);
+-	}
++	for (i = 0; i < remote->url_nr; i++)
++		validate_one_remote_url(cfg, remote->url[i], &redacted);
++	for (i = 0; i < remote->pushurl_nr; i++)
++		validate_one_remote_url(cfg, remote->pushurl[i], &redacted);
+ 
+ 	strbuf_release(&redacted);
+ done:
+diff --git a/t/t5516-fetch-push.sh b/t/t5516-fetch-push.sh
+index c7a21d7cfb5..cdecc1c049c 100755
+--- a/t/t5516-fetch-push.sh
++++ b/t/t5516-fetch-push.sh
+@@ -1905,7 +1905,8 @@ test_expect_success CURL 'push warns or fails when using username:password in co
+ 	git -C repo remote set-url pwd-url https://localhost &&
+ 
+ 	test_must_fail git -C repo -c transfer.credentialsInUrl=warn push pwd-url HEAD:refs/heads/branch 2>err &&
+-	! grep "warning: $message" err
++	grep "warning: $message" err >warnings &&
++	test_line_count = 1 warnings
+ '
+ 
+ test_done
+-- 
+2.36.1.1239.gfba91521d90
+

@@ -1,0 +1,86 @@
+From 38af32c5b9675d981acc246a7be24702246a6fa2 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-2.5-38af32c5b96-20220615T104503Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.5-00000000000-20220615T104503Z-avarab@gmail.com>
+References: <RFC-cover-0.5-00000000000-20220615T104503Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 14 Jun 2022 20:32:44 +0200
+Subject: [RFC PATCH 2/5] fetch+push tests: add missing coverage for
+ 6dcbdc0d661
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests that were missing from 6dcbdc0d661 (remote: create
+fetch.credentialsInUrl config, 2022-06-06), we want to test how we
+handle cases where the config comes from a file, and that we handle
+"pushURL" correctly.
+
+Currently the "pushURL" case isn't handled at all, i.e. URLs aren't
+warned about in "remote.*pushurl" , only for "remote.*.url".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5516-fetch-push.sh | 41 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/t/t5516-fetch-push.sh b/t/t5516-fetch-push.sh
+index 4b32ae39a39..51d695e475a 100755
+--- a/t/t5516-fetch-push.sh
++++ b/t/t5516-fetch-push.sh
+@@ -1852,6 +1852,26 @@ test_expect_success 'fetch warns or fails when using username:password' '
+ 	test_line_count = 1 warnings
+ '
+ 
++test_expect_success CURL 'fetch warns or fails when using username:password in config' '
++	message="URL '\''https://username:<redacted>@localhost/'\'' uses plaintext credentials" &&
++
++	test_when_finished "rm -rf repo" &&
++	git init repo &&
++	test_commit -C repo A &&
++	git -C repo remote add pwd-url https://username:password@localhost &&
++	test_must_fail git -C repo -c transfer.credentialsInUrl=allow fetch pwd-url 2>err &&
++	! grep "$message" err &&
++
++	test_must_fail git -C repo -c transfer.credentialsInUrl=warn fetch pwd-url 2>err &&
++	grep "warning: $message" err >warnings &&
++	test_line_count = 3 warnings &&
++
++	git -C repo remote set-url --push pwd-url https://username:password@localhost &&
++	git -C repo remote set-url pwd-url https://localhost &&
++
++	test_must_fail git -C repo -c transfer.credentialsInUrl=warn fetch pwd-url 2>err &&
++	! grep "fatal: $message" err
++'
+ 
+ test_expect_success 'push warns or fails when using username:password' '
+ 	message="URL '\''https://username:<redacted>@localhost/'\'' uses plaintext credentials" &&
+@@ -1867,4 +1887,25 @@ test_expect_success 'push warns or fails when using username:password' '
+ 	test_line_count = 1 warnings
+ '
+ 
++test_expect_success CURL 'push warns or fails when using username:password in config' '
++	message="URL '\''https://username:<redacted>@localhost/'\'' uses plaintext credentials" &&
++
++	test_when_finished "rm -rf repo" &&
++	git init repo &&
++	test_commit -C repo A &&
++	git -C repo remote add pwd-url https://username:password@localhost &&
++	test_must_fail git -C repo -c transfer.credentialsInUrl=allow push pwd-url HEAD:refs/heads/branch 2>err &&
++	! grep "$message" err &&
++
++	test_must_fail git -C repo -c transfer.credentialsInUrl=warn push pwd-url HEAD:refs/heads/branch 2>err &&
++	grep "warning: $message" err >warnings &&
++	test_line_count = 2 warnings &&
++
++	git -C repo remote set-url --push pwd-url https://username:password@localhost &&
++	git -C repo remote set-url pwd-url https://localhost &&
++
++	test_must_fail git -C repo -c transfer.credentialsInUrl=warn push pwd-url HEAD:refs/heads/branch 2>err &&
++	! grep "warning: $message" err
++'
++
+ test_done
+-- 
+2.36.1.1239.gfba91521d90
+
