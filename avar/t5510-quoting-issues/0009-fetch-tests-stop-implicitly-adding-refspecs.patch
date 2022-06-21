@@ -1,0 +1,111 @@
+From 99832815abd16bf46559d82134ade39111ef17ec Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.10-99832815abd-20220621T222854Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20220621T222854Z-avarab@gmail.com>
+References: <xmqqa6a5g0m3.fsf@gitster.g>
+	<cover-00.10-00000000000-20220621T222854Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 21 Jun 2022 14:50:15 +0200
+Subject: [PATCH 09/10] fetch tests: stop implicitly adding refspecs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the implicit behavior added in 97716d217c1 (fetch: add a
+--prune-tags option and fetch.pruneTags config, 2018-02-09) of
+providing the heads/tags refspecs and the "$remote_url" for tests that
+needed the "--mode link".
+
+In that case we need the URI on the command-line, and would then add
+these refspecs.
+
+Note that this was added in other cases, but these are the only ones
+where it mattered, i.e. we redundantly modified the command-line
+before.
+
+Yes, the "\"$remote_url\"" quoting here is buggy, but so is the
+pre-image in the same way, but removing this edge case will make it
+easier to eventually deal with that. So let's make that variable
+non-local for now and pass it in.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5510-fetch.sh | 42 +++++++++++++++++++++++++-----------------
+ 1 file changed, 25 insertions(+), 17 deletions(-)
+
+diff --git a/t/t5510-fetch.sh b/t/t5510-fetch.sh
+index 54c7c86e5ca..73964bebced 100755
+--- a/t/t5510-fetch.sh
++++ b/t/t5510-fetch.sh
+@@ -848,7 +848,7 @@ test_configured_prune_type () {
+ 	shift 6 &&
+ 	local cmdline="$@" &&
+ 
+-	local remote_url="file://$TRASH_DIRECTORY/." &&
++	remote_url="file://$TRASH_DIRECTORY/." && # NOT local yet!
+ 	local cmdline_setup="\"$remote_url\" \"$refspec_heads\""
+ 
+ 	if test "$mode" = 'link'
+@@ -862,15 +862,6 @@ test_configured_prune_type () {
+ 			new_cmdline=$(printf "%s" "$cmdline" | perl -pe 's[origin(?!/)]["'"$remote_url"'"]g')
+ 		fi &&
+ 
+-		if test "$fetch_prune_tags" = 'true' ||
+-		   test "$remote_origin_prune_tags" = 'true'
+-		then
+-			if ! printf '%s' "$cmdline\n" | grep -q refs/remotes/origin/
+-			then
+-				new_cmdline="$new_cmdline refs/tags/*:refs/tags/*"
+-			fi
+-		fi &&
+-
+ 		cmdline="$new_cmdline"
+ 	fi &&
+ 
+@@ -990,19 +981,36 @@ test_configured_prune true  true  unset unset pruned pruned \
+ # --prune-tags on its own does nothing, needs --prune as well, same
+ # for fetch.pruneTags without fetch.prune
+ test_configured_prune unset unset unset unset kept kept     --prune-tags
+-test_configured_prune unset unset true unset  kept kept
+-test_configured_prune unset unset unset true  kept kept
++test_configured_prune_type --mode name unset unset true unset  kept kept
++test_configured_prune_type --mode link unset unset true unset  kept kept \
++	origin "refs/tags/*:refs/tags/*"
++test_configured_prune_type --mode name unset unset unset true  kept kept
++test_configured_prune_type --mode link unset unset unset true  kept kept \
++	origin "refs/tags/*:refs/tags/*"
+ 
+ # These will prune the tags
+ test_configured_prune unset unset unset unset pruned pruned --prune --prune-tags
+-test_configured_prune true  unset true  unset pruned pruned
+-test_configured_prune unset true  unset true  pruned pruned
++
++test_configured_prune_type --mode name true  unset true  unset pruned pruned
++test_configured_prune_type --mode link true  unset true  unset pruned pruned \
++	"\"$remote_url\"" \
++	"refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
++test_configured_prune_type --mode name unset true  unset true  pruned pruned
++test_configured_prune_type --mode link unset true  unset true  pruned pruned \
++	"\"$remote_url\"" \
++	"refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
+ 
+ # remote.<name>.pruneTags overrides fetch.pruneTags, just like
+ # remote.<name>.prune overrides fetch.prune if set.
+-test_configured_prune true  unset true unset pruned pruned
+-test_configured_prune false true  false true  pruned pruned
+-test_configured_prune true  false true  false kept   kept
++test_configured_prune_type --mode name true  unset true unset pruned pruned
++test_configured_prune_type --mode link true  unset true unset pruned pruned \
++	"\"$remote_url\"" \
++	"refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
++test_configured_prune_type --mode name false true  false true pruned pruned
++test_configured_prune_type --mode link false true  false true pruned pruned \
++	"\"$remote_url\"" \
++	"refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
++test_configured_prune true  false true false kept kept
+ 
+ # When --prune-tags is supplied it's ignored if an explicit refspec is
+ # given, same for the configuration options.
+-- 
+2.36.1.1239.gfba91521d90
+

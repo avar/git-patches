@@ -1,0 +1,187 @@
+From 54129b94a772a8096bf62a3e8247d002920846f8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-10.10-54129b94a77-20220621T222854Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20220621T222854Z-avarab@gmail.com>
+References: <xmqqa6a5g0m3.fsf@gitster.g>
+	<cover-00.10-00000000000-20220621T222854Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 21 Jun 2022 10:47:39 +0200
+Subject: [PATCH 10/10] fetch tests: fix needless and buggy re-quoting
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the test_configured_prune_type() function to take full
+advantage of its arguments being passed in as a list, rather than
+needing hacks to work around its quoting issues.
+
+When the test_configured_prune() function was implemented in
+737c5a9cde7 (fetch: make --prune configurable, 2013-07-13) it passed
+in its arguments to "git fetch" as one argument (although at the time
+only one argument was passed)..
+
+Then in preparation for passing more arguments the first quoting hack
+was added in 82f34e03e91 (fetch tests: double quote a variable for
+interpolation, 2018-02-09), with e1790f9245f (fetch tests: fetch <url>
+<spec> as well as fetch [<remote>], 2018-02-09) following after
+that. This was all to implement the "git fetch --prune-tags" feature
+in 97716d217c1 (fetch: add a --prune-tags option and fetch.pruneTags
+config, 2018-02-09).
+
+At the time the edge cases introduced by this quoting were a known
+issue, but the alternative was a larger refactoring of this test
+file. In preceding commits we've done that refactoring, so let's
+finally take advantage of it. As reported in [1] the existing
+workaround(s) weren't enough.
+
+We can now drop the "perl" (or "sed" or whatever, see [2]), this will
+also handle other cases, such as those mentioned in [3].
+
+1. https://lore.kernel.org/git/00a401d884d0$32885890$979909b0$@nexbridge.com/
+2. https://lore.kernel.org/git/495bd957-43dc-f252-657d-2969bb7ad5f3@github.com/
+3. https://lore.kernel.org/git/YrFwcL2dRS%2Fv7xAw@coredump.intra.peff.net/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5510-fetch.sh | 79 +++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 62 insertions(+), 17 deletions(-)
+
+diff --git a/t/t5510-fetch.sh b/t/t5510-fetch.sh
+index 73964bebced..730968d4cd7 100755
+--- a/t/t5510-fetch.sh
++++ b/t/t5510-fetch.sh
+@@ -837,6 +837,7 @@ test_configured_prune_type () {
+ 		shift
+ 	done &&
+ 
++	local refspec_tags='refs/tags/*:refs/tags/*' &&
+ 	local refspec_heads='+refs/heads/*:refs/remotes/origin/*' &&
+ 
+ 	local fetch_prune="$1" &&
+@@ -846,23 +847,59 @@ test_configured_prune_type () {
+ 	local expected_branch="$5" &&
+ 	local expected_tag="$6" &&
+ 	shift 6 &&
+-	local cmdline="$@" &&
++	local cmdline="" &&
++	local arg_fetch_prune="" &&
++	local arg_fetch_no_prune="" &&
++	local arg_fetch_prune_tags="" &&
++	local arg_fetch_origin="" &&
++	local arg_fetch_url="" &&
++	local arg_fetch_refspec_tags="" &&
++	local arg_fetch_refspec_heads="" &&
++	while test $# != 0
++	do
++		cmdline="${cmdline:+$cmdline }$1" &&
++		case "$1" in
++		--prune)
++			arg_fetch_prune=t
++			;;
++		--no-prune)
++			arg_fetch_no_prune=t
++			;;
++		--prune-tags)
++			arg_fetch_prune_tags=t
++			;;
++		origin)
++			arg_fetch_origin=t
++			;;
++		REMOTE_URL)
++			arg_fetch_url=t
++			;;
++		$refspec_tags)
++			arg_fetch_refspec_tags=t
++			;;
++		$refspec_heads)
++			arg_fetch_refspec_heads=t
++			;;
++		*)
++			BUG "unknown argument: '$1'"
++			;;
++		esac &&
++		shift
++	done &&
+ 
+-	remote_url="file://$TRASH_DIRECTORY/." && # NOT local yet!
+-	local cmdline_setup="\"$remote_url\" \"$refspec_heads\""
++	local remote_url="file://$TRASH_DIRECTORY/." &&
+ 
+ 	if test "$mode" = 'link'
+ 	then
+-		new_cmdline="" &&
+-
+ 		if test -z "$cmdline"
+ 		then
+-			new_cmdline=$cmdline_setup
+-		else
+-			new_cmdline=$(printf "%s" "$cmdline" | perl -pe 's[origin(?!/)]["'"$remote_url"'"]g')
+-		fi &&
+-
+-		cmdline="$new_cmdline"
++			arg_fetch_refspec_heads=t
++			arg_fetch_url=t
++		elif test -n "$arg_fetch_origin"
++		then
++			arg_fetch_origin=
++			arg_fetch_url=t
++		fi
+ 	fi &&
+ 
+ 	test_expect_success "$mode prune fetch.prune=$fetch_prune remote.origin.prune=$remote_origin_prune fetch.pruneTags=$fetch_prune_tags remote.origin.pruneTags=$remote_origin_prune_tags${cmdline:+ $cmdline}; branch:$expected_branch tag:$expected_tag" '
+@@ -871,7 +908,7 @@ test_configured_prune_type () {
+ 		git tag -f newtag &&
+ 		(
+ 			cd one &&
+-			git fetch '"$cmdline_setup"' &&
++			git fetch "$remote_url" "$refspec_heads" &&
+ 			git rev-parse --verify refs/remotes/origin/newbranch &&
+ 			git rev-parse --verify refs/tags/newtag
+ 		) &&
+@@ -893,7 +930,15 @@ test_configured_prune_type () {
+ 			then
+ 				git_fetch_c=""
+ 			fi &&
+-			git$git_fetch_c fetch '"$cmdline"' &&
++			git$git_fetch_c fetch \
++				${arg_fetch_prune:+--prune} \
++				${arg_fetch_no_prune:+--no-prune} \
++				${arg_fetch_prune_tags:+--prune-tags} \
++				${arg_fetch_origin:+origin} \
++				${arg_fetch_url:+"$remote_url"} \
++				${arg_fetch_refspec_tags:+"refs/tags/*:refs/tags/*"} \
++				${arg_fetch_refspec_heads:+"+refs/heads/*:refs/remotes/origin/*"} &&
++
+ 			case "$expected_branch" in
+ 			pruned)
+ 				test_must_fail git rev-parse --verify refs/remotes/origin/newbranch
+@@ -993,22 +1038,22 @@ test_configured_prune unset unset unset unset pruned pruned --prune --prune-tags
+ 
+ test_configured_prune_type --mode name true  unset true  unset pruned pruned
+ test_configured_prune_type --mode link true  unset true  unset pruned pruned \
+-	"\"$remote_url\"" \
++	REMOTE_URL \
+ 	"refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
+ test_configured_prune_type --mode name unset true  unset true  pruned pruned
+ test_configured_prune_type --mode link unset true  unset true  pruned pruned \
+-	"\"$remote_url\"" \
++	REMOTE_URL \
+ 	"refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
+ 
+ # remote.<name>.pruneTags overrides fetch.pruneTags, just like
+ # remote.<name>.prune overrides fetch.prune if set.
+ test_configured_prune_type --mode name true  unset true unset pruned pruned
+ test_configured_prune_type --mode link true  unset true unset pruned pruned \
+-	"\"$remote_url\"" \
++	REMOTE_URL \
+ 	"refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
+ test_configured_prune_type --mode name false true  false true pruned pruned
+ test_configured_prune_type --mode link false true  false true pruned pruned \
+-	"\"$remote_url\"" \
++	REMOTE_URL \
+ 	"refs/tags/*:refs/tags/*" "+refs/heads/*:refs/remotes/origin/*"
+ test_configured_prune true  false true false kept kept
+ 
+-- 
+2.36.1.1239.gfba91521d90
+

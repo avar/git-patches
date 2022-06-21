@@ -1,0 +1,113 @@
+From a3fb3174bde7190cf62335649ff683b364c46741 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-05.10-a3fb3174bde-20220621T222854Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20220621T222854Z-avarab@gmail.com>
+References: <xmqqa6a5g0m3.fsf@gitster.g>
+	<cover-00.10-00000000000-20220621T222854Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 21 Jun 2022 11:15:56 +0200
+Subject: [PATCH 05/10] fetch tests: pass "mode" parameter first, pave way for
+ "$@"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "$mode" parameter to be passed first, and setup a
+command-line parser we'll be able to use for getting rid of many of
+the boilerplate parameters.
+
+This will allow us to unquote the command-line argument, and process
+fetch arguments as a list of "$@". For now we need to do more work to
+unpack these, but in a subsequent commit we'll be able to make the
+shell quote handling here much simpler.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5510-fetch.sh | 43 +++++++++++++++++++++++++++++++++----------
+ 1 file changed, 33 insertions(+), 10 deletions(-)
+
+diff --git a/t/t5510-fetch.sh b/t/t5510-fetch.sh
+index 5d118a6a806..477b6dd4953 100755
+--- a/t/t5510-fetch.sh
++++ b/t/t5510-fetch.sh
+@@ -822,14 +822,29 @@ set_config_tristate () {
+ }
+ 
+ test_configured_prune_type () {
++	mode= &&
++	while test $# != 0
++	do
++		case "$1" in
++		--mode)
++			mode="$2" &&
++			shift
++			;;
++		*)
++			break
++			;;
++		esac &&
++		shift
++	done &&
++
+ 	local fetch_prune="$1" &&
+ 	local remote_origin_prune="$2" &&
+ 	local fetch_prune_tags="$3" &&
+ 	local remote_origin_prune_tags="$4" &&
+ 	local expected_branch="$5" &&
+ 	local expected_tag="$6" &&
+-	local cmdline="$7" &&
+-	local mode="$8" &&
++	shift 6 &&
++	local cmdline="$@" &&
+ 
+ 	if test -z "$cmdline_setup"
+ 	then
+@@ -915,8 +930,8 @@ test_configured_prune_type () {
+ }
+ 
+ test_configured_prune () {
+-	test_configured_prune_type "$@" "name" &&
+-	test_configured_prune_type "$@" "link"
++	test_configured_prune_type --mode name "$@" &&
++	test_configured_prune_type --mode link "$@"
+ }
+ 
+ # $1 config: fetch.prune
+@@ -1007,11 +1022,19 @@ test_configured_prune unset unset unset true pruned  kept \
+ # +refs/heads/*:refs/remotes/origin/* refspec and supplying it on the
+ # command-line negates --prune-tags, the branches will not be pruned.
+ test_configured_prune_type_branch () {
+-	test_configured_prune_type "$1" "$2" "$3" "$4" pruned "$6" "$7" "name"
+-	test_configured_prune_type "$1" "$2" "$3" "$4" kept   "$6" "$7" "link"
++	local cfg_fp="$1" &&
++	local cfg_rnp="$2" &&
++	local cfg_fpt="$3" &&
++	local cfg_rnpt="$4" &&
++	local arg_branch="$5" &&
++	local arg_tag="$6" &&
++	shift 6 &&
++
++	test_configured_prune_type --mode name "$cfg_fp" "$cfg_rnp" "$cfg_fpt" "$cfg_rnpt" pruned "$arg_tag" "$@"
++	test_configured_prune_type --mode link "$cfg_fp" "$cfg_rnp" "$cfg_fpt" "$cfg_rnpt" kept   "$arg_tag" "$@"
+ }
+-test_configured_prune_type unset unset unset unset kept   kept   "origin --prune-tags" "name"
+-test_configured_prune_type unset unset unset unset kept   kept   "origin --prune-tags" "link"
++test_configured_prune_type --mode name unset unset unset unset kept   kept   "origin --prune-tags"
++test_configured_prune_type --mode link unset unset unset unset kept   kept   "origin --prune-tags"
+ test_configured_prune_type_branch unset unset unset unset - pruned "origin --prune --prune-tags"
+ test_configured_prune_type_branch unset unset unset unset - pruned "--prune --prune-tags origin"
+ test_configured_prune_type_branch unset unset true  unset - pruned "--prune origin"
+@@ -1029,8 +1052,8 @@ test_expect_success 'remove remote.origin.fetch "one"' '
+ 		git config --unset-all remote.origin.fetch
+ 	)
+ '
+-test_configured_prune_type unset unset unset unset kept pruned "origin --prune --prune-tags" "name"
+-test_configured_prune_type unset unset unset unset kept pruned "origin --prune --prune-tags" "link"
++test_configured_prune_type --mode name unset unset unset unset kept pruned "origin --prune --prune-tags"
++test_configured_prune_type --mode link unset unset unset unset kept pruned "origin --prune --prune-tags"
+ 
+ test_expect_success 'all boundary commits are excluded' '
+ 	test_commit base &&
+-- 
+2.36.1.1239.gfba91521d90
+
