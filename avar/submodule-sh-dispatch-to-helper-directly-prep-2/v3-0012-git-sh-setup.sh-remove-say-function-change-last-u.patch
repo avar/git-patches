@@ -1,0 +1,126 @@
+From ecdd8c6ed28bd15ba357021aaf3aeb1b0a106803 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-12.12-ecdd8c6ed28-20220622T142012Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.12-00000000000-20220622T142012Z-avarab@gmail.com>
+References: <cover-v2-00.12-00000000000-20220613T220150Z-avarab@gmail.com>
+	<cover-v3-00.12-00000000000-20220622T142012Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Jun 2022 13:32:36 +0200
+Subject: [PATCH v3 12/12] git-sh-setup.sh: remove "say" function, change last
+ users
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the "say" function, with various rewrites of the remaining
+git-*.sh code to C and the preceding change to have git-submodule.sh
+stop using the GIT_QUIET variable there were only four uses in
+git-subtree.sh. Let's have it use an "arg_quiet" variable instead, and
+move the "say" function over to it.
+
+The only other use was a trivial message in git-instaweb.sh, since it
+has never supported the --quiet option (or similar) that code added in
+0b624b4ceee (instaweb: restart server if already running, 2009-11-22)
+can simply use "echo" instead.
+
+The remaining in-tree hits from "say" are all for the sibling function
+defined in t/test-lib.sh. It's safe to remove this function since it
+has never been documented in Documentation/git-sh-setup.txt.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ contrib/subtree/git-subtree.sh | 15 ++++++++++++---
+ git-instaweb.sh                |  2 +-
+ git-sh-setup.sh                |  9 ---------
+ 3 files changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/contrib/subtree/git-subtree.sh b/contrib/subtree/git-subtree.sh
+index 1af1d9653e9..7562a395c24 100755
+--- a/contrib/subtree/git-subtree.sh
++++ b/contrib/subtree/git-subtree.sh
+@@ -50,6 +50,14 @@ m,message=    use the given message as the commit message for the merge commit
+ 
+ indent=0
+ 
++# Usage: say [MSG...]
++say () {
++	if test -z "$arg_quiet"
++	then
++		printf '%s\n' "$*"
++	fi
++}
++
+ # Usage: debug [MSG...]
+ debug () {
+ 	if test -n "$arg_debug"
+@@ -60,7 +68,7 @@ debug () {
+ 
+ # Usage: progress [MSG...]
+ progress () {
+-	if test -z "$GIT_QUIET"
++	if test -z "$arg_quiet"
+ 	then
+ 		if test -z "$arg_debug"
+ 		then
+@@ -146,6 +154,7 @@ main () {
+ 	eval "$set_args"
+ 
+ 	# Begin "real" flag parsing.
++	arg_quiet=
+ 	arg_debug=
+ 	arg_prefix=
+ 	arg_split_branch=
+@@ -161,7 +170,7 @@ main () {
+ 
+ 		case "$opt" in
+ 		-q)
+-			GIT_QUIET=1
++			arg_quiet=1
+ 			;;
+ 		-d)
+ 			arg_debug=1
+@@ -252,7 +261,7 @@ main () {
+ 	dir="$(dirname "$arg_prefix/.")"
+ 
+ 	debug "command: {$arg_command}"
+-	debug "quiet: {$GIT_QUIET}"
++	debug "quiet: {$arg_quiet}"
+ 	debug "dir: {$dir}"
+ 	debug "opts: {$*}"
+ 	debug
+diff --git a/git-instaweb.sh b/git-instaweb.sh
+index 4349566c891..c68f49454cd 100755
+--- a/git-instaweb.sh
++++ b/git-instaweb.sh
+@@ -102,7 +102,7 @@ resolve_full_httpd () {
+ 
+ start_httpd () {
+ 	if test -f "$fqgitdir/pid"; then
+-		say "Instance already running. Restarting..."
++		echo "Instance already running. Restarting..."
+ 		stop_httpd
+ 	fi
+ 
+diff --git a/git-sh-setup.sh b/git-sh-setup.sh
+index ecb60d9e3cb..ce273fe0e48 100644
+--- a/git-sh-setup.sh
++++ b/git-sh-setup.sh
+@@ -57,15 +57,6 @@ die_with_status () {
+ 	exit "$status"
+ }
+ 
+-GIT_QUIET=
+-
+-say () {
+-	if test -z "$GIT_QUIET"
+-	then
+-		printf '%s\n' "$*"
+-	fi
+-}
+-
+ if test -n "$OPTIONS_SPEC"; then
+ 	usage() {
+ 		"$0" -h
+-- 
+2.36.1.1239.gfba91521d90
+
