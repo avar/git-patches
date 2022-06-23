@@ -1,0 +1,100 @@
+From df87e515efde698b25ec42caae05fe4a0ed05511 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-df87e515efd-20220623T154928Z-avarab@gmail.com>
+In-Reply-To: <cover-0.1-00000000000-20220623T154928Z-avarab@gmail.com>
+References: <cover-0.1-00000000000-20220623T154928Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 22 Jun 2022 15:39:58 +0200
+Subject: [PATCH 1/1] trace2: don't include "fsync" events in all trace2 logs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix the overly verbose trace2 logging added in 9a4987677d3 (trace2:
+add stats for fsync operations, 2022-03-30) (first released with
+v2.36.0).
+
+Since that change every single "git" command invocation has included
+these "data" events, even though we'll only make use of these with
+core.fsyncMethod=batch, and even then only have non-zero values if
+we're writing object data to disk. See c0f4752ed2f (core.fsyncmethod:
+batched disk flushes for loose-objects, 2022-04-04) for that feature.
+
+The result was that e.g. "git version" would previously emit a total
+of 6 trace2 events with the GIT_TRACE2_EVENT target (version, start,
+cmd_ancestry, cmd_name, exit, atexit), but afterwards would emit
+8. We'd emit 2 "data" events before the "exit" event.
+
+The reason we didn't catch this was that the trace2 unit tests added
+in a15860dca3f (trace2: t/helper/test-trace2, t0210.sh, t0211.sh,
+t0212.sh, 2019-02-22) would omit any "data" events that weren't the
+ones it cared about. Before this change to the C code 6/7 of our
+"t/t0212-trace2-event.sh" tests would fail if this change was applied
+to "t/t0212/parse_events.perl".
+
+Let's make the trace2 testing more strict, and further append any new
+events types we don't know about in "t/t0212/parse_events.perl". Since
+we only invoke the "test-tool trace2" there's no guarantee that we'll
+catch other overly verbose events in the future, but we'll at least
+notice if we start emitting new events that are issues every time we
+log anything with trace2's JSON target.
+
+We exclude the "data_json" event type, we'd otherwise would fail on
+both "win test" and "win+VS test" CI due to the logging added in
+353d3d77f4f (trace2: collect Windows-specific process information,
+2019-02-22). It looks like that logging should really be using
+trace2_cmd_ancestry() instead, which was introduced later in
+2f732bf15e6 (tr2: log parent process name, 2021-07-21), but let's
+leave it for now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0212/parse_events.perl | 17 +++++++++++------
+ wrapper.c                 |  3 +++
+ 2 files changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/t/t0212/parse_events.perl b/t/t0212/parse_events.perl
+index b6408560c0c..389cf6f61c4 100644
+--- a/t/t0212/parse_events.perl
++++ b/t/t0212/parse_events.perl
+@@ -216,12 +216,17 @@
+ 
+     elsif ($event eq 'data') {
+ 	my $cat = $line->{'category'};
+-	if ($cat eq 'test_category') {
+-	    
+-	    my $key = $line->{'key'};
+-	    my $value = $line->{'value'};
+-	    $processes->{$sid}->{'data'}->{$cat}->{$key} = $value;
+-	}
++	my $key = $line->{'key'};
++	my $value = $line->{'value'};
++	$processes->{$sid}->{'data'}->{$cat}->{$key} = $value;
++    }
++
++    elsif ($event eq 'data_json') {
++	# Ignore due to compat/win32/trace2_win32_process_info.c
++    }
++
++    else {
++	push @{$processes->{$sid}->{$event}} => $line->{value};
+     }
+ 
+     # This trace2 target does not emit 'printf' events.
+diff --git a/wrapper.c b/wrapper.c
+index 1c3c970080b..eebd764131f 100644
+--- a/wrapper.c
++++ b/wrapper.c
+@@ -618,6 +618,9 @@ int git_fsync(int fd, enum fsync_action action)
+ 
+ void trace_git_fsync_stats(void)
+ {
++	if (!count_fsync_writeout_only && !count_fsync_hardware_flush)
++		return;
++
+ 	trace2_data_intmax("fsync", the_repository, "fsync/writeout-only", count_fsync_writeout_only);
+ 	trace2_data_intmax("fsync", the_repository, "fsync/hardware-flush", count_fsync_hardware_flush);
+ }
+-- 
+2.37.0.rc2.867.gbe8216e3e5c
+
