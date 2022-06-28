@@ -1,0 +1,137 @@
+From abb5cb499aab2dcff6f354a7db484b20a56d2378 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-10.12-abb5cb499aa-20220628T095914Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.12-00000000000-20220628T095914Z-avarab@gmail.com>
+References: <cover-v3-00.12-00000000000-20220622T142012Z-avarab@gmail.com>
+	<cover-v4-00.12-00000000000-20220628T095914Z-avarab@gmail.com>
+From: Glen Choo <chooglen@google.com>
+Date: Fri, 10 Jun 2022 00:26:18 +0000
+Subject: [PATCH v4 10/12] submodule--helper: eliminate internal "--update"
+ option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up on the preceding commit which taught "git submodule--helper
+update" to understand "--merge", "--checkout" and "--rebase" and use
+those options instead of "--update=(rebase|merge|checkout|none)" when
+the command invokes itself.
+
+Unlike the preceding change this isn't strictly necessary to
+eventually change "git-submodule.sh" so that it invokes "git
+submodule--helper update" directly, but let's remove this
+inconsistency in the command-line interface. We shouldn't need to
+carry special synonyms for existing options in "git submodule--helper"
+when that command can use the primary documented names instead.
+
+But, as seen in the post-image this makes the control flow within
+"builtin/submodule--helper.c" simpler, we can now write directly to
+the "update_default" member of "struct update_data" when parsing the
+options in "module_update()".
+
+Signed-off-by: Glen Choo <chooglen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 33 +++++++++++++--------------------
+ 1 file changed, 13 insertions(+), 20 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index e35ae0322ee..d60f6cd9de0 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1818,7 +1818,7 @@ static int module_clone(int argc, const char **argv, const char *prefix)
+ static void determine_submodule_update_strategy(struct repository *r,
+ 						int just_cloned,
+ 						const char *path,
+-						const char *update,
++						enum submodule_update_type update,
+ 						struct submodule_update_strategy *out)
+ {
+ 	const struct submodule *sub = submodule_from_path(r, null_oid(), path);
+@@ -1828,9 +1828,7 @@ static void determine_submodule_update_strategy(struct repository *r,
+ 	key = xstrfmt("submodule.%s.update", sub->name);
+ 
+ 	if (update) {
+-		if (parse_submodule_update_strategy(update, out) < 0)
+-			die(_("Invalid update mode '%s' for submodule path '%s'"),
+-				update, path);
++		out->type = update;
+ 	} else if (!repo_config_get_string_tmp(r, key, &val)) {
+ 		if (parse_submodule_update_strategy(val, out) < 0)
+ 			die(_("Invalid update mode '%s' configured for submodule path '%s'"),
+@@ -1882,7 +1880,7 @@ struct update_data {
+ 	const char *prefix;
+ 	const char *recursive_prefix;
+ 	const char *displaypath;
+-	const char *update_default;
++	enum submodule_update_type update_default;
+ 	struct object_id suboid;
+ 	struct string_list references;
+ 	struct submodule_update_strategy update_strategy;
+@@ -2424,6 +2422,8 @@ static const char *submodule_update_type_to_label(enum submodule_update_type typ
+ 
+ static void update_data_to_args(struct update_data *update_data, struct strvec *args)
+ {
++	enum submodule_update_type update_type = update_data->update_default;
++
+ 	strvec_pushl(args, "submodule--helper", "update", "--recursive", NULL);
+ 	strvec_pushf(args, "--jobs=%d", update_data->max_jobs);
+ 	if (update_data->recursive_prefix)
+@@ -2447,8 +2447,10 @@ static void update_data_to_args(struct update_data *update_data, struct strvec *
+ 		strvec_push(args, "--require-init");
+ 	if (update_data->depth)
+ 		strvec_pushf(args, "--depth=%d", update_data->depth);
+-	if (update_data->update_default)
+-		strvec_pushl(args, "--update", update_data->update_default, NULL);
++	if (update_type != SM_UPDATE_UNSPECIFIED)
++		strvec_pushf(args, "--%s",
++			     submodule_update_type_to_label(update_type));
++
+ 	if (update_data->references.nr) {
+ 		struct string_list_item *item;
+ 		for_each_string_list_item(item, &update_data->references)
+@@ -2600,7 +2602,6 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 	struct update_data opt = UPDATE_DATA_INIT;
+ 	struct list_objects_filter_options filter_options;
+ 	int ret;
+-	enum submodule_update_type update_type = SM_UPDATE_UNSPECIFIED;
+ 
+ 	struct option module_update_options[] = {
+ 		OPT__FORCE(&opt.force, N_("force checkout updates"), 0),
+@@ -2619,16 +2620,13 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 			   N_("path"),
+ 			   N_("path into the working tree, across nested "
+ 			      "submodule boundaries")),
+-		OPT_STRING(0, "update", &opt.update_default,
+-			   N_("string"),
+-			   N_("rebase, merge, checkout or none")),
+-		OPT_SET_INT(0, "checkout", &update_type,
++		OPT_SET_INT(0, "checkout", &opt.update_default,
+ 			N_("use the 'checkout' update strategy (default)"),
+ 			SM_UPDATE_CHECKOUT),
+-		OPT_SET_INT('m', "merge", &update_type,
++		OPT_SET_INT('m', "merge", &opt.update_default,
+ 			N_("use the 'merge' update strategy"),
+ 			SM_UPDATE_MERGE),
+-		OPT_SET_INT('r', "rebase", &update_type,
++		OPT_SET_INT('r', "rebase", &opt.update_default,
+ 			N_("use the 'rebase' update strategy"),
+ 			SM_UPDATE_REBASE),
+ 		OPT_STRING_LIST(0, "reference", &opt.references, N_("repo"),
+@@ -2680,13 +2678,8 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 
+ 	opt.filter_options = &filter_options;
+ 
+-	if (update_type != SM_UPDATE_UNSPECIFIED)
+-		opt.update_default = submodule_update_type_to_label(update_type);
+-
+ 	if (opt.update_default)
+-		if (parse_submodule_update_strategy(opt.update_default,
+-						    &opt.update_strategy) < 0)
+-			die(_("bad value for update parameter"));
++		opt.update_strategy.type = opt.update_default;
+ 
+ 	if (module_list_compute(argc, argv, prefix, &pathspec, &opt.list) < 0) {
+ 		list_objects_filter_release(&filter_options);
+-- 
+2.37.0.880.gf07d56b18ba
+

@@ -1,0 +1,146 @@
+From e8ddb95dcbfaed9688dc3a26d88c2ca542b5bc13 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-09.12-e8ddb95dcbf-20220628T095914Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.12-00000000000-20220628T095914Z-avarab@gmail.com>
+References: <cover-v3-00.12-00000000000-20220622T142012Z-avarab@gmail.com>
+	<cover-v4-00.12-00000000000-20220628T095914Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 9 Jun 2022 16:26:17 +0200
+Subject: [PATCH v4 09/12] submodule--helper: understand --checkout, --merge
+ and --rebase synonyms
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Understand --checkout, --merge and --rebase synonyms for
+--update={checkout,merge,rebase}, as well as the short options that
+'git submodule' itself understands.
+
+This removes a difference between the CLI API of "git submodule" and
+"git submodule--helper", making it easier to make the latter an alias
+for the former. See 48308681b07 (git submodule update: have a
+dedicated helper for cloning, 2016-02-29) for the initial addition of
+--update.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 30 ++++++++++++++++++++++++++++++
+ git-submodule.sh            | 14 +++++++++-----
+ 2 files changed, 39 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index d145d53addd..e35ae0322ee 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2405,6 +2405,23 @@ static void ensure_core_worktree(const char *path)
+ 	}
+ }
+ 
++static const char *submodule_update_type_to_label(enum submodule_update_type type)
++{
++	switch (type) {
++	case SM_UPDATE_CHECKOUT:
++		return "checkout";
++	case SM_UPDATE_MERGE:
++		return "merge";
++	case SM_UPDATE_REBASE:
++		return "rebase";
++	case SM_UPDATE_UNSPECIFIED:
++	case SM_UPDATE_NONE:
++	case SM_UPDATE_COMMAND:
++		break;
++	}
++	BUG("unreachable with type %d", type);
++}
++
+ static void update_data_to_args(struct update_data *update_data, struct strvec *args)
+ {
+ 	strvec_pushl(args, "submodule--helper", "update", "--recursive", NULL);
+@@ -2583,6 +2600,7 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 	struct update_data opt = UPDATE_DATA_INIT;
+ 	struct list_objects_filter_options filter_options;
+ 	int ret;
++	enum submodule_update_type update_type = SM_UPDATE_UNSPECIFIED;
+ 
+ 	struct option module_update_options[] = {
+ 		OPT__FORCE(&opt.force, N_("force checkout updates"), 0),
+@@ -2604,6 +2622,15 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 		OPT_STRING(0, "update", &opt.update_default,
+ 			   N_("string"),
+ 			   N_("rebase, merge, checkout or none")),
++		OPT_SET_INT(0, "checkout", &update_type,
++			N_("use the 'checkout' update strategy (default)"),
++			SM_UPDATE_CHECKOUT),
++		OPT_SET_INT('m', "merge", &update_type,
++			N_("use the 'merge' update strategy"),
++			SM_UPDATE_MERGE),
++		OPT_SET_INT('r', "rebase", &update_type,
++			N_("use the 'rebase' update strategy"),
++			SM_UPDATE_REBASE),
+ 		OPT_STRING_LIST(0, "reference", &opt.references, N_("repo"),
+ 			   N_("reference repository")),
+ 		OPT_BOOL(0, "dissociate", &opt.dissociate,
+@@ -2653,6 +2680,9 @@ static int module_update(int argc, const char **argv, const char *prefix)
+ 
+ 	opt.filter_options = &filter_options;
+ 
++	if (update_type != SM_UPDATE_UNSPECIFIED)
++		opt.update_default = submodule_update_type_to_label(update_type);
++
+ 	if (opt.update_default)
+ 		if (parse_submodule_update_strategy(opt.update_default,
+ 						    &opt.update_strategy) < 0)
+diff --git a/git-submodule.sh b/git-submodule.sh
+index 1c1dc320922..7fc7119fb21 100755
+--- a/git-submodule.sh
++++ b/git-submodule.sh
+@@ -40,7 +40,9 @@ require_init=
+ files=
+ remote=
+ nofetch=
+-update=
++rebase=
++merge=
++checkout=
+ custom_name=
+ depth=
+ progress=
+@@ -260,7 +262,7 @@ cmd_update()
+ 			force=$1
+ 			;;
+ 		-r|--rebase)
+-			update="rebase"
++			rebase=1
+ 			;;
+ 		--reference)
+ 			case "$2" in '') usage ;; esac
+@@ -274,13 +276,13 @@ cmd_update()
+ 			dissociate=1
+ 			;;
+ 		-m|--merge)
+-			update="merge"
++			merge=1
+ 			;;
+ 		--recursive)
+ 			recursive=1
+ 			;;
+ 		--checkout)
+-			update="checkout"
++			checkout=1
+ 			;;
+ 		--recommend-shallow)
+ 			recommend_shallow="--recommend-shallow"
+@@ -341,7 +343,9 @@ cmd_update()
+ 		${init:+--init} \
+ 		${nofetch:+--no-fetch} \
+ 		${wt_prefix:+--prefix "$wt_prefix"} \
+-		${update:+--update "$update"} \
++		${rebase:+--rebase} \
++		${merge:+--merge} \
++		${checkout:+--checkout} \
+ 		${reference:+"$reference"} \
+ 		${dissociate:+"--dissociate"} \
+ 		${depth:+"$depth"} \
+-- 
+2.37.0.880.gf07d56b18ba
+
