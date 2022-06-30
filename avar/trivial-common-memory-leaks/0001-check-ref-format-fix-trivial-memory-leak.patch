@@ -1,0 +1,73 @@
+From f35cf7c6ee9ff71d4135ff96f75a6757f8554c31 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.11-f35cf7c6ee9-20220630T175714Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20220630T175714Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220630T175714Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 29 Jun 2022 13:45:30 +0200
+Subject: [PATCH 01/11] check-ref-format: fix trivial memory leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in "git check-ref-format" that's been present in the
+code in one form or another since 38eedc634bc (git check-ref-format
+--print, 2009-10-12), the code got substantially refactored in
+cfbe22f03f9 (check-ref-format: handle subcommands in separate
+functions, 2010-08-05).
+
+As a result we can mark a test as passing with SANITIZE=leak using
+"TEST_PASSES_SANITIZE_LEAK=true".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/check-ref-format.c  | 11 ++++++++---
+ t/t1402-check-ref-format.sh |  1 +
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/check-ref-format.c b/builtin/check-ref-format.c
+index bc67d3f0a83..fd0e5f86832 100644
+--- a/builtin/check-ref-format.c
++++ b/builtin/check-ref-format.c
+@@ -57,6 +57,8 @@ int cmd_check_ref_format(int argc, const char **argv, const char *prefix)
+ 	int normalize = 0;
+ 	int flags = 0;
+ 	const char *refname;
++	char *to_free = NULL;
++	int ret = 1;
+ 
+ 	if (argc == 2 && !strcmp(argv[1], "-h"))
+ 		usage(builtin_check_ref_format_usage);
+@@ -81,11 +83,14 @@ int cmd_check_ref_format(int argc, const char **argv, const char *prefix)
+ 
+ 	refname = argv[i];
+ 	if (normalize)
+-		refname = collapse_slashes(refname);
++		refname = to_free = collapse_slashes(refname);
+ 	if (check_refname_format(refname, flags))
+-		return 1;
++		goto cleanup;
+ 	if (normalize)
+ 		printf("%s\n", refname);
+ 
+-	return 0;
++	ret = 0;
++cleanup:
++	free(to_free);
++	return ret;
+ }
+diff --git a/t/t1402-check-ref-format.sh b/t/t1402-check-ref-format.sh
+index cabc516ae9a..5ed9d7318e0 100755
+--- a/t/t1402-check-ref-format.sh
++++ b/t/t1402-check-ref-format.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='Test git check-ref-format'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ valid_ref() {
+-- 
+2.37.0.874.g7d3439f13c4
+

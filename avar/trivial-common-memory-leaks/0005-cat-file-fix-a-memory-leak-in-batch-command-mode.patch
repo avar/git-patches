@@ -1,0 +1,42 @@
+From 9ba267377ee801ecdb449c3b05e3fc782d9bf3e0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-05.11-9ba267377ee-20220630T175714Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20220630T175714Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220630T175714Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Jun 2022 10:38:34 +0200
+Subject: [PATCH 05/11] cat-file: fix a memory leak in --batch-command mode
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak introduced in 440c705ea63 (cat-file: add
+--batch-command mode, 2022-02-18). The free_cmds() function was only
+called on "queued_nr" if we had a "flush" command. As the "without
+flush for blob info" test added in the same commit shows we can't rely
+on that, so let's call free_cmds() again at the end.
+
+Since "nr" follows the usual pattern of being set to 0 if we've
+free()'d the memory already it's OK to call it twice, even in cases
+where we are doing a "flush".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/cat-file.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/builtin/cat-file.c b/builtin/cat-file.c
+index 50cf38999d1..ac0459f96be 100644
+--- a/builtin/cat-file.c
++++ b/builtin/cat-file.c
+@@ -655,6 +655,7 @@ static void batch_objects_command(struct batch_options *opt,
+ 		free_cmds(queued_cmd, &nr);
+ 	}
+ 
++	free_cmds(queued_cmd, &nr);
+ 	free(queued_cmd);
+ 	strbuf_release(&input);
+ }
+-- 
+2.37.0.874.g7d3439f13c4
+

@@ -1,0 +1,51 @@
+From a687d1281f82b2aad9f740d593ed07d54fa459f8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.11-a687d1281f8-20220630T175714Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20220630T175714Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220630T175714Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Jun 2022 10:52:48 +0200
+Subject: [PATCH 03/11] submodule.c: free() memory from xgetcwd()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in code added in bf0231c6614 (rev-parse: add
+--show-superproject-working-tree, 2017-03-08), we should never have
+made the result of xgetcwd() a "const char *", as we return a
+strbuf_detach()'d value. Let's fix that and free() it when we're done
+with it.
+
+We can't mark any tests passing passing with SANITIZE=leak using
+"TEST_PASSES_SANITIZE_LEAK=true" as a result of this change, but
+e.g. "t/t1500-rev-parse.sh" now gets closer to passing.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ submodule.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/submodule.c b/submodule.c
+index 4e299f578f9..06073b2e7be 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -2388,7 +2388,7 @@ int get_superproject_working_tree(struct strbuf *buf)
+ 	struct child_process cp = CHILD_PROCESS_INIT;
+ 	struct strbuf sb = STRBUF_INIT;
+ 	struct strbuf one_up = STRBUF_INIT;
+-	const char *cwd = xgetcwd();
++	char *cwd = xgetcwd();
+ 	int ret = 0;
+ 	const char *subpath;
+ 	int code;
+@@ -2451,6 +2451,7 @@ int get_superproject_working_tree(struct strbuf *buf)
+ 		ret = 1;
+ 		free(super_wt);
+ 	}
++	free(cwd);
+ 	strbuf_release(&sb);
+ 
+ 	code = finish_command(&cp);
+-- 
+2.37.0.874.g7d3439f13c4
+
