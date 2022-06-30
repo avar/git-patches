@@ -1,0 +1,60 @@
+From d3f65326701dc3d5b856f09440d5d6f0e3124b92 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.3-d3f65326701-20220630T101646Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.3-00000000000-20220630T101646Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20220621T221928Z-avarab@gmail.com>
+	<cover-v2-0.3-00000000000-20220630T101646Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 22 Jun 2022 00:01:52 +0200
+Subject: [PATCH v2 3/3] config tests: fix harmless but broken "rm -r" cleanup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "test_when_finished" cleanup phase added in 4179b4897f2 (config:
+allow overriding of global and system configuration, 2021-04-19) has
+never worked as intended, firstly the ".config/git" is a directory, so
+we'd need the "-r" flag, but more importantly the $HOME variable
+wasn't properly quoted.
+
+We'd thus end up trying to remove the "trash" part of "trash
+directory", which wouldn't fail with "-f", since "rm -f" won't fail on
+non-existing files.
+
+It's possible that this would have caused an actual failure if someone
+had a $HOME with a space character in it, such that our "rm -f" would
+fail to remove an existing directory, but in practice that probably
+never happened.
+
+Let's fix both the quoting issue, and the other issue cleanup issue in
+4179b4897f2, which is that we were attempting to clean up
+~/.config/git, but weren't cleaing up ~/.gitconfig.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1300-config.sh | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/t/t1300-config.sh b/t/t1300-config.sh
+index d3d9adbb3db..c6661e61af5 100755
+--- a/t/t1300-config.sh
++++ b/t/t1300-config.sh
+@@ -2083,12 +2083,13 @@ test_expect_success '--show-scope with --show-origin' '
+ '
+ 
+ test_expect_success 'override global and system config' '
+-	test_when_finished rm -f "$HOME"/.config/git &&
+-
++	test_when_finished rm -f \"\$HOME\"/.gitconfig &&
+ 	cat >"$HOME"/.gitconfig <<-EOF &&
+ 	[home]
+ 		config = true
+ 	EOF
++
++	test_when_finished rm -rf \"\$HOME\"/.config/git &&
+ 	mkdir -p "$HOME"/.config/git &&
+ 	cat >"$HOME"/.config/git/config <<-EOF &&
+ 	[xdg]
+-- 
+2.37.0.880.gf07d56b18ba
+
