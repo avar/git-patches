@@ -1,0 +1,73 @@
+From 7a0064860ad348ed7e2b46aec62e429ab1731009 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.9-7a0064860ad-20220630T180129Z-avarab@gmail.com>
+In-Reply-To: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+References: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Jun 2022 09:51:22 +0200
+Subject: [PATCH 3/9] test-tool {dump,scrap}-cache-tree: fix memory leaks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix memory leaks in two test-tools used by t0090-cache-tree.sh. As a
+result we can mark the test as passing with SANITIZE=leak using
+"TEST_PASSES_SANITIZE_LEAK=true".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-dump-cache-tree.c  | 7 ++++++-
+ t/helper/test-scrap-cache-tree.c | 1 +
+ t/t0090-cache-tree.sh            | 2 ++
+ 3 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/t/helper/test-dump-cache-tree.c b/t/helper/test-dump-cache-tree.c
+index 6a3f88f5f5d..0d6d7f1ecbf 100644
+--- a/t/helper/test-dump-cache-tree.c
++++ b/t/helper/test-dump-cache-tree.c
+@@ -59,11 +59,16 @@ int cmd__dump_cache_tree(int ac, const char **av)
+ {
+ 	struct index_state istate;
+ 	struct cache_tree *another = cache_tree();
++	int ret;
++
+ 	setup_git_directory();
+ 	if (read_cache() < 0)
+ 		die("unable to read index file");
+ 	istate = the_index;
+ 	istate.cache_tree = another;
+ 	cache_tree_update(&istate, WRITE_TREE_DRY_RUN);
+-	return dump_cache_tree(active_cache_tree, another, "");
++	ret = dump_cache_tree(active_cache_tree, another, "");
++	cache_tree_free(&another);
++
++	return ret;
+ }
+diff --git a/t/helper/test-scrap-cache-tree.c b/t/helper/test-scrap-cache-tree.c
+index 393f1604ff9..026c802479d 100644
+--- a/t/helper/test-scrap-cache-tree.c
++++ b/t/helper/test-scrap-cache-tree.c
+@@ -12,6 +12,7 @@ int cmd__scrap_cache_tree(int ac, const char **av)
+ 	hold_locked_index(&index_lock, LOCK_DIE_ON_ERROR);
+ 	if (read_cache() < 0)
+ 		die("unable to read index file");
++	cache_tree_free(&active_cache_tree);
+ 	active_cache_tree = NULL;
+ 	if (write_locked_index(&the_index, &index_lock, COMMIT_LOCK))
+ 		die("unable to write index file");
+diff --git a/t/t0090-cache-tree.sh b/t/t0090-cache-tree.sh
+index 90675726484..d8e2fc42e15 100755
+--- a/t/t0090-cache-tree.sh
++++ b/t/t0090-cache-tree.sh
+@@ -5,6 +5,8 @@ test_description="Test whether cache-tree is properly updated
+ Tests whether various commands properly update and/or rewrite the
+ cache-tree extension.
+ "
++
++TEST_PASSES_SANITIZE_LEAK=true
+  . ./test-lib.sh
+ 
+ cmp_cache_tree () {
+-- 
+2.37.0.874.g7d3439f13c4
+

@@ -1,0 +1,61 @@
+From bdb467d1414da40e4d1c4585f0cdc008c74ac991 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-7.9-bdb467d1414-20220630T180129Z-avarab@gmail.com>
+In-Reply-To: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+References: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 29 Jun 2022 13:32:54 +0200
+Subject: [PATCH 7/9] test-tool bloom: fix a memory leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix memory leaks introduced with these tests in f1294eaf7fb (bloom.c:
+introduce core Bloom filter constructs, 2020-03-30), as a result we
+can mark almost the entirety of t0095-bloom.sh as passing with
+SANITIZE=leak using "TEST_PASSES_SANITIZE_LEAK=true", there's still an
+unrelated memory leak in "git commit" in one of the tests, let's skip
+that one under SANITIZE_LEAK for now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-bloom.c | 2 ++
+ t/t0095-bloom.sh      | 2 +-
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/t/helper/test-bloom.c b/t/helper/test-bloom.c
+index ad3ef1cd77a..6c900ca6684 100644
+--- a/t/helper/test-bloom.c
++++ b/t/helper/test-bloom.c
+@@ -16,6 +16,7 @@ static void add_string_to_filter(const char *data, struct bloom_filter *filter)
+ 		}
+ 		printf("\n");
+ 		add_key_to_filter(&key, filter, &settings);
++		clear_bloom_key(&key);
+ }
+ 
+ static void print_bloom_filter(struct bloom_filter *filter) {
+@@ -80,6 +81,7 @@ int cmd__bloom(int argc, const char **argv)
+ 		}
+ 
+ 		print_bloom_filter(&filter);
++		free(filter.data);
+ 	}
+ 
+ 	if (!strcmp(argv[1], "get_filter_for_commit")) {
+diff --git a/t/t0095-bloom.sh b/t/t0095-bloom.sh
+index 5945973552a..daeb4a5e3e7 100755
+--- a/t/t0095-bloom.sh
++++ b/t/t0095-bloom.sh
+@@ -67,7 +67,7 @@ test_expect_success 'compute bloom key for test string 2' '
+ 	test_cmp expect actual
+ '
+ 
+-test_expect_success 'get bloom filters for commit with no changes' '
++test_expect_success !SANITIZE_LEAK 'get bloom filters for commit with no changes' '
+ 	git init &&
+ 	git commit --allow-empty -m "c0" &&
+ 	cat >expect <<-\EOF &&
+-- 
+2.37.0.874.g7d3439f13c4
+

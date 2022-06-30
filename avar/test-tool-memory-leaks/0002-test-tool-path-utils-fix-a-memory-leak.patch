@@ -1,0 +1,76 @@
+From 06b2dcf4f12287e2005b17210baddd3478ff9749 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.9-06b2dcf4f12-20220630T180129Z-avarab@gmail.com>
+In-Reply-To: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+References: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Jun 2022 09:22:14 +0200
+Subject: [PATCH 2/9] test-tool path-utils: fix a memory leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in "test-tool path-utils", as a result we can mark
+the corresponding test as passing with SANITIZE=leak using
+"TEST_PASSES_SANITIZE_LEAK=true".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-path-utils.c | 10 ++++++++--
+ t/t0060-path-utils.sh      |  1 +
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/t/helper/test-path-utils.c b/t/helper/test-path-utils.c
+index 229ed416b0e..380437cfe02 100644
+--- a/t/helper/test-path-utils.c
++++ b/t/helper/test-path-utils.c
+@@ -294,11 +294,13 @@ static int protect_ntfs_hfs_benchmark(int argc, const char **argv)
+ int cmd__path_utils(int argc, const char **argv)
+ {
+ 	if (argc == 3 && !strcmp(argv[1], "normalize_path_copy")) {
+-		char *buf = xmallocz(strlen(argv[2]));
++		char *to_free = NULL;
++		char *buf = to_free = xmallocz(strlen(argv[2]));
+ 		int rv = normalize_path_copy(buf, argv[2]);
+ 		if (rv)
+ 			buf = "++failed++";
+ 		puts(buf);
++		free(to_free);
+ 		return 0;
+ 	}
+ 
+@@ -356,7 +358,10 @@ int cmd__path_utils(int argc, const char **argv)
+ 		int nongit_ok;
+ 		setup_git_directory_gently(&nongit_ok);
+ 		while (argc > 3) {
+-			puts(prefix_path(prefix, prefix_len, argv[3]));
++			char *pfx = prefix_path(prefix, prefix_len, argv[3]);
++
++			puts(pfx);
++			free(pfx);
+ 			argc--;
+ 			argv++;
+ 		}
+@@ -366,6 +371,7 @@ int cmd__path_utils(int argc, const char **argv)
+ 	if (argc == 4 && !strcmp(argv[1], "strip_path_suffix")) {
+ 		char *prefix = strip_path_suffix(argv[2], argv[3]);
+ 		printf("%s\n", prefix ? prefix : "(null)");
++		free(prefix);
+ 		return 0;
+ 	}
+ 
+diff --git a/t/t0060-path-utils.sh b/t/t0060-path-utils.sh
+index aa35350b6f3..1f2007e62b7 100755
+--- a/t/t0060-path-utils.sh
++++ b/t/t0060-path-utils.sh
+@@ -5,6 +5,7 @@
+ 
+ test_description='Test various path utilities'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ norm_path() {
+-- 
+2.37.0.874.g7d3439f13c4
+

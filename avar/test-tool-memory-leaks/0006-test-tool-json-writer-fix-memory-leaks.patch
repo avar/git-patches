@@ -1,0 +1,100 @@
+From 97448b9056e6a266d7c0c518fb50e121be39fb8d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-6.9-97448b9056e-20220630T180129Z-avarab@gmail.com>
+In-Reply-To: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+References: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 29 Jun 2022 13:10:38 +0200
+Subject: [PATCH 6/9] test-tool json-writer: fix memory leaks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix memory leaks introduced with these tests in
+75459410edd (json_writer: new routines to create JSON data,
+2018-07-13), as a result we can mark a test as passing with
+SANITIZE=leak using "TEST_PASSES_SANITIZE_LEAK=true".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-json-writer.c | 16 ++++++++++++----
+ t/t0019-json-writer.sh      |  2 ++
+ 2 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/t/helper/test-json-writer.c b/t/helper/test-json-writer.c
+index 37c452535f8..8c3edacc000 100644
+--- a/t/helper/test-json-writer.c
++++ b/t/helper/test-json-writer.c
+@@ -181,12 +181,18 @@ static struct json_writer nest1 = JSON_WRITER_INIT;
+ 
+ static void make_nest1(int pretty)
+ {
++	make_obj1(0);
++	make_arr1(0);
++
+ 	jw_object_begin(&nest1, pretty);
+ 	{
+ 		jw_object_sub_jw(&nest1, "obj1", &obj1);
+ 		jw_object_sub_jw(&nest1, "arr1", &arr1);
+ 	}
+ 	jw_end(&nest1);
++
++	jw_release(&obj1);
++	jw_release(&arr1);
+ }
+ 
+ static char *expect_inline1 =
+@@ -313,6 +319,9 @@ static void make_mixed1(int pretty)
+ 		jw_object_sub_jw(&mixed1, "arr1", &arr1);
+ 	}
+ 	jw_end(&mixed1);
++
++	jw_release(&obj1);
++	jw_release(&arr1);
+ }
+ 
+ static void cmp(const char *test, const struct json_writer *jw, const char *exp)
+@@ -325,8 +334,8 @@ static void cmp(const char *test, const struct json_writer *jw, const char *exp)
+ 	exit(1);
+ }
+ 
+-#define t(v) do { make_##v(0); cmp(#v, &v, expect_##v); } while (0)
+-#define p(v) do { make_##v(1); cmp(#v, &v, pretty_##v); } while (0)
++#define t(v) do { make_##v(0); cmp(#v, &v, expect_##v); jw_release(&v); } while (0)
++#define p(v) do { make_##v(1); cmp(#v, &v, pretty_##v); jw_release(&v); } while (0)
+ 
+ /*
+  * Run some basic regression tests with some known patterns.
+@@ -381,7 +390,6 @@ static int unit_tests(void)
+ 
+ 	/* mixed forms */
+ 	t(mixed1);
+-	jw_init(&mixed1);
+ 	p(mixed1);
+ 
+ 	return 0;
+@@ -544,7 +552,7 @@ static int scripted(void)
+ 
+ 	printf("%s\n", jw.json.buf);
+ 
+-	strbuf_release(&jw.json);
++	jw_release(&jw);
+ 	return 0;
+ }
+ 
+diff --git a/t/t0019-json-writer.sh b/t/t0019-json-writer.sh
+index 3b0c336b38e..19a730c29ed 100755
+--- a/t/t0019-json-writer.sh
++++ b/t/t0019-json-writer.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='test json-writer JSON generation'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'unit test of json-writer routines' '
+-- 
+2.37.0.874.g7d3439f13c4
+
