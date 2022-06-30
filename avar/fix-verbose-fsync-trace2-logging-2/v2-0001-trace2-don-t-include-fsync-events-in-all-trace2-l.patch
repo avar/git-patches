@@ -55,6 +55,44 @@ leave it for now.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+I think this re-roll addresses the concerns Junio brought up in:
+https://lore.kernel.org/git/xmqqh74byy19.fsf@gitster.g/; As to the
+larger question of:
+
+On Thu, Jun 23 2022, Junio C Hamano wrote:
+
+> I am not sure if it is a good solution in the longer term, but this
+> implementation may be a good-enough way to squelch the immediate
+> loudness issue.
+
+I think a better long-term solution in this case, per the initial
+feedback on the patch would be to have a generic facility to trace2
+log how often we call a given syscall:
+
+	https://lore.kernel.org/git/220330.86zgl7o8l8.gmgdl@evledraar.gmail.com/
+
+I.e. in most (all?) other cases our trace2 logging is logging git's
+"business logic", but in this case the logging is functionally the
+same as a more dumb interception of an arbitrary system call, and then
+having some generic "syscall stats" trace2 event.
+
+In this case such a generic logger would need to be a bit smarter than
+just a dumb wrapper, i.e. we'd need:
+
+    fsync() != EINTR /* due to fsync_loop() */
+    sync_file_range()
+
+That still wouldn't be the same as the current logging if implemented
+correctly, but I think in a good way. E.g. now we'll log a failed
+fsync() the same as a successful one, as we increment the counter
+before seeing what the return value was.
+
+But anyway, as noted in the original thread Neeraj didn't have time to
+look into that, neither do I, and the patch is now a part of git. So
+let's solve the immediate issue of verbose logging, and leave any
+other improvements for the future.
+
 Range-diff against v1:
 1:  df87e515efd ! 1:  a1fc37de947 trace2: don't include "fsync" events in all trace2 logs
     @@ Commit message
