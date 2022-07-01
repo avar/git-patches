@@ -1,0 +1,74 @@
+From 8658f3ad020abcd67aca34a766d3378c0da0d801 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-07.11-8658f3ad020-20220701T103859Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20220701T103859Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220630T175714Z-avarab@gmail.com>
+	<cover-v2-00.11-00000000000-20220701T103859Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Jun 2022 11:02:44 +0200
+Subject: [PATCH v2 07/11] merge-file: fix memory leaks on error path
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in "merge-file", we need to loop over the "mmfs"
+array and free() what we've got so far when we error out. As a result
+we can mark a test as passing with SANITIZE=leak using
+"TEST_PASSES_SANITIZE_LEAK=true".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/merge-file.c  | 10 ++++++----
+ t/t6403-merge-file.sh |  2 ++
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/merge-file.c b/builtin/merge-file.c
+index 793817f3cb9..c923bbf2abb 100644
+--- a/builtin/merge-file.c
++++ b/builtin/merge-file.c
+@@ -87,7 +87,8 @@ int cmd_merge_file(int argc, const char **argv, const char *prefix)
+ 
+ 		free(fname);
+ 		if (ret)
+-			return ret;
++			goto cleanup;
++
+ 	}
+ 
+ 	xmp.ancestor = names[1];
+@@ -95,9 +96,6 @@ int cmd_merge_file(int argc, const char **argv, const char *prefix)
+ 	xmp.file2 = names[2];
+ 	ret = xdl_merge(mmfs + 1, mmfs + 0, mmfs + 2, &xmp, &result);
+ 
+-	for (i = 0; i < 3; i++)
+-		free(mmfs[i].ptr);
+-
+ 	if (ret >= 0) {
+ 		const char *filename = argv[0];
+ 		char *fpath = prefix_filename(prefix, argv[0]);
+@@ -118,5 +116,9 @@ int cmd_merge_file(int argc, const char **argv, const char *prefix)
+ 	if (ret > 127)
+ 		ret = 127;
+ 
++cleanup:
++	for (i = 0; i < 3; i++)
++		free(mmfs[i].ptr);
++
+ 	return ret;
+ }
+diff --git a/t/t6403-merge-file.sh b/t/t6403-merge-file.sh
+index 2f421d967ab..1a7082323dd 100755
+--- a/t/t6403-merge-file.sh
++++ b/t/t6403-merge-file.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='RCS merge replacement: merge-file'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+-- 
+2.37.0.900.g4d0de1cceb2
+

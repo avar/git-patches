@@ -1,0 +1,121 @@
+From 5666104943fe946efee2c79dcc6e42ecd8d432b2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-11.11-5666104943f-20220701T103859Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20220701T103859Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220630T175714Z-avarab@gmail.com>
+	<cover-v2-00.11-00000000000-20220701T103859Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 30 Jun 2022 14:52:26 +0200
+Subject: [PATCH v2 11/11] pull: fix a "struct oid_array" memory leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak introduced in 44c175c7a46 (pull: error on no merge
+candidates, 2015-06-18). As a result we can mark several tests as
+passing with SANITIZE=leak using "TEST_PASSES_SANITIZE_LEAK=true".
+
+Removing the "int ret = 0" assignment added here in a6d7eb2c7a6 (pull:
+optionally rebase submodules (remote submodule changes only),
+2017-06-23) is not a logic error, it could always have been left
+uninitialized (as "int ret"), now that we'll use the "ret" from the
+upper scope we can drop the assignment in the "opt_rebase" branch.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/pull.c               | 16 ++++++++++------
+ t/t5524-pull-msg.sh          |  1 +
+ t/t6417-merge-ours-theirs.sh |  1 +
+ t/t9101-git-svn-props.sh     |  1 -
+ 4 files changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/pull.c b/builtin/pull.c
+index 01155ba67b2..403a24d7ca6 100644
+--- a/builtin/pull.c
++++ b/builtin/pull.c
+@@ -990,6 +990,7 @@ int cmd_pull(int argc, const char **argv, const char *prefix)
+ 	int rebase_unspecified = 0;
+ 	int can_ff;
+ 	int divergent;
++	int ret;
+ 
+ 	if (!getenv("GIT_REFLOG_ACTION"))
+ 		set_reflog_message(argc, argv);
+@@ -1100,7 +1101,8 @@ int cmd_pull(int argc, const char **argv, const char *prefix)
+ 	if (is_null_oid(&orig_head)) {
+ 		if (merge_heads.nr > 1)
+ 			die(_("Cannot merge multiple branches into empty head."));
+-		return pull_into_void(merge_heads.oid, &curr_head);
++		ret = pull_into_void(merge_heads.oid, &curr_head);
++		goto cleanup;
+ 	}
+ 	if (merge_heads.nr > 1) {
+ 		if (opt_rebase)
+@@ -1125,8 +1127,6 @@ int cmd_pull(int argc, const char **argv, const char *prefix)
+ 	}
+ 
+ 	if (opt_rebase) {
+-		int ret = 0;
+-
+ 		struct object_id newbase;
+ 		struct object_id upstream;
+ 		get_rebase_newbase_and_upstream(&newbase, &upstream, &curr_head,
+@@ -1149,12 +1149,16 @@ int cmd_pull(int argc, const char **argv, const char *prefix)
+ 			     recurse_submodules == RECURSE_SUBMODULES_ON_DEMAND))
+ 			ret = rebase_submodules();
+ 
+-		return ret;
++		goto cleanup;
+ 	} else {
+-		int ret = run_merge();
++		ret = run_merge();
+ 		if (!ret && (recurse_submodules == RECURSE_SUBMODULES_ON ||
+ 			     recurse_submodules == RECURSE_SUBMODULES_ON_DEMAND))
+ 			ret = update_submodules();
+-		return ret;
++		goto cleanup;
+ 	}
++
++cleanup:
++	oid_array_clear(&merge_heads);
++	return ret;
+ }
+diff --git a/t/t5524-pull-msg.sh b/t/t5524-pull-msg.sh
+index b2be3605f5a..56716e29ddf 100755
+--- a/t/t5524-pull-msg.sh
++++ b/t/t5524-pull-msg.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git pull message generation'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ dollar='$Dollar'
+diff --git a/t/t6417-merge-ours-theirs.sh b/t/t6417-merge-ours-theirs.sh
+index 62d1406119e..482b73a998f 100755
+--- a/t/t6417-merge-ours-theirs.sh
++++ b/t/t6417-merge-ours-theirs.sh
+@@ -4,6 +4,7 @@ test_description='Merge-recursive ours and theirs variants'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t9101-git-svn-props.sh b/t/t9101-git-svn-props.sh
+index d043e80fc34..52046e60d51 100755
+--- a/t/t9101-git-svn-props.sh
++++ b/t/t9101-git-svn-props.sh
+@@ -5,7 +5,6 @@
+ 
+ test_description='git svn property tests'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ mkdir import
+-- 
+2.37.0.900.g4d0de1cceb2
+
