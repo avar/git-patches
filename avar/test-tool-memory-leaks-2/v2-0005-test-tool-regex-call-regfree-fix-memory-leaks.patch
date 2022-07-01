@@ -1,0 +1,80 @@
+From 940cd5378ad8f0d9408c4f4ec7c988195c991f6f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.9-940cd5378ad-20220701T103436Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20220701T103436Z-avarab@gmail.com>
+References: <cover-0.9-00000000000-20220630T180129Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20220701T103436Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 30 Oct 2021 18:05:57 +0200
+Subject: [PATCH v2 5/9] test-tool regex: call regfree(), fix memory leaks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix memory leaks in "test-tool regex" which have been there since
+c91841594c2 (test-regex: Add a test to check for a bug in the regex
+routines, 2012-09-01), as a result we can mark a test as passing with
+SANITIZE=leak using "TEST_PASSES_SANITIZE_LEAK=true".
+
+We could regfree() on the die() paths here, which would make some
+invocations of valgrind(1) happy, but let's just target SANITIZE=leak
+for now. Variables that are still reachable when we die() are not
+reported as leaks.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-regex.c           | 9 ++++++---
+ t/t7812-grep-icase-non-ascii.sh | 1 +
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/t/helper/test-regex.c b/t/helper/test-regex.c
+index d6f28ca8d14..bd871a735b4 100644
+--- a/t/helper/test-regex.c
++++ b/t/helper/test-regex.c
+@@ -34,6 +34,7 @@ static int test_regex_bug(void)
+ 	if (m[0].rm_so == 3) /* matches '\n' when it should not */
+ 		die("regex bug confirmed: re-build git with NO_REGEX=1");
+ 
++	regfree(&r);
+ 	return 0;
+ }
+ 
+@@ -94,18 +95,20 @@ int cmd__regex(int argc, const char **argv)
+ 		die("failed regcomp() for pattern '%s' (%s)", pat, errbuf);
+ 	}
+ 	if (!str)
+-		return 0;
++		goto cleanup;
+ 
+ 	ret = regexec(&r, str, 1, m, 0);
+ 	if (ret) {
+ 		if (silent || ret == REG_NOMATCH)
+-			return ret;
++			goto cleanup;
+ 
+ 		regerror(ret, &r, errbuf, sizeof(errbuf));
+ 		die("failed regexec() for subject '%s' (%s)", str, errbuf);
+ 	}
+ 
+-	return 0;
++cleanup:
++	regfree(&r);
++	return ret;
+ usage:
+ 	usage("\ttest-tool regex --bug\n"
+ 	      "\ttest-tool regex [--silent] <pattern>\n"
+diff --git a/t/t7812-grep-icase-non-ascii.sh b/t/t7812-grep-icase-non-ascii.sh
+index ac7be547145..31c66b63c2c 100755
+--- a/t/t7812-grep-icase-non-ascii.sh
++++ b/t/t7812-grep-icase-non-ascii.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='grep icase on non-English locales'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-gettext.sh
+ 
+ doalarm () {
+-- 
+2.37.0.900.g4d0de1cceb2
+
