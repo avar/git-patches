@@ -1,0 +1,124 @@
+From 45a429b9cc986067893cd58265304aa20fcf2c4a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-4.4-45a429b9cc9-20220701T102506Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.4-00000000000-20220701T102506Z-avarab@gmail.com>
+References: <cover-v2-0.2-00000000000-20220621T223954Z-avarab@gmail.com>
+	<cover-v3-0.4-00000000000-20220701T102506Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 23 Jun 2022 14:22:23 +0200
+Subject: [PATCH v3 4/4] cocci: generalize "unused" rule to cover more than
+ "strbuf"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Generalize the newly added "unused.cocci" rule to find more than just
+"struct strbuf", let's have it find the same unused patterns for
+"struct string_list", as well as other code that uses
+similar-looking *_{release,clear,free}() and {release,clear,free}_*()
+functions.
+
+See [1] for example of code that would be covered by the
+"get_worktrees()" part of this rule. We'd still need work that the
+series is based on (we were passing "worktrees" to a function), but
+could now do the change in [1] automatically.
+
+1. https://lore.kernel.org/git/Yq6eJFUPPTv%2Fzc0o@coredump.intra.peff.net/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/repack.c                |  2 --
+ contrib/coccinelle/unused.cocci | 31 ++++++++++++++++++++++++-------
+ 2 files changed, 24 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/repack.c b/builtin/repack.c
+index 4a7ae4cf489..482b66f57d6 100644
+--- a/builtin/repack.c
++++ b/builtin/repack.c
+@@ -727,7 +727,6 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 	struct child_process cmd = CHILD_PROCESS_INIT;
+ 	struct string_list_item *item;
+ 	struct string_list names = STRING_LIST_INIT_DUP;
+-	struct string_list rollback = STRING_LIST_INIT_NODUP;
+ 	struct string_list existing_nonkept_packs = STRING_LIST_INIT_DUP;
+ 	struct string_list existing_kept_packs = STRING_LIST_INIT_DUP;
+ 	struct pack_geometry *geometry = NULL;
+@@ -1117,7 +1116,6 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 	}
+ 
+ 	string_list_clear(&names, 0);
+-	string_list_clear(&rollback, 0);
+ 	string_list_clear(&existing_nonkept_packs, 0);
+ 	string_list_clear(&existing_kept_packs, 0);
+ 	clear_pack_geometry(geometry);
+diff --git a/contrib/coccinelle/unused.cocci b/contrib/coccinelle/unused.cocci
+index 9f0101c1350..a1b09d2d73d 100644
+--- a/contrib/coccinelle/unused.cocci
++++ b/contrib/coccinelle/unused.cocci
+@@ -1,5 +1,5 @@
+ // This rule finds sequences of "unused" declerations and uses of
+-// "struct strbuf".
++// "struct strbuf" and other common types.
+ //
+ // I.e. this finds cases where we only declare the variable, and then
+ // release it, e.g.:
+@@ -20,14 +20,18 @@
+ @@
+ type T;
+ identifier I;
+-// STRBUF_INIT
+-constant INIT_MACRO =~ "^STRBUF_INIT$";
++// STRBUF_INIT, but also e.g. STRING_LIST_INIT_DUP (so no anchoring)
++constant INIT_MACRO =~ "_INIT";
+ // x[mc]alloc() etc.
+ identifier MALLOC1 =~ "^x?[mc]alloc$";
++// I = get_worktrees() etc.
++identifier INIT_ASSIGN1 =~ "^get_worktrees$";
+ // strbuf_init(&I, ...) etc.
+-identifier INIT_CALL1 =~ "^strbuf_init$";
+-// strbuf_release()
+-identifier REL1 =~ "^strbuf_release$";
++identifier INIT_CALL1 =~ "^[a-z_]*_init$";
++// stbuf_release(), string_list_clear() etc.
++identifier REL1 =~ "^[a-z_]*_(release|clear|free)$";
++// release_patch(), clear_pathspec() etc.
++identifier REL2 =~ "^(release|clear|free)_[a-z_]*$";
+ @@
+ 
+ // .. A declaration like "struct strbuf buf;"...
+@@ -52,6 +56,10 @@ identifier REL1 =~ "^strbuf_release$";
+ // "strbuf_init(&buf, ...)" ...
+ - \( INIT_CALL1 \)( \( I \| &I \), ...);
+ |
++// .. or e.g. "worktrees = get_worktrees();", i.e. a known "assignment
++// init" ...
++- I = \( INIT_ASSIGN1 \)(...);
++|
+ // .. or to follow-up a "struct strbuf *buf" with e.g. "buf =
+ // xmalloc(...)" (which may in turn be followed-up by a
+ // "strbuf_init()", which we'll match with INIT_CALL1) ...
+@@ -61,11 +69,20 @@ identifier REL1 =~ "^strbuf_release$";
+ 
+ // ... and then no mention of "buf" or "&buf" until we get to a
+ // strbuf_release(&buf) at the end ...
+-- \( REL1 \)( \( &I \| I \) );
++(
++- \( REL1 \| REL2 \)( \( I \| &I \), ...);
++|
++- \( REL1 \| REL2 \)( \( &I \| I \) );
++)
+ // ... and no use *after* either, e.g. we don't want to delete
+ // init/strbuf_release() patterns, where "&buf" could be used
+ // afterwards.
+   ... when != \( I \| &I \)
++// Note that we're intentionally loose in accepting e.g. a
++// "strbuf_init(&buf)" followed by a "string_list_clear(&buf,
++// 0)". It's assumed that the compiler will catch any such invalid
++// code, i.e. that our constructors/destructors don't take a "void *".
++//
+ // This rule also isn't capable of finding cases where &buf is used,
+ // but only to e.g. pass that variable to a static function which
+ // doesn't use it. The analysis is only function-local.
+-- 
+2.37.0.900.g4d0de1cceb2
+

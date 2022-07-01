@@ -1,0 +1,80 @@
+From 6324d3956edde008994c3680bc850a24ff98d9f1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-2.4-6324d3956ed-20220701T102506Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.4-00000000000-20220701T102506Z-avarab@gmail.com>
+References: <cover-v2-0.2-00000000000-20220621T223954Z-avarab@gmail.com>
+	<cover-v3-0.4-00000000000-20220701T102506Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 23 Jun 2022 14:47:30 +0200
+Subject: [PATCH v3 2/4] cocci: catch unused "strbuf" using an xmalloc()
+ pattern
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There's no current matches for this rule, but it will match both:
+
+	struct strbuf *buf = xmalloc(sizeof(struct strbuf));
+	strbuf_init(buf, 0);
+	strbuf_release(buf);
+
+And:
+
+	struct strbuf *buf;
+
+	buf = xmalloc(sizeof(struct strbuf));
+	strbuf_init(buf, 0);
+	strbuf_release(buf);
+
+Note that we'd also match a strbuf_init() before the xmalloc(), but
+we're not seeking to be so strict as to make checks that the compiler
+will catch for us redundant, and saying we'll match either "init" or
+"xmalloc" lines makes the rule simpler.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ contrib/coccinelle/unused.cocci | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/contrib/coccinelle/unused.cocci b/contrib/coccinelle/unused.cocci
+index bc26d39b313..43942f3cd4f 100644
+--- a/contrib/coccinelle/unused.cocci
++++ b/contrib/coccinelle/unused.cocci
+@@ -22,6 +22,8 @@ type T;
+ identifier I;
+ // STRBUF_INIT
+ constant INIT_MACRO =~ "^STRBUF_INIT$";
++// x[mc]alloc() etc.
++identifier MALLOC1 =~ "^x?[mc]alloc$";
+ // strbuf_init(&I, ...) etc.
+ identifier INIT_CALL1 =~ "^strbuf_init$";
+ // strbuf_release()
+@@ -37,15 +39,25 @@ identifier REL1 =~ "^strbuf_release$";
+ // ... or "struct STRBUF buf = STRBUF_INIT;" ...
+ |
+ - T I = INIT_MACRO;
++|
++// ... or "struct strbuf *buf = xmalloc(...)" etc. ...
++- T I = MALLOC1(...);
+ )
+ 
+ // ... Optionally followed by lines that make no use of "buf", "&buf"
+ // etc., but which ...
+ <... when != \( I \| &I \)
+      when strict
++(
+ // .. (only) make use of "buf" or "&buf" to call something like
+ // "strbuf_init(&buf, ...)" ...
+ - \( INIT_CALL1 \)( \( I \| &I \), ...);
++|
++// .. or to follow-up a "struct strbuf *buf" with e.g. "buf =
++// xmalloc(...)" (which may in turn be followed-up by a
++// "strbuf_init()", which we'll match with INIT_CALL1) ...
++- I = MALLOC1(...);
++)
+ ...>
+ 
+ // ... and then no mention of "buf" or "&buf" until we get to a
+-- 
+2.37.0.900.g4d0de1cceb2
+

@@ -1,0 +1,201 @@
+From 45a429b9cc986067893cd58265304aa20fcf2c4a Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.4-00000000000-20220701T102506Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.2-00000000000-20220621T223954Z-avarab@gmail.com>
+References: <cover-v2-0.2-00000000000-20220621T223954Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 1 Jul 2022 12:25:06 +0200
+Subject: [PATCH v3 0/4] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (4):
+  cocci: add and apply a rule to find "unused" strbufs
+  cocci: catch unused "strbuf" using an xmalloc() pattern
+  cocci: remove "when strict" from unused.cocci
+  cocci: generalize "unused" rule to cover more than "strbuf"
+
+ builtin/fetch.c                 |  3 +-
+ builtin/merge.c                 |  4 --
+ builtin/repack.c                |  2 -
+ contrib/coccinelle/unused.cocci | 88 +++++++++++++++++++++++++++++++++
+ contrib/scalar/scalar.c         |  3 +-
+ diff.c                          |  2 -
+ 6 files changed, 90 insertions(+), 12 deletions(-)
+ create mode 100644 contrib/coccinelle/unused.cocci
+
+Range-diff against v2:
+1:  d14036521ab ! 1:  49e9ccb5819 cocci: add and apply a rule to find "unused" variables
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    cocci: add and apply a rule to find "unused" variables
+    +    cocci: add and apply a rule to find "unused" strbufs
+     
+    -    Add a coccinelle rule to remove variable initialization followed by
+    -    calling a "release" function. See extensive commentary in the new
+    -    "unused.cocci" for how it works, and what it's intended to find and
+    -    replace.
+    +    Add a coccinelle rule to remove "struct strbuf" initialization
+    +    followed by calling "strbuf_release()" function.
+    +
+    +    See extensive commentary in the new "unused.cocci" for how it works,
+    +    and what it's intended to find and replace.
+     
+         The inclusion of "contrib/scalar/scalar.c" is because "spatch" was
+         manually run on it (we don't usually run spatch on contrib).
+    @@ Commit message
+         The use of "with strict" here will be explained and amended in the
+         following commit.
+     
+    -    1. https://lore.kernel.org/git/042d624b8159364229e95d35e9309f12b67f8173.1652977582.git.gitgitgadget@gmail.com/
+    -
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/fetch.c ##
+    @@ builtin/merge.c: static void merge_name(const char *remote, struct strbuf *msg)
+     
+      ## contrib/coccinelle/unused.cocci (new) ##
+     @@
+    -+// This rule finds sequences of "unused" declerations, init and
+    -+// release(). E.g.:
+    ++// This rule finds sequences of "unused" declerations and uses of
+    ++// "struct strbuf".
+    ++//
+    ++// I.e. this finds cases where we only declare the variable, and then
+    ++// release it, e.g.:
+     +//
+     +//	struct strbuf buf = STRBUF_INIT;
+     +//      [.. no other use of "buf" in the function ..]
+     +//	strbuf_release(&buf)
+     +//
+    ++// Or:
+    ++//
+    ++//	struct strbuf buf;
+    ++//	[.. no other use of "buf" in the function ..]
+    ++//	strbuf_init(&buf, 0);
+    ++//	[.. no other use of "buf" in the function ..]
+    ++//	strbuf_release(&buf)
+    ++//
+     +// To do do this we find (continued below)...
+     +@@
+     +type T;
+     +identifier I;
+    -+// STRBUF_INIT, but also e.g. STRING_LIST_INIT_DUP (so no anchoring)
+    -+constant INIT =~ "_INIT";
+    -+// I = get_worktrees() etc.
+    -+identifier INIT_ASSIGN1 =~ "^get_worktrees$";
+    ++// STRBUF_INIT
+    ++constant INIT_MACRO =~ "^STRBUF_INIT$";
+     +// strbuf_init(&I, ...) etc.
+    -+identifier INIT_CALL1 =~ "^[a-z_]*_init$";
+    -+// stbuf_release(), string_list_clear() etc.
+    -+identifier REL1 =~ "^[a-z_]*_(release|clear|free)$";
+    -+// release_patch(), clear_pathspec() etc.
+    -+identifier REL2 =~ "^(release|clear|free)_[a-z_]*$";
+    ++identifier INIT_CALL1 =~ "^strbuf_init$";
+    ++// strbuf_release()
+    ++identifier REL1 =~ "^strbuf_release$";
+     +@@
+     +
+     +// .. A declaration like "struct strbuf buf;"...
+     +(
+     +- T I;
+    ++// ... or "struct strbuf buf = { 0 };" ...
+    ++|
+    ++- T I = { 0 };
+     +// ... or "struct STRBUF buf = STRBUF_INIT;" ...
+     +|
+    -+- T I = INIT;
+    ++- T I = INIT_MACRO;
+     +)
+     +
+     +// ... Optionally followed by lines that make no use of "buf", "&buf"
+    @@ contrib/coccinelle/unused.cocci (new)
+     +     when strict
+     +// .. (only) make use of "buf" or "&buf" to call something like
+     +// "strbuf_init(&buf, ...)" ...
+    -+(
+     +- \( INIT_CALL1 \)( \( I \| &I \), ...);
+    -+|
+    -+// .. or e.g. "worktrees = get_worktrees();", i.e. a known "assignment
+    -+// init" ...
+    -+- I = \( INIT_ASSIGN1 \)(...);
+    -+)
+     +...>
+     +
+     +// ... and then no mention of "buf" or "&buf" until we get to a
+     +// strbuf_release(&buf) at the end ...
+    -+(
+    -+- \( REL1 \| REL2 \)( \( I \| &I \), ...);
+    -+|
+    -+- \( REL1 \| REL2 \)( \( &I \| I \) );
+    -+)
+    ++- \( REL1 \)( \( &I \| I \) );
+     +// ... and no use *after* either, e.g. we don't want to delete
+     +// init/strbuf_release() patterns, where "&buf" could be used
+     +// afterwards.
+     +  ... when != \( I \| &I \)
+     +      when strict
+    -+// Note that we're intentionally loose in accepting e.g. a
+    -+// "strbuf_init(&buf)" followed by a "string_list_clear(&buf,
+    -+// 0)". It's assumed that the compiler will catch any such invalid
+    -+// code, i.e. that our constructors/destructors don't take a "void *".
+    -+//
+     +// This rule also isn't capable of finding cases where &buf is used,
+     +// but only to e.g. pass that variable to a static function which
+     +// doesn't use it. The analysis is only function-local.
+-:  ----------- > 2:  6324d3956ed cocci: catch unused "strbuf" using an xmalloc() pattern
+2:  4130dc15287 ! 3:  9a5e7208dec cocci: remove "when strict" from unused.cocci
+    @@ builtin/merge.c: static void restore_state(const struct object_id *head,
+      }
+      
+     
+    - ## builtin/repack.c ##
+    -@@ builtin/repack.c: int cmd_repack(int argc, const char **argv, const char *prefix)
+    - 	struct child_process cmd = CHILD_PROCESS_INIT;
+    - 	struct string_list_item *item;
+    - 	struct string_list names = STRING_LIST_INIT_DUP;
+    --	struct string_list rollback = STRING_LIST_INIT_NODUP;
+    - 	struct string_list existing_nonkept_packs = STRING_LIST_INIT_DUP;
+    - 	struct string_list existing_kept_packs = STRING_LIST_INIT_DUP;
+    - 	struct pack_geometry *geometry = NULL;
+    -@@ builtin/repack.c: int cmd_repack(int argc, const char **argv, const char *prefix)
+    - 	}
+    - 
+    - 	string_list_clear(&names, 0);
+    --	string_list_clear(&rollback, 0);
+    - 	string_list_clear(&existing_nonkept_packs, 0);
+    - 	string_list_clear(&existing_kept_packs, 0);
+    - 	clear_pack_geometry(geometry);
+    -
+      ## contrib/coccinelle/unused.cocci ##
+    -@@ contrib/coccinelle/unused.cocci: identifier REL2 =~ "^(release|clear|free)_[a-z_]*$";
+    +@@ contrib/coccinelle/unused.cocci: identifier REL1 =~ "^strbuf_release$";
+      // ... Optionally followed by lines that make no use of "buf", "&buf"
+      // etc., but which ...
+      <... when != \( I \| &I \)
+     -     when strict
+    + (
+      // .. (only) make use of "buf" or "&buf" to call something like
+      // "strbuf_init(&buf, ...)" ...
+    - (
+    -@@ contrib/coccinelle/unused.cocci: identifier REL2 =~ "^(release|clear|free)_[a-z_]*$";
+    +@@ contrib/coccinelle/unused.cocci: identifier REL1 =~ "^strbuf_release$";
+      // init/strbuf_release() patterns, where "&buf" could be used
+      // afterwards.
+        ... when != \( I \| &I \)
+     -      when strict
+    - // Note that we're intentionally loose in accepting e.g. a
+    - // "strbuf_init(&buf)" followed by a "string_list_clear(&buf,
+    - // 0)". It's assumed that the compiler will catch any such invalid
+    + // This rule also isn't capable of finding cases where &buf is used,
+    + // but only to e.g. pass that variable to a static function which
+    + // doesn't use it. The analysis is only function-local.
+-:  ----------- > 4:  45a429b9cc9 cocci: generalize "unused" rule to cover more than "strbuf"
+-- 
+2.37.0.900.g4d0de1cceb2
+
