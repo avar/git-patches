@@ -1,0 +1,155 @@
+From 5e15cb3781cde2e5f03b44889260962b0915dde5 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-2.5-5e15cb3781c-20220705T105356Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.5-00000000000-20220705T105356Z-avarab@gmail.com>
+References: <cover-v3-0.4-00000000000-20220701T102506Z-avarab@gmail.com>
+	<cover-v4-0.5-00000000000-20220705T105356Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 4 Jul 2022 10:45:18 +0200
+Subject: [PATCH v4 2/5] cocci: add a "coccicheck-test" target and test *.cocci
+ rules
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a "coccicheck-test" target to test our *.cocci rules, and as a
+demonstration add tests for the rules added in 39ea59a2570 (remove
+unnecessary NULL check before free(3), 2016-10-08) and
+1b83d1251ed (coccinelle: add a rule to make "expression" code use
+FREE_AND_NULL(), 2017-06-15).
+
+I considered making use of the "spatch --test" option, and the choice
+of a "tests" over a "t" directory is to make these tests compatible
+with such a future change.
+
+Unfortunately "spatch --test" doesn't return meaningful exit codes,
+AFAICT you need to "grep" its output to see if the *.res is what you
+expect. There's "--test-okfailed", but I didn't find a way to sensibly
+integrate those (it relies on some in-between status files, but
+doesn't help with the status codes).
+
+Instead let's use a "--sp-file" pattern similar to the main
+"coccicheck" rule, with the difference that we use and compare the
+two *.res files with cmp(1).
+
+Piping stdout to $@.diff and $@.err is done for ad-hoc debugging, and
+to quiet the normally very verbose output.
+
+The "cmp || git diff" is optimistically giving us better output on
+failure, but even if we only have POSIX cmp and no system git
+installed we'll still fail with the "cmp", just with an error message
+that isn't as friendly. The "2>/dev/null" is in case we don't have a
+"git" installed.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile                          | 20 +++++++++++++++++++-
+ contrib/coccinelle/tests/free.c   | 11 +++++++++++
+ contrib/coccinelle/tests/free.res |  9 +++++++++
+ shared.mak                        |  4 +++-
+ 4 files changed, 42 insertions(+), 2 deletions(-)
+ create mode 100644 contrib/coccinelle/tests/free.c
+ create mode 100644 contrib/coccinelle/tests/free.res
+
+diff --git a/Makefile b/Makefile
+index 04d0fd1fe60..e31d6480141 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1286,7 +1286,8 @@ SANITIZE_ADDRESS =
+ # For the 'coccicheck' target; setting SPATCH_BATCH_SIZE higher will
+ # usually result in less CPU usage at the cost of higher peak memory.
+ # Setting it to 0 will feed all files in a single spatch invocation.
+-SPATCH_FLAGS = --all-includes --patch .
++SPATCH_FLAGS = --all-includes
++SPATCH_PATCH_FLAGS = --patch .
+ SPATCH_BATCH_SIZE = 1
+ 
+ include config.mak.uname
+@@ -3123,6 +3124,8 @@ check: $(GENERATED_H)
+ 		exit 1; \
+ 	fi
+ 
++COCCI_TEST_RES = $(wildcard contrib/coccinelle/tests/*.res)
++
+ %.cocci.patch: %.cocci $(COCCI_SOURCES)
+ 	$(QUIET_SPATCH) \
+ 	if test $(SPATCH_BATCH_SIZE) = 0; then \
+@@ -3132,6 +3135,7 @@ check: $(GENERATED_H)
+ 	fi; \
+ 	if ! echo $(COCCI_SOURCES) | xargs $$limit \
+ 		$(SPATCH) --sp-file $< $(SPATCH_FLAGS) \
++		$(SPATCH_PATCH_FLAGS) \
+ 		>$@+ 2>$@.log; \
+ 	then \
+ 		cat $@.log; \
+@@ -3142,6 +3146,20 @@ check: $(GENERATED_H)
+ 	then \
+ 		echo '    ' SPATCH result: $@; \
+ 	fi
++
++COCCI_TEST_RES_GEN = $(addprefix .build/,$(COCCI_TEST_RES))
++$(COCCI_TEST_RES_GEN): .build/%.res : %.c
++$(COCCI_TEST_RES_GEN): .build/%.res : %.res
++$(COCCI_TEST_RES_GEN): .build/contrib/coccinelle/tests/%.res : contrib/coccinelle/%.cocci
++	$(call mkdir_p_parent_template)
++	$(QUIET_SPATCH_TEST)$(SPATCH) --sp-file $< $(SPATCH_FLAGS) \
++		$(@:.build/%.res=%.c) -o $@ >$@.diff 2>$@.err && \
++	cmp $(@:.build/%=%) $@ || \
++	git -P diff --no-index $(@:.build/%=%) $@ 2>/dev/null; \
++
++.PHONY: coccicheck-test
++coccicheck-test: $(COCCI_TEST_RES_GEN)
++
+ coccicheck: $(addsuffix .patch,$(filter-out %.pending.cocci,$(wildcard contrib/coccinelle/*.cocci)))
+ 
+ # See contrib/coccinelle/README
+diff --git a/contrib/coccinelle/tests/free.c b/contrib/coccinelle/tests/free.c
+new file mode 100644
+index 00000000000..96d4abc0c78
+--- /dev/null
++++ b/contrib/coccinelle/tests/free.c
+@@ -0,0 +1,11 @@
++int use_FREE_AND_NULL(int *v)
++{
++	free(*v);
++	*v = NULL;
++}
++
++int need_no_if(int *v)
++{
++	if (v)
++		free(v);
++}
+diff --git a/contrib/coccinelle/tests/free.res b/contrib/coccinelle/tests/free.res
+new file mode 100644
+index 00000000000..f90fd9f48e3
+--- /dev/null
++++ b/contrib/coccinelle/tests/free.res
+@@ -0,0 +1,9 @@
++int use_FREE_AND_NULL(int *v)
++{
++	FREE_AND_NULL(*v);
++}
++
++int need_no_if(int *v)
++{
++	free(v);
++}
+diff --git a/shared.mak b/shared.mak
+index 4330192e9c3..974faabf60f 100644
+--- a/shared.mak
++++ b/shared.mak
+@@ -69,7 +69,9 @@ ifndef V
+ 	QUIET_SP       = @echo '   ' SP $<;
+ 	QUIET_HDR      = @echo '   ' HDR $(<:hcc=h);
+ 	QUIET_RC       = @echo '   ' RC $@;
+-	QUIET_SPATCH   = @echo '   ' SPATCH $<;
++
++	QUIET_SPATCH      = @echo '   ' SPATCH $<;
++	QUIET_SPATCH_TEST = @echo '   ' SPATCH TEST $(@:.build/%=%);
+ 
+ ## Used in "Documentation/Makefile"
+ 	QUIET_ASCIIDOC	= @echo '   ' ASCIIDOC $@;
+-- 
+2.37.0.903.g3f2fd1cdc74
+

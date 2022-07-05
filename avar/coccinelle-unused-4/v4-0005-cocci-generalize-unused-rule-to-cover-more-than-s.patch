@@ -1,0 +1,167 @@
+From c279e6d6ba6521414a2f874ede13cb0e1d75396d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-5.5-c279e6d6ba6-20220705T105356Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.5-00000000000-20220705T105356Z-avarab@gmail.com>
+References: <cover-v3-0.4-00000000000-20220701T102506Z-avarab@gmail.com>
+	<cover-v4-0.5-00000000000-20220705T105356Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 23 Jun 2022 14:22:23 +0200
+Subject: [PATCH v4 5/5] cocci: generalize "unused" rule to cover more than
+ "strbuf"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Generalize the newly added "unused.cocci" rule to find more than just
+"struct strbuf", let's have it find the same unused patterns for
+"struct string_list", as well as other code that uses
+similar-looking *_{release,clear,free}() and {release,clear,free}_*()
+functions.
+
+We're intentionally loose in accepting e.g. a "strbuf_init(&sb)"
+followed by a "string_list_clear(&sb, 0)".  It's assumed that the
+compiler will catch any such invalid code, i.e. that our
+constructors/destructors don't take a "void *".
+
+See [1] for example of code that would be covered by the
+"get_worktrees()" part of this rule. We'd still need work that the
+series is based on (we were passing "worktrees" to a function), but
+could now do the change in [1] automatically.
+
+1. https://lore.kernel.org/git/Yq6eJFUPPTv%2Fzc0o@coredump.intra.peff.net/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/repack.c                    |  2 --
+ contrib/coccinelle/tests/unused.c   | 27 +++++++++++++++++++++++++++
+ contrib/coccinelle/tests/unused.res | 15 +++++++++++++++
+ contrib/coccinelle/unused.cocci     | 19 +++++++++++++++----
+ 4 files changed, 57 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/repack.c b/builtin/repack.c
+index 4a7ae4cf489..482b66f57d6 100644
+--- a/builtin/repack.c
++++ b/builtin/repack.c
+@@ -727,7 +727,6 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 	struct child_process cmd = CHILD_PROCESS_INIT;
+ 	struct string_list_item *item;
+ 	struct string_list names = STRING_LIST_INIT_DUP;
+-	struct string_list rollback = STRING_LIST_INIT_NODUP;
+ 	struct string_list existing_nonkept_packs = STRING_LIST_INIT_DUP;
+ 	struct string_list existing_kept_packs = STRING_LIST_INIT_DUP;
+ 	struct pack_geometry *geometry = NULL;
+@@ -1117,7 +1116,6 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 	}
+ 
+ 	string_list_clear(&names, 0);
+-	string_list_clear(&rollback, 0);
+ 	string_list_clear(&existing_nonkept_packs, 0);
+ 	string_list_clear(&existing_kept_packs, 0);
+ 	clear_pack_geometry(geometry);
+diff --git a/contrib/coccinelle/tests/unused.c b/contrib/coccinelle/tests/unused.c
+index 495ae58ccf1..8294d734ba4 100644
+--- a/contrib/coccinelle/tests/unused.c
++++ b/contrib/coccinelle/tests/unused.c
+@@ -53,3 +53,30 @@ void test_strbuf(void)
+ 		return;
+ 	strbuf_release(&sb8);
+ }
++
++void test_other(void)
++{
++	struct string_list l = STRING_LIST_INIT_DUP;
++	struct strbuf sb = STRBUF_INIT;
++
++	string_list_clear(&l, 0);
++	string_list_clear(&sb, 0);
++}
++
++void test_worktrees(void)
++{
++	struct worktree **w1 = get_worktrees();
++	struct worktree **w2 = get_worktrees();
++	struct worktree **w3;
++	struct worktree **w4;
++
++	w3 = get_worktrees();
++	w4 = get_worktrees();
++
++	use_it(w4);
++
++	free_worktrees(w1);
++	free_worktrees(w2);
++	free_worktrees(w3);
++	free_worktrees(w4);
++}
+diff --git a/contrib/coccinelle/tests/unused.res b/contrib/coccinelle/tests/unused.res
+index b3b71053ed6..6d3e745683c 100644
+--- a/contrib/coccinelle/tests/unused.res
++++ b/contrib/coccinelle/tests/unused.res
+@@ -28,3 +28,18 @@ void test_strbuf(void)
+ 	if (when_strict())
+ 		return;
+ }
++
++void test_other(void)
++{
++}
++
++void test_worktrees(void)
++{
++	struct worktree **w4;
++
++	w4 = get_worktrees();
++
++	use_it(w4);
++
++	free_worktrees(w4);
++}
+diff --git a/contrib/coccinelle/unused.cocci b/contrib/coccinelle/unused.cocci
+index 56530498d17..d84046f82ea 100644
+--- a/contrib/coccinelle/unused.cocci
++++ b/contrib/coccinelle/unused.cocci
+@@ -4,10 +4,13 @@
+ @@
+ type T;
+ identifier I;
+-constant INIT_MACRO =~ "^STRBUF_INIT$";
++// STRBUF_INIT, but also e.g. STRING_LIST_INIT_DUP (so no anchoring)
++constant INIT_MACRO =~ "_INIT";
+ identifier MALLOC1 =~ "^x?[mc]alloc$";
+-identifier INIT_CALL1 =~ "^strbuf_init$";
+-identifier REL1 =~ "^strbuf_(release|reset)$";
++identifier INIT_ASSIGN1 =~ "^get_worktrees$";
++identifier INIT_CALL1 =~ "^[a-z_]*_init$";
++identifier REL1 =~ "^[a-z_]*_(release|reset|clear|free)$";
++identifier REL2 =~ "^(release|clear|free)_[a-z_]*$";
+ @@
+ 
+ (
+@@ -18,15 +21,23 @@ identifier REL1 =~ "^strbuf_(release|reset)$";
+ - T I = INIT_MACRO;
+ |
+ - T I = MALLOC1(...);
++|
++- T I = INIT_ASSIGN1(...);
+ )
+ 
+ <... when != \( I \| &I \)
+ (
+ - \( INIT_CALL1 \)( \( I \| &I \), ...);
+ |
++- I = \( INIT_ASSIGN1 \)(...);
++|
+ - I = MALLOC1(...);
+ )
+ ...>
+ 
+-- \( REL1 \)( \( &I \| I \) );
++(
++- \( REL1 \| REL2 \)( \( I \| &I \), ...);
++|
++- \( REL1 \| REL2 \)( \( &I \| I \) );
++)
+   ... when != \( I \| &I \)
+-- 
+2.37.0.903.g3f2fd1cdc74
+
