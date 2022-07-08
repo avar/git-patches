@@ -1,0 +1,72 @@
+From d7c14a1cad88dda32cce21240ed1ff62cc2767ba Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.7-d7c14a1cad8-20220708T140354Z-avarab@gmail.com>
+In-Reply-To: <cover-0.7-00000000000-20220708T140354Z-avarab@gmail.com>
+References: <b34dcb93-df73-f5de-3c7c-7ab6c3250afe@gmail.com>
+	<cover-0.7-00000000000-20220708T140354Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 8 Jul 2022 15:08:55 +0200
+Subject: [PATCH 3/7] git-shared-util.h: add G*() versions of *ALLOC_*()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add "gently" versions of ALLOC_ARRAY(), CALLOC_ARRAY() etc. using the
+naming convention G*() as a shorthand for "GENTLY_*()".
+
+Nothing uses these functions yet, but as we'll see in subsequent
+commit(s) we're able to convert things that need e.g. non-fatal
+"ALLOC_GROW" behavior over to this.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-shared-util.h | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/git-shared-util.h b/git-shared-util.h
+index 7b4479a0f72..718a8e00732 100644
+--- a/git-shared-util.h
++++ b/git-shared-util.h
+@@ -8,8 +8,11 @@
+ #define FREE_AND_NULL(p) do { free(p); (p) = NULL; } while (0)
+ 
+ #define ALLOC_ARRAY(x, alloc) (x) = xmalloc(st_mult(sizeof(*(x)), (alloc)))
++#define GALLOC_ARRAY(x, alloc) (x) = malloc(st_mult(sizeof(*(x)), (alloc)))
+ #define CALLOC_ARRAY(x, alloc) (x) = xcalloc((alloc), sizeof(*(x)))
++#define GCALLOC_ARRAY(x, alloc) (x) = calloc((alloc), sizeof(*(x)))
+ #define REALLOC_ARRAY(x, alloc) (x) = xrealloc((x), st_mult(sizeof(*(x)), (alloc)))
++#define GREALLOC_ARRAY(x, alloc) (x) = realloc((x), st_mult(sizeof(*(x)), (alloc)))
+ 
+ #define COPY_ARRAY(dst, src, n) copy_array((dst), (src), (n), sizeof(*(dst)) + \
+ 	BUILD_ASSERT_OR_ZERO(sizeof(*(dst)) == sizeof(*(src))))
+@@ -71,17 +74,25 @@ static inline void move_array(void *dst, const void *src, size_t n, size_t size)
+  * added niceties.
+  *
+  * DO NOT USE any expression with side-effect for 'x', 'nr', or 'alloc'.
++ *
++ * GALLOC_GROW() behaves like ALLOC_GROW(), except that in malloc()
++ * failure we'll return NULL rather than dying.
+  */
+-#define ALLOC_GROW(x, nr, alloc) \
++#define ALLOC_GROW_1(x, nr, alloc, gently) \
+ 	do { \
+ 		if ((nr) > alloc) { \
+ 			if (alloc_nr(alloc) < (nr)) \
+ 				alloc = (nr); \
+ 			else \
+ 				alloc = alloc_nr(alloc); \
+-			REALLOC_ARRAY(x, alloc); \
++			if (gently) \
++				GREALLOC_ARRAY(x, alloc); \
++			else \
++				REALLOC_ARRAY(x, alloc); \
+ 		} \
+ 	} while (0)
++#define ALLOC_GROW(x, nr, alloc) ALLOC_GROW_1(x, nr, alloc, 0)
++#define GALLOC_GROW(x, nr, alloc) ALLOC_GROW_1(x, nr, alloc, 1)
+ 
+ /*
+  * Similar to ALLOC_GROW but handles updating of the nr value and
+-- 
+2.37.0.913.g189dca38629
+
