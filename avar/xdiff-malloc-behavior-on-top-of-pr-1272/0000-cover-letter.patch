@@ -4,12 +4,74 @@ In-Reply-To: <b34dcb93-df73-f5de-3c7c-7ab6c3250afe@gmail.com>
 References: <b34dcb93-df73-f5de-3c7c-7ab6c3250afe@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Fri, 8 Jul 2022 16:03:54 +0200
-Subject: [PATCH 0/7] *** SUBJECT HERE ***
+Subject: [PATCH 0/7] xdiff: use standard alloc macros, share them via git-shared-util.h
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series is on top of
+https://lore.kernel.org/git/pull.1272.git.1656516334.gitgitgadget@gmail.com/;
+and shows that we can factor our the allocation macros used in cache.h
+and git-compat-util.h instead of defining replacements for them and
+alloc_nr() in xdiff/*.
+
+The journy towards doing so is slightly longer, but I think worth
+doing, since...
+
+On Fri, Jul 08 2022, Phillip Wood wrote:
+
+> On 07/07/2022 12:17, Ævar Arnfjörð Bjarmason wrote:
+
+>> I don't think it's more readable to carry code in-tree that's
+>> unreachable except when combined with code out-of-tree. I.e. this series
+>> leaves us with the equivalent of:
+>>      ptr = xmalloc(...);
+>>          if (!ptr)
+>>              /* unreachable in git.git ... */
+>> I don't think it's more readable to have code that rather trivial
+>> analysis will show goes against the "__attribute__((noreturn))" we're
+>> placing on our die() function.
+>
+> We're already in this situation. The code in xdiff is written to
+> handle allocation failures and we use an allocation function that dies
+> instead. This patch series does nothing to alter that situation.
+>[...]
+>> That just seems inviting a segfault or undefined/untested behavior
+>> (whether in the sense of "undefined by C" or "untested by git.git's
+>> codebase logic"). Everything around xmalloc() now assumes "never returns
+>> NULL", and you want to:
+>>   * Make it return NULL when combined with out-of-tree-code
+>
+> No I do not want to alter the behavior of xmalloc() at all, that is
+> why this series does not alter the behavior of xmalloc()
+> [...]
+> I think there is an argument that we should change our xdiff wrapper
+> to use malloc() rather than xmalloc() so we're able to test the error
+> handling. That then begs the question as to how we actually get the
+> allocation functions to fail when they're being tested. I also think
+> that is an orthogonal change that could happen with or without this
+> patch series.
+
+I think part of what I was claiming upthread I was just confused
+about. I.e. yes we do use xdl_malloc() defined as xmalloc() already,
+what *is* true (and I didn't make this clear) was that your proposed
+series cements that further in place.
+
+But as 6/7 here notes 36c83197249 (xdiff: use xmalloc/xrealloc,
+2019-04-11) left us with that state of affairs for expediency, but as
+we're really close to just "properly lib-ifying" xdiff I think we
+should just do that. At the time of 36c83197249 we had ~20 calls to
+xdl_malloc(), after your series we were at ~1/2 of that (including a
+callers that 36c83197249 explicitly punted on).
+
+This larger series is something we can do later, but I'm submitting it
+as a non-RFC in case there's consensus to pick it up on top. The sum
+of the two would be smaller if they were squashed together, but I
+haven't done that here.
+
+The 1/7 is an amendmend I suggested to 47be28e51e6 (Merge branch
+'pw/xdiff-alloc-fail', 2022-03-09), since it was modifying some of the
+same lines of code...
 
 Ævar Arnfjörð Bjarmason (7):
   xdiff: simplify freeing patterns around xdl_free_env()
