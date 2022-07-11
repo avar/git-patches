@@ -1,0 +1,153 @@
+From 3f7c2275e1906d82e3ef3dd9785a316dca9d1cfb Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-1.4-3f7c2275e19-20220711T110019Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.4-00000000000-20220711T110019Z-avarab@gmail.com>
+References: <YstJl+5BPyR5RWnR@tapette.crustytoothpaste.net>
+	<RFC-cover-0.4-00000000000-20220711T110019Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 11 Jul 2022 10:18:04 +0200
+Subject: [RFC PATCH 1/4] Makefile: add a style-all targets for .clang-format
+ testing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend "style" rule added in 2118805b929 (Makefile: add style build
+rule, 2017-08-14) with a set of "style-all" rules. These rules all
+apply our ".clang-format" added in 6134de6ac18 (clang-format: outline
+the git project's coding style, 2017-08-14) to all our tracked files,
+rather than using "git-clang-format", which only applies the rules to
+files that differ from those that are tracked.
+
+This allows for testing and improving the .clang-format itself, as it
+should as closely as possible mirror out stated
+Documentation/CodingGuidelines, or in cases where we don't have
+explicit guidelines it should match the prevailing preferred style in
+the project.
+
+Let's apply one such change, in 6134de6ac18 the "AlignEscapedNewlines"
+configuration was set to "Left", but as setting it to "DontAlign"
+shows our more common pattern is to not align "\"'s across newlines in
+macro definitions.
+
+Before & after the .clang-format change, running:
+
+	git checkout -f '*.[ch]' && make -k style-all-diff-ok -k; make style-all-diff-apply
+
+Will yield, respectively:
+
+	578 files changed, 32191 insertions(+), 29944 deletions(-)
+	579 files changed, 32065 insertions(+), 29818 deletions(-)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .clang-format |  8 +++---
+ Makefile      | 67 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 71 insertions(+), 4 deletions(-)
+
+diff --git a/.clang-format b/.clang-format
+index c592dda681f..3f536c49f24 100644
+--- a/.clang-format
++++ b/.clang-format
+@@ -32,12 +32,12 @@ AlignConsecutiveAssignments: false
+ # double b = 3.14;
+ AlignConsecutiveDeclarations: false
+ 
+-# Align escaped newlines as far left as possible
+-# #define A   \
++# Do not align escaped newlines in macro definitions
++# #define A \
+ #   int aaaa; \
+-#   int b;    \
++#   int b; \
+ #   int cccccccc;
+-AlignEscapedNewlines: Left
++AlignEscapedNewlines: DontAlign
+ 
+ # Align operands of binary and ternary expressions
+ # int aaa = bbbbbbbbbbb +
+diff --git a/Makefile b/Makefile
+index 04d0fd1fe60..67306820002 100644
+--- a/Makefile
++++ b/Makefile
+@@ -3108,10 +3108,77 @@ $(HCO): %.hco: %.hcc FORCE
+ .PHONY: hdr-check $(HCO)
+ hdr-check: $(HCO)
+ 
++##
++## clang-format targets
++##
++
++### style: apply a clang-format "diff" based on the changes in the
++### working tree
+ .PHONY: style
+ style:
+ 	git clang-format --style file --diff --extensions c,h
+ 
++#### style: common variables
++STYLE_SOURCES = $(filter-out $(THIRD_PARTY_SOURCES) $(EXCEPT_HDRS),\
++	$(FOUND_C_SOURCES) $(FOUND_H_SOURCES))
++
++#### style-all: generate clang-format output for everything. Copying
++#### the file to */in/* is so we can apply it with "git apply" (so one
++#### side won't have a .build/style-all/* prefix). If only "git apply"
++#### had a "-p" that applied only to one of "a/" or "b/" ...
++STYLE_SOURCES_IN = $(addprefix .build/style-all/in/,$(STYLE_SOURCES))
++$(STYLE_SOURCES_IN): .build/style-all/in/% : %
++	$(call mkdir_p_parent_template)
++	$(QUIET_LNCP)cp $< $@
++
++STYLE_SOURCES_OUT = $(addprefix .build/style-all/out/,$(STYLE_SOURCES))
++$(STYLE_SOURCES_OUT): .clang-format
++$(STYLE_SOURCES_OUT): .build/style-all/out/%: .build/style-all/in/%
++	$(call mkdir_p_parent_template)
++	$(QUIET_GEN)clang-format $< >$@
++.PHONY: style-all
++style-all: $(STYLE_SOURCES_GEN)
++
++#### style-all-diff: generate diffs of clang-format output
++#### v.s. checked-in files
++STYLE_SOURCES_DIFF = $(addprefix .build/style-all/diff/,$(STYLE_SOURCES))
++$(STYLE_SOURCES_DIFF): .build/style-all/diff/%: .build/style-all/out/%
++	$(call mkdir_p_parent_template)
++	$(QUIET_GEN)git \
++		-P \
++		diff --no-index \
++		$(<:.build/style-all/out/%=.build/style-all/in/%) $< >$@ || \
++	test -s $@
++
++.PHONY: style-all-diff
++style-all-diff: $(STYLE_SOURCES_DIFF)
++
++#### style-all-diff-ok: fail on files that have pending clang-format
++#### changes
++STYLE_SOURCES_DIFF_OK = $(addsuffix .ok,$(STYLE_SOURCES_DIFF))
++$(STYLE_SOURCES_DIFF_OK): %.ok: %
++	$(QUIET_GEN)! test -s $< && \
++	>$@
++.PHONY: style-all-diff-ok
++style-all-diff-ok: $(STYLE_SOURCES_DIFF_OK)
++
++.build/style-all.diff: $(STYLE_SOURCES_DIFF)
++	$(QUIET_GEN)cat $^ >$@
++
++#### style-all-diff-apply: apply the proposed clang-format changes. We
++#### need to have no local changes here, and use FORCE as the
++#### dependency graph of this rule is circular. I.e. we'll modify
++#### git.c, but eventually depend on it as well.
++STYLE_ALL_DIFF_APPLY_EXCLUDE =
++STYLE_ALL_DIFF_APPLY_EXCLUDE += ':!/Makefile'
++STYLE_ALL_DIFF_APPLY_EXCLUDE += ':!/.clang-format'
++style-all-diff-apply: FORCE
++style-all-diff-apply: .build/style-all.diff
++	git diff --quiet HEAD -- $(STYLE_ALL_DIFF_APPLY_EXCLUDE) && \
++	git diff --quiet --cached -- $(STYLE_ALL_DIFF_APPLY_EXCLUDE) && \
++	git apply -p4 $< && \
++	git -P diff --shortstat -- $(STYLE_ALL_DIFF_APPLY_EXCLUDE)
++
+ .PHONY: check
+ check: $(GENERATED_H)
+ 	@if sparse; \
+-- 
+2.37.0.913.g189dca38629
+
