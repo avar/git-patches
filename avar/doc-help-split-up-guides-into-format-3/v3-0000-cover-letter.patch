@@ -1,9 +1,9 @@
-From 32727c0800600967ae61ccfe1d29d696d2bc897f Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-0.7-00000000000-20220712T193016Z-avarab@gmail.com>
+From 93be9ad5f36478e4cbee5c76018029a18c134f30 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.7-00000000000-20220712T194436Z-avarab@gmail.com>
 In-Reply-To: <cover-v2-0.5-00000000000-20211212T194047Z-avarab@gmail.com>
 References: <cover-v2-0.5-00000000000-20211212T194047Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 12 Jul 2022 21:30:16 +0200
+Date: Tue, 12 Jul 2022 21:44:36 +0200
 Subject: [PATCH v3 0/7] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -54,12 +54,12 @@ Content-Transfer-Encoding: 8bit
  builtin/help.c                                | 18 ++++++-
  cache.h                                       |  3 +-
  command-list.txt                              | 33 ++++++++++---
- help.c                                        | 22 +++++++++
+ help.c                                        | 29 ++++++++++-
  help.h                                        |  2 +
  pack-revindex.h                               |  2 +-
  t/t0012-help.sh                               | 14 +++++-
  t/t5551-http-fetch-smart.sh                   |  4 +-
- 39 files changed, 485 insertions(+), 118 deletions(-)
+ 39 files changed, 491 insertions(+), 119 deletions(-)
  rename Documentation/{technical/bundle-format.txt => gitformat-bundle.txt} (79%)
  rename Documentation/{technical/chunk-format.txt => gitformat-chunk.txt} (90%)
  rename Documentation/{technical/commit-graph-format.txt => gitformat-commit-graph.txt} (87%)
@@ -75,7 +75,7 @@ Content-Transfer-Encoding: 8bit
  rename Documentation/{technical/signature-format.txt => gitformat-signature.txt} (96%)
 
 Range-diff against v2:
-1:  960574b7f05 ! 1:  1c39f5c7772 git docs: split "User-facing file formats" off from "Guides"
+1:  960574b7f05 ! 1:  929d9192828 git docs: split "User-facing file formats" off from "Guides"
     @@ Documentation/git-help.txt
      @@ Documentation/git-help.txt: SYNOPSIS
       --------
@@ -137,6 +137,23 @@ Range-diff against v2:
       	{ 0, NULL }
       };
       
+    +@@ help.c: static const char *drop_prefix(const char *name, uint32_t category)
+    + 
+    + 	if (skip_prefix(name, "git-", &new_name))
+    + 		return new_name;
+    +-	if (category == CAT_guide && skip_prefix(name, "git", &new_name))
+    ++	switch (category) {
+    ++	case CAT_guide:
+    ++	case CAT_userformats:
+    ++		skip_prefix(name, "git", &new_name);
+    + 		return new_name;
+    ++	}
+    + 	return name;
+    + 
+    + }
+     @@ help.c: void list_guides_help(void)
+      	putchar('\n');
+      }
     @@ help.c: void list_guides_help(void)
      +void list_user_formats_help(void)
      +{
@@ -175,9 +192,12 @@ Range-diff against v2:
     -+test_expect_success 'git help --formats' '
     ++test_expect_success 'git help --user-formats' '
      +	git help --user-formats >help.output &&
-     +	grep "^   gitattributes   " help.output &&
-     +	grep "^   gitmailmap   " help.output
-    @@ t/t0012-help.sh: test_expect_success 'git help succeeds without git.html' '
+    -+	grep "^   gitattributes   " help.output &&
+    -+	grep "^   gitmailmap   " help.output
+    ++	grep "^   attributes   " help.output &&
+    ++	grep "^   mailmap   " help.output
+     +'
+     +
       test_expect_success 'git help -c' '
       	git help -c >help.output &&
       	cat >expect <<-\EOF &&
@@ -190,7 +210,7 @@ Range-diff against v2:
     + 	EOF
     + 	test_cmp expect actual
     + '
-2:  b2d73f8c9da ! 2:  04e0efa14c2 git docs: create a "Git file and wire formats" section
+2:  b2d73f8c9da ! 2:  1fd57d5caf4 git docs: create a "Git file and wire formats" section
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -329,6 +349,17 @@ Range-diff against v2:
       	{ 0, NULL }
       };
       
+    +@@ help.c: static const char *drop_prefix(const char *name, uint32_t category)
+    + 	switch (category) {
+    + 	case CAT_guide:
+    + 	case CAT_userformats:
+    ++	case CAT_gitformats:
+    + 		skip_prefix(name, "git", &new_name);
+    + 		return new_name;
+    + 	}
+     @@ help.c: void list_user_formats_help(void)
+      	putchar('\n');
+      }
     @@ help.c: void list_user_formats_help(void)
      +void list_git_formats_help(void)
      +{
@@ -361,7 +392,7 @@ Range-diff against v2:
     + 	EOF
     + 	test_cmp expect actual
     + '
-3:  5abd59b807f ! 3:  d39bb2733b1 docs: move commit-graph format docs to man section 5
+3:  5abd59b807f ! 3:  d548c6aaba7 docs: move commit-graph format docs to man section 5
     @@ Documentation/gitformat-commit-graph.txt: CHUNK DATA:
             2 bits of the lowest byte, storing the 33rd and 34th bit of the
             commit time.
@@ -396,8 +427,8 @@ Range-diff against v2:
      +
      +GIT
      +---
-4:  fb91009c18f = 4:  2d2f0356046 docs: move protocol-related docs to man section 5
-5:  5cb41bb0dcb ! 5:  da73cfbf610 docs: move {index,signature,bitmap,chunk}-format docs to man section 5
+4:  fb91009c18f = 4:  f404987f94d docs: move protocol-related docs to man section 5
+5:  5cb41bb0dcb ! 5:  27199a37744 docs: move {index,signature,bitmap,chunk}-format docs to man section 5
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -868,8 +899,8 @@ Range-diff against v2:
     +  *
     +  *     It is effectively a concatanation of all packs in the MIDX (ordered by
     +  *     their numeric ID within the MIDX) in their original order within each
--:  ----------- > 6:  f36cf441d75 docs: move http-protocol docs to man section 5
--:  ----------- > 7:  32727c08006 docs: move multi-pack-index docs to man section 5
+-:  ----------- > 6:  c1882a7a756 docs: move http-protocol docs to man section 5
+-:  ----------- > 7:  93be9ad5f36 docs: move multi-pack-index docs to man section 5
 -- 
 2.37.0.932.g7b7031e73bc
 
