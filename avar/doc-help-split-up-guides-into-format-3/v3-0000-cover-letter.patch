@@ -1,9 +1,9 @@
-From 93be9ad5f36478e4cbee5c76018029a18c134f30 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-0.7-00000000000-20220712T194436Z-avarab@gmail.com>
+From aabdc4a4151cf0046741dcb0c5ab09e00c62d9bf Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.7-00000000000-20220712T195419Z-avarab@gmail.com>
 In-Reply-To: <cover-v2-0.5-00000000000-20211212T194047Z-avarab@gmail.com>
 References: <cover-v2-0.5-00000000000-20211212T194047Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 12 Jul 2022 21:44:36 +0200
+Date: Tue, 12 Jul 2022 21:54:19 +0200
 Subject: [PATCH v3 0/7] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -20,7 +20,7 @@ Content-Transfer-Encoding: 8bit
   docs: move http-protocol docs to man section 5
   docs: move multi-pack-index docs to man section 5
 
- Documentation/Makefile                        | 26 +++++-----
+ Documentation/Makefile                        | 28 ++++++-----
  Documentation/config/lsrefs.txt               |  2 +-
  Documentation/config/pack.txt                 |  2 +-
  Documentation/config/protocol.txt             |  2 +-
@@ -36,6 +36,7 @@ Content-Transfer-Encoding: 8bit
  .../index-format.txt => gitformat-index.txt}  | 22 ++++++++-
  ...dex.txt => gitformat-multi-pack-index.txt} | 20 +++++++-
  ...p-format.txt => gitformat-pack-bitmap.txt} | 38 +++++++++++---
+ ...uft-packs.txt => gitformat-pack-cruft.txt} | 22 ++++++++-
  ...otocol.txt => gitformat-pack-protocol.txt} | 26 ++++++++--
  .../pack-format.txt => gitformat-pack.txt}    | 39 +++++++++++++--
  ...xt => gitformat-protocol-capabilities.txt} | 28 ++++++++---
@@ -53,19 +54,20 @@ Content-Transfer-Encoding: 8bit
  Makefile                                      |  1 +
  builtin/help.c                                | 18 ++++++-
  cache.h                                       |  3 +-
- command-list.txt                              | 33 ++++++++++---
+ command-list.txt                              | 34 ++++++++++---
  help.c                                        | 29 ++++++++++-
  help.h                                        |  2 +
  pack-revindex.h                               |  2 +-
  t/t0012-help.sh                               | 14 +++++-
  t/t5551-http-fetch-smart.sh                   |  4 +-
- 39 files changed, 491 insertions(+), 119 deletions(-)
+ 40 files changed, 513 insertions(+), 122 deletions(-)
  rename Documentation/{technical/bundle-format.txt => gitformat-bundle.txt} (79%)
  rename Documentation/{technical/chunk-format.txt => gitformat-chunk.txt} (90%)
  rename Documentation/{technical/commit-graph-format.txt => gitformat-commit-graph.txt} (87%)
  rename Documentation/{technical/index-format.txt => gitformat-index.txt} (98%)
  rename Documentation/{technical/multi-pack-index.txt => gitformat-multi-pack-index.txt} (94%)
  rename Documentation/{technical/bitmap-format.txt => gitformat-pack-bitmap.txt} (91%)
+ rename Documentation/{technical/cruft-packs.txt => gitformat-pack-cruft.txt} (96%)
  rename Documentation/{technical/pack-protocol.txt => gitformat-pack-protocol.txt} (98%)
  rename Documentation/{technical/pack-format.txt => gitformat-pack.txt} (95%)
  rename Documentation/{technical/protocol-capabilities.txt => gitformat-protocol-capabilities.txt} (96%)
@@ -428,7 +430,7 @@ Range-diff against v2:
      +GIT
      +---
 4:  fb91009c18f = 4:  f404987f94d docs: move protocol-related docs to man section 5
-5:  5cb41bb0dcb ! 5:  27199a37744 docs: move {index,signature,bitmap,chunk}-format docs to man section 5
+5:  5cb41bb0dcb ! 5:  6c46b4dccea docs: move {index,signature,bitmap,chunk}-format docs to man section 5
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -461,6 +463,7 @@ Range-diff against v2:
       MAN5_TXT += gitformat-commit-graph.txt
      +MAN5_TXT += gitformat-index.txt
     ++MAN5_TXT += gitformat-pack-bitmap.txt
+    ++MAN5_TXT += gitformat-pack-cruft.txt
       MAN5_TXT += gitformat-pack-protocol.txt
     ++MAN5_TXT += gitformat-pack.txt
       MAN5_TXT += gitformat-protocol-capabilities.txt
@@ -476,7 +479,7 @@ Range-diff against v2:
       TECH_DOCS += SubmittingPatches
     + TECH_DOCS += ToolsForGit
     +-TECH_DOCS += technical/bitmap-format
-    + TECH_DOCS += technical/cruft-packs
+    +-TECH_DOCS += technical/cruft-packs
       TECH_DOCS += technical/hash-function-transition
       TECH_DOCS += technical/http-protocol
      -TECH_DOCS += technical/index-format
@@ -667,10 +670,10 @@ Range-diff against v2:
      +=== On-disk format
       
     - 	- A header appears at the beginning:
+    - 
+    -@@ Documentation/gitformat-bitmap.txt: MIDXs, both the bit-cache and rev-cache extensions are required.
     +     * A header appears at the beginning:
       
-    -@@ Documentation/gitformat-bitmap.txt: MIDXs, both the bit-cache and rev-cache extensions are required.
-    - 
     - 		- The compressed bitmap itself, see Appendix A.
     +@@ Documentation/gitformat-pack-bitmap.txt: in the index.
     + 	TRAILER: ::
@@ -701,28 +704,31 @@ Range-diff against v2:
      +Part of the linkgit:git[1] suite
      
     - ## Documentation/technical/chunk-format.txt => Documentation/gitformat-chunk.txt ##
-    -@@
+    + ## Documentation/technical/cruft-packs.txt => Documentation/gitformat-pack-cruft.txt ##
+     @@
     --Chunk-based file formats
     --========================
     -+gitformat-chunk(5)
     -+==================
-    -+
-    -+NAME
-    -+----
+    +-= Cruft packs
+    ++gitformat-pack-cruft(5)
+    ++=======================
+     +
+     +NAME
+     +----
     -+gitformat-chunk - Chunk-based file formats
-    -+
-    -+SYNOPSIS
-    -+--------
+    ++gitformat-pack-cruft - The cruft pack file format
+     +
+     +SYNOPSIS
+     +--------
     -+
     -+Used by linkgit:gitformat-commit-graph[5] and the "MIDX" format (see
     -+link:technical/pack-format.html[the pack format documentation]).
-    -+
-    -+DESCRIPTION
-    -+-----------
-    + ## Documentation/gitformat-pack-protocol.txt ##
-    +@@ Documentation/gitformat-pack-protocol.txt: Now that the client and server have finished negotiation about what
-    + the minimal amount of data that needs to be sent to the client is, the server
-    + will construct and send the required data in packfile format.
+    ++[verse]
+    ++$GIT_DIR/objects/pack/pack-*.mtimes
+     +
+     +DESCRIPTION
+     +-----------
       
     - Some file formats in Git use a common concept of "chunks" to describe
     - sections of the file. This allows structured access to a large file by
@@ -730,15 +736,38 @@ Range-diff against v2:
     -   in `midx.c` for how the chunk-format API is used to write and
     -   parse the multi-pack-index file format documented in
     -   link:technical/pack-format.html[the multi-pack-index file format].
-    -+
-    -+GIT
-    -+---
-    -+Part of the linkgit:git[1] suite
-    -
+    + The cruft packs feature offer an alternative to Git's traditional mechanism of
+    + removing unreachable objects. This document provides an overview of Git's
+    +@@ Documentation/gitformat-pack-cruft.txt: same.
+    + To remove unreachable objects from your repository, Git offers `git repack -Ad`
+    + (see linkgit:git-repack[1]). Quoting from the documentation:
+    + 
+    +-[quote]
+    ++----
+    + [...] unreachable objects in a previous pack become loose, unpacked objects,
+    + instead of being left in the old pack. [...] loose unreachable objects will be
+    + pruned according to normal expiry rules with the next 'git gc' invocation.
+    ++----
+    + 
+    + Unreachable objects aren't removed immediately, since doing so could race with
+    + an incoming push which may reference an object which is about to be deleted.
+    +@@ Documentation/gitformat-pack-cruft.txt: which aren't already stored in an earlier cruft pack) is significantly more
+    + complicated to construct, and so aren't pursued here. The obvious drawback to
+    + the current implementation is that the entire cruft pack must be re-written from
+    + scratch.
+     +
+     +GIT
+     +---
+     +Part of the linkgit:git[1] suite
+     
     - ## Documentation/gitformat-commit-graph.txt ##
     -@@ Documentation/gitformat-commit-graph.txt: All multi-byte numbers are in network byte order.
     -       ID appears at most once.
-    - 
+    + ## Documentation/gitformat-pack-protocol.txt ##
+    +@@ Documentation/gitformat-pack-protocol.txt: Now that the client and server have finished negotiation about what
+    + the minimal amount of data that needs to be sent to the client is, the server
+    + will construct and send the required data in packfile format.
+      
     -   The CHUNK LOOKUP matches the table of contents from
     --  link:technical/chunk-format.html[the chunk-based file format].
     -+  the chunk-based file format, see linkgit:gitformat-chunk[5]
@@ -881,6 +910,7 @@ Range-diff against v2:
      +gitformat-index                         gitformats
     ++gitformat-pack                          gitformats
     ++gitformat-pack-bitmap                   gitformats
+    ++gitformat-pack-cruft                    gitformats
       gitformat-pack-protocol                 gitformats
       gitformat-protocol-capabilities         gitformats
       gitformat-protocol-common               gitformats
@@ -899,8 +929,8 @@ Range-diff against v2:
     +  *
     +  *     It is effectively a concatanation of all packs in the MIDX (ordered by
     +  *     their numeric ID within the MIDX) in their original order within each
--:  ----------- > 6:  c1882a7a756 docs: move http-protocol docs to man section 5
--:  ----------- > 7:  93be9ad5f36 docs: move multi-pack-index docs to man section 5
+-:  ----------- > 6:  5cf8b526bff docs: move http-protocol docs to man section 5
+-:  ----------- > 7:  aabdc4a4151 docs: move multi-pack-index docs to man section 5
 -- 
 2.37.0.932.g7b7031e73bc
 

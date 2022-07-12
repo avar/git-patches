@@ -1,8 +1,8 @@
-From 27199a37744dd90182bd9aa523d934070615dedb Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v3-5.7-27199a37744-20220712T194436Z-avarab@gmail.com>
-In-Reply-To: <cover-v3-0.7-00000000000-20220712T194436Z-avarab@gmail.com>
+From 6c46b4dcceaf9121d938ba63d8a6f58dcbb9ae25 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-5.7-6c46b4dccea-20220712T195419Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.7-00000000000-20220712T195419Z-avarab@gmail.com>
 References: <cover-v2-0.5-00000000000-20211212T194047Z-avarab@gmail.com>
-	<cover-v3-0.7-00000000000-20220712T194436Z-avarab@gmail.com>
+	<cover-v3-0.7-00000000000-20220712T195419Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Sun, 6 Jun 2021 12:07:07 +0200
@@ -23,7 +23,7 @@ by default.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- Documentation/Makefile                        |  9 +++--
+ Documentation/Makefile                        | 11 +++---
  Documentation/config/pack.txt                 |  2 +-
  Documentation/git-bundle.txt                  |  3 +-
  Documentation/git-multi-pack-index.txt        |  4 +-
@@ -31,6 +31,7 @@ Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
  Documentation/gitformat-commit-graph.txt      |  2 +-
  .../index-format.txt => gitformat-index.txt}  | 22 ++++++++++-
  ...p-format.txt => gitformat-pack-bitmap.txt} | 38 +++++++++++++++----
+ ...uft-packs.txt => gitformat-pack-cruft.txt} | 22 ++++++++++-
  Documentation/gitformat-pack-protocol.txt     |  2 +-
  .../pack-format.txt => gitformat-pack.txt}    | 34 +++++++++++++++--
  ...ure-format.txt => gitformat-signature.txt} | 21 ++++++++--
@@ -38,20 +39,21 @@ Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
  .../technical/hash-function-transition.txt    |  2 +-
  Documentation/user-manual.txt                 |  2 +-
  cache.h                                       |  3 +-
- command-list.txt                              |  5 +++
+ command-list.txt                              |  6 +++
  pack-revindex.h                               |  2 +-
- 17 files changed, 143 insertions(+), 37 deletions(-)
+ 18 files changed, 165 insertions(+), 40 deletions(-)
  rename Documentation/{technical/chunk-format.txt => gitformat-chunk.txt} (90%)
  rename Documentation/{technical/index-format.txt => gitformat-index.txt} (98%)
  rename Documentation/{technical/bitmap-format.txt => gitformat-pack-bitmap.txt} (91%)
+ rename Documentation/{technical/cruft-packs.txt => gitformat-pack-cruft.txt} (96%)
  rename Documentation/{technical/pack-format.txt => gitformat-pack.txt} (95%)
  rename Documentation/{technical/signature-format.txt => gitformat-signature.txt} (96%)
 
 diff --git a/Documentation/Makefile b/Documentation/Makefile
-index adc1404d380..988c41cab8a 100644
+index adc1404d380..64be37526c1 100644
 --- a/Documentation/Makefile
 +++ b/Documentation/Makefile
-@@ -25,11 +25,16 @@ MAN1_TXT += gitweb.txt
+@@ -25,11 +25,17 @@ MAN1_TXT += gitweb.txt
  # man5 / man7 guides (note: new guides should also be added to command-list.txt)
  MAN5_TXT += gitattributes.txt
  MAN5_TXT += gitformat-bundle.txt
@@ -59,6 +61,7 @@ index adc1404d380..988c41cab8a 100644
  MAN5_TXT += gitformat-commit-graph.txt
 +MAN5_TXT += gitformat-index.txt
 +MAN5_TXT += gitformat-pack-bitmap.txt
++MAN5_TXT += gitformat-pack-cruft.txt
  MAN5_TXT += gitformat-pack-protocol.txt
 +MAN5_TXT += gitformat-pack.txt
  MAN5_TXT += gitformat-protocol-capabilities.txt
@@ -68,12 +71,12 @@ index adc1404d380..988c41cab8a 100644
  MAN5_TXT += githooks.txt
  MAN5_TXT += gitignore.txt
  MAN5_TXT += gitmailmap.txt
-@@ -100,14 +105,11 @@ TECH_DOCS += MyFirstContribution
+@@ -100,14 +106,10 @@ TECH_DOCS += MyFirstContribution
  TECH_DOCS += MyFirstObjectWalk
  TECH_DOCS += SubmittingPatches
  TECH_DOCS += ToolsForGit
 -TECH_DOCS += technical/bitmap-format
- TECH_DOCS += technical/cruft-packs
+-TECH_DOCS += technical/cruft-packs
  TECH_DOCS += technical/hash-function-transition
  TECH_DOCS += technical/http-protocol
 -TECH_DOCS += technical/index-format
@@ -318,6 +321,53 @@ index a85f58f5153..942bdd020ca 100644
 +GIT
 +---
 +Part of the linkgit:git[1] suite
+diff --git a/Documentation/technical/cruft-packs.txt b/Documentation/gitformat-pack-cruft.txt
+similarity index 96%
+rename from Documentation/technical/cruft-packs.txt
+rename to Documentation/gitformat-pack-cruft.txt
+index d81f3a8982f..908f752bd84 100644
+--- a/Documentation/technical/cruft-packs.txt
++++ b/Documentation/gitformat-pack-cruft.txt
+@@ -1,4 +1,17 @@
+-= Cruft packs
++gitformat-pack-cruft(5)
++=======================
++
++NAME
++----
++gitformat-pack-cruft - The cruft pack file format
++
++SYNOPSIS
++--------
++[verse]
++$GIT_DIR/objects/pack/pack-*.mtimes
++
++DESCRIPTION
++-----------
+ 
+ The cruft packs feature offer an alternative to Git's traditional mechanism of
+ removing unreachable objects. This document provides an overview of Git's
+@@ -10,10 +23,11 @@ same.
+ To remove unreachable objects from your repository, Git offers `git repack -Ad`
+ (see linkgit:git-repack[1]). Quoting from the documentation:
+ 
+-[quote]
++----
+ [...] unreachable objects in a previous pack become loose, unpacked objects,
+ instead of being left in the old pack. [...] loose unreachable objects will be
+ pruned according to normal expiry rules with the next 'git gc' invocation.
++----
+ 
+ Unreachable objects aren't removed immediately, since doing so could race with
+ an incoming push which may reference an object which is about to be deleted.
+@@ -121,3 +135,7 @@ which aren't already stored in an earlier cruft pack) is significantly more
+ complicated to construct, and so aren't pursued here. The obvious drawback to
+ the current implementation is that the entire cruft pack must be re-written from
+ scratch.
++
++GIT
++---
++Part of the linkgit:git[1] suite
 diff --git a/Documentation/gitformat-pack-protocol.txt b/Documentation/gitformat-pack-protocol.txt
 index b665af5b690..f1bfd6705d9 100644
 --- a/Documentation/gitformat-pack-protocol.txt
@@ -478,10 +528,10 @@ index ac5ab4ef9d3..82755c7c0aa 100644
  enum object_type {
  	OBJ_BAD = -1,
 diff --git a/command-list.txt b/command-list.txt
-index bec0fa690aa..4045e3166bf 100644
+index bec0fa690aa..8cd64c34a7c 100644
 --- a/command-list.txt
 +++ b/command-list.txt
-@@ -209,11 +209,16 @@ gitdiffcore                             guide
+@@ -209,11 +209,17 @@ gitdiffcore                             guide
  giteveryday                             guide
  gitfaq                                  guide
  gitformat-bundle                        gitformats
@@ -490,6 +540,7 @@ index bec0fa690aa..4045e3166bf 100644
 +gitformat-index                         gitformats
 +gitformat-pack                          gitformats
 +gitformat-pack-bitmap                   gitformats
++gitformat-pack-cruft                    gitformats
  gitformat-pack-protocol                 gitformats
  gitformat-protocol-capabilities         gitformats
  gitformat-protocol-common               gitformats
