@@ -1,0 +1,71 @@
+From f8c20bbf266f8fee0dcd161d707586ecaf165a32 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.11-f8c20bbf266-20220713T131322Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20220713T131322Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220713T131322Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 12 Jul 2022 10:24:18 +0200
+Subject: [PATCH 07/11] submodule--helper: fix "errmsg_str" memory leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak introduced in e83e3333b57 (submodule: port submodule
+subcommand 'summary' from shell to C, 2020-08-13), to do that stop
+juggling around the "errmsg" and "struct strbuf", let's instead move
+the "struct strbuf errmsg" to the top-level.
+
+Now we don't need to strbuf_detach() it anymore, but we do need to
+ensure that we pass NULL to print_submodule_summary() when we have no
+error message.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index a964dbeec38..a05578a7382 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -932,7 +932,8 @@ static void generate_submodule_summary(struct summary_cb *info,
+ {
+ 	char *displaypath, *src_abbrev = NULL, *dst_abbrev;
+ 	int missing_src = 0, missing_dst = 0;
+-	char *errmsg = NULL;
++	char *errmsg;
++	struct strbuf errmsg_str = STRBUF_INIT;
+ 	int total_commits = -1;
+ 
+ 	if (!info->cached && oideq(&p->oid_dst, null_oid())) {
+@@ -1032,7 +1033,6 @@ static void generate_submodule_summary(struct summary_cb *info,
+ 		 * submodule, i.e., deleted or changed to blob
+ 		 */
+ 		if (S_ISGITLINK(p->mod_dst)) {
+-			struct strbuf errmsg_str = STRBUF_INIT;
+ 			if (missing_src && missing_dst) {
+ 				strbuf_addf(&errmsg_str, "  Warn: %s doesn't contain commits %s and %s\n",
+ 					    displaypath, oid_to_hex(&p->oid_src),
+@@ -1043,10 +1043,10 @@ static void generate_submodule_summary(struct summary_cb *info,
+ 					    oid_to_hex(&p->oid_src) :
+ 					    oid_to_hex(&p->oid_dst));
+ 			}
+-			errmsg = strbuf_detach(&errmsg_str, NULL);
+ 		}
+ 	}
+ 
++	errmsg = errmsg_str.len ? errmsg_str.buf : NULL;
+ 	print_submodule_summary(info, errmsg, total_commits,
+ 				displaypath, src_abbrev,
+ 				dst_abbrev, p);
+@@ -1054,6 +1054,7 @@ static void generate_submodule_summary(struct summary_cb *info,
+ 	free(displaypath);
+ 	free(src_abbrev);
+ 	free(dst_abbrev);
++	strbuf_release(&errmsg_str);
+ }
+ 
+ static void prepare_submodule_summary(struct summary_cb *info,
+-- 
+2.37.0.932.g7b7031e73bc
+

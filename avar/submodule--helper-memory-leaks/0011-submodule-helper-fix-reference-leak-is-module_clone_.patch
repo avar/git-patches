@@ -1,0 +1,70 @@
+From a1ab3d649e941bf1bf91ef0d0b6459c641dd0b9e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-11.11-a1ab3d649e9-20220713T131322Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20220713T131322Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220713T131322Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 12 Jul 2022 09:49:47 +0200
+Subject: [PATCH 11/11] submodule--helper:fix "reference" leak is
+ "module_clone_data"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix leaks in the "reference" member of "struct module_clone_data" that
+have been with us since 31224cbdc72 (clone: recursive and reference
+option triggers submodule alternates, 2016-08-17) and
+8c8195e9c3e (submodule--helper: introduce add-clone subcommand,
+2021-07-10).
+
+Those commits added an xstrdup()'d member of the
+STRING_LIST_INIT_NODUP'd "struct string_list". We need to free()
+those, but not the ones we get from argv, let's make use of the "util"
+member, if it has a pointer it's the pointer we'll need to free.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index d9fab5d77da..966f543fbd9 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1598,6 +1598,7 @@ struct module_clone_data {
+ static void module_clone_data_release(struct module_clone_data *cd)
+ {
+ 	free(cd->path_free);
++	string_list_clear(&cd->reference, 1);
+ }
+ 
+ struct submodule_alternate_setup {
+@@ -1652,7 +1653,9 @@ static int add_possible_reference_from_superproject(
+ 
+ 		sm_alternate = compute_alternate_path(sb.buf, &err);
+ 		if (sm_alternate) {
+-			string_list_append(sas->reference, xstrdup(sb.buf));
++			char *p = strbuf_detach(&sb, NULL);
++
++			string_list_append(sas->reference, p)->util = p;
+ 			free(sm_alternate);
+ 		} else {
+ 			switch (sas->error_mode) {
+@@ -3194,9 +3197,11 @@ static int add_submodule(const struct add_data *add_data)
+ 		clone_data.url = add_data->realrepo;
+ 		clone_data.quiet = add_data->quiet;
+ 		clone_data.progress = add_data->progress;
+-		if (add_data->reference_path)
+-			string_list_append(&clone_data.reference,
+-					   xstrdup(add_data->reference_path));
++		if (add_data->reference_path) {
++			char *p = xstrdup(add_data->reference_path);
++
++			string_list_append(&clone_data.reference, p)->util = p;
++		}
+ 		clone_data.dissociate = add_data->dissociate;
+ 		if (add_data->depth >= 0)
+ 			clone_data.depth = xstrfmt("%d", add_data->depth);
+-- 
+2.37.0.932.g7b7031e73bc
+

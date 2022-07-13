@@ -1,0 +1,164 @@
+From e5ec6945409fbf9bb5cf915593d1bba2ed6454c6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.11-e5ec6945409-20220713T131322Z-avarab@gmail.com>
+In-Reply-To: <cover-00.11-00000000000-20220713T131322Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220713T131322Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Jun 2022 10:51:23 +0200
+Subject: [PATCH 03/11] submodule--helper: fix "module_clone_data" memory leaks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix memory leaks related to the "struct module_clone_data" by creating
+a module_clone_data_release() function to go with the
+MODULE_CLONE_DATA_INIT added in a98b02c1128 (submodule--helper:
+refactor module_clone(), 2021-07-10).
+
+The "path" member can come from "argv" (i.e. not malloc'd), or it can
+be something we determine at runtime. In the latter case let's save
+away a pointer to free() to avoid leaking memory.
+
+Fixing this leak makes several tests pass, so let's mark them as
+passing with TEST_PASSES_SANITIZE_LEAK=true.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c   | 24 +++++++++++++++++++-----
+ t/t6008-rev-list-submodule.sh |  1 +
+ t/t7414-submodule-mistakes.sh |  2 ++
+ t/t7506-status-submodule.sh   |  1 +
+ t/t7507-commit-verbose.sh     |  2 ++
+ 5 files changed, 25 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 73717be957c..23ab9c7e349 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1511,6 +1511,7 @@ static int module_deinit(int argc, const char **argv, const char *prefix)
+ struct module_clone_data {
+ 	const char *prefix;
+ 	const char *path;
++	char *path_free;
+ 	const char *name;
+ 	const char *url;
+ 	const char *depth;
+@@ -1527,6 +1528,11 @@ struct module_clone_data {
+ 	.single_branch = -1, \
+ }
+ 
++static void module_clone_data_release(struct module_clone_data *cd)
++{
++	free(cd->path_free);
++}
++
+ struct submodule_alternate_setup {
+ 	const char *submodule_name;
+ 	enum SUBMODULE_ALTERNATE_ERROR_MODE {
+@@ -1651,9 +1657,9 @@ static int clone_submodule(struct module_clone_data *clone_data)
+ 
+ 	if (!is_absolute_path(clone_data->path)) {
+ 		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+-		clone_data->path = strbuf_detach(&sb, NULL);
++		clone_data->path = clone_data->path_free = strbuf_detach(&sb, NULL);
+ 	} else {
+-		clone_data->path = xstrdup(clone_data->path);
++		clone_data->path = clone_data->path_free = xstrdup(clone_data->path);
+ 	}
+ 
+ 	if (validate_submodule_git_dir(sm_gitdir, clone_data->name) < 0)
+@@ -1801,6 +1807,8 @@ static int module_clone(int argc, const char **argv, const char *prefix)
+ 
+ 	clone_submodule(&clone_data);
+ 	list_objects_filter_release(&filter_options);
++
++	module_clone_data_release(&clone_data);
+ 	return 0;
+ }
+ 
+@@ -3016,6 +3024,7 @@ static int add_submodule(const struct add_data *add_data)
+ {
+ 	char *submod_gitdir_path;
+ 	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
++	int ret;
+ 
+ 	/* perhaps the path already exists and is already a git repo, else clone it */
+ 	if (is_directory(add_data->sm_path)) {
+@@ -3077,8 +3086,10 @@ static int add_submodule(const struct add_data *add_data)
+ 		if (add_data->depth >= 0)
+ 			clone_data.depth = xstrfmt("%d", add_data->depth);
+ 
+-		if (clone_submodule(&clone_data))
+-			return -1;
++		if (clone_submodule(&clone_data)) {
++			ret = -1;
++			goto cleanup;
++		}
+ 
+ 		prepare_submodule_repo_env(&cp.env);
+ 		cp.git_cmd = 1;
+@@ -3097,7 +3108,10 @@ static int add_submodule(const struct add_data *add_data)
+ 		if (run_command(&cp))
+ 			die(_("unable to checkout submodule '%s'"), add_data->sm_path);
+ 	}
+-	return 0;
++	ret = 0;
++cleanup:
++	module_clone_data_release(&clone_data);
++	return ret;
+ }
+ 
+ static int config_submodule_in_gitmodules(const char *name, const char *var, const char *value)
+diff --git a/t/t6008-rev-list-submodule.sh b/t/t6008-rev-list-submodule.sh
+index 3153a0d8910..12e67e187ef 100755
+--- a/t/t6008-rev-list-submodule.sh
++++ b/t/t6008-rev-list-submodule.sh
+@@ -8,6 +8,7 @@ test_description='git rev-list involving submodules that this repo has'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t7414-submodule-mistakes.sh b/t/t7414-submodule-mistakes.sh
+index f2e7df59cf2..3269298197c 100755
+--- a/t/t7414-submodule-mistakes.sh
++++ b/t/t7414-submodule-mistakes.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='handling of common mistakes people may make with submodules'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'create embedded repository' '
+diff --git a/t/t7506-status-submodule.sh b/t/t7506-status-submodule.sh
+index 3fcb44767f5..f5426a8e589 100755
+--- a/t/t7506-status-submodule.sh
++++ b/t/t7506-status-submodule.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git status for submodule'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_create_repo_with_commit () {
+diff --git a/t/t7507-commit-verbose.sh b/t/t7507-commit-verbose.sh
+index ed2653d46fe..92462a22374 100755
+--- a/t/t7507-commit-verbose.sh
++++ b/t/t7507-commit-verbose.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='verbose commit template'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ write_script "check-for-diff" <<\EOF &&
+-- 
+2.37.0.932.g7b7031e73bc
+
