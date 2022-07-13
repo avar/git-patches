@@ -1,0 +1,91 @@
+From 7f3bf3f0e400c3ee73b01056ac7d626fb13cf009 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.6-7f3bf3f0e40-20220713T130511Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20220713T130511Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20220713T130511Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Jul 2022 12:06:43 +0200
+Subject: [PATCH 3/6] log: make the intent of cmd_show()'s "rev.pending"
+ juggling clearer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adjust code added in 5d7eeee2ac6 (git-show: grok blobs, trees and
+tags, too, 2006-12-14) to use the "memcpy a &blank" idiom introduced
+in 5726a6b4012 (*.c *_init(): define in terms of corresponding *_INIT
+macro, 2021-07-01).
+
+Now the types in play are guaranteed to correspond, i.e. we used "int"
+here for the "count" before, but the corresponding "nr" is an
+"unsigned int". By using a "blank" object we almost entirely bypass
+that, we'll only need to declare our own "unsigned int i".
+
+There are no functional changes here aside from potential overflow
+guard rails, the structure only has these three members ("nr", "alloc"
+and "objects"), but now we're obviously future-proof against assuming
+that.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/log.c | 20 ++++++++++----------
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/builtin/log.c b/builtin/log.c
+index 88a5e98875a..e0f40798d45 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -668,10 +668,12 @@ static void show_setup_revisions_tweak(struct rev_info *rev,
+ int cmd_show(int argc, const char **argv, const char *prefix)
+ {
+ 	struct rev_info rev;
+-	struct object_array_entry *objects;
++	struct object_array blank = OBJECT_ARRAY_INIT;
++	struct object_array cp = OBJECT_ARRAY_INIT;
++	unsigned int i;
+ 	struct setup_revision_opt opt;
+ 	struct pathspec match_all;
+-	int i, count, ret = 0;
++	int ret = 0;
+ 
+ 	init_log_defaults();
+ 	git_config(git_log_config, NULL);
+@@ -698,12 +700,11 @@ int cmd_show(int argc, const char **argv, const char *prefix)
+ 	if (!rev.no_walk)
+ 		return cmd_log_deinit(cmd_log_walk(&rev), &rev);
+ 
+-	count = rev.pending.nr;
+-	objects = rev.pending.objects;
++	memcpy(&cp, &rev.pending, sizeof(rev.pending));
+ 	rev.diffopt.no_free = 1;
+-	for (i = 0; i < count && !ret; i++) {
+-		struct object *o = objects[i].item;
+-		const char *name = objects[i].name;
++	for (i = 0; i < cp.nr && !ret; i++) {
++		struct object *o = cp.objects[i].item;
++		const char *name = cp.objects[i].name;
+ 		switch (o->type) {
+ 		case OBJ_BLOB:
+ 			ret = show_blob_object(&o->oid, &rev, name);
+@@ -726,7 +727,7 @@ int cmd_show(int argc, const char **argv, const char *prefix)
+ 			if (!o)
+ 				ret = error(_("could not read object %s"),
+ 					    oid_to_hex(oid));
+-			objects[i].item = o;
++			cp.objects[i].item = o;
+ 			i--;
+ 			break;
+ 		}
+@@ -743,8 +744,7 @@ int cmd_show(int argc, const char **argv, const char *prefix)
+ 			rev.shown_one = 1;
+ 			break;
+ 		case OBJ_COMMIT:
+-			rev.pending.nr = rev.pending.alloc = 0;
+-			rev.pending.objects = NULL;
++			memcpy(&rev.pending, &blank, sizeof(rev.pending));
+ 			add_object_array(o, name, &rev.pending);
+ 			ret = cmd_log_walk_no_free(&rev);
+ 			break;
+-- 
+2.37.0.932.g7b7031e73bc
+
