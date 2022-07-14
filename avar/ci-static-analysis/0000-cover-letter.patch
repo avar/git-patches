@@ -1,7 +1,7 @@
-From df206d362b62b90267867ae5d8965af3f1e688fa Mon Sep 17 00:00:00 2001
-Message-Id: <cover-00.10-00000000000-20220714T163958Z-avarab@gmail.com>
+From 5ef362505c168af0ce9384bdf99d5790d7ea3e70 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-00.10-00000000000-20220714T192234Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Thu, 14 Jul 2022 18:39:58 +0200
+Date: Thu, 14 Jul 2022 21:22:34 +0200
 Subject: [PATCH 00/10] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -13,9 +13,9 @@ Content-Transfer-Encoding: 8bit
   CI: run "set -ex" early in ci/lib.sh
   CI: remove more dead Travis CI support
   CI: remove dead "tree skipping" code
+  CI: make "$jobname" explicit, remove fallback
   CI/lib.sh: stop adding leading whitespace to $MAKEFLAGS
   CI: consistently use "export" in ci/lib.sh
-  CI: make "$jobname" explicit, remove fallback
   CI: export variables via a wrapper
   CI: don't have "git grep" invoke a pager in tree content check
   CI: have "static-analysis" run a "make ci-static-analysis" target
@@ -24,7 +24,7 @@ Content-Transfer-Encoding: 8bit
  .github/workflows/main.yml           |  13 +-
  Makefile                             |  32 ++++-
  ci/check-directional-formatting.bash |   2 +-
- ci/lib.sh                            | 202 ++++++++++-----------------
+ ci/lib.sh                            | 200 ++++++++++-----------------
  ci/print-test-failures.sh            |  39 ------
  ci/run-build-and-tests.sh            |  41 +++---
  ci/run-docker-build.sh               |  66 ---------
@@ -34,7 +34,7 @@ Content-Transfer-Encoding: 8bit
  ci/test-documentation.sh             |   3 -
  ci/util/extract-trash-dirs.sh        |  50 -------
  shared.mak                           |   1 +
- 13 files changed, 135 insertions(+), 400 deletions(-)
+ 13 files changed, 135 insertions(+), 398 deletions(-)
  delete mode 100755 ci/run-docker-build.sh
  delete mode 100755 ci/run-docker.sh
  delete mode 100755 ci/run-static-analysis.sh
@@ -243,103 +243,17 @@ Range-diff:
      -
      -save_good_tree
      
- 6:  d96333c1bd8 !  4:  a10b6c49949 CI/lib.sh: stop adding leading whitespace to $MAKEFLAGS
-    @@ Commit message
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## ci/lib.sh ##
-    -@@ ci/lib.sh: check_unignored_build_artifacts ()
-    +@@ ci/lib.sh: handle_failed_tests () {
-      # GitHub Action doesn't set TERM, which is required by tput
-      export TERM=${TERM:-dumb}
-      
-    @@ ci/lib.sh: check_unignored_build_artifacts ()
-     -export MAKEFLAGS=
-     +export MAKEFLAGS=--jobs=$NPROC
-      
-    - if test "$GITHUB_ACTIONS" = "true"
-    + if test -n "$SYSTEM_COLLECTIONURI" || test -n "$SYSTEM_TASKDEFINITIONSURI"
-      then
-    - 	CI_TYPE=github-actions
-    - 	CC="${CC_PACKAGE:-${CC:-gcc}}"
-    +@@ ci/lib.sh: then
-    + 	# We are running in Azure Pipelines
-    + 	CC="${CC:-gcc}"
-    + 
-    +-	export GIT_PROVE_OPTS="--timer --jobs 10 --state=failed,slow,save"
-    ++	export GIT_PROVE_OPTS="--timer --jobs $NPROC --state=failed,slow,save"
-    + 	export GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
-    +-	MAKEFLAGS="$MAKEFLAGS --jobs=10"
-    + 	test Windows_NT != "$AGENT_OS" ||
-    + 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
-    + elif test true = "$GITHUB_ACTIONS"
-    +@@ ci/lib.sh: then
-    + 		return 1
-    + 	}
-      
-     -	export GIT_PROVE_OPTS="--timer --jobs 10"
-     +	export GIT_PROVE_OPTS="--timer --jobs $NPROC"
-    - 	export GIT_TEST_OPTS="--verbose-log -x"
-    + 	export GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
-     -	MAKEFLAGS="$MAKEFLAGS --jobs=10"
-      	test Windows != "$RUNNER_OS" ||
-      	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
-11:  9655bae9e21 !  5:  cb861772ae9 CI: consistently use "export" in ci/lib.sh
-    @@ ci/lib.sh: export TERM=${TERM:-dumb}
-     -export MAKEFLAGS=--jobs=$NPROC
-     +MAKEFLAGS=--jobs=$NPROC
-      
-    - if test "$GITHUB_ACTIONS" = "true"
-    + if test -n "$SYSTEM_COLLECTIONURI" || test -n "$SYSTEM_TASKDEFINITIONSURI"
-      then
-     @@ ci/lib.sh: then
-    - 	CC="${CC_PACKAGE:-${CC:-gcc}}"
-    + 	CC="${CC:-gcc}"
-    + 
-    + 	export GIT_PROVE_OPTS="--timer --jobs $NPROC --state=failed,slow,save"
-    +-	export GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
-    ++	GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
-    + 	test Windows_NT != "$AGENT_OS" ||
-    + 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
-    ++	export GIT_TEST_OPTS
-    + elif test true = "$GITHUB_ACTIONS"
-    + then
-    + 	CI_TYPE=github-actions
-    +@@ ci/lib.sh: then
-    + 	}
-      
-      	export GIT_PROVE_OPTS="--timer --jobs $NPROC"
-    --	export GIT_TEST_OPTS="--verbose-log -x"
-    -+	GIT_TEST_OPTS="--verbose-log -x"
-    +-	export GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
-    ++	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
-      	test Windows != "$RUNNER_OS" ||
-      	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
-     +	export GIT_TEST_OPTS
-    @@ ci/lib.sh: then
-      	echo "Could not identify CI type" >&2
-      	env >&2
-     @@ ci/lib.sh: linux-leaks)
-    - 	;;
-      esac
-      
-    --MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
-    -+export MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
-    + MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
-    ++export MAKEFLAGS
-    + 
-    + end_group
-    + set -x
- 2:  1be7910c728 !  6:  380d8c68288 CI: make "$jobname" explicit, remove fallback
+ 2:  1be7910c728 !  4:  5d1df78d0de CI: make "$jobname" explicit, remove fallback
     @@ Commit message
      
          This makes all of our CI jobs have an explicit $jobname, and removes
          the special-case of the Windows jobs implicitly setting one (that they
     -    don't currently use). In subsequent commits we'll use this new
-    +    don't currently use). In the subsequent commits we'll use this new
-         $jobname explicitly.
+    -    $jobname explicitly.
+    +    don't currently use).
      
          This is a follow-up to my 25715419bf4 (CI: don't run "make test" twice
+         in one job, 2021-11-23), since then all the jobs except the Windows
     @@ Commit message
          ci/lib.sh.
      
@@ -400,7 +314,119 @@ Range-diff:
      -if test -z "$jobname"
      -then
  5:  66b0a383daf <  -:  ----------- CI: remove unused Azure ci/* code
-12:  2da0aa1d40e !  7:  6fe4c7c81db CI: export variables via a wrapper
+ 6:  d96333c1bd8 !  5:  ee36d4eb2a9 CI/lib.sh: stop adding leading whitespace to $MAKEFLAGS
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## ci/lib.sh ##
+    -@@ ci/lib.sh: check_unignored_build_artifacts ()
+    +@@ ci/lib.sh: handle_failed_tests () {
+      # GitHub Action doesn't set TERM, which is required by tput
+      export TERM=${TERM:-dumb}
+      
+    @@ ci/lib.sh: check_unignored_build_artifacts ()
+     -export MAKEFLAGS=
+     +export MAKEFLAGS=--jobs=$NPROC
+      
+    - if test "$GITHUB_ACTIONS" = "true"
+    + if test -n "$SYSTEM_COLLECTIONURI" || test -n "$SYSTEM_TASKDEFINITIONSURI"
+      then
+    - 	CI_TYPE=github-actions
+    - 	CC="${CC_PACKAGE:-${CC:-gcc}}"
+    +@@ ci/lib.sh: then
+    + 	# We are running in Azure Pipelines
+    + 	CC="${CC:-gcc}"
+    + 
+    +-	export GIT_PROVE_OPTS="--timer --jobs 10 --state=failed,slow,save"
+    ++	export GIT_PROVE_OPTS="--timer --jobs $NPROC --state=failed,slow,save"
+    + 	export GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
+    +-	MAKEFLAGS="$MAKEFLAGS --jobs=10"
+    + 	test Windows_NT != "$AGENT_OS" ||
+    + 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+    + elif test true = "$GITHUB_ACTIONS"
+    +@@ ci/lib.sh: then
+    + 		return 1
+    + 	}
+      
+     -	export GIT_PROVE_OPTS="--timer --jobs 10"
+     +	export GIT_PROVE_OPTS="--timer --jobs $NPROC"
+    - 	export GIT_TEST_OPTS="--verbose-log -x"
+    + 	export GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+     -	MAKEFLAGS="$MAKEFLAGS --jobs=10"
+      	test Windows != "$RUNNER_OS" ||
+      	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+11:  9655bae9e21 !  6:  7cbf8191105 CI: consistently use "export" in ci/lib.sh
+    @@ Metadata
+      ## Commit message ##
+         CI: consistently use "export" in ci/lib.sh
+     
+    -    Change the "ci/lib.sh" script co consistently use "export", for
+    +    Change the "ci/lib.sh" script to consistently use "export", for
+         e.g. MAKEFLAGS we were exporting it, and then assigning to it, let's
+         do it the other way around.
+     
+         Right now this doesn't matter, since we in
+         e.g. "ci/install-dependencies.sh" source this file, and don't use
+    -    something like "env(1)" to retrieve these variables. But in a
+    -    subsequent commit we'll "export" these variables through a wrapper (to
+    -    additionally write them to a GitHub CI-specific $GITHUB_ENV
+    -    file). This change makes that subsequent change easier to read, as it
+    -    won't need to do any control flow refactoring.
+    +    something like "env(1)" to retrieve these variables.
+    +
+    +    But in a subsequent commit we'll "export" these variables through a
+    +    wrapper (and to eventually write them to a GitHub CI-specific
+    +    $GITHUB_ENV file). This change makes that subsequent change easier to
+    +    read, as it won't need to do any control flow refactoring.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ ci/lib.sh: export TERM=${TERM:-dumb}
+     -export MAKEFLAGS=--jobs=$NPROC
+     +MAKEFLAGS=--jobs=$NPROC
+      
+    - if test "$GITHUB_ACTIONS" = "true"
+    + if test -n "$SYSTEM_COLLECTIONURI" || test -n "$SYSTEM_TASKDEFINITIONSURI"
+      then
+     @@ ci/lib.sh: then
+    - 	CC="${CC_PACKAGE:-${CC:-gcc}}"
+    + 	CC="${CC:-gcc}"
+    + 
+    + 	export GIT_PROVE_OPTS="--timer --jobs $NPROC --state=failed,slow,save"
+    +-	export GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
+    ++	GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
+    + 	test Windows_NT != "$AGENT_OS" ||
+    + 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+    ++	export GIT_TEST_OPTS
+    + elif test true = "$GITHUB_ACTIONS"
+    + then
+    + 	CI_TYPE=github-actions
+    +@@ ci/lib.sh: then
+    + 	}
+      
+      	export GIT_PROVE_OPTS="--timer --jobs $NPROC"
+    --	export GIT_TEST_OPTS="--verbose-log -x"
+    -+	GIT_TEST_OPTS="--verbose-log -x"
+    +-	export GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+    ++	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+      	test Windows != "$RUNNER_OS" ||
+      	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+     +	export GIT_TEST_OPTS
+    @@ ci/lib.sh: then
+      	echo "Could not identify CI type" >&2
+      	env >&2
+     @@ ci/lib.sh: linux-leaks)
+    - 	;;
+      esac
+      
+    --MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
+    -+export MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
+    + MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
+    ++export MAKEFLAGS
+    + 
+    + end_group
+    + set -x
+12:  2da0aa1d40e !  7:  e6805874eb9 CI: export variables via a wrapper
     @@ Commit message
          expose what variables we set in what CI "step", so having only the
          ones we actually use will improve readability.
@@ -453,7 +479,10 @@ Range-diff:
       }
       
       # GitHub Action doesn't set TERM, which is required by tput
-    @@ ci/lib.sh: check_unignored_build_artifacts ()
+     -export TERM=${TERM:-dumb}
+    -+setenv TERM ${TERM:-dumb}
+    ++setenv --all TERM ${TERM:-dumb}
+      
       # How many jobs to run in parallel?
       NPROC=10
      @@ ci/lib.sh: then
@@ -464,9 +493,9 @@ Range-diff:
     ++	setenv --test GIT_PROVE_OPTS "--timer --jobs $NPROC --state=failed,slow,save"
     + 	GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
     + 	test Windows_NT != "$AGENT_OS" ||
-    +-	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+    + 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
     +-	export GIT_TEST_OPTS
-    ++	setenv -- GIT_TEST_OPTS "--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+    ++	setenv --test GIT_TEST_OPTS "$GIT_TEST_OPTS"
     + elif test true = "$GITHUB_ACTIONS"
     + then
       	CI_TYPE=github-actions
@@ -512,9 +541,10 @@ Range-diff:
       esac
       
     --export MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
-    +-MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
+    -+setenv --all MAKEFLAGS "$MAKEFLAGS CC=${CC:-cc}"
+    + MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
     +-export MAKEFLAGS
-     +setenv --all MAKEFLAGS "$MAKEFLAGS CC=${CC:-cc}"
+    ++setenv --all MAKEFLAGS "$MAKEFLAGS"
     + 
     + end_group
     + set -x
@@ -551,8 +581,8 @@ Range-diff:
     + 	run_tests=
       	;;
       esac
- 7:  d0780ab4a96 =  8:  2274dcdb268 CI: don't have "git grep" invoke a pager in tree content check
- 8:  84e368736e2 !  9:  1b5dc9ad146 CI: have "static-analysis" run a "make ci-static-analysis" target
+ 7:  d0780ab4a96 =  8:  8bcaeb1dd79 CI: don't have "git grep" invoke a pager in tree content check
+ 8:  84e368736e2 !  9:  95b9c3797c0 CI: have "static-analysis" run a "make ci-static-analysis" target
     @@ Commit message
      
          But without those improvements being able to easily run a 1=1
@@ -645,7 +675,7 @@ Range-diff:
     + 	QUIET_LINK     = @echo '   ' LINK $@;
     + 	QUIET_BUILT_IN = @echo '   ' BUILTIN $@;
     + 	QUIET_LNCP     = @echo '   ' LN/CP $@;
- 9:  1a9c98b909c ! 10:  df206d362b6 CI: have "static-analysis" run "check-builtins", not "documentation"
+ 9:  1a9c98b909c ! 10:  5ef362505c1 CI: have "static-analysis" run "check-builtins", not "documentation"
     @@ Makefile: ci-check-directional-formatting:
      +ci-static-analysis: check-builtins
       ci-static-analysis: check-coccicheck
@@ -673,5 +703,5 @@ Range-diff:
 28:  7a208927819 <  -:  ----------- CI: don't use "set -x" in "ci/lib.sh" output
 29:  4d8a8f3be07 <  -:  ----------- CI: make it easy to use ci/*.sh outside of CI
 -- 
-2.37.1.968.g442493753b4
+2.37.1.996.g651fc6e809f
 
