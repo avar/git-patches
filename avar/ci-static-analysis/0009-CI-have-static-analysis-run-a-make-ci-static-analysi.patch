@@ -1,0 +1,197 @@
+From 1b5dc9ad146c39bce3879773671fb834bab4a1b4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.10-1b5dc9ad146-20220714T163958Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20220714T163958Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220714T163958Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 25 Jan 2022 17:11:47 +0100
+Subject: [PATCH 09/10] CI: have "static-analysis" run a "make
+ ci-static-analysis" target
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make it easier to run the CI logic locally by creating
+"ci-static-analysis" target.
+
+Now the "check-coccicheck" logic added in 0860a7641ba (travis-ci: fail
+if Coccinelle static analysis found something to transform,
+2018-07-23) can be easily tested outside of CI, and likewise the
+sanity check added in 0e7696c64db (ci: disallow directional
+formatting, 2021-11-04).
+
+These targets could be improved, the "hdr-check" target will re-do all
+of its work every time it's run, and could with a change similar to my
+c234e8a0ecf (Makefile: make the "sparse" target non-.PHONY,
+2021-09-23). The same goes for the new
+"ci-check-directional-formatting" target.
+
+But without those improvements being able to easily run a 1=1
+equivalent of the checks we do in CI during a local build is already
+an improvement.
+
+This change will also make the CI check faster, since we can take
+advantage of parallelism across these "make" invocations. The "make
+coccicheck" command in particular takes a long to finish its last job,
+at the end we might only have one job pegging 100% of one CPU
+core. Now any extra cores will be free to run the rest of the targets
+under "ci-static-analysis".
+
+Because we're now going to invoke "make" directly from the CI recipe
+we'll need to amend the new "setenv" wrapper to write the "MAKEFLAGS"
+and other variables to "$GITHUB_ENV".
+
+In my testing the "static-analysis" job runs in just over 10 minutes
+without this change, but this change cuts just over a minute off the
+runtime.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml |  6 ++++--
+ Makefile                   | 29 +++++++++++++++++++++++++++++
+ ci/lib.sh                  |  7 ++++++-
+ ci/run-static-analysis.sh  | 32 --------------------------------
+ shared.mak                 |  1 +
+ 5 files changed, 40 insertions(+), 35 deletions(-)
+ delete mode 100755 ci/run-static-analysis.sh
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index 8b7697df9fb..fa6d861c75a 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -319,9 +319,11 @@ jobs:
+     runs-on: ubuntu-18.04
+     steps:
+     - uses: actions/checkout@v2
++    - run: ci/lib.sh
++      env:
++        NO_CI_GROUPS: 1
+     - run: ci/install-dependencies.sh
+-    - run: ci/run-static-analysis.sh
+-    - run: ci/check-directional-formatting.bash
++    - run: make ci-static-analysis
+   sparse:
+     needs: ci-config
+     if: needs.ci-config.outputs.enabled == 'yes'
+diff --git a/Makefile b/Makefile
+index 04d0fd1fe60..c328e190d64 100644
+--- a/Makefile
++++ b/Makefile
+@@ -3147,6 +3147,20 @@ coccicheck: $(addsuffix .patch,$(filter-out %.pending.cocci,$(wildcard contrib/c
+ # See contrib/coccinelle/README
+ coccicheck-pending: $(addsuffix .patch,$(wildcard contrib/coccinelle/*.pending.cocci))
+ 
++.PHONY: check-coccicheck
++check-coccicheck: coccicheck
++	$(QUIET_CHECK)for cocci_patch in contrib/coccinelle/*.patch; do \
++		if test -s "$$cocci_patch"; then \
++			echo "Coccinelle suggests the following changes in '$$cocci_patch':"; \
++			cat "$$cocci_patch"; \
++			fail=UnfortunatelyYes; \
++		fi \
++	done; \
++	if test -n "$$fail"; then \
++		echo "error: Coccinelle suggested some changes"; \
++		exit 1; \
++	fi
++
+ .PHONY: coccicheck coccicheck-pending
+ 
+ ### Installation rules
+@@ -3589,3 +3603,18 @@ $(FUZZ_PROGRAMS): all
+ 		$(XDIFF_OBJS) $(EXTLIBS) git.o $@.o $(LIB_FUZZING_ENGINE) -o $@
+ 
+ fuzz-all: $(FUZZ_PROGRAMS)
++
++### CI "check" targets
++#
++# These targets are run from the CI, see .github/workflows/main.yml,
++# but can also be run manually to run the same assertions locally.
++
++.PHONY: ci-check-directional-formatting
++ci-check-directional-formatting:
++	$(QUIET_CHECK)ci/check-directional-formatting.bash
++
++.PHONY: ci-static-analysis
++ci-static-analysis: ci-check-directional-formatting
++ci-static-analysis: check-coccicheck
++ci-static-analysis: hdr-check
++ci-static-analysis: check-pot
+diff --git a/ci/lib.sh b/ci/lib.sh
+index c87105d9862..2e6c391ddbe 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -15,7 +15,7 @@ then
+ 	exit 1
+ fi
+ 
+-if test true != "$GITHUB_ACTIONS"
++if test true != "$GITHUB_ACTIONS" || test -n "$NO_CI_GROUPS"
+ then
+ 	begin_group () { :; }
+ 	end_group () { :; }
+@@ -89,6 +89,11 @@ setenv () {
+ 
+ 	eval "$key=\"$val\""
+ 	eval "export $key"
++	eval "export $key=\"$val\""
++	if test -n "$GITHUB_ENV"
++	then
++		echo "$key=$val" >>"$GITHUB_ENV"
++	fi
+ }
+ 
+ check_unignored_build_artifacts () {
+diff --git a/ci/run-static-analysis.sh b/ci/run-static-analysis.sh
+deleted file mode 100755
+index faae31f0078..00000000000
+--- a/ci/run-static-analysis.sh
++++ /dev/null
+@@ -1,32 +0,0 @@
+-#!/bin/sh
+-#
+-# Perform various static code analysis checks
+-#
+-
+-. ${0%/*}/lib.sh
+-
+-make coccicheck
+-
+-set +x
+-
+-fail=
+-for cocci_patch in contrib/coccinelle/*.patch
+-do
+-	if test -s "$cocci_patch"
+-	then
+-		echo "$(tput setaf 1)Coccinelle suggests the following changes in '$cocci_patch':$(tput sgr0)"
+-		cat "$cocci_patch"
+-		fail=UnfortunatelyYes
+-	fi
+-done
+-
+-if test -n "$fail"
+-then
+-	echo "$(tput setaf 1)error: Coccinelle suggested some changes$(tput sgr0)"
+-	exit 1
+-fi
+-
+-make hdr-check ||
+-exit 1
+-
+-make check-pot
+diff --git a/shared.mak b/shared.mak
+index 4330192e9c3..3bd846aaf9e 100644
+--- a/shared.mak
++++ b/shared.mak
+@@ -58,6 +58,7 @@ ifndef V
+ ## Used in "Makefile"
+ 	QUIET_CC       = @echo '   ' CC $@;
+ 	QUIET_AR       = @echo '   ' AR $@;
++	QUIET_CHECK    = @echo '   ' CHECK $@;
+ 	QUIET_LINK     = @echo '   ' LINK $@;
+ 	QUIET_BUILT_IN = @echo '   ' BUILTIN $@;
+ 	QUIET_LNCP     = @echo '   ' LN/CP $@;
+-- 
+2.37.1.968.g442493753b4
+

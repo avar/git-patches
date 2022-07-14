@@ -1,0 +1,235 @@
+From 6fe4c7c81db7e520bd639827e7175250d10f8a0c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.10-6fe4c7c81db-20220714T163958Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20220714T163958Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220714T163958Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 27 Jan 2022 10:44:49 +0100
+Subject: [PATCH 07/10] CI: export variables via a wrapper
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add and use a "setenv" wrapper to export the variables set in
+ci/lib.sh.
+
+For now this merely adds debugging information about what variables
+are set, but in a subsequent commit we'll expand this to set variables
+in $GITHUB_ENV instead of the environment, and thus carry variable
+settings between steps in a job.
+
+We'll also eventually be interested in what type of variable we're
+setting, and when it needs to be used, because we'll prominently
+expose what variables we set in what CI "step", so having only the
+ones we actually use will improve readability.
+
+To that end call the "setenv" function with optional "--install",
+"--build", "--test" and "--all" parameters to indicate whether they're
+needed for building, testing or both.
+
+We currently ignore the "varname" parameter, but will make use of it in a
+subsequent commit. Adding it here reduces the needless churn, as we
+won't need to change all these lines again for that subsequent change.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ ci/lib.sh                 | 71 ++++++++++++++++++++++++++++-----------
+ ci/run-build-and-tests.sh | 34 +++++++++----------
+ 2 files changed, 68 insertions(+), 37 deletions(-)
+
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 44039152ebc..c87105d9862 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -59,6 +59,38 @@ else
+ 	begin_group "CI setup"
+ fi
+ 
++# Helper functions
++setenv () {
++	while test $# != 0
++	do
++		case "$1" in
++		--install)
++			;;
++		--build)
++			;;
++		--test)
++			;;
++		--all)
++			;;
++		-*)
++			echo "BUG: bad setenv() option '$1'" >&2
++			exit 1
++			;;
++		*)
++			break
++			;;
++		esac
++		shift
++	done
++
++	key=$1
++	val=$2
++	shift 2
++
++	eval "$key=\"$val\""
++	eval "export $key"
++}
++
+ check_unignored_build_artifacts () {
+ 	! git ls-files --other --exclude-standard --error-unmatch \
+ 		-- ':/*' 2>/dev/null ||
+@@ -73,7 +105,7 @@ handle_failed_tests () {
+ }
+ 
+ # GitHub Action doesn't set TERM, which is required by tput
+-export TERM=${TERM:-dumb}
++setenv TERM ${TERM:-dumb}
+ 
+ # How many jobs to run in parallel?
+ NPROC=10
+@@ -87,11 +119,10 @@ then
+ 	# We are running in Azure Pipelines
+ 	CC="${CC:-gcc}"
+ 
+-	export GIT_PROVE_OPTS="--timer --jobs $NPROC --state=failed,slow,save"
++	setenv --test GIT_PROVE_OPTS "--timer --jobs $NPROC --state=failed,slow,save"
+ 	GIT_TEST_OPTS="--verbose-log -x --write-junit-xml"
+ 	test Windows_NT != "$AGENT_OS" ||
+-	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+-	export GIT_TEST_OPTS
++	setenv -- GIT_TEST_OPTS "--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+ elif test true = "$GITHUB_ACTIONS"
+ then
+ 	CI_TYPE=github-actions
+@@ -118,21 +149,21 @@ then
+ 		return 1
+ 	}
+ 
+-	export GIT_PROVE_OPTS="--timer --jobs $NPROC"
++	setenv --test GIT_PROVE_OPTS "--timer --jobs $NPROC"
+ 	GIT_TEST_OPTS="--verbose-log -x --github-workflow-markup"
+ 	test Windows != "$RUNNER_OS" ||
+ 	GIT_TEST_OPTS="--no-chain-lint --no-bin-wrappers $GIT_TEST_OPTS"
+-	export GIT_TEST_OPTS
++	setenv --test GIT_TEST_OPTS "$GIT_TEST_OPTS"
+ else
+ 	echo "Could not identify CI type" >&2
+ 	env >&2
+ 	exit 1
+ fi
+ 
+-export DEVELOPER=1
+-export DEFAULT_TEST_TARGET=prove
+-export GIT_TEST_CLONE_2GB=true
+-export SKIP_DASHED_BUILT_INS=YesPlease
++setenv --build DEVELOPER 1
++setenv --test DEFAULT_TEST_TARGET prove
++setenv --test GIT_TEST_CLONE_2GB true
++setenv --build SKIP_DASHED_BUILT_INS YesPlease
+ 
+ case "$runs_on_pool" in
+ ubuntu-latest)
+@@ -148,19 +179,20 @@ ubuntu-latest)
+ 		MAKEFLAGS="$MAKEFLAGS PYTHON_PATH=/usr/bin/python2"
+ 	fi
+ 
+-	export GIT_TEST_HTTPD=true
++	setenv --test GIT_TEST_HTTPD true
+ 
+ 	# The Linux build installs the defined dependency versions below.
+ 	# The OS X build installs much more recent versions, whichever
+ 	# were recorded in the Homebrew database upon creating the OS X
+ 	# image.
+ 	# Keep that in mind when you encounter a broken OS X build!
+-	export LINUX_P4_VERSION="16.2"
+-	export LINUX_GIT_LFS_VERSION="1.5.2"
++	setenv --install LINUX_P4_VERSION "16.2"
++	setenv --install LINUX_GIT_LFS_VERSION "1.5.2"
+ 
+-	P4_PATH="$HOME/custom/p4"
+-	GIT_LFS_PATH="$HOME/custom/git-lfs"
+-	export PATH="$GIT_LFS_PATH:$P4_PATH:$PATH"
++	setenv --install P4_PATH "$HOME/custom/p4"
++	setenv --install GIT_LFS_PATH "$HOME/custom/git-lfs"
++	setenv --all PATH "$GIT_LFS_PATH:$P4_PATH:$PATH"
++	setenv --test GIT_TEST_HTTPD true
+ 	;;
+ macos-latest)
+ 	if [ "$jobname" = osx-gcc ]
+@@ -183,13 +215,12 @@ linux-musl)
+ 	MAKEFLAGS="$MAKEFLAGS GIT_TEST_UTF8_LOCALE=C.UTF-8"
+ 	;;
+ linux-leaks)
+-	export SANITIZE=leak
+-	export GIT_TEST_PASSING_SANITIZE_LEAK=true
++	setenv --build SANITIZE leak
++	setenv --test GIT_TEST_PASSING_SANITIZE_LEAK true
+ 	;;
+ esac
+ 
+-MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
+-export MAKEFLAGS
++setenv --all MAKEFLAGS "$MAKEFLAGS CC=${CC:-cc}"
+ 
+ end_group
+ set -x
+diff --git a/ci/run-build-and-tests.sh b/ci/run-build-and-tests.sh
+index 1a89a4967bf..b7774e4abcf 100755
+--- a/ci/run-build-and-tests.sh
++++ b/ci/run-build-and-tests.sh
+@@ -9,33 +9,33 @@ run_tests=t
+ 
+ case "$jobname" in
+ linux-gcc)
+-	export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
++	setenv --test GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME main
+ 	;;
+ linux-TEST-vars)
+-	export GIT_TEST_SPLIT_INDEX=yes
+-	export GIT_TEST_MERGE_ALGORITHM=recursive
+-	export GIT_TEST_FULL_IN_PACK_ARRAY=true
+-	export GIT_TEST_OE_SIZE=10
+-	export GIT_TEST_OE_DELTA_SIZE=5
+-	export GIT_TEST_COMMIT_GRAPH=1
+-	export GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS=1
+-	export GIT_TEST_MULTI_PACK_INDEX=1
+-	export GIT_TEST_MULTI_PACK_INDEX_WRITE_BITMAP=1
+-	export GIT_TEST_ADD_I_USE_BUILTIN=0
+-	export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=master
+-	export GIT_TEST_WRITE_REV_INDEX=1
+-	export GIT_TEST_CHECKOUT_WORKERS=2
++	setenv --test GIT_TEST_SPLIT_INDEX yes
++	setenv --test GIT_TEST_MERGE_ALGORITHM recursive
++	setenv --test GIT_TEST_FULL_IN_PACK_ARRAY true
++	setenv --test GIT_TEST_OE_SIZE 10
++	setenv --test GIT_TEST_OE_DELTA_SIZE 5
++	setenv --test GIT_TEST_COMMIT_GRAPH 1
++	setenv --test GIT_TEST_COMMIT_GRAPH_CHANGED_PATHS 1
++	setenv --test GIT_TEST_MULTI_PACK_INDEX 1
++	setenv --test GIT_TEST_MULTI_PACK_INDEX_WRITE_BITMAP 1
++	setenv --test GIT_TEST_ADD_I_USE_BUILTIN 0
++	setenv --test GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME master
++	setenv --test GIT_TEST_WRITE_REV_INDEX 1
++	setenv --test GIT_TEST_CHECKOUT_WORKERS 2
+ 	;;
+ linux-clang)
+-	export GIT_TEST_DEFAULT_HASH=sha1
++	setenv --test GIT_TEST_DEFAULT_HASH sha1
+ 	;;
+ linux-sha256)
+-	export GIT_TEST_DEFAULT_HASH=sha256
++	setenv --test GIT_TEST_DEFAULT_HASH sha256
+ 	;;
+ pedantic)
+ 	# Don't run the tests; we only care about whether Git can be
+ 	# built.
+-	export DEVOPTS=pedantic
++	setenv --build DEVOPTS pedantic
+ 	run_tests=
+ 	;;
+ esac
+-- 
+2.37.1.968.g442493753b4
+
