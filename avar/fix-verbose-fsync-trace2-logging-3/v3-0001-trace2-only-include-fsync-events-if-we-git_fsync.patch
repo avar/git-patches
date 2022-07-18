@@ -1,5 +1,5 @@
-From 65c813eaa764d5a0ac19c093d9b744bdc78b65e8 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v3-1.1-65c813eaa76-20220718T085003Z-avarab@gmail.com>
+From 0f7649c8e3680902092a69dceac867f3c48a1257 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.1-0f7649c8e36-20220718T090222Z-avarab@gmail.com>
 In-Reply-To: <patch-v2-1.1-a1fc37de947-20220630T084607Z-avarab@gmail.com>
 References: <patch-v2-1.1-a1fc37de947-20220630T084607Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -74,7 +74,7 @@ whether we actually were able to use the "bulk" method.
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
 Range-diff against v2:
-1:  a1fc37de947 ! 1:  65c813eaa76 trace2: don't include "fsync" events in all trace2 logs
+1:  a1fc37de947 ! 1:  0f7649c8e36 trace2: don't include "fsync" events in all trace2 logs
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -114,17 +114,38 @@ Range-diff against v2:
           # This trace2 target does not emit 'printf' events.
      
     + ## t/t5351-unpack-large-objects.sh ##
-    +@@ t/t5351-unpack-large-objects.sh: BATCH_CONFIGURATION='-c core.fsync=loose-object -c core.fsyncmethod=batch'
+    +@@ t/t5351-unpack-large-objects.sh: test_expect_success 'unpack big object in stream' '
+    + 	test_dir_is_empty dest.git/objects/pack
+    + '
+    + 
+    ++check_fsync_events () {
+    ++	local trace="$1" &&
+    ++	shift &&
+    ++
+    ++	cat >expect &&
+    ++	sed -n \
+    ++		-e '/^{"event":"data",.*"category":"fsync",/ {
+    ++			s/.*"category":"fsync",//;
+    ++			s/}$//;
+    ++			p;
+    ++		}' \
+    ++		<"$trace" >actual &&
+    ++	test_cmp expect actual
+    ++}
+    ++
+    + BATCH_CONFIGURATION='-c core.fsync=loose-object -c core.fsyncmethod=batch'
+    + 
     + test_expect_success 'unpack big object in stream (core.fsyncmethod=batch)' '
     + 	prepare_dest 1m &&
     + 	GIT_TRACE2_EVENT="$(pwd)/trace2.txt" \
     ++	GIT_TEST_FSYNC=true \
     + 		git -C dest.git $BATCH_CONFIGURATION unpack-objects <pack-$PACK.pack &&
     +-	grep fsync/hardware-flush trace2.txt &&
-    ++	grep fsync/ trace2.txt >wo.txt &&
-    ++	sed -e "s/.*value\":\"//" -e "s/\".*//" <wo.txt >actual &&
-    ++	printf "%s\n" 6 1 >expect &&
-    ++	test_cmp expect actual &&
+    ++	check_fsync_events trace2.txt <<-\EOF &&
+    ++	"key":"fsync/writeout-only","value":"6"
+    ++	"key":"fsync/hardware-flush","value":"1"
+    ++	EOF
+    ++
     + 	test_dir_is_empty dest.git/objects/pack &&
     + 	git -C dest.git cat-file --batch-check="%(objectname)" <obj-list >current &&
     + 	cmp obj-list current
@@ -134,9 +155,9 @@ Range-diff against v2:
       
 
  t/t0212/parse_events.perl       | 19 +++++++++++++------
- t/t5351-unpack-large-objects.sh |  6 +++++-
+ t/t5351-unpack-large-objects.sh | 22 +++++++++++++++++++++-
  wrapper.c                       | 10 ++++++++--
- 3 files changed, 26 insertions(+), 9 deletions(-)
+ 3 files changed, 42 insertions(+), 9 deletions(-)
 
 diff --git a/t/t0212/parse_events.perl b/t/t0212/parse_events.perl
 index b6408560c0c..30a9f51e9f1 100644
@@ -169,20 +190,41 @@ index b6408560c0c..30a9f51e9f1 100644
  
      # This trace2 target does not emit 'printf' events.
 diff --git a/t/t5351-unpack-large-objects.sh b/t/t5351-unpack-large-objects.sh
-index 8ce8aa3b147..dfe2f2b7b8e 100755
+index 8ce8aa3b147..f785cb06173 100755
 --- a/t/t5351-unpack-large-objects.sh
 +++ b/t/t5351-unpack-large-objects.sh
-@@ -53,8 +53,12 @@ BATCH_CONFIGURATION='-c core.fsync=loose-object -c core.fsyncmethod=batch'
+@@ -48,13 +48,33 @@ test_expect_success 'unpack big object in stream' '
+ 	test_dir_is_empty dest.git/objects/pack
+ '
+ 
++check_fsync_events () {
++	local trace="$1" &&
++	shift &&
++
++	cat >expect &&
++	sed -n \
++		-e '/^{"event":"data",.*"category":"fsync",/ {
++			s/.*"category":"fsync",//;
++			s/}$//;
++			p;
++		}' \
++		<"$trace" >actual &&
++	test_cmp expect actual
++}
++
+ BATCH_CONFIGURATION='-c core.fsync=loose-object -c core.fsyncmethod=batch'
+ 
  test_expect_success 'unpack big object in stream (core.fsyncmethod=batch)' '
  	prepare_dest 1m &&
  	GIT_TRACE2_EVENT="$(pwd)/trace2.txt" \
 +	GIT_TEST_FSYNC=true \
  		git -C dest.git $BATCH_CONFIGURATION unpack-objects <pack-$PACK.pack &&
 -	grep fsync/hardware-flush trace2.txt &&
-+	grep fsync/ trace2.txt >wo.txt &&
-+	sed -e "s/.*value\":\"//" -e "s/\".*//" <wo.txt >actual &&
-+	printf "%s\n" 6 1 >expect &&
-+	test_cmp expect actual &&
++	check_fsync_events trace2.txt <<-\EOF &&
++	"key":"fsync/writeout-only","value":"6"
++	"key":"fsync/hardware-flush","value":"1"
++	EOF
++
  	test_dir_is_empty dest.git/objects/pack &&
  	git -C dest.git cat-file --batch-check="%(objectname)" <obj-list >current &&
  	cmp obj-list current
