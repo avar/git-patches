@@ -1,5 +1,5 @@
-From 0f7649c8e3680902092a69dceac867f3c48a1257 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v3-1.1-0f7649c8e36-20220718T090222Z-avarab@gmail.com>
+From 979dea5956ae2179be8d7c46cbbf9074ddac2bf6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.1-979dea5956a-20220718T102747Z-avarab@gmail.com>
 In-Reply-To: <patch-v2-1.1-a1fc37de947-20220630T084607Z-avarab@gmail.com>
 References: <patch-v2-1.1-a1fc37de947-20220630T084607Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
@@ -74,7 +74,7 @@ whether we actually were able to use the "bulk" method.
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
 Range-diff against v2:
-1:  a1fc37de947 ! 1:  0f7649c8e36 trace2: don't include "fsync" events in all trace2 logs
+1:  a1fc37de947 ! 1:  979dea5956a trace2: don't include "fsync" events in all trace2 logs
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -152,7 +152,32 @@ Range-diff against v2:
     +
       ## wrapper.c ##
      @@ wrapper.c: int git_fsync(int fd, enum fsync_action action)
+    + 	}
+    + }
       
+    ++static void log_trace_fsync_if(const char *key, intmax_t value)
+    ++{
+    ++	if (value)
+    ++		trace2_data_intmax("fsync", the_repository, key, value);
+    ++}
+    ++
+      void trace_git_fsync_stats(void)
+      {
+     -	trace2_data_intmax("fsync", the_repository, "fsync/writeout-only", count_fsync_writeout_only);
+     -	trace2_data_intmax("fsync", the_repository, "fsync/hardware-flush", count_fsync_hardware_flush);
+    -+	const struct repository *r = the_repository;
+    -+	const intmax_t cfwo = count_fsync_writeout_only;
+    -+	const intmax_t cfhf = count_fsync_hardware_flush;
+    -+
+    -+	if (cfwo)
+    -+		trace2_data_intmax("fsync", r, "fsync/writeout-only", cfwo);
+    -+	if (cfhf)
+    -+		trace2_data_intmax("fsync", r, "fsync/hardware-flush", cfhf);
+    ++	log_trace_fsync_if("fsync/writeout-only", count_fsync_writeout_only);
+    ++	log_trace_fsync_if("fsync/hardware-flush", count_fsync_hardware_flush);
+      }
+      
+      static int warn_if_unremovable(const char *op, const char *file, int rc)
 
  t/t0212/parse_events.perl       | 19 +++++++++++++------
  t/t5351-unpack-large-objects.sh | 22 +++++++++++++++++++++-
@@ -229,23 +254,25 @@ index 8ce8aa3b147..f785cb06173 100755
  	git -C dest.git cat-file --batch-check="%(objectname)" <obj-list >current &&
  	cmp obj-list current
 diff --git a/wrapper.c b/wrapper.c
-index 1c3c970080b..67727f95411 100644
+index 1c3c970080b..cfe79bd081f 100644
 --- a/wrapper.c
 +++ b/wrapper.c
-@@ -618,8 +618,14 @@ int git_fsync(int fd, enum fsync_action action)
+@@ -616,10 +616,16 @@ int git_fsync(int fd, enum fsync_action action)
+ 	}
+ }
  
++static void log_trace_fsync_if(const char *key, intmax_t value)
++{
++	if (value)
++		trace2_data_intmax("fsync", the_repository, key, value);
++}
++
  void trace_git_fsync_stats(void)
  {
 -	trace2_data_intmax("fsync", the_repository, "fsync/writeout-only", count_fsync_writeout_only);
 -	trace2_data_intmax("fsync", the_repository, "fsync/hardware-flush", count_fsync_hardware_flush);
-+	const struct repository *r = the_repository;
-+	const intmax_t cfwo = count_fsync_writeout_only;
-+	const intmax_t cfhf = count_fsync_hardware_flush;
-+
-+	if (cfwo)
-+		trace2_data_intmax("fsync", r, "fsync/writeout-only", cfwo);
-+	if (cfhf)
-+		trace2_data_intmax("fsync", r, "fsync/hardware-flush", cfhf);
++	log_trace_fsync_if("fsync/writeout-only", count_fsync_writeout_only);
++	log_trace_fsync_if("fsync/hardware-flush", count_fsync_hardware_flush);
  }
  
  static int warn_if_unremovable(const char *op, const char *file, int rc)
