@@ -1,10 +1,10 @@
-From 2459b883b7d21886dc44ca6eac94a4916ba5b708 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-00.23-00000000000-20220719T195047Z-avarab@gmail.com>
+From 531db4ddae6378def05227cd20fc780378b9c5b5 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-00.24-00000000000-20220719T204458Z-avarab@gmail.com>
 In-Reply-To: <cover-00.11-00000000000-20220713T131601Z-avarab@gmail.com>
 References: <cover-00.11-00000000000-20220713T131601Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 19 Jul 2022 21:50:47 +0200
-Subject: [PATCH v2 00/23] *** SUBJECT HERE ***
+Date: Tue, 19 Jul 2022 22:44:58 +0200
+Subject: [PATCH v2 00/24] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -15,11 +15,12 @@ Glen Choo (2):
   submodule--helper: add "const" to copy of "update_data"
   submodule--helper: refactor "errmsg_str" to be a "struct strbuf"
 
-Ævar Arnfjörð Bjarmason (21):
+Ævar Arnfjörð Bjarmason (22):
   submodule--helper: replace memset() with { 0 }-initialization
   submodule--helper: fix a leak in "clone_submodule"
   submodule--helper: fix trivial get_default_remote_submodule() leak
-  submodule--helper: fix "struct pathspec" memory leaks
+  submodule--helper: fix most "struct pathspec" memory leaks
+  submodule--helper: "struct pathspec" memory leak in module_update()
   submodule--helper: don't leak {run,capture}_command() cp.dir argument
   submodule--helper: add and use *_release() functions
   submodule--helper: fix "errmsg_str" memory leak
@@ -38,7 +39,7 @@ Glen Choo (2):
   submodule--helper: fix bad config API usage
   submodule--helper: fix a configure_added_submodule() leak
 
- builtin/submodule--helper.c        | 345 ++++++++++++++++++++---------
+ builtin/submodule--helper.c        | 347 +++++++++++++++++++++--------
  t/t1500-rev-parse.sh               |   1 +
  t/t2403-worktree-move.sh           |   1 +
  t/t6008-rev-list-submodule.sh      |   1 +
@@ -48,7 +49,7 @@ Glen Choo (2):
  t/t7414-submodule-mistakes.sh      |   2 +
  t/t7506-status-submodule.sh        |   1 +
  t/t7507-commit-verbose.sh          |   2 +
- 10 files changed, 257 insertions(+), 99 deletions(-)
+ 10 files changed, 259 insertions(+), 99 deletions(-)
 
 Range-diff against v1:
  2:  4049362e9b4 =  1:  fcdf4a2e2d9 submodule--helper: replace memset() with { 0 }-initialization
@@ -187,8 +188,18 @@ Range-diff against v1:
       ## t/t6008-rev-list-submodule.sh ##
      @@ t/t6008-rev-list-submodule.sh: test_description='git rev-list involving submodules that this repo has'
  -:  ----------- >  3:  25e17bbb058 submodule--helper: fix trivial get_default_remote_submodule() leak
- 4:  cdefd283c23 =  4:  b1a0cce57e9 submodule--helper: fix "struct pathspec" memory leaks
- 5:  76eab92c8b6 !  5:  2b9f954fe97 submodule--helper: free() leaking {run,capture}_command() argument
+ 4:  cdefd283c23 !  4:  9fb60485c3e submodule--helper: fix "struct pathspec" memory leaks
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    submodule--helper: fix "struct pathspec" memory leaks
+    +    submodule--helper: fix most "struct pathspec" memory leaks
+     
+         Call clear_pathspec() at the end of various functions that work with
+         and allocate a "struct pathspec".
+ -:  ----------- >  5:  a4672aa9c94 submodule--helper: "struct pathspec" memory leak in module_update()
+ 5:  76eab92c8b6 !  6:  7925db18b33 submodule--helper: free() leaking {run,capture}_command() argument
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -318,8 +329,8 @@ Range-diff against v1:
     - }
     - 
     - static int run_update_procedure(struct update_data *ud)
- -:  ----------- >  6:  908b2504193 submodule--helper: add "const" to copy of "update_data"
- 6:  b9984e982db !  7:  ebd9433f951 submodule--helper: add and use *_release() functions
+ -:  ----------- >  7:  30883f3aa01 submodule--helper: add "const" to copy of "update_data"
+ 6:  b9984e982db !  8:  b7582391c91 submodule--helper: add and use *_release() functions
     @@ Commit message
          submodule--helper: add and use *_release() functions
      
@@ -339,7 +350,25 @@ Range-diff against v1:
      +	free(suc->update_clone);
      +	free(suc->failed_clones);
      +}
- 7:  f8c20bbf266 !  8:  17ce39fdca4 submodule--helper: fix "errmsg_str" memory leak
+    @@ builtin/submodule--helper.c: static int update_submodules(struct update_data *up
+     @@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
+      
+      		if (module_list_compute(argc, argv, opt.prefix,
+    - 					&pathspec, &list) < 0) {
+    + 					&pathspec2, &list) < 0) {
+     +			module_list_release(&list);
+      			ret = 1;
+      			goto cleanup;
+    @@ builtin/submodule--helper.c: static int module_update(int argc, const char **arg
+     +	update_data_release(&opt);
+      	list_objects_filter_release(&filter_options);
+      	clear_pathspec(&pathspec);
+    - 	return ret;
+    + 	clear_pathspec(&pathspec2);
+     @@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+      	ret = 0;
+      cleanup:
+ 7:  f8c20bbf266 !  9:  92737916083 submodule--helper: fix "errmsg_str" memory leak
     @@
       ## Metadata ##
     -Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
@@ -430,9 +459,9 @@ Range-diff against v1:
       
     - static void prepare_submodule_summary(struct summary_cb *info,
     + 	free(displaypath);
- -:  ----------- >  9:  d8672a6d08a submodule--helper: fix "errmsg_str" memory leak
- 8:  c8bb7bb7bb3 = 10:  a31b09469aa submodule--helper: fix "sm_path" and other "module_cb_list" leaks
-10:  e6c633256f3 ! 11:  8434d0237e0 submodule--helper: fix a leak with repo_clear()
+ -:  ----------- > 10:  c81a4f69179 submodule--helper: fix "errmsg_str" memory leak
+ 8:  c8bb7bb7bb3 = 11:  c25b55c9528 submodule--helper: fix "sm_path" and other "module_cb_list" leaks
+10:  e6c633256f3 ! 12:  303447bd4f5 submodule--helper: fix a leak with repo_clear()
     @@ builtin/submodule--helper.c: static void ensure_core_worktree(const char *path)
       }
       
@@ -457,8 +486,8 @@ Range-diff against v1:
     - . ./test-lib.sh
     - 
     - test_expect_success 'setup a real submodule' '
- -:  ----------- > 12:  3af84183dec submodule--helper: fix a memory leak in get_default_remote_submodule()
-11:  475b1196a93 ! 13:  93d6c81ca1d submodule--helper: fix "reference" leak is "module_clone_data"
+ -:  ----------- > 13:  f8ededcdf77 submodule--helper: fix a memory leak in get_default_remote_submodule()
+11:  475b1196a93 ! 14:  c7610088968 submodule--helper: fix "reference" leak is "module_clone_data"
     @@ Commit message
          those, but not the ones we get from argv, let's make use of the "util"
          member, if it has a pointer it's the pointer we'll need to free.
@@ -540,10 +569,10 @@ Range-diff against v1:
     + }
     + 
     + static int config_submodule_in_gitmodules(const char *name, const char *var, const char *value)
- -:  ----------- > 14:  003ec37ae71 submodule--helper: fix obscure leak in module_add()
- -:  ----------- > 15:  c508c8aacf0 submodule--helper: fix a leak in module_add()
- -:  ----------- > 16:  6d4f784b818 submodule--helper: fix a memory leak in print_status()
- 9:  7b36f71879e ! 17:  4bf71d59d43 submodule--helper: free "char *" in "struct update_data"
+ -:  ----------- > 15:  abd8e2eef3a submodule--helper: fix obscure leak in module_add()
+ -:  ----------- > 16:  1f01203d154 submodule--helper: fix a leak in module_add()
+ -:  ----------- > 17:  12b8a945486 submodule--helper: fix a memory leak in print_status()
+ 9:  7b36f71879e ! 18:  fac2c4491f3 submodule--helper: free "char *" in "struct update_data"
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -595,9 +624,9 @@ Range-diff against v1:
     + . ./test-lib.sh
     + 
     + test_expect_success 'setup a real submodule' '
- -:  ----------- > 18:  c5f0775f4dd submodule--helper: rename "int res" to "int ret"
- -:  ----------- > 19:  122709e07a8 submodule--helper: add skeleton "goto cleanup" to update_submodule()
- 1:  f1c847ad613 ! 20:  7c734327ec7 submodule.c: free() memory from xgetcwd()
+ -:  ----------- > 19:  cf0c8851954 submodule--helper: rename "int res" to "int ret"
+ -:  ----------- > 20:  7882e33cdca submodule--helper: add skeleton "goto cleanup" to update_submodule()
+ 1:  f1c847ad613 ! 21:  31395a2b4f8 submodule.c: free() memory from xgetcwd()
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -739,9 +768,9 @@ Range-diff against v1:
       
     - 	code = finish_command(&cp);
     + cleanup:
- -:  ----------- > 21:  ce201429062 submodule--helper: free rest of "displaypath" in "struct update_data"
- -:  ----------- > 22:  521fe0f0b4c submodule--helper: fix bad config API usage
- -:  ----------- > 23:  2459b883b7d submodule--helper: fix a configure_added_submodule() leak
+ -:  ----------- > 22:  a2168cf1378 submodule--helper: free rest of "displaypath" in "struct update_data"
+ -:  ----------- > 23:  d77c6665ca9 submodule--helper: fix bad config API usage
+ -:  ----------- > 24:  531db4ddae6 submodule--helper: fix a configure_added_submodule() leak
 -- 
-2.37.1.1032.gb00b5447790
+2.37.1.1062.g385eac7fccf
 
