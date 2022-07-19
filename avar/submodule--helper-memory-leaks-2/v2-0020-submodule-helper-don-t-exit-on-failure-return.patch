@@ -1,0 +1,133 @@
+From a866f88ee9589d9e9bdb854772a0ebfabb3d73f9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-20.23-a866f88ee95-20220719T193904Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.23-00000000000-20220719T193904Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220713T131601Z-avarab@gmail.com>
+	<cover-v2-00.23-00000000000-20220719T193904Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Jul 2022 17:44:26 +0200
+Subject: [PATCH v2 20/23] submodule--helper: don't exit() on failure, return
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code downstream of module_update() to short-circuit and return
+to the top-level on failure, rather than calling exit().
+
+To do so we need to diligently check whether we "must_die_on_failure",
+which is a pattern started in c51f8f94e5b (submodule--helper: run
+update procedures from C, 2021-08-24), but which hadn't been completed
+to the point where we could avoid calling exit() here.
+
+This introduces no functional changes, but makes it easier to both
+call these routines as a library in the future, and to avoid leaking
+memory.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 35 ++++++++++++++++++++++++-----------
+ 1 file changed, 24 insertions(+), 11 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 7dfa009248b..6b1bcee4fd1 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2282,7 +2282,8 @@ static int fetch_in_submodule(const char *module_path, int depth, int quiet, str
+ 	return run_command(&cp);
+ }
+ 
+-static int run_update_command(struct update_data *ud, int subforce)
++static int run_update_command(struct update_data *ud, int subforce,
++			      int *must_die_on_failurep)
+ {
+ 	struct child_process cp = CHILD_PROCESS_INIT;
+ 	char *oid = oid_to_hex(&ud->oid);
+@@ -2344,8 +2345,10 @@ static int run_update_command(struct update_data *ud, int subforce)
+ 			BUG("unexpected update strategy type: %s",
+ 			    submodule_strategy_to_string(&ud->update_strategy));
+ 		}
+-		if (must_die_on_failure)
+-			exit(128);
++		if (must_die_on_failure) {
++			*must_die_on_failurep = 1;
++			return 128;
++		}
+ 
+ 		/* the command failed, but update must continue */
+ 		return 1;
+@@ -2379,7 +2382,8 @@ static int run_update_command(struct update_data *ud, int subforce)
+ 	return 0;
+ }
+ 
+-static int run_update_procedure(struct update_data *ud)
++static int run_update_procedure(struct update_data *ud,
++				int *must_die_on_failure)
+ {
+ 	int subforce = is_null_oid(&ud->suboid) || ud->force;
+ 
+@@ -2406,7 +2410,7 @@ static int run_update_procedure(struct update_data *ud)
+ 			    ud->displaypath, oid_to_hex(&ud->oid));
+ 	}
+ 
+-	return run_update_command(ud, subforce);
++	return run_update_command(ud, subforce, must_die_on_failure);
+ }
+ 
+ static const char *remote_submodule_branch(const char *path)
+@@ -2542,7 +2546,8 @@ static void update_data_to_args(struct update_data *update_data, struct strvec *
+ 				    "--no-single-branch");
+ }
+ 
+-static int update_submodule(struct update_data *update_data)
++static int update_submodule(struct update_data *update_data,
++			    int *must_die_on_failure)
+ {
+ 	int ret;
+ 
+@@ -2583,8 +2588,10 @@ static int update_submodule(struct update_data *update_data)
+ 	}
+ 
+ 	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
+-		ret = run_update_procedure(update_data);
+-		if (ret) {
++		ret = run_update_procedure(update_data, must_die_on_failure);
++		if (ret && *must_die_on_failure) {
++			goto cleanup;
++		} else if (ret) {
+ 			ret = 1;
+ 			goto cleanup;
+ 		}
+@@ -2610,7 +2617,8 @@ static int update_submodule(struct update_data *update_data)
+ 		die_message(_("Failed to recurse into submodule path '%s'"),
+ 			    update_data->displaypath);
+ 		if (ret == 128) {
+-			exit(ret);
++			*must_die_on_failure = 1;
++			goto cleanup;
+ 		} else if (ret) {
+ 			ret = 1;
+ 			goto cleanup;
+@@ -2648,13 +2656,18 @@ static int update_submodules(struct update_data *update_data)
+ 
+ 	for (i = 0; i < suc.update_clone_nr; i++) {
+ 		struct update_clone_data ucd = suc.update_clone[i];
++		int code;
++		int must_die_on_failure = 0;
+ 
+ 		oidcpy(&update_data->oid, &ucd.oid);
+ 		update_data->just_cloned = ucd.just_cloned;
+ 		update_data->sm_path = ucd.sub->path;
+ 
+-		if (update_submodule(update_data))
+-			res = 1;
++		code = update_submodule(update_data, &must_die_on_failure);
++		if (code)
++			res = code;
++		if (must_die_on_failure)
++			goto cleanup;
+ 	}
+ 
+ cleanup:
+-- 
+2.37.1.1032.gb00b5447790
+

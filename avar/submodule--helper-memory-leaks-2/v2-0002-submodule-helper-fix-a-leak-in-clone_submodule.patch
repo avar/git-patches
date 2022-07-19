@@ -1,0 +1,124 @@
+From 1ee450768fc2f38e65554246977f6b7ba024375a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-02.23-1ee450768fc-20220719T193904Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.23-00000000000-20220719T193904Z-avarab@gmail.com>
+References: <cover-00.11-00000000000-20220713T131601Z-avarab@gmail.com>
+	<cover-v2-00.23-00000000000-20220719T193904Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Jun 2022 10:51:23 +0200
+Subject: [PATCH v2 02/23] submodule--helper: fix a leak in "clone_submodule"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak of the "path" member of the "struct
+module_clone_data" in clone_submodule(). This fixes leaks in code
+added in f8eaa0ba98b (submodule--helper, module_clone: always operate
+on absolute paths, 2016-03-31).
+
+For the "else" case we don't need to xstrdup() the "clone_data->path",
+if we're not creating a new one we'll leave it to our caller to keep
+track of it.
+
+In the case of the module_clone() caller it's from "argv", and doesn't
+need to be free'd, and in the case of the add_submodule() caller we
+get a pointer to "sm_path", which doesn't need to be directly free'd
+either.
+
+Fixing this leak makes several tests pass, so let's mark them as
+passing with TEST_PASSES_SANITIZE_LEAK=true.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c   | 6 ++++--
+ t/t6008-rev-list-submodule.sh | 1 +
+ t/t7414-submodule-mistakes.sh | 2 ++
+ t/t7506-status-submodule.sh   | 1 +
+ t/t7507-commit-verbose.sh     | 2 ++
+ 5 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 73717be957c..4155d2450e0 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1644,6 +1644,7 @@ static int clone_submodule(struct module_clone_data *clone_data)
+ 	char *sm_alternate = NULL, *error_strategy = NULL;
+ 	struct strbuf sb = STRBUF_INIT;
+ 	struct child_process cp = CHILD_PROCESS_INIT;
++	char *to_free = NULL;
+ 
+ 	submodule_name_to_gitdir(&sb, the_repository, clone_data->name);
+ 	sm_gitdir = absolute_pathdup(sb.buf);
+@@ -1651,9 +1652,9 @@ static int clone_submodule(struct module_clone_data *clone_data)
+ 
+ 	if (!is_absolute_path(clone_data->path)) {
+ 		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+-		clone_data->path = strbuf_detach(&sb, NULL);
++		clone_data->path = to_free = strbuf_detach(&sb, NULL);
+ 	} else {
+-		clone_data->path = xstrdup(clone_data->path);
++		clone_data->path = clone_data->path;
+ 	}
+ 
+ 	if (validate_submodule_git_dir(sm_gitdir, clone_data->name) < 0)
+@@ -1737,6 +1738,7 @@ static int clone_submodule(struct module_clone_data *clone_data)
+ 	strbuf_release(&sb);
+ 	free(sm_gitdir);
+ 	free(p);
++	free(to_free);
+ 	return 0;
+ }
+ 
+diff --git a/t/t6008-rev-list-submodule.sh b/t/t6008-rev-list-submodule.sh
+index 3153a0d8910..12e67e187ef 100755
+--- a/t/t6008-rev-list-submodule.sh
++++ b/t/t6008-rev-list-submodule.sh
+@@ -8,6 +8,7 @@ test_description='git rev-list involving submodules that this repo has'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t7414-submodule-mistakes.sh b/t/t7414-submodule-mistakes.sh
+index f2e7df59cf2..3269298197c 100755
+--- a/t/t7414-submodule-mistakes.sh
++++ b/t/t7414-submodule-mistakes.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='handling of common mistakes people may make with submodules'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'create embedded repository' '
+diff --git a/t/t7506-status-submodule.sh b/t/t7506-status-submodule.sh
+index 3fcb44767f5..f5426a8e589 100755
+--- a/t/t7506-status-submodule.sh
++++ b/t/t7506-status-submodule.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git status for submodule'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_create_repo_with_commit () {
+diff --git a/t/t7507-commit-verbose.sh b/t/t7507-commit-verbose.sh
+index ed2653d46fe..92462a22374 100755
+--- a/t/t7507-commit-verbose.sh
++++ b/t/t7507-commit-verbose.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='verbose commit template'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ write_script "check-for-diff" <<\EOF &&
+-- 
+2.37.1.1032.gb00b5447790
+
