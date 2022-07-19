@@ -1,9 +1,9 @@
 From b548cac9b1bcc9747ac46a0bf51d2c6d7f439bfd Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-00.23-00000000000-20220719T193904Z-avarab@gmail.com>
+Message-Id: <cover-v2-00.23-00000000000-20220719T193946Z-avarab@gmail.com>
 In-Reply-To: <cover-00.11-00000000000-20220713T131601Z-avarab@gmail.com>
 References: <cover-00.11-00000000000-20220713T131601Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 19 Jul 2022 21:39:04 +0200
+Date: Tue, 19 Jul 2022 21:39:46 +0200
 Subject: [PATCH v2 00/23] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -51,9 +51,8 @@ Glen Choo (2):
  9 files changed, 255 insertions(+), 98 deletions(-)
 
 Range-diff against v1:
- 1:  63150b4091c <  -:  ----------- git-submodule.sh: remove unused sanitize_submodule_env()
-21:  4049362e9b4 =  1:  fcdf4a2e2d9 submodule--helper: replace memset() with { 0 }-initialization
-22:  e5ec6945409 !  2:  1ee450768fc submodule--helper: fix "module_clone_data" memory leaks
+ 2:  4049362e9b4 =  1:  fcdf4a2e2d9 submodule--helper: replace memset() with { 0 }-initialization
+ 3:  e5ec6945409 !  2:  1ee450768fc submodule--helper: fix "module_clone_data" memory leaks
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -179,74 +178,9 @@ Range-diff against v1:
      
       ## t/t6008-rev-list-submodule.sh ##
      @@ t/t6008-rev-list-submodule.sh: test_description='git rev-list involving submodules that this repo has'
- 5:  a4632f00a4a !  3:  7b187983940 submodule--helper: have --require-init imply --init
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    submodule--helper: have --require-init imply --init
-    +    submodule--helper: fix trivial get_default_remote_submodule() leak
-     
-    -    Adjust code added in 0060fd1511b (clone --recurse-submodules: prevent
-    -    name squatting on Windows, 2019-09-12) to have the internal
-    -    --require-init option imply --init, rather than having
-    -    "git-submodule.sh" add it implicitly.
-    -
-    -    This change doesn't make any difference now, but eliminates another
-    -    special-case where "git submodule--helper update"'s behavior was
-    -    different from "git submodule update". This will make it easier to
-    -    eventually replace the cmd_update() function in git-submodule.sh.
-    -
-    -    We'll still need to keep the distinction between "--init" and
-    -    "--require-init" in git-submodule.sh. Once cmd_update() gets
-    -    re-implemented in C we'll be able to change variables and other code
-    -    related to that, but not yet.
-    +    Fix a leak in code added in 1012a5cbc3f (submodule--helper
-    +    run-update-procedure: learn --remote, 2022-03-04), we need to free()
-    +    the xstrdup()'d string. This gets e.g. t/t7419-submodule-set-branch.sh
-    +    closer to passing under SANITIZE=leak.
-     
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 		OPT_BOOL(0, "progress", &opt.progress,
-    - 			    N_("force cloning progress")),
-    - 		OPT_BOOL(0, "require-init", &opt.require_init,
-    --			   N_("disallow cloning into non-empty directory")),
-    -+			   N_("disallow cloning into non-empty directory, implies --init")),
-    - 		OPT_BOOL(0, "single-branch", &opt.single_branch,
-    - 			 N_("clone only one branch, HEAD or --branch")),
-    - 		OPT_PARSE_LIST_OBJECTS_FILTER(&filter_options),
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 	argc = parse_options(argc, argv, prefix, module_update_options,
-    - 			     git_submodule_helper_usage, 0);
-    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    + 		const char *branch = remote_submodule_branch(update_data->sm_path);
-    + 		char *remote_ref = xstrfmt("refs/remotes/%s/%s", remote_name, branch);
-      
-    -+	if (opt.require_init)
-    -+		opt.init = 1;
-    ++		free(remote_name);
-     +
-    - 	if (filter_options.choice && !opt.init) {
-    - 		usage_with_options(git_submodule_helper_usage,
-    - 				   module_update_options);
-    -
-    - ## git-submodule.sh ##
-    -@@ git-submodule.sh: cmd_update()
-    - 			init=1
-    - 			;;
-    - 		--require-init)
-    --			init=1
-    - 			require_init=1
-    - 			;;
-    - 		--remote)
-    + 		if (!update_data->nofetch) {
-    + 			if (fetch_in_submodule(update_data->sm_path, update_data->depth,
-    + 					      0, NULL))
-23:  cdefd283c23 =  4:  dd0eb910415 submodule--helper: fix "struct pathspec" memory leaks
-24:  76eab92c8b6 !  5:  d55e71e9b50 submodule--helper: free() leaking {run,capture}_command() argument
+ -:  ----------- >  3:  7b187983940 submodule--helper: fix trivial get_default_remote_submodule() leak
+ 4:  cdefd283c23 =  4:  dd0eb910415 submodule--helper: fix "struct pathspec" memory leaks
+ 5:  76eab92c8b6 !  5:  d55e71e9b50 submodule--helper: free() leaking {run,capture}_command() argument
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -376,101 +310,8 @@ Range-diff against v1:
     - }
     - 
     - static int run_update_procedure(struct update_data *ud)
-19:  fae32067b4c !  6:  cecb985528b submodule--helper: remove display path helper
-    @@ Metadata
-     Author: Glen Choo <chooglen@google.com>
-     
-      ## Commit message ##
-    -    submodule--helper: remove display path helper
-    +    submodule--helper: add "const" to copy of "update_data"
-     
-    -    All invocations of do_get_submodule_displaypath() pass
-    -    get_super_prefix() as the super_prefix arg, which is exactly the same
-    -    as get_submodule_displaypath().
-    -
-    -    Replace all calls to do_get_submodule_displaypath() with
-    -    get_submodule_displaypath(), and since it has no more callers, remove
-    +    Add a "const" to the copy of "struct update_data" that's tracked by
-    +    the "struct submodule_update_clone", as it neither owns nor modifies
-         it.
-     
-         Signed-off-by: Glen Choo <chooglen@google.com>
-    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
-    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int resolve_relative_url_test(int argc, const char **argv, const char *pr
-    - 	return 0;
-    - }
-    - 
-    --static char *do_get_submodule_displaypath(const char *path,
-    --					  const char *prefix,
-    --					  const char *super_prefix)
-    -+/* the result should be freed by the caller. */
-    -+static char *get_submodule_displaypath(const char *path, const char *prefix)
-    - {
-    -+	const char *super_prefix = get_super_prefix();
-    -+
-    - 	if (prefix && super_prefix) {
-    - 		BUG("cannot have prefix '%s' and superprefix '%s'",
-    - 		    prefix, super_prefix);
-    -@@ builtin/submodule--helper.c: static char *do_get_submodule_displaypath(const char *path,
-    - 	}
-    - }
-    - 
-    --/* the result should be freed by the caller. */
-    --static char *get_submodule_displaypath(const char *path, const char *prefix)
-    --{
-    --	const char *super_prefix = get_super_prefix();
-    --	return do_get_submodule_displaypath(path, prefix, super_prefix);
-    --}
-    --
-    - static char *compute_rev_name(const char *sub_path, const char* object_id)
-    - {
-    - 	struct strbuf sb = STRBUF_INIT;
-    -@@ builtin/submodule--helper.c: static void init_submodule(const char *path, const char *prefix,
-    - 	struct strbuf sb = STRBUF_INIT;
-    - 	char *upd = NULL, *url = NULL, *displaypath;
-    - 
-    --	displaypath = do_get_submodule_displaypath(path, prefix, get_super_prefix());
-    -+	displaypath = get_submodule_displaypath(path, prefix);
-    +@@ builtin/submodule--helper.c: struct submodule_update_clone {
-    + 	int current;
-      
-    - 	sub = submodule_from_path(the_repository, null_oid(), path);
-    + 	/* configuration parameters which are passed on to the children */
-    +-	struct update_data *update_data;
-    ++	const struct update_data *update_data;
-      
-    + 	/* to be consumed by update_submodule() */
-    + 	struct update_clone_data *update_clone;
-     @@ builtin/submodule--helper.c: static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
-    + 	const char *update_string;
-      	enum submodule_update_type update_type;
-      	char *key;
-    - 	struct update_data *ud = suc->update_data;
-    --	char *displaypath = do_get_submodule_displaypath(ce->name, ud->prefix,
-    --							 get_super_prefix());
-    -+	char *displaypath = get_submodule_displaypath(ce->name, ud->prefix);
-    +-	struct update_data *ud = suc->update_data;
-    ++	const struct update_data *ud = suc->update_data;
-    + 	char *displaypath = get_submodule_displaypath(ce->name, ud->prefix);
-      	struct strbuf sb = STRBUF_INIT;
-      	int needs_cloning = 0;
-    - 	int need_free_url = 0;
-    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    - {
-    - 	ensure_core_worktree(update_data->sm_path);
-    - 
-    --	update_data->displaypath = do_get_submodule_displaypath(update_data->sm_path,
-    --								update_data->prefix,
-    --								get_super_prefix());
-    -+	update_data->displaypath = get_submodule_displaypath(
-    -+		update_data->sm_path, update_data->prefix);
-    - 
-    - 	determine_submodule_update_strategy(the_repository, update_data->just_cloned,
-    - 					    update_data->sm_path, update_data->update_default,
-25:  b9984e982db !  7:  a4839adc640 submodule--helper: add and use *_release() functions
+ -:  ----------- >  6:  cecb985528b submodule--helper: add "const" to copy of "update_data"
+ 6:  b9984e982db !  7:  a4839adc640 submodule--helper: add and use *_release() functions
     @@ Commit message
          submodule--helper: add and use *_release() functions
      
@@ -490,7 +331,7 @@ Range-diff against v1:
      +	free(suc->update_clone);
      +	free(suc->failed_clones);
      +}
-26:  f8c20bbf266 !  8:  cce19123567 submodule--helper: fix "errmsg_str" memory leak
+ 7:  f8c20bbf266 !  8:  cce19123567 submodule--helper: fix "errmsg_str" memory leak
     @@
       ## Metadata ##
     -Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
@@ -582,8 +423,8 @@ Range-diff against v1:
     - static void prepare_submodule_summary(struct summary_cb *info,
     + 	free(displaypath);
  -:  ----------- >  9:  62aba8cf599 submodule--helper: fix "errmsg_str" memory leak
-27:  c8bb7bb7bb3 = 10:  1c5b58ee5dd submodule--helper: fix "sm_path" and other "module_cb_list" leaks
-29:  e6c633256f3 ! 11:  2c3b0b8d19c submodule--helper: fix a leak with repo_clear()
+ 8:  c8bb7bb7bb3 = 10:  1c5b58ee5dd submodule--helper: fix "sm_path" and other "module_cb_list" leaks
+10:  e6c633256f3 ! 11:  2c3b0b8d19c submodule--helper: fix a leak with repo_clear()
     @@ builtin/submodule--helper.c: static void ensure_core_worktree(const char *path)
       }
       
@@ -608,147 +449,8 @@ Range-diff against v1:
     - . ./test-lib.sh
     - 
     - test_expect_success 'setup a real submodule' '
-10:  abb5cb499aa ! 12:  db07fb00b86 submodule--helper: eliminate internal "--update" option
-    @@
-      ## Metadata ##
-    -Author: Glen Choo <chooglen@google.com>
-    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    submodule--helper: eliminate internal "--update" option
-    +    submodule--helper: fix a memory leak in get_default_remote_submodule()
-     
-    -    Follow-up on the preceding commit which taught "git submodule--helper
-    -    update" to understand "--merge", "--checkout" and "--rebase" and use
-    -    those options instead of "--update=(rebase|merge|checkout|none)" when
-    -    the command invokes itself.
-    +    Fix a memory leak in the get_default_remote_submodule() function added
-    +    in a77c3fcb5ec (submodule--helper: get remote names from any
-    +    repository, 2022-03-04), we need to repo_clear() the submodule we
-    +    initialize.
-     
-    -    Unlike the preceding change this isn't strictly necessary to
-    -    eventually change "git-submodule.sh" so that it invokes "git
-    -    submodule--helper update" directly, but let's remove this
-    -    inconsistency in the command-line interface. We shouldn't need to
-    -    carry special synonyms for existing options in "git submodule--helper"
-    -    when that command can use the primary documented names instead.
-    -
-    -    But, as seen in the post-image this makes the control flow within
-    -    "builtin/submodule--helper.c" simpler, we can now write directly to
-    -    the "update_default" member of "struct update_data" when parsing the
-    -    options in "module_update()".
-    -
-    -    Signed-off-by: Glen Choo <chooglen@google.com>
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
-    - static void determine_submodule_update_strategy(struct repository *r,
-    - 						int just_cloned,
-    - 						const char *path,
-    --						const char *update,
-    -+						enum submodule_update_type update,
-    - 						struct submodule_update_strategy *out)
-    +@@ builtin/submodule--helper.c: static char *repo_get_default_remote(struct repository *repo)
-    + static char *get_default_remote_submodule(const char *module_path)
-      {
-    - 	const struct submodule *sub = submodule_from_path(r, null_oid(), path);
-    -@@ builtin/submodule--helper.c: static void determine_submodule_update_strategy(struct repository *r,
-    - 	key = xstrfmt("submodule.%s.update", sub->name);
-    + 	struct repository subrepo;
-    ++	char *ret;
-      
-    - 	if (update) {
-    --		if (parse_submodule_update_strategy(update, out) < 0)
-    --			die(_("Invalid update mode '%s' for submodule path '%s'"),
-    --				update, path);
-    -+		out->type = update;
-    - 	} else if (!repo_config_get_string_tmp(r, key, &val)) {
-    - 		if (parse_submodule_update_strategy(val, out) < 0)
-    - 			die(_("Invalid update mode '%s' configured for submodule path '%s'"),
-    -@@ builtin/submodule--helper.c: struct update_data {
-    - 	const char *prefix;
-    - 	const char *recursive_prefix;
-    - 	const char *displaypath;
-    --	const char *update_default;
-    -+	enum submodule_update_type update_default;
-    - 	struct object_id suboid;
-    - 	struct string_list references;
-    - 	struct submodule_update_strategy update_strategy;
-    -@@ builtin/submodule--helper.c: static const char *submodule_update_type_to_label(enum submodule_update_type typ
-    - 
-    - static void update_data_to_args(struct update_data *update_data, struct strvec *args)
-    - {
-    -+	enum submodule_update_type update_type = update_data->update_default;
-    + 	repo_submodule_init(&subrepo, the_repository, module_path, null_oid());
-    +-	return repo_get_default_remote(&subrepo);
-    ++	ret = repo_get_default_remote(&subrepo);
-    ++	repo_clear(&subrepo);
-     +
-    - 	strvec_pushl(args, "submodule--helper", "update", "--recursive", NULL);
-    - 	strvec_pushf(args, "--jobs=%d", update_data->max_jobs);
-    - 	if (update_data->recursive_prefix)
-    -@@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data *update_data, struct strvec *
-    - 		strvec_push(args, "--require-init");
-    - 	if (update_data->depth)
-    - 		strvec_pushf(args, "--depth=%d", update_data->depth);
-    --	if (update_data->update_default)
-    --		strvec_pushl(args, "--update", update_data->update_default, NULL);
-    -+	if (update_type != SM_UPDATE_UNSPECIFIED)
-    -+		strvec_pushf(args, "--%s",
-    -+			     submodule_update_type_to_label(update_type));
-    -+
-    - 	if (update_data->references.nr) {
-    - 		struct string_list_item *item;
-    - 		for_each_string_list_item(item, &update_data->references)
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 	struct update_data opt = UPDATE_DATA_INIT;
-    - 	struct list_objects_filter_options filter_options;
-    - 	int ret;
-    --	enum submodule_update_type update_type = SM_UPDATE_UNSPECIFIED;
-    - 
-    - 	struct option module_update_options[] = {
-    - 		OPT__FORCE(&opt.force, N_("force checkout updates"), 0),
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 			   N_("path"),
-    - 			   N_("path into the working tree, across nested "
-    - 			      "submodule boundaries")),
-    --		OPT_STRING(0, "update", &opt.update_default,
-    --			   N_("string"),
-    --			   N_("rebase, merge, checkout or none")),
-    --		OPT_SET_INT(0, "checkout", &update_type,
-    -+		OPT_SET_INT(0, "checkout", &opt.update_default,
-    - 			N_("use the 'checkout' update strategy (default)"),
-    - 			SM_UPDATE_CHECKOUT),
-    --		OPT_SET_INT('m', "merge", &update_type,
-    -+		OPT_SET_INT('m', "merge", &opt.update_default,
-    - 			N_("use the 'merge' update strategy"),
-    - 			SM_UPDATE_MERGE),
-    --		OPT_SET_INT('r', "rebase", &update_type,
-    -+		OPT_SET_INT('r', "rebase", &opt.update_default,
-    - 			N_("use the 'rebase' update strategy"),
-    - 			SM_UPDATE_REBASE),
-    - 		OPT_STRING_LIST(0, "reference", &opt.references, N_("repo"),
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 
-    - 	opt.filter_options = &filter_options;
-    - 
-    --	if (update_type != SM_UPDATE_UNSPECIFIED)
-    --		opt.update_default = submodule_update_type_to_label(update_type);
-    --
-    - 	if (opt.update_default)
-    --		if (parse_submodule_update_strategy(opt.update_default,
-    --						    &opt.update_strategy) < 0)
-    --			die(_("bad value for update parameter"));
-    -+		opt.update_strategy.type = opt.update_default;
-    ++	return ret;
-    + }
-      
-    - 	if (module_list_compute(argc, argv, prefix, &pathspec, &opt.list) < 0) {
-    - 		list_objects_filter_release(&filter_options);
-    + static char *get_default_remote(void)
-30:  475b1196a93 ! 13:  fd582f41752 submodule--helper: fix "reference" leak is "module_clone_data"
+ -:  ----------- > 12:  db07fb00b86 submodule--helper: fix a memory leak in get_default_remote_submodule()
+11:  475b1196a93 ! 13:  fd582f41752 submodule--helper: fix "reference" leak is "module_clone_data"
     @@ Commit message
          those, but not the ones we get from argv, let's make use of the "util"
          member, if it has a pointer it's the pointer we'll need to free.
@@ -830,358 +532,10 @@ Range-diff against v1:
     + }
     + 
     + static int config_submodule_in_gitmodules(const char *name, const char *var, const char *value)
- 2:  7bf62497c54 ! 14:  34a219a6656 git-submodule.sh: remove unused $prefix variable
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    git-submodule.sh: remove unused $prefix variable
-    +    submodule--helper: fix obscure leak in module_add()
-     
-    -    Remove the $prefix variable which isn't used anymore, and hasn't been
-    -    since b3c5f5cb048 (submodule: move core cmd_update() logic to C,
-    -    2022-03-15).
-    +    Fix an obscure leak in module_add()< if the "git add" command we were
-    +    piping to failed we'd fail to strbuf_release(&sb). This fixes a leak
-    +    introduced in a6226fd772b (submodule--helper: convert the bulk of
-    +    cmd_add() to C, 2021-08-10).
-     
-    -    Before that we'd use it to invoke "git submodule--helper" with the
-    -    "--recursive-prefix" option, but since b3c5f5cb048 that "git
-    -    submodule--helper" option is only used when it invokes itself.
-    -
-    -    So the "--recursive-prefix" option is still in use, but at this point
-    -    only when the helper invokes itself during submodule recursion. See
-    -    the "--recursive-prefix" option added in
-    -    c51f8f94e5b (submodule--helper: run update procedures from C,
-    -    2021-08-24).
-    +    In fixing it move to a "goto cleanup" pattern, and since we need to
-    +    introduce a "ret" variable to do that let's also get rid of the
-    +    intermediate "exit_code" variable. The initialization to "-1" in
-    +    a6226fd772b has always been redundant, we'd only use the "exit_code"
-    +    value after assigning the return value of pipe_command() to it.
-     
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-    - ## git-submodule.sh ##
-    -@@ git-submodule.sh: files=
-    - remote=
-    - nofetch=
-    - update=
-    --prefix=
-    - custom_name=
-    - depth=
-    - progress=
-    -@@ git-submodule.sh: cmd_add()
-    - 		usage
-    - 	fi
-    + ## builtin/submodule--helper.c ##
-    +@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
-    + 	int force = 0, quiet = 0, progress = 0, dissociate = 0;
-    + 	struct add_data add_data = ADD_DATA_INIT;
-    + 	char *to_free = NULL;
-    ++	struct strbuf sb = STRBUF_INIT;
-    ++	int ret;
-      
-    --	git ${wt_prefix:+-C "$wt_prefix"} ${prefix:+--super-prefix "$prefix"} submodule--helper add ${GIT_QUIET:+--quiet} ${force:+--force} ${progress:+"--progress"} ${branch:+--branch "$branch"} ${reference_path:+--reference "$reference_path"} ${dissociate:+--dissociate} ${custom_name:+--name "$custom_name"} ${depth:+"$depth"} -- "$@"
-    -+	git ${wt_prefix:+-C "$wt_prefix"} submodule--helper add ${GIT_QUIET:+--quiet} ${force:+--force} ${progress:+"--progress"} ${branch:+--branch "$branch"} ${reference_path:+--reference "$reference_path"} ${dissociate:+--dissociate} ${custom_name:+--name "$custom_name"} ${depth:+"$depth"} -- "$@"
-    - }
-    + 	struct option options[] = {
-    + 		OPT_STRING('b', "branch", &add_data.branch, N_("branch"),
-    +@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
-    + 	die_on_repo_without_commits(add_data.sm_path);
-    + 
-    + 	if (!force) {
-    +-		int exit_code = -1;
-    +-		struct strbuf sb = STRBUF_INIT;
-    + 		struct child_process cp = CHILD_PROCESS_INIT;
-    + 		cp.git_cmd = 1;
-    + 		cp.no_stdout = 1;
-    + 		strvec_pushl(&cp.args, "add", "--dry-run", "--ignore-missing",
-    + 			     "--no-warn-embedded-repo", add_data.sm_path, NULL);
-    +-		if ((exit_code = pipe_command(&cp, NULL, 0, NULL, 0, &sb, 0))) {
-    ++		if ((ret = pipe_command(&cp, NULL, 0, NULL, 0, &sb, 0))) {
-    + 			strbuf_complete_line(&sb);
-    + 			fputs(sb.buf, stderr);
-    +-			free(add_data.sm_path);
-    +-			return exit_code;
-    ++			goto cleanup;
-    + 		}
-    +-		strbuf_release(&sb);
-    + 	}
-    + 
-    + 	if(!add_data.sm_name)
-    +@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
-    + 	add_data.dissociate = !!dissociate;
-      
-    - #
-    -@@ git-submodule.sh: cmd_init()
-    - 		shift
-    - 	done
-    + 	if (add_submodule(&add_data)) {
-    +-		free(add_data.sm_path);
-    +-		return 1;
-    ++		ret = 1;
-    ++		goto cleanup;
-    + 	}
-    + 	configure_added_submodule(&add_data);
-    ++
-    ++	ret = 0;
-    ++cleanup:
-    + 	free(add_data.sm_path);
-    + 	free(to_free);
-    ++	strbuf_release(&sb);
-      
-    --	git ${wt_prefix:+-C "$wt_prefix"} ${prefix:+--super-prefix "$prefix"} submodule--helper init ${GIT_QUIET:+--quiet} -- "$@"
-    -+	git ${wt_prefix:+-C "$wt_prefix"} submodule--helper init ${GIT_QUIET:+--quiet} -- "$@"
-    +-	return 0;
-    ++	return ret;
-      }
-      
-    - #
-    -@@ git-submodule.sh: cmd_update()
-    - 		${init:+--init} \
-    - 		${nofetch:+--no-fetch} \
-    - 		${wt_prefix:+--prefix "$wt_prefix"} \
-    --		${prefix:+--recursive-prefix "$prefix"} \
-    - 		${update:+--update "$update"} \
-    - 		${reference:+"$reference"} \
-    - 		${dissociate:+"--dissociate"} \
-    + #define SUPPORT_SUPER_PREFIX (1<<0)
- 3:  e4750f190f8 <  -:  ----------- git-submodule.sh: make the "$cached" variable a boolean
- 4:  52d97fd4c36 ! 15:  e83e68ed8a9 git-submodule.sh: remove unused top-level "--branch" argument
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    git-submodule.sh: remove unused top-level "--branch" argument
-    +    submodule--helper: fix a leak in module_add()
-     
-    -    In 5c08dbbdf1a (git-submodule: fix subcommand parser, 2008-01-15) the
-    -    "--branch" option was supported as an option to "git submodule"
-    -    itself, i.e. "git submodule --branch" as a side-effect of its
-    -    implementation.
-    +    Fix a leak in module_path(), since a6226fd772b (submodule--helper:
-    +    convert the bulk of cmd_add() to C, 2021-08-10), we've been freeing
-    +    add_data.sm_path, but in this case we clobbered it, and didn't free
-    +    the value we clobbered.
-     
-    -    Then in b57e8119e6e (submodule: teach set-branch subcommand,
-    -    2019-02-08) when the "set-branch" subcommand was added the assertion
-    -    that we shouldn't have "--branch" anywhere except as an argument to
-    -    "add" and "set-branch" was copy/pasted from the adjacent check for
-    -    "--cache" added (or rather modified) in 496eeeb19b9 (git-submodule.sh:
-    -    avoid "test <cond> -a/-o <cond>", 2014-06-10).
-    -
-    -    But there's been a logic error in that check, which at a glance looked
-    -    like it should be supporting:
-    -
-    -        git submodule --branch <branch> (add | set-branch) [<options>]
-    -
-    -    But due to "||" in the condition (as opposed to "&&" for "--cache") if
-    -    we have "--branch" here already we'll emit usage, even for "add" and
-    -    "set-branch".
-    -
-    -    So in addition to never having documented this form, it hasn't worked
-    -    since b57e8119e6e was released with v2.22.0.
-    -
-    -    So it's safe to remove this code. I.e. we don't want to support the
-    -    form noted above, but only:
-    -
-    -        git submodule (add | set-branch) --branch <branch> [<options>]
-    +    This makes test 28 of "t/t7400-submodule-basic.sh" ("submodule add in
-    +    subdirectory") pass when we're compiled with SANITIZE=leak..
-     
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-    - ## git-submodule.sh ##
-    -@@ git-submodule.sh: do
-    - 	-q|--quiet)
-    - 		GIT_QUIET=1
-    - 		;;
-    --	-b|--branch)
-    --		case "$2" in
-    --		'')
-    --			usage
-    --			;;
-    --		esac
-    --		branch="$2"; shift
-    --		;;
-    - 	--cached)
-    - 		cached=1
-    - 		;;
-    -@@ git-submodule.sh: then
-    -     fi
-    - fi
-    + ## builtin/submodule--helper.c ##
-    +@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
-    + 	else
-    + 		add_data.sm_path = xstrdup(argv[1]);
-    + 
-    +-	if (prefix && *prefix && !is_absolute_path(add_data.sm_path))
-    +-		add_data.sm_path = xstrfmt("%s%s", prefix, add_data.sm_path);
-    ++	if (prefix && *prefix && !is_absolute_path(add_data.sm_path)) {
-    ++		char *sm_path = add_data.sm_path;
-    ++		add_data.sm_path = xstrfmt("%s%s", prefix, sm_path);
-    ++		free(sm_path);
-    ++	}
-      
-    --# "-b branch" is accepted only by "add" and "set-branch"
-    --if test -n "$branch" && (test "$command" != add || test "$command" != set-branch)
-    --then
-    --	usage
-    --fi
-    --
-    - # "--cached" is accepted only by "status" and "summary"
-    - if test -n "$cached" && test "$command" != status && test "$command" != summary
-    - then
-    + 	if (starts_with_dot_dot_slash(add_data.repo) ||
-    + 	    starts_with_dot_slash(add_data.repo)) {
- 6:  ad5aad8fed7 <  -:  ----------- submodule update: remove "-v" option
- 7:  9c8a102acc0 <  -:  ----------- submodule--helper: rename "absorb-git-dirs" to "absorbgitdirs"
- 8:  b8a9b085633 ! 16:  d165ec19a49 submodule--helper: report "submodule" as our name in some "-h" output
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    submodule--helper: report "submodule" as our name in some "-h" output
-    +    submodule--helper: fix a memory leak in print_status()
-     
-    -    Change the user-facing "git submodule--helper" commands so that
-    -    they'll report their name as being "git submodule". To a user these
-    -    commands are internal implementation details, and it doesn't make
-    -    sense to emit usage about an internal helper when "git submodule" is
-    -    invoked with invalid options.
-    +    Fix a leak in print_status(), the compute_rev_name() function
-    +    implemented in this file will return a strbuf_detach()'d value, or
-    +    NULL.
-     
-    -    Before this we'd emit e.g.:
-    -
-    -            $ git submodule absorbgitdirs --blah
-    -            error: unknown option `blah'
-    -            usage: git submodule--helper absorbgitdirs [<options>] [<path>...]
-    -            [...]
-    -    And:
-    -
-    -            $ git submodule set-url -- --
-    -            usage: git submodule--helper set-url [--quiet] <path> <newurl>
-    -            [...]
-    -
-    -    Now we'll start with "usage: git submodule [...]" in both of those
-    -    cases. This change does not alter the "list", "name", "clone",
-    -    "config" and "create-branch" commands, those are internal-only (as an
-    -    aside; their usage info should probably invoke BUG(...)). This only
-    -    changes the user-facing commands.
-    -
-    -    The "status", "deinit" and "update" commands are not included in this
-    -    change, because their usage information already used "submodule"
-    -    rather than "submodule--helper".
-    -
-    -    I don't think it's currently possible to emit some of this usage
-    -    information in practice, as git-submodule.sh will catch unknown
-    -    options, and e.g. it doesn't seem to be possible to get "add" to emit
-    -    its usage information from "submodule--helper".
-    -
-    -    Though that change may be superfluous now, it's also harmless, and
-    -    will allow us to eventually dispatch further into "git
-    -    submodule--helper" from git-submodule.sh, while emitting the correct
-    -    usage output.
-    +    This leak has existed since this code was added in
-    +    a9f8a37584a (submodule: port submodule subcommand 'status' from shell
-    +    to C, 2017-10-06), but in 0b5e2ea7cf3 (submodule--helper: don't print
-    +    null in 'submodule status', 2018-04-18) we added a "const"
-    +    intermediate variable for the return value, that "const" should be
-    +    removed.
-     
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int module_foreach(int argc, const char **argv, const char *prefix)
-    - 	};
-    - 
-    - 	const char *const git_submodule_helper_usage[] = {
-    --		N_("git submodule--helper foreach [--quiet] [--recursive] [--] <command>"),
-    -+		N_("git submodule foreach [--quiet] [--recursive] [--] <command>"),
-    - 		NULL
-    - 	};
-    - 
-    -@@ builtin/submodule--helper.c: static int module_init(int argc, const char **argv, const char *prefix)
-    - 	};
-    - 
-    - 	const char *const git_submodule_helper_usage[] = {
-    --		N_("git submodule--helper init [<options>] [<path>]"),
-    -+		N_("git submodule init [<options>] [<path>]"),
-    - 		NULL
-    - 	};
-    - 
-    -@@ builtin/submodule--helper.c: static int module_summary(int argc, const char **argv, const char *prefix)
-    - 	};
-    - 
-    - 	const char *const git_submodule_helper_usage[] = {
-    --		N_("git submodule--helper summary [<options>] [<commit>] [--] [<path>]"),
-    -+		N_("git submodule summary [<options>] [<commit>] [--] [<path>]"),
-    - 		NULL
-    - 	};
-    - 
-    -@@ builtin/submodule--helper.c: static int module_sync(int argc, const char **argv, const char *prefix)
-    - 	};
-    - 
-    - 	const char *const git_submodule_helper_usage[] = {
-    --		N_("git submodule--helper sync [--quiet] [--recursive] [<path>]"),
-    -+		N_("git submodule sync [--quiet] [--recursive] [<path>]"),
-    - 		NULL
-    - 	};
-    - 
-    -@@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
-    - 	};
-    - 
-    - 	const char *const git_submodule_helper_usage[] = {
-    --		N_("git submodule--helper absorbgitdirs [<options>] [<path>...]"),
-    -+		N_("git submodule absorbgitdirs [<options>] [<path>...]"),
-    - 		NULL
-    - 	};
-    - 
-    -@@ builtin/submodule--helper.c: static int module_set_url(int argc, const char **argv, const char *prefix)
-    - 		OPT_END()
-    - 	};
-    - 	const char *const usage[] = {
-    --		N_("git submodule--helper set-url [--quiet] <path> <newurl>"),
-    -+		N_("git submodule set-url [--quiet] <path> <newurl>"),
-    - 		NULL
-    - 	};
-    - 
-    -@@ builtin/submodule--helper.c: static int module_set_branch(int argc, const char **argv, const char *prefix)
-    - 		OPT_END()
-    - 	};
-    - 	const char *const usage[] = {
-    --		N_("git submodule--helper set-branch [-q|--quiet] (-d|--default) <path>"),
-    --		N_("git submodule--helper set-branch [-q|--quiet] (-b|--branch) <branch> <path>"),
-    -+		N_("git submodule set-branch [-q|--quiet] (-d|--default) <path>"),
-    -+		N_("git submodule set-branch [-q|--quiet] (-b|--branch) <branch> <path>"),
-    - 		NULL
-    - 	};
-    +@@ builtin/submodule--helper.c: static void print_status(unsigned int flags, char state, const char *path,
-    + 	printf("%c%s %s", state, oid_to_hex(oid), displaypath);
-      
-    -@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
-    - 	};
-    + 	if (state == ' ' || state == '+') {
-    +-		const char *name = compute_rev_name(path, oid_to_hex(oid));
-    ++		char *name = compute_rev_name(path, oid_to_hex(oid));
-      
-    - 	const char *const usage[] = {
-    --		N_("git submodule--helper add [<options>] [--] <repository> [<path>]"),
-    -+		N_("git submodule add [<options>] [--] <repository> [<path>]"),
-    - 		NULL
-    - 	};
-    + 		if (name)
-    + 			printf(" (%s)", name);
-    ++		free(name);
-    + 	}
-      
-    + 	printf("\n");
-28:  7b36f71879e ! 17:  aaa9f3a0126 submodule--helper: free "char *" in "struct update_data"
+ -:  ----------- > 14:  34a219a6656 submodule--helper: fix obscure leak in module_add()
+ -:  ----------- > 15:  e83e68ed8a9 submodule--helper: fix a leak in module_add()
+ -:  ----------- > 16:  d165ec19a49 submodule--helper: fix a memory leak in print_status()
+ 9:  7b36f71879e ! 17:  aaa9f3a0126 submodule--helper: free "char *" in "struct update_data"
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -1233,292 +587,60 @@ Range-diff against v1:
     + . ./test-lib.sh
     + 
     + test_expect_success 'setup a real submodule' '
-15:  021d5e57b39 ! 18:  f18ba4f6318 submodule--helper: don't recreate recursive prefix
-    @@
-      ## Metadata ##
-    -Author: Glen Choo <chooglen@google.com>
-    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+ -:  ----------- > 18:  f18ba4f6318 submodule--helper: rename "int res" to "int ret"
+ -:  ----------- > 19:  58939562e66 submodule--helper: add skeleton "goto cleanup" to update_submodule()
+ 1:  f1c847ad613 ! 20:  a866f88ee95 submodule.c: free() memory from xgetcwd()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
       ## Commit message ##
-    -    submodule--helper: don't recreate recursive prefix
-    +    submodule--helper: rename "int res" to "int ret"
-     
-    -    update_submodule() uses duplicated code to compute
-    -    update_data->displaypath and next.recursive_prefix. The latter is just
-    -    the former with "/" appended to it, and since update_data->displaypath
-    -    not changed outside of this statement, we can just reuse the already
-    -    computed result.
-    +    Rename the "res" variable added in b3c5f5cb048 (submodule: move core
-    +    cmd_update() logic to C, 2022-03-15) to "ret", which is the convention
-    +    in the rest of this file. Subsequent commits will change this code to
-    +    a "goto cleanup" pattern, let's have the post image look consistent
-    +    with the rest.
-     
-    -    We can go one step further and remove the reference to
-    -    next.recursive_prefix altogether. Since it is only used in
-    -    update_data_to_args() (to compute the "--recursive-prefix" flag for the
-    -    recursive update child process) we can just use the already computed
-    -    .displaypath value of there.
-    -
-    -    Delete the duplicated code, and remove the unnecessary reference to
-    -    next.recursive_prefix. As a bonus, this fixes a memory leak where
-    -    prefixed_path was never freed (this leak was first reported in [1]).
-    -
-    -    [1] https://lore.kernel.org/git/877a45867ae368bf9e053caedcb6cf421e02344d.1655336146.git.gitgitgadget@gmail.com
-    -
-    -    Signed-off-by: Glen Choo <chooglen@google.com>
-    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
-    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data *update_data, struct strvec *
-    - 
-    - 	strvec_pushl(args, "submodule--helper", "update", "--recursive", NULL);
-    - 	strvec_pushf(args, "--jobs=%d", update_data->max_jobs);
-    --	if (update_data->recursive_prefix)
-    --		strvec_pushl(args, "--recursive-prefix",
-    --			     update_data->recursive_prefix, NULL);
-    -+	if (update_data->displaypath) {
-    -+		strvec_push(args, "--recursive-prefix");
-    -+		strvec_pushf(args, "%s/", update_data->displaypath);
-    -+	}
-    - 	if (update_data->quiet)
-    - 		strvec_push(args, "--quiet");
-    - 	if (update_data->force)
-     @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    + 	if (update_data->recursive) {
-    + 		struct child_process cp = CHILD_PROCESS_INIT;
-      		struct update_data next = *update_data;
-    - 		int res;
-    +-		int res;
-    ++		int ret;
-      
-    --		if (update_data->recursive_prefix)
-    --			prefixed_path = xstrfmt("%s%s/", update_data->recursive_prefix,
-    --						update_data->sm_path);
-    --		else
-    --			prefixed_path = xstrfmt("%s/", update_data->sm_path);
-    --
-    --		next.recursive_prefix = get_submodule_displaypath(prefixed_path,
-    --								  update_data->prefix);
-      		next.prefix = NULL;
-      		oidcpy(&next.oid, null_oid());
-    - 		oidcpy(&next.suboid, null_oid());
-    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    + 		update_data_to_args(&next, &cp.args);
-    + 
-    + 		/* die() if child process die()'d */
-    +-		res = run_command(&cp);
-    +-		if (!res)
-    ++		ret = run_command(&cp);
-    ++		if (!ret)
-    + 			return 0;
-    + 		die_message(_("Failed to recurse into submodule path '%s'"),
-    + 			    update_data->displaypath);
-    +-		if (res == 128)
-    +-			exit(res);
-    +-		else if (res)
-    ++		if (ret == 128)
-    ++			exit(ret);
-    ++		else if (ret)
-    + 			return 1;
-    + 	}
-    + 
-16:  b3d414e0e52 ! 19:  58939562e66 submodule--helper: use correct display path helper
-    @@
-      ## Metadata ##
-    -Author: Glen Choo <chooglen@google.com>
-    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    submodule--helper: use correct display path helper
-    +    submodule--helper: add skeleton "goto cleanup" to update_submodule()
-     
-    -    Replace a chunk of code in update_submodule() with an equivalent
-    -    do_get_submodule_displaypath() invocation. This is already tested by
-    -    t/t7406-submodule-update.sh:'submodule update --init --recursive from
-    -    subdirectory', so no tests are added.
-    +    Add a skeleton "goto cleanup" pattern to update_submodule(), rather
-    +    than having branches in it "return". This is in preparation for doing
-    +    something useful with the "cleanup" label, but for now we're using it
-    +    as the equivalent of a "done" label.
-     
-    -    The two are equivalent because:
-    +    The "exit()" branch is not handled yet, and neither is the exit() that
-    +    run_update_procedure() might invoke. That'll be handled in a
-    +    subsequent commit.
-     
-    -    - Exactly one of recursive_prefix|prefix is non-NULL at a time; prefix
-    -      is set at the superproject level, and recursive_prefix is set when
-    -      recursing into submodules. There is also a BUG() statement in
-    -      get_submodule_displaypath() that asserts that both cannot be non-NULL.
-    -
-    -    - In get_submodule_displaypath(), get_super_prefix() always returns NULL
-    -      because "--super-prefix" is never passed. Thus calling it is
-    -      equivalent to calling do_get_submodule_displaypath() with super_prefix
-    -      = NULL.
-    -
-    -    Therefore:
-    -
-    -    - When recursive_prefix is non-NULL, prefix is NULL, and thus
-    -      get_submodule_displaypath() just returns prefixed_path. This is
-    -      identical to calling do_get_submodule_displaypath() with super_prefix
-    -      = recursive_prefix because the return value is still the concatenation
-    -      of recursive_prefix + update_data->sm_path.
-    -
-    -    - When prefix is non-NULL, prefixed_path = update_data->sm_path. Thus
-    -      calling get_submodule_displaypath() with prefixed_path is equivalent
-    -      to calling do_get_submodule_displaypath() with update_data->sm_path
-    -
-    -    Signed-off-by: Glen Choo <chooglen@google.com>
-    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
-    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-     @@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data *update_data, struct strvec *
-      
-      static int update_submodule(struct update_data *update_data)
-      {
-    --	char *prefixed_path;
-    --
-    ++	int ret;
-    ++
-      	ensure_core_worktree(update_data->sm_path);
-      
-    --	if (update_data->recursive_prefix)
-    --		prefixed_path = xstrfmt("%s%s", update_data->recursive_prefix,
-    --					update_data->sm_path);
-    --	else
-    --		prefixed_path = xstrdup(update_data->sm_path);
-    --
-    --	update_data->displaypath = get_submodule_displaypath(prefixed_path,
-    --							     update_data->prefix);
-    --	free(prefixed_path);
-    -+	update_data->displaypath = do_get_submodule_displaypath(update_data->sm_path,
-    -+								update_data->prefix,
-    -+								update_data->recursive_prefix);
-    + 	update_data->displaypath = get_submodule_displaypath(
-    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    + 		free(remote_ref);
-    + 	}
-    + 
-    +-	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force)
-    +-		if (run_update_procedure(update_data))
-    +-			return 1;
-    ++	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
-    ++		ret = run_update_procedure(update_data);
-    ++		if (ret) {
-    ++			ret = 1;
-    ++			goto cleanup;
-    ++		}
-    ++	}
-    + 
-    + 	if (update_data->recursive) {
-    + 		struct child_process cp = CHILD_PROCESS_INIT;
-    + 		struct update_data next = *update_data;
-    +-		int ret;
-    + 
-    + 		next.prefix = NULL;
-    + 		oidcpy(&next.oid, null_oid());
-    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    + 		/* die() if child process die()'d */
-    + 		ret = run_command(&cp);
-    + 		if (!ret)
-    +-			return 0;
-    ++			goto cleanup;
-    + 		die_message(_("Failed to recurse into submodule path '%s'"),
-    + 			    update_data->displaypath);
-    +-		if (ret == 128)
-    ++		if (ret == 128) {
-    + 			exit(ret);
-    +-		else if (ret)
-    +-			return 1;
-    ++		} else if (ret) {
-    ++			ret = 1;
-    ++			goto cleanup;
-    ++		}
-    + 	}
-    + 
-    +-	return 0;
-    ++	ret = 0;
-    ++cleanup:
-    ++	return ret;
-    + }
-      
-    - 	determine_submodule_update_strategy(the_repository, update_data->just_cloned,
-    - 					    update_data->sm_path, update_data->update_default,
-    + static int update_submodules(struct update_data *update_data)
-18:  1b5ad3a50ee ! 20:  a866f88ee95 submodule--helper update: use --super-prefix
-    @@
-      ## Metadata ##
-    -Author: Glen Choo <chooglen@google.com>
-    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    submodule--helper update: use --super-prefix
+    -    submodule.c: free() memory from xgetcwd()
     +    submodule--helper: don't exit() on failure, return
      
-    -    Unlike the other subcommands, "git submodule--helper update" uses the
-    -    "--recursive-prefix" flag instead of "--super-prefix". The two flags are
-    -    otherwise identical (they only serve to compute the 'display path' of a
-    -    submodule), except that there is a dedicated helper function to get the
-    -    value of "--super-prefix".
+    -    Fix a memory leak in code added in bf0231c6614 (rev-parse: add
+    -    --show-superproject-working-tree, 2017-03-08), we should never have
+    -    made the result of xgetcwd() a "const char *", as we return a
+    -    strbuf_detach()'d value. Let's fix that and free() it when we're done
+    -    with it.
     +    Change code downstream of module_update() to short-circuit and return
     +    to the top-level on failure, rather than calling exit().
      
-    -    This inconsistency exists because "git submodule update" used to pass
-    -    "--recursive-prefix" between shell and C (introduced in [1]) before
-    -    "--super-prefix" was introduced (in [2]), and for simplicity, we kept
-    -    this name when "git submodule--helper update" was created.
+    -    We can't mark any tests passing passing with SANITIZE=leak using
+    -    "TEST_PASSES_SANITIZE_LEAK=true" as a result of this change, but
+    -    e.g. "t/t1500-rev-parse.sh" now gets closer to passing.
     +    To do so we need to diligently check whether we "must_die_on_failure",
     +    which is a pattern started in c51f8f94e5b (submodule--helper: run
     +    update procedures from C, 2021-08-24), but which hadn't been completed
     +    to the point where we could avoid calling exit() here.
-     
-    -    Remove "--recursive-prefix" and its associated code from "git
-    -    submodule--helper update", replacing it with "--super-prefix".
+    +
     +    This introduces no functional changes, but makes it easier to both
     +    call these routines as a library in the future, and to avoid leaking
     +    memory.
      
-    -    To use "--super-prefix", module_update is marked with
-    -    SUPPORT_SUPER_PREFIX. Note that module_clone must also be marked with
-    -    SUPPORT_SUPER_PREFIX, otherwise the "git submodule--helper clone"
-    -    subprocess will fail check because "--super-prefix" is propagated via
-    -    the environment.
-    -
-    -    [1] 48308681b0 (git submodule update: have a dedicated helper for
-    -    cloning, 2016-02-29)
-    -    [2] 74866d7579 (git: make super-prefix option, 2016-10-07)
-    -
-    -    Signed-off-by: Glen Choo <chooglen@google.com>
-    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
-    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int starts_with_dot_dot_slash(const char *const path)
-    - 
-    - struct init_cb {
-    - 	const char *prefix;
-    --	const char *superprefix;
-    - 	unsigned int flags;
-    - };
-    - #define INIT_CB_INIT { 0 }
+    - ## submodule.c ##
+    -@@ submodule.c: int get_superproject_working_tree(struct strbuf *buf)
+    + ## builtin/submodule--helper.c ##
     +@@ builtin/submodule--helper.c: static int fetch_in_submodule(const char *module_path, int depth, int quiet, str
     + 	return run_command(&cp);
     + }
-      
-    - static void init_submodule(const char *path, const char *prefix,
-    --			   const char *superprefix, unsigned int flags)
-    -+			   unsigned int flags)
+    + 
     +-static int run_update_command(struct update_data *ud, int subforce)
     ++static int run_update_command(struct update_data *ud, int subforce,
     ++			      int *must_die_on_failurep)
-      {
-    - 	const struct submodule *sub;
+    + {
+      	struct child_process cp = CHILD_PROCESS_INIT;
     - 	struct strbuf sb = STRBUF_INIT;
-    - 	char *upd = NULL, *url = NULL, *displaypath;
-    + 	struct child_process cp = CHILD_PROCESS_INIT;
+    - 	struct strbuf one_up = STRBUF_INIT;
+    --	const char *cwd = xgetcwd();
+    -+	char *cwd = xgetcwd();
+    - 	int ret = 0;
+    - 	const char *subpath;
+    - 	int code;
+    -@@ submodule.c: int get_superproject_working_tree(struct strbuf *buf)
+    - 		ret = 1;
+    - 		free(super_wt);
     + 	char *oid = oid_to_hex(&ud->oid);
     +@@ builtin/submodule--helper.c: static int run_update_command(struct update_data *ud, int subforce)
     + 			BUG("unexpected update strategy type: %s",
@@ -1530,82 +652,40 @@ Range-diff against v1:
     ++			*must_die_on_failurep = 1;
     ++			return 128;
     ++		}
-      
-    --	/* try superprefix from the environment, if it is not passed explicitly */
-    --	if (!superprefix)
-    --		superprefix = get_super_prefix();
-    --	displaypath = do_get_submodule_displaypath(path, prefix, superprefix);
-    -+	displaypath = do_get_submodule_displaypath(path, prefix, get_super_prefix());
-    - 
-    - 	sub = submodule_from_path(the_repository, null_oid(), path);
+    + 
     + 		/* the command failed, but update must continue */
     + 		return 1;
     +@@ builtin/submodule--helper.c: static int run_update_command(struct update_data *ud, int subforce)
     + 	return 0;
     + }
-      
-    -@@ builtin/submodule--helper.c: static void init_submodule(const char *path, const char *prefix,
-    - static void init_submodule_cb(const struct cache_entry *list_item, void *cb_data)
+    + 
     +-static int run_update_procedure(struct update_data *ud)
     ++static int run_update_procedure(struct update_data *ud,
     ++				int *must_die_on_failure)
-      {
-    - 	struct init_cb *info = cb_data;
-    --	init_submodule(list_item->name, info->prefix, info->superprefix, info->flags);
-    -+	init_submodule(list_item->name, info->prefix, info->flags);
-    - }
+    + {
     + 	int subforce = is_null_oid(&ud->suboid) || ud->force;
-      
-    - static int module_init(int argc, const char **argv, const char *prefix)
-    -@@ builtin/submodule--helper.c: struct submodule_update_clone {
+    + 
     +@@ builtin/submodule--helper.c: static int run_update_procedure(struct update_data *ud)
     + 			    ud->displaypath, oid_to_hex(&ud->oid));
     + 	}
-      
-    - struct update_data {
-    - 	const char *prefix;
-    --	const char *recursive_prefix;
-    - 	const char *displaypath;
-    - 	enum submodule_update_type update_default;
-    - 	struct object_id suboid;
-    -@@ builtin/submodule--helper.c: static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
-    - 	char *key;
-    - 	struct update_data *ud = suc->update_data;
-    - 	char *displaypath = do_get_submodule_displaypath(ce->name, ud->prefix,
-    --							 ud->recursive_prefix);
-    -+							 get_super_prefix());
-    - 	struct strbuf sb = STRBUF_INIT;
-    - 	int needs_cloning = 0;
-    - 	int need_free_url = 0;
+    + 
     +-	return run_update_command(ud, subforce);
     ++	return run_update_command(ud, subforce, must_die_on_failure);
     + }
     + 
     + static const char *remote_submodule_branch(const char *path)
-     @@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data *update_data, struct strvec *
+    +@@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data *update_data, struct strvec *
     + 				    "--no-single-branch");
     + }
     + 
     +-static int update_submodule(struct update_data *update_data)
     ++static int update_submodule(struct update_data *update_data,
     ++			    int *must_die_on_failure)
-      {
-    - 	enum submodule_update_type update_type = update_data->update_default;
+    + {
     + 	int ret;
-      
-    --	strvec_pushl(args, "submodule--helper", "update", "--recursive", NULL);
-    --	strvec_pushf(args, "--jobs=%d", update_data->max_jobs);
-    - 	if (update_data->displaypath) {
-    --		strvec_push(args, "--recursive-prefix");
-    -+		strvec_push(args, "--super-prefix");
-    - 		strvec_pushf(args, "%s/", update_data->displaypath);
+    + 
     +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-      	}
-    -+	strvec_pushl(args, "submodule--helper", "update", "--recursive", NULL);
-    -+	strvec_pushf(args, "--jobs=%d", update_data->max_jobs);
-    - 	if (update_data->quiet)
-    - 		strvec_push(args, "--quiet");
-    - 	if (update_data->force)
+    + 	}
     + 
     + 	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
     +-		ret = run_update_procedure(update_data);
@@ -1617,7 +697,7 @@ Range-diff against v1:
     + 			ret = 1;
     + 			goto cleanup;
     + 		}
-     @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
     + 		die_message(_("Failed to recurse into submodule path '%s'"),
     + 			    update_data->displaypath);
     + 		if (ret == 128) {
@@ -1628,39 +708,16 @@ Range-diff against v1:
     + 			ret = 1;
     + 			goto cleanup;
     +@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
-      
-    - 	update_data->displaypath = do_get_submodule_displaypath(update_data->sm_path,
-    - 								update_data->prefix,
-    --								update_data->recursive_prefix);
-    -+								get_super_prefix());
+    + 
     + 	for (i = 0; i < suc.update_clone_nr; i++) {
     + 		struct update_clone_data ucd = suc.update_clone[i];
     ++		int code;
     ++		int must_die_on_failure = 0;
-      
-    - 	determine_submodule_update_strategy(the_repository, update_data->just_cloned,
-    - 					    update_data->sm_path, update_data->update_default,
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 		OPT_STRING(0, "prefix", &opt.prefix,
-    - 			   N_("path"),
-    - 			   N_("path into the working tree")),
-    --		OPT_STRING(0, "recursive-prefix", &opt.recursive_prefix,
-    --			   N_("path"),
-    --			   N_("path into the working tree, across nested "
-    --			      "submodule boundaries")),
-    - 		OPT_SET_INT(0, "checkout", &opt.update_default,
-    - 			N_("use the 'checkout' update strategy (default)"),
-    - 			SM_UPDATE_CHECKOUT),
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 			module_list_active(&list);
+    + 
     + 		oidcpy(&update_data->oid, &ucd.oid);
     + 		update_data->just_cloned = ucd.just_cloned;
     + 		update_data->sm_path = ucd.sub->path;
-      
-    - 		info.prefix = opt.prefix;
-    --		info.superprefix = opt.recursive_prefix;
-    - 		if (opt.quiet)
-    - 			info.flags |= OPT_QUIET;
+    + 
     +-		if (update_submodule(update_data))
     +-			res = 1;
     ++		code = update_submodule(update_data, &must_die_on_failure);
@@ -1668,321 +725,15 @@ Range-diff against v1:
     ++			res = code;
     ++		if (must_die_on_failure)
     ++			goto cleanup;
-    + 	}
-      
-    -@@ builtin/submodule--helper.c: struct cmd_struct {
-    - static struct cmd_struct commands[] = {
-    - 	{"list", module_list, 0},
-    - 	{"name", module_name, 0},
-    --	{"clone", module_clone, 0},
-    -+	{"clone", module_clone, SUPPORT_SUPER_PREFIX},
-    - 	{"add", module_add, 0},
-    --	{"update", module_update, 0},
-    -+	{"update", module_update, SUPPORT_SUPER_PREFIX},
-    - 	{"resolve-relative-url-test", resolve_relative_url_test, 0},
-    - 	{"foreach", module_foreach, SUPPORT_SUPER_PREFIX},
-    - 	{"init", module_init, 0},
-    + cleanup:
- 9:  e8ddb95dcbf ! 21:  acaa2b4e533 submodule--helper: understand --checkout, --merge and --rebase synonyms
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    submodule--helper: understand --checkout, --merge and --rebase synonyms
-    +    submodule--helper: free remaining "displaypath" in "struct update_data"
-     
-    -    Understand --checkout, --merge and --rebase synonyms for
-    -    --update={checkout,merge,rebase}, as well as the short options that
-    -    'git submodule' itself understands.
-    -
-    -    This removes a difference between the CLI API of "git submodule" and
-    -    "git submodule--helper", making it easier to make the latter an alias
-    -    for the former. See 48308681b07 (git submodule update: have a
-    -    dedicated helper for cloning, 2016-02-29) for the initial addition of
-    -    --update.
-    +    Fix a leak in code added in c51f8f94e5b (submodule--helper: run update
-    +    procedures from C, 2021-08-24), we clobber the "displaypath" member of
-    +    the passed-in "struct update_data" both so that die() messages in this
-    +    update_submodule() function itself can use it, and for the
-    +    run_update_procedure() called within this function.
-     
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static void ensure_core_worktree(const char *path)
-    - 	}
-    - }
-    - 
-    -+static const char *submodule_update_type_to_label(enum submodule_update_type type)
-    -+{
-    -+	switch (type) {
-    -+	case SM_UPDATE_CHECKOUT:
-    -+		return "checkout";
-    -+	case SM_UPDATE_MERGE:
-    -+		return "merge";
-    -+	case SM_UPDATE_REBASE:
-    -+		return "rebase";
-    -+	case SM_UPDATE_UNSPECIFIED:
-    -+	case SM_UPDATE_NONE:
-    -+	case SM_UPDATE_COMMAND:
-    -+		break;
-    -+	}
-    -+	BUG("unreachable with type %d", type);
-    -+}
-    -+
-    - static void update_data_to_args(struct update_data *update_data, struct strvec *args)
-    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data,
-    + 			    int *must_die_on_failure)
-      {
-    - 	strvec_pushl(args, "submodule--helper", "update", "--recursive", NULL);
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 	struct update_data opt = UPDATE_DATA_INIT;
-    - 	struct list_objects_filter_options filter_options;
-      	int ret;
-    -+	enum submodule_update_type update_type = SM_UPDATE_UNSPECIFIED;
-    ++	char *old_displaypath = update_data->displaypath;
-      
-    - 	struct option module_update_options[] = {
-    - 		OPT__FORCE(&opt.force, N_("force checkout updates"), 0),
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    - 		OPT_STRING(0, "update", &opt.update_default,
-    - 			   N_("string"),
-    - 			   N_("rebase, merge, checkout or none")),
-    -+		OPT_SET_INT(0, "checkout", &update_type,
-    -+			N_("use the 'checkout' update strategy (default)"),
-    -+			SM_UPDATE_CHECKOUT),
-    -+		OPT_SET_INT('m', "merge", &update_type,
-    -+			N_("use the 'merge' update strategy"),
-    -+			SM_UPDATE_MERGE),
-    -+		OPT_SET_INT('r', "rebase", &update_type,
-    -+			N_("use the 'rebase' update strategy"),
-    -+			SM_UPDATE_REBASE),
-    - 		OPT_STRING_LIST(0, "reference", &opt.references, N_("repo"),
-    - 			   N_("reference repository")),
-    - 		OPT_BOOL(0, "dissociate", &opt.dissociate,
-    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
-    + 	ensure_core_worktree(update_data->sm_path);
-      
-    - 	opt.filter_options = &filter_options;
-    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data,
-      
-    -+	if (update_type != SM_UPDATE_UNSPECIFIED)
-    -+		opt.update_default = submodule_update_type_to_label(update_type);
-    + 	ret = 0;
-    + cleanup:
-    ++	free(update_data->displaypath);
-    ++	update_data->displaypath = old_displaypath;
-     +
-    - 	if (opt.update_default)
-    - 		if (parse_submodule_update_strategy(opt.update_default,
-    - 						    &opt.update_strategy) < 0)
-    -
-    - ## git-submodule.sh ##
-    -@@ git-submodule.sh: require_init=
-    - files=
-    - remote=
-    - nofetch=
-    --update=
-    -+rebase=
-    -+merge=
-    -+checkout=
-    - custom_name=
-    - depth=
-    - progress=
-    -@@ git-submodule.sh: cmd_update()
-    - 			force=$1
-    - 			;;
-    - 		-r|--rebase)
-    --			update="rebase"
-    -+			rebase=1
-    - 			;;
-    - 		--reference)
-    - 			case "$2" in '') usage ;; esac
-    -@@ git-submodule.sh: cmd_update()
-    - 			dissociate=1
-    - 			;;
-    - 		-m|--merge)
-    --			update="merge"
-    -+			merge=1
-    - 			;;
-    - 		--recursive)
-    - 			recursive=1
-    - 			;;
-    - 		--checkout)
-    --			update="checkout"
-    -+			checkout=1
-    - 			;;
-    - 		--recommend-shallow)
-    - 			recommend_shallow="--recommend-shallow"
-    -@@ git-submodule.sh: cmd_update()
-    - 		${init:+--init} \
-    - 		${nofetch:+--no-fetch} \
-    - 		${wt_prefix:+--prefix "$wt_prefix"} \
-    --		${update:+--update "$update"} \
-    -+		${rebase:+--rebase} \
-    -+		${merge:+--merge} \
-    -+		${checkout:+--checkout} \
-    - 		${reference:+"$reference"} \
-    - 		${dissociate:+"--dissociate"} \
-    - 		${depth:+"$depth"} \
-    + 	return ret;
-    + }
-    + 
-11:  c7eac40a0f2 <  -:  ----------- git-submodule.sh: use "$quiet", not "$GIT_QUIET"
-12:  f8f332f3c0a <  -:  ----------- git-sh-setup.sh: remove "say" function, change last users
-13:  a156995f510 <  -:  ----------- submodule--helper tests: add missing "display path" coverage
- -:  ----------- > 22:  bed64988a94 submodule--helper: fix bad config API usage
-14:  d6821231a1c ! 23:  b548cac9b1b submodule--helper update: use display path helper
-    @@
-      ## Metadata ##
-    -Author: Glen Choo <chooglen@google.com>
-    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    submodule--helper update: use display path helper
-    +    submodule--helper: fix a configure_added_submodule() leak
-     
-    -    There are two locations in prepare_to_clone_next_submodule() that
-    -    manually calculate the submodule display path, but should just use
-    -    do_get_submodule_displaypath() for consistency.
-    +    Fix config API a memory leak added in a452128a36c (submodule--helper:
-    +    introduce add-config subcommand, 2021-08-06) by using the *_tmp()
-    +    variant of git_config_get_string().
-     
-    -    Do this replacement and reorder the code slightly to avoid computing
-    -    the display path twice.
-    +    In this case we're only checking whether
-    +    the (repo|git)_config_get_string() call is telling us that the
-    +    "submodule.active" key exists.
-     
-    -    Until the preceding commit this code had never been tested, with our
-    -    newly added tests we can see that both these sites have been computing
-    -    the display path incorrectly ever since they were introduced in
-    -    48308681b0 (git submodule update: have a dedicated helper for cloning,
-    -    2016-02-29) [1]:
-    +    As with the preceding commit we'll find many other such patterns in
-    +    the codebase if we go fishing. E.g. "git gc" leaks in the code added
-    +    in 61f7a383d3b (maintenance: use 'incremental' strategy by default,
-    +    2020-10-15). Similar code in "git gc" added in
-    +    b08ff1fee00 (maintenance: add --schedule option and config,
-    +    2020-09-11) doesn't leak, but we could avoid the malloc() & free() in
-    +    that case.
-     
-    -    - The first hunk puts a "/" between recursive_prefix and ce->name, but
-    -      recursive_prefix already ends with "/".
-    -    - The second hunk calls relative_path() on recursive_prefix and
-    -      ce->name, but relative_path() only makes sense when both paths share
-    -      the same base directory. This is never the case here:
-    -      - recursive_prefix is the path from the topmost superproject to the
-    -        current submodule
-    -      - ce->name is the path from the root of the current submodule to its
-    -        submodule.
-    -      so, e.g. recursive_prefix="super" and ce->name="submodule" produces
-    -      displayname="../super" instead of "super/submodule".
-    +    A coccinelle rule to find those would find and fix some leaks, and
-    +    cases where we're doing needless malloc() + free()'s but only care
-    +    about the key existence, or are copying
-    +    the (repo|git)_config_get_string() return value right away.
-     
-    -    [1] I verified this by applying the tests to 48308681b0.
-    +    But as with the preceding commit let's punt on all of that for now,
-    +    and just narrowly fix this specific case in submodule--helper.
-     
-    -    Signed-off-by: Glen Choo <chooglen@google.com>
-    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
-    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
-    - 	const char *update_string;
-    - 	enum submodule_update_type update_type;
-    +@@ builtin/submodule--helper.c: static int config_submodule_in_gitmodules(const char *name, const char *var, con
-    + static void configure_added_submodule(struct add_data *add_data)
-    + {
-      	char *key;
-    --	struct strbuf displaypath_sb = STRBUF_INIT;
-    -+	struct update_data *ud = suc->update_data;
-    -+	char *displaypath = do_get_submodule_displaypath(ce->name, ud->prefix,
-    -+							 ud->recursive_prefix);
-    - 	struct strbuf sb = STRBUF_INIT;
-    --	const char *displaypath = NULL;
-    - 	int needs_cloning = 0;
-    - 	int need_free_url = 0;
-    +-	char *val = NULL;
-    ++	const char *val;
-    + 	struct child_process add_submod = CHILD_PROCESS_INIT;
-    + 	struct child_process add_gitmodules = CHILD_PROCESS_INIT;
-      
-    - 	if (ce_stage(ce)) {
-    --		if (suc->update_data->recursive_prefix)
-    --			strbuf_addf(&sb, "%s/%s", suc->update_data->recursive_prefix, ce->name);
-    --		else
-    --			strbuf_addstr(&sb, ce->name);
-    --		strbuf_addf(out, _("Skipping unmerged submodule %s"), sb.buf);
-    -+		strbuf_addf(out, _("Skipping unmerged submodule %s"), displaypath);
-    - 		strbuf_addch(out, '\n');
-    - 		goto cleanup;
-    - 	}
-    - 
-    - 	sub = submodule_from_path(the_repository, null_oid(), ce->name);
-    +@@ builtin/submodule--helper.c: static void configure_added_submodule(struct add_data *add_data)
-    + 	 * is_submodule_active(), since that function needs to find
-    + 	 * out the value of "submodule.active" again anyway.
-    + 	 */
-    +-	if (!git_config_get_string("submodule.active", &val)) {
-    ++	if (!git_config_get_string_tmp("submodule.active", &val)) {
-    + 		/*
-    + 		 * If the submodule being added isn't already covered by the
-    + 		 * current configured pathspec, set the submodule's active flag
-    +
-    + ## t/t7413-submodule-is-active.sh ##
-    +@@ t/t7413-submodule-is-active.sh: This test verifies that `git submodue--helper is-active` correctly identifies
-    + submodules which are "active" and interesting to the user.
-    + '
-      
-    --	if (suc->update_data->recursive_prefix)
-    --		displaypath = relative_path(suc->update_data->recursive_prefix,
-    --					    ce->name, &displaypath_sb);
-    --	else
-    --		displaypath = ce->name;
-    --
-    - 	if (!sub) {
-    - 		next_submodule_warn_missing(suc, out, displaypath);
-    - 		goto cleanup;
-    -@@ builtin/submodule--helper.c: static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
-    - 					      "--no-single-branch");
-    ++TEST_PASSES_SANITIZE_LEAK=true
-    + . ./test-lib.sh
-      
-    - cleanup:
-    --	strbuf_release(&displaypath_sb);
-    -+	free(displaypath);
+      	}
+    -+	free(cwd);
     - 	strbuf_release(&sb);
-    - 	if (need_free_url)
-    - 		free((void*)url);
-    -
-    - ## t/t7406-submodule-update.sh ##
-    -@@ t/t7406-submodule-update.sh: test_expect_success 'submodule update should skip unmerged submodules' '
-    - 	test_config -C top-cloned submodule.middle.update !true &&
-    - 	git -C top-cloned submodule update --recursive 2>actual.err &&
-    - 	cat >expect.err <<-\EOF &&
-    --	Skipping unmerged submodule middle//bottom
-    -+	Skipping unmerged submodule middle/bottom
-    - 	EOF
-    - 	test_cmp expect.err actual.err
-    - '
-    -@@ t/t7406-submodule-update.sh: test_expect_success 'submodule update --recursive skip submodules with strategy=
-    - 	git -C top-cloned/middle config submodule.bottom.update none &&
-    - 	git -C top-cloned submodule update --recursive 2>actual.err &&
-    - 	cat >expect.err <<-\EOF &&
-    --	Skipping submodule '\''../middle/'\''
-    -+	Skipping submodule '\''middle/bottom'\''
-    - 	EOF
-    - 	test_cmp expect.err actual.err
-    - '
-    + test_expect_success 'setup' '
-17:  7dc4852e786 <  -:  ----------- submodule--helper: remove unused SUPPORT_SUPER_PREFIX flags
-20:  f1c847ad613 <  -:  ----------- submodule.c: free() memory from xgetcwd()
+      
+    - 	code = finish_command(&cp);
+    + cleanup:
+ -:  ----------- > 21:  acaa2b4e533 submodule--helper: free remaining "displaypath" in "struct update_data"
+ -:  ----------- > 22:  bed64988a94 submodule--helper: fix bad config API usage
+ -:  ----------- > 23:  b548cac9b1b submodule--helper: fix a configure_added_submodule() leak
 -- 
 2.37.1.1032.gb00b5447790
 
