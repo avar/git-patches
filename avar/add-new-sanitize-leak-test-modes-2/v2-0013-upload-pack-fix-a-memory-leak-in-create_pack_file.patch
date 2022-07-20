@@ -1,0 +1,69 @@
+From 45d0de9e6ac992a4022735b72e7cd99a730c0bb9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-13.14-45d0de9e6ac-20220720T211102Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.14-00000000000-20220720T211102Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220719T205710Z-avarab@gmail.com>
+	<cover-v2-00.14-00000000000-20220720T211102Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 20 Jul 2022 12:41:32 +0200
+Subject: [PATCH v2 13/14] upload-pack: fix a memory leak in create_pack_file()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak that's been reported by some versions of "gcc" since
+"output_state" became malloc'd in 55a9651d26a (upload-pack.c: increase
+output buffer size, 2021-12-14).
+
+In e75d2f7f734 (revisions API: have release_revisions() release
+"filter", 2022-04-13) it was correctly marked as leak-free, the only
+path through this function that doesn't reach the free(output_state)
+is if we "goto fail", and that will invoke "die()".
+
+Such leaks are not included with SANITIZE=leak (but e.g. valgrind will
+still report them), but under some gcc optimization (I have not been
+able to reproduce it with "clang") we'll report a leak here
+anyway. E.g. gcc v12 with "-O2" and above will trigger it, but not
+clang v13 with any "-On".
+
+The GitHub CI would also run into this leak if the "linux-leaks" job
+was made to run with "GIT_TEST_SANITIZE_LEAK_LOG=true".
+
+See [1] for a past case where gcc had similar trouble analyzing leaks
+involving a die() invocation in the function.
+
+1. https://lore.kernel.org/git/patch-v3-5.6-9a44204c4c9-20211022T175227Z-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1060-object-corruption.sh | 1 +
+ upload-pack.c                | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/t/t1060-object-corruption.sh b/t/t1060-object-corruption.sh
+index e8a58b15897..5b8e47e346c 100755
+--- a/t/t1060-object-corruption.sh
++++ b/t/t1060-object-corruption.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='see how we handle various forms of corruption'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ # convert "1234abcd" to ".git/objects/12/34abcd"
+diff --git a/upload-pack.c b/upload-pack.c
+index 3a851b36066..b3884d3f4de 100644
+--- a/upload-pack.c
++++ b/upload-pack.c
+@@ -455,6 +455,7 @@ static void create_pack_file(struct upload_pack_data *pack_data,
+ 	return;
+ 
+  fail:
++	free(output_state);
+ 	send_client_data(3, abort_msg, sizeof(abort_msg),
+ 			 pack_data->use_sideband);
+ 	die("git upload-pack: %s", abort_msg);
+-- 
+2.37.1.1064.gc96144cf387
+

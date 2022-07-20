@@ -1,0 +1,128 @@
+From 044b3fb813f2adcea10a4d2492d80adaad950cb6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-10.14-044b3fb813f-20220720T211102Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.14-00000000000-20220720T211102Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220719T205710Z-avarab@gmail.com>
+	<cover-v2-00.14-00000000000-20220720T211102Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 16 Dec 2021 18:57:55 +0100
+Subject: [PATCH v2 10/14] test-lib.sh: add a
+ GIT_TEST_PASSING_SANITIZE_LEAK=check mode
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a new "GIT_TEST_PASSING_SANITIZE_LEAK=check" mode to the
+test-lib.sh.
+
+As noted in the updated "t/README" this compliments the existing
+"GIT_TEST_PASSING_SANITIZE_LEAK=true" mode added in
+956d2e4639b (tests: add a test mode for SANITIZE=leak, run it in CI,
+2021-09-23).
+
+Rather than document this all in one (even more) dense paragraph split
+up the discussion of how it combines with --immediate into its own
+paragraph following the discussion of
+"GIT_TEST_SANITIZE_LEAK_LOG=true".
+
+Before the removal of "test_external" in a preceding commit we would
+have had to special-case t9700-perl-git.sh and t0202-gettext-perl.sh.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/README      | 17 +++++++++++++++++
+ t/test-lib.sh | 34 ++++++++++++++++++++++++++--------
+ 2 files changed, 43 insertions(+), 8 deletions(-)
+
+diff --git a/t/README b/t/README
+index 98f69ed13d2..e13063195e5 100644
+--- a/t/README
++++ b/t/README
+@@ -371,11 +371,28 @@ declared themselves as leak-free by setting
+ "TEST_PASSES_SANITIZE_LEAK=true" before sourcing "test-lib.sh". This
+ test mode is used by the "linux-leaks" CI target.
+ 
++GIT_TEST_PASSING_SANITIZE_LEAK=check checks that our
++"TEST_PASSES_SANITIZE_LEAK=true" markings are current. Rather than
++skipping those tests that haven't set "TEST_PASSES_SANITIZE_LEAK=true"
++before sourcing "test-lib.sh" this mode runs them with
++"--invert-exit-code". This is used to check that there's a one-to-one
++mapping between "TEST_PASSES_SANITIZE_LEAK=true" and those tests that
++pass under "SANITIZE=leak". This is especially useful when testing a
++series that fixes various memory leaks with "git rebase -x".
++
+ GIT_TEST_SANITIZE_LEAK_LOG=true will log memory leaks to
+ "test-results/$TEST_NAME.leak/trace.*" files. The logs include a
+ "dedup_token" (see +"ASAN_OPTIONS=help=1 ./git") and other options to
+ make logs +machine-readable.
+ 
++GIT_TEST_PASSING_SANITIZE_LEAK=check when combined with "--immediate"
++will run to completion faster, and result in the same failing
++tests. The only practical reason to run
++GIT_TEST_PASSING_SANITIZE_LEAK=check without "--immediate" is to
++combine it with "GIT_TEST_SANITIZE_LEAK_LOG=true". If we stop at the
++first failing test case our leak logs won't show subsequent leaks we
++might have run into.
++
+ GIT_TEST_PROTOCOL_VERSION=<n>, when set, makes 'protocol.version'
+ default to n.
+ 
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 453d980bcf7..5785eaf08dc 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1452,17 +1452,34 @@ BAIL_OUT_ENV_NEEDS_SANITIZE_LEAK () {
+ # skip non-whitelisted tests when compiled with SANITIZE=leak
+ if test -n "$SANITIZE_LEAK"
+ then
+-	if test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
++	# Normalize with test_bool_env
++	passes_sanitize_leak=
++
++	# We need to see TEST_PASSES_SANITIZE_LEAK in "git
++	# env--helper" (via test_bool_env)
++	export TEST_PASSES_SANITIZE_LEAK
++	if test_bool_env TEST_PASSES_SANITIZE_LEAK false
++	then
++		passes_sanitize_leak=t
++	fi
++
++	if test "$GIT_TEST_PASSING_SANITIZE_LEAK" = "check"
+ 	then
+-		# We need to see it in "git env--helper" (via
+-		# test_bool_env)
+-		export TEST_PASSES_SANITIZE_LEAK
++		if test -n "$invert_exit_code"
++		then
++			BAIL_OUT "cannot use --invert-exit-code under GIT_TEST_PASSING_SANITIZE_LEAK=check"
++		fi
+ 
+-		if ! test_bool_env TEST_PASSES_SANITIZE_LEAK false
++		if test -z "$passes_sanitize_leak"
+ 		then
+-			skip_all="skipping $this_test under GIT_TEST_PASSING_SANITIZE_LEAK=true"
+-			test_done
++			say "in GIT_TEST_PASSING_SANITIZE_LEAK=check mode, setting --invert-exit-code for TEST_PASSES_SANITIZE_LEAK != true"
++			invert_exit_code=t
+ 		fi
++	elif test -z "$passes_sanitize_leak" &&
++	     test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
++	then
++		skip_all="skipping $this_test under GIT_TEST_PASSING_SANITIZE_LEAK=true"
++		test_done
+ 	fi
+ 
+ 	if test_bool_env GIT_TEST_SANITIZE_LEAK_LOG false
+@@ -1481,7 +1498,8 @@ then
+ 		prepend_var LSAN_OPTIONS : log_path=\"$TEST_RESULTS_SAN_FILE\"
+ 		export LSAN_OPTIONS
+ 	fi
+-elif test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
++elif test "$GIT_TEST_PASSING_SANITIZE_LEAK" = "check" ||
++     test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
+ then
+ 	BAIL_OUT_ENV_NEEDS_SANITIZE_LEAK "GIT_TEST_PASSING_SANITIZE_LEAK=true"
+ elif test_bool_env GIT_TEST_SANITIZE_LEAK_LOG false
+-- 
+2.37.1.1064.gc96144cf387
+

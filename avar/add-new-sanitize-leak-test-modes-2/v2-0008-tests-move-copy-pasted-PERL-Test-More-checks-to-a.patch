@@ -1,0 +1,136 @@
+From 94e68498e9821b09fe985688b323d0403499074a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-08.14-94e68498e98-20220720T211102Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.14-00000000000-20220720T211102Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20220719T205710Z-avarab@gmail.com>
+	<cover-v2-00.14-00000000000-20220720T211102Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 20 Jul 2022 17:51:05 +0200
+Subject: [PATCH v2 08/14] tests: move copy/pasted PERL + Test::More checks to
+ a lib-perl.sh
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since the original "perl -MTest::More" prerequisite check was added in
+[1] it's been copy/pasted in [2], [3] and [4]. As we'll be changing
+these codepaths in a subsequent commit let's consolidate these.
+
+While we're at it let's move these to a lazy prereq, and make them
+conform to our usual coding style (e.g. "\nthen", not "; then").
+
+1. e46f9c8161a (t9700: skip when Test::More is not available,
+   2008-06-29)
+2. 5e9637c6297 (i18n: add infrastructure for translating Git with
+   gettext, 2011-11-18)
+3. 8d314d7afec (send-email: reduce dependencies impact on
+   parse_address_line, 2015-07-07)
+4. f07eeed123b (git-credential-netrc: adapt to test framework for git,
+   2018-05-12)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .../netrc/t-git-credential-netrc.sh           | 11 ++---------
+ t/lib-perl.sh                                 | 19 +++++++++++++++++++
+ t/t0202-gettext-perl.sh                       | 12 ++----------
+ t/t9700-perl-git.sh                           | 11 ++---------
+ 4 files changed, 25 insertions(+), 28 deletions(-)
+ create mode 100644 t/lib-perl.sh
+
+diff --git a/contrib/credential/netrc/t-git-credential-netrc.sh b/contrib/credential/netrc/t-git-credential-netrc.sh
+index 07227d02287..ff17a9460cd 100755
+--- a/contrib/credential/netrc/t-git-credential-netrc.sh
++++ b/contrib/credential/netrc/t-git-credential-netrc.sh
+@@ -3,16 +3,9 @@
+ 	cd ../../../t
+ 	test_description='git-credential-netrc'
+ 	. ./test-lib.sh
++	. "$TEST_DIRECTORY"/lib-perl.sh
+ 
+-	if ! test_have_prereq PERL; then
+-		skip_all='skipping perl interface tests, perl not available'
+-		test_done
+-	fi
+-
+-	perl -MTest::More -e 0 2>/dev/null || {
+-		skip_all="Perl Test::More unavailable, skipping test"
+-		test_done
+-	}
++	skip_all_if_no_Test_More
+ 
+ 	# set up test repository
+ 
+diff --git a/t/lib-perl.sh b/t/lib-perl.sh
+new file mode 100644
+index 00000000000..d0bf509a167
+--- /dev/null
++++ b/t/lib-perl.sh
+@@ -0,0 +1,19 @@
++# Copyright (c) 2022 Ævar Arnfjörð Bjarmason
++
++test_lazy_prereq PERL_TEST_MORE '
++	perl -MTest::More -e 0
++'
++
++skip_all_if_no_Test_More () {
++	if ! test_have_prereq PERL
++	then
++		skip_all='skipping perl interface tests, perl not available'
++		test_done
++	fi
++
++	if ! test_have_prereq PERL_TEST_MORE
++	then
++		skip_all="Perl Test::More unavailable, skipping test"
++		test_done
++	fi
++}
+diff --git a/t/t0202-gettext-perl.sh b/t/t0202-gettext-perl.sh
+index df2ea34932b..043b190626c 100755
+--- a/t/t0202-gettext-perl.sh
++++ b/t/t0202-gettext-perl.sh
+@@ -7,16 +7,8 @@ test_description='Perl gettext interface (Git::I18N)'
+ 
+ TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-gettext.sh
+-
+-if ! test_have_prereq PERL; then
+-	skip_all='skipping perl interface tests, perl not available'
+-	test_done
+-fi
+-
+-perl -MTest::More -e 0 2>/dev/null || {
+-	skip_all="Perl Test::More unavailable, skipping test"
+-	test_done
+-}
++. "$TEST_DIRECTORY"/lib-perl.sh
++skip_all_if_no_Test_More
+ 
+ # The external test will outputs its own plan
+ test_external_has_tap=1
+diff --git a/t/t9700-perl-git.sh b/t/t9700-perl-git.sh
+index 102c133112c..17fc43f6e57 100755
+--- a/t/t9700-perl-git.sh
++++ b/t/t9700-perl-git.sh
+@@ -5,16 +5,9 @@
+ 
+ test_description='perl interface (Git.pm)'
+ . ./test-lib.sh
++. "$TEST_DIRECTORY"/lib-perl.sh
+ 
+-if ! test_have_prereq PERL; then
+-	skip_all='skipping perl interface tests, perl not available'
+-	test_done
+-fi
+-
+-perl -MTest::More -e 0 2>/dev/null || {
+-	skip_all="Perl Test::More unavailable, skipping test"
+-	test_done
+-}
++skip_all_if_no_Test_More
+ 
+ # set up test repository
+ 
+-- 
+2.37.1.1064.gc96144cf387
+
