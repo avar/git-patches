@@ -1,0 +1,56 @@
+From 11400b037b9e55d15255d58745f70c319f4e5df7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.3-11400b037b9-20220721T094804Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.3-00000000000-20220721T094804Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220721T063543Z-avarab@gmail.com>
+	<cover-v2-0.3-00000000000-20220721T094804Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Jul 2022 11:34:40 +0200
+Subject: [PATCH v2 2/3] cocci: apply string_list.cocci with
+ --disable-worth-trying-opt
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Apply the new string_list.cocci added in the preceding commit with
+--disable-worth-trying-opt. For optimization purposes we run spatch in
+a mode where even though we run it with --all-includes we'll miss some
+changes because we don't use --disable-worth-trying-opt.
+
+This is because without that option it'll take a look at
+notes-utils.c, and conclude that it doesn't need to process
+it (irrelevant output excluded with "[...]"):
+
+	$ spatch --sp-file contrib/coccinelle/string_list.cocci --patch . notes-utils.c
+	[...]
+	(ONCE) Expected tokens string_list strdup_strings CALLOC_ARRAY
+	Skipping: notes-utils.c
+
+This is just one of the known (and probably some unknown) issues where
+our "make coccicheck" fails to include changes for whatever
+reason. That should be fixed more generally, but let's just fix this
+manually for now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ notes-utils.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/notes-utils.c b/notes-utils.c
+index d7d18e30f5a..73559d24ec8 100644
+--- a/notes-utils.c
++++ b/notes-utils.c
+@@ -129,8 +129,8 @@ struct notes_rewrite_cfg *init_copy_notes_for_rewrite(const char *cmd)
+ 	c->cmd = cmd;
+ 	c->enabled = 1;
+ 	c->combine = combine_notes_concatenate;
+-	CALLOC_ARRAY(c->refs, 1);
+-	c->refs->strdup_strings = 1;
++	ALLOC_ARRAY(c->refs, 1);
++	string_list_init_dup(c->refs);
+ 	c->refs_from_env = 0;
+ 	c->mode_from_env = 0;
+ 	if (rewrite_mode_env) {
+-- 
+2.37.1.1095.g64a1e8362fd
+
