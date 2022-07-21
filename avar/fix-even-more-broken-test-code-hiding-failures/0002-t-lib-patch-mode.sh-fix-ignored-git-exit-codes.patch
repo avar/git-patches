@@ -1,0 +1,61 @@
+From 85c6ab40e9104cccddeb9125fffd57941477f9ee Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.6-85c6ab40e91-20220721T064349Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20220721T064349Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20220721T064349Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Jun 2022 10:30:45 +0200
+Subject: [PATCH 2/6] t/lib-patch-mode.sh: fix ignored "git" exit codes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix code added in b319ef70a94 (Add a small patch-mode testing library,
+2009-08-13) to use &&-chaining and test_cmp instead of interpolating
+"git" commands in a "test" statement.
+
+This fixes cases where we'd have e.g. missed memory leaks under
+SANITIZE=leak, this code doesn't leak now as far as I can tell, but I
+discovered it while looking at leaks in related code.
+
+The "cat _head >expect" here is redundant, we could simply give
+"_head" to "test_cmp", but let's be consistent in using the "expect"
+and "actual" names for clarity.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/lib-patch-mode.sh | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/t/lib-patch-mode.sh b/t/lib-patch-mode.sh
+index cfd76bf987b..887554933c2 100644
+--- a/t/lib-patch-mode.sh
++++ b/t/lib-patch-mode.sh
+@@ -29,8 +29,13 @@ set_and_save_state () {
+ 
+ # verify_state <path> <expected-worktree-content> <expected-index-content>
+ verify_state () {
+-	test "$(cat "$1")" = "$2" &&
+-	test "$(git show :"$1")" = "$3"
++	echo "$2" >expect &&
++	cat "$1" >actual &&
++	test_cmp expect actual &&
++
++	echo "$3" >expect
++	git show :"$1" >actual &&
++	test_cmp expect actual
+ }
+ 
+ # verify_saved_state <path>
+@@ -46,5 +51,7 @@ save_head () {
+ }
+ 
+ verify_saved_head () {
+-	test "$(cat _head)" = "$(git rev-parse HEAD)"
++	cat _head >expect &&
++	git rev-parse HEAD >actual &&
++	test_cmp expect actual
+ }
+-- 
+2.37.1.1095.g64a1e8362fd
+
