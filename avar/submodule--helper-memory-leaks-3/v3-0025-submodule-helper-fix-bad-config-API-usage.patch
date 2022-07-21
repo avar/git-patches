@@ -1,0 +1,52 @@
+From f650716cd7e062c76bf1082c25251cf0423fcbb7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-25.26-f650716cd7e-20220721T190920Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.26-00000000000-20220721T190920Z-avarab@gmail.com>
+References: <cover-v2-00.24-00000000000-20220719T204458Z-avarab@gmail.com>
+	<cover-v3-00.26-00000000000-20220721T190920Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Jul 2022 21:29:07 +0200
+Subject: [PATCH v3 25/26] submodule--helper: fix bad config API usage
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix bad config API usage added in a452128a36c (submodule--helper:
+introduce add-config subcommand, 2021-08-06). After
+git_config_get_string() returns successfully we know the "char **dest"
+will be non-NULL.
+
+A coccinelle patch that transforms this turns up a couple of other
+such issues, one in fetch-pack.c, and another in upload-pack.c:
+
+	@@
+	identifier F =~ "^(repo|git)_config_get_string(_tmp)?$";
+	identifier V;
+	@@
+	  !F(..., &V)
+	- && (V)
+
+But let's focus narrowly on submodule--helper for now, we can fix
+those some other time.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 4e70a74357c..37c145b3ede 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -3306,7 +3306,7 @@ static void configure_added_submodule(struct add_data *add_data)
+ 	 * is_submodule_active(), since that function needs to find
+ 	 * out the value of "submodule.active" again anyway.
+ 	 */
+-	if (!git_config_get_string("submodule.active", &val) && val) {
++	if (!git_config_get_string("submodule.active", &val)) {
+ 		/*
+ 		 * If the submodule being added isn't already covered by the
+ 		 * current configured pathspec, set the submodule's active flag
+-- 
+2.37.1.1095.g64a1e8362fd
+

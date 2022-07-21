@@ -1,0 +1,90 @@
+From 32e4ae7ead5b069ec49a11dfcc719245af7f7591 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-02.26-32e4ae7ead5-20220721T190920Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.26-00000000000-20220721T190920Z-avarab@gmail.com>
+References: <cover-v2-00.24-00000000000-20220719T204458Z-avarab@gmail.com>
+	<cover-v3-00.26-00000000000-20220721T190920Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Jul 2022 18:35:11 +0200
+Subject: [PATCH v3 02/26] submodule--helper: stop conflating "sb" in
+ clone_submodule()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the three uses of a "struct strbuf sb" such that each of them
+exists in its own scope. This makes the control flow clearer.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 27 +++++++++++++++++++--------
+ 1 file changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 73717be957c..29641690c8c 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1638,18 +1638,28 @@ static void prepare_possible_alternates(const char *sm_name,
+ 	free(error_strategy);
+ }
+ 
+-static int clone_submodule(struct module_clone_data *clone_data)
++static char *clone_submodule_sm_gitdir(const char *name)
+ {
+-	char *p, *sm_gitdir;
+-	char *sm_alternate = NULL, *error_strategy = NULL;
+ 	struct strbuf sb = STRBUF_INIT;
+-	struct child_process cp = CHILD_PROCESS_INIT;
++	char *sm_gitdir;
+ 
+-	submodule_name_to_gitdir(&sb, the_repository, clone_data->name);
++	submodule_name_to_gitdir(&sb, the_repository, name);
+ 	sm_gitdir = absolute_pathdup(sb.buf);
+-	strbuf_reset(&sb);
++	strbuf_release(&sb);
++
++	return sm_gitdir;
++}
++
++static int clone_submodule(struct module_clone_data *clone_data)
++{
++	char *p;
++	char *sm_gitdir = clone_submodule_sm_gitdir(clone_data->name);
++	char *sm_alternate = NULL, *error_strategy = NULL;
++	struct child_process cp = CHILD_PROCESS_INIT;
+ 
+ 	if (!is_absolute_path(clone_data->path)) {
++		struct strbuf sb = STRBUF_INIT;
++
+ 		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+ 		clone_data->path = strbuf_detach(&sb, NULL);
+ 	} else {
+@@ -1705,6 +1715,8 @@ static int clone_submodule(struct module_clone_data *clone_data)
+ 			die(_("clone of '%s' into submodule path '%s' failed"),
+ 			    clone_data->url, clone_data->path);
+ 	} else {
++		struct strbuf sb = STRBUF_INIT;
++
+ 		if (clone_data->require_init && !access(clone_data->path, X_OK) &&
+ 		    !is_empty_dir(clone_data->path))
+ 			die(_("directory not empty: '%s'"), clone_data->path);
+@@ -1712,7 +1724,7 @@ static int clone_submodule(struct module_clone_data *clone_data)
+ 			die(_("could not create directory '%s'"), clone_data->path);
+ 		strbuf_addf(&sb, "%s/index", sm_gitdir);
+ 		unlink_or_warn(sb.buf);
+-		strbuf_reset(&sb);
++		strbuf_release(&sb);
+ 	}
+ 
+ 	connect_work_tree_and_git_dir(clone_data->path, sm_gitdir, 0);
+@@ -1734,7 +1746,6 @@ static int clone_submodule(struct module_clone_data *clone_data)
+ 	free(sm_alternate);
+ 	free(error_strategy);
+ 
+-	strbuf_release(&sb);
+ 	free(sm_gitdir);
+ 	free(p);
+ 	return 0;
+-- 
+2.37.1.1095.g64a1e8362fd
+

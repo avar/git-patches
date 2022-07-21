@@ -1,0 +1,856 @@
+From 581ce0872c081b12325e917707e689037c60c832 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-00.26-00000000000-20220721T190920Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.24-00000000000-20220719T204458Z-avarab@gmail.com>
+References: <cover-v2-00.24-00000000000-20220719T204458Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 21 Jul 2022 21:09:20 +0200
+Subject: [PATCH v3 00/26] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Glen Choo (2):
+  submodule--helper: add "const" to copy of "update_data"
+  submodule--helper: refactor "errmsg_str" to be a "struct strbuf"
+
+Ævar Arnfjörð Bjarmason (24):
+  submodule--helper: replace memset() with { 0 }-initialization
+  submodule--helper: stop conflating "sb" in clone_submodule()
+  submodule--helper: pass a "const struct module_clone_data" to
+    clone_submodule()
+  submodule--helper: fix a leak in "clone_submodule"
+  submodule--helper: fix trivial get_default_remote_submodule() leak
+  submodule--helper: fix most "struct pathspec" memory leaks
+  submodule--helper: "struct pathspec" memory leak in module_update()
+  submodule--helper: don't leak {run,capture}_command() cp.dir argument
+  submodule--helper: add and use *_release() functions
+  submodule--helper: fix "errmsg_str" memory leak
+  submodule--helper: fix "sm_path" and other "module_cb_list" leaks
+  submodule--helper: fix a leak with repo_clear()
+  submodule--helper: fix a memory leak in get_default_remote_submodule()
+  submodule--helper: fix "reference" leak is "module_clone_data"
+  submodule--helper: fix obscure leak in module_add()
+  submodule--helper: fix a leak in module_add()
+  submodule--helper: fix a memory leak in print_status()
+  submodule--helper: free some "displaypath" in "struct update_data"
+  submodule--helper: rename "int res" to "int ret"
+  submodule--helper: add skeleton "goto cleanup" to update_submodule()
+  submodule--helper: don't exit() on failure, return
+  submodule--helper: free rest of "displaypath" in "struct update_data"
+  submodule--helper: fix bad config API usage
+  submodule--helper: fix a configure_added_submodule() leak
+
+ builtin/submodule--helper.c        | 374 ++++++++++++++++++++---------
+ t/t1500-rev-parse.sh               |   1 +
+ t/t2403-worktree-move.sh           |   1 +
+ t/t6008-rev-list-submodule.sh      |   1 +
+ t/t6134-pathspec-in-submodule.sh   |   1 +
+ t/t7412-submodule-absorbgitdirs.sh |   1 +
+ t/t7413-submodule-is-active.sh     |   1 +
+ t/t7414-submodule-mistakes.sh      |   2 +
+ t/t7506-status-submodule.sh        |   1 +
+ t/t7507-commit-verbose.sh          |   2 +
+ 10 files changed, 270 insertions(+), 115 deletions(-)
+
+Range-diff against v2:
+ 1:  5664c4f9a0e <  -:  ----------- test-lib.sh: use $1, not $@ in test_known_broken_{ok,failure}_
+ 2:  c228308c121 <  -:  ----------- test-lib.sh: don't set GIT_EXIT_OK before calling test_atexit_handler
+10:  fcdf4a2e2d9 =  1:  3c7ae3e0222 submodule--helper: replace memset() with { 0 }-initialization
+ 6:  a6640b20997 !  2:  32e4ae7ead5 test-lib.sh: add a GIT_TEST_PASSING_SANITIZE_LEAK=check mode
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib.sh: add a GIT_TEST_PASSING_SANITIZE_LEAK=check mode
+    +    submodule--helper: stop conflating "sb" in clone_submodule()
+     
+    -    Add a new "GIT_TEST_PASSING_SANITIZE_LEAK=check" mode to the
+    -    test-lib.sh.
+    -
+    -    As noted in the updated "t/README" this compliments the existing
+    -    "GIT_TEST_PASSING_SANITIZE_LEAK=true" mode added in
+    -    956d2e4639b (tests: add a test mode for SANITIZE=leak, run it in CI,
+    -    2021-09-23).
+    -
+    -    It does so by adding the ability to check that there's a 1=1
+    -    correspondence between those tests that are marked as passing with
+    -    SANITIZE=leak, and those tests that are leak-free. I.e. a test that
+    -    passes with SANITIZE=leak but isn't marked as such with
+    -    TEST_PASSES_SANITIZE_LEAK=true will error out.
+    +    Refactor the three uses of a "struct strbuf sb" such that each of them
+    +    exists in its own scope. This makes the control flow clearer.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/README ##
+    -@@ t/README: excluded as so much relies on it, but this might change in the future.
+    - GIT_TEST_SPLIT_INDEX=<boolean> forces split-index mode on the whole
+    - test suite. Accept any boolean values that are accepted by git-config.
+    + ## builtin/submodule--helper.c ##
+    +@@ builtin/submodule--helper.c: static void prepare_possible_alternates(const char *sm_name,
+    + 	free(error_strategy);
+    + }
+      
+    --GIT_TEST_PASSING_SANITIZE_LEAK=<boolean> when compiled with
+    -+GIT_TEST_PASSING_SANITIZE_LEAK=[check|<boolean>] when compiled with
+    - SANITIZE=leak will run only those tests that have whitelisted
+    - themselves as passing with no memory leaks. Tests can be whitelisted
+    - by setting "TEST_PASSES_SANITIZE_LEAK=true" before sourcing
+    - "test-lib.sh" itself at the top of the test script. This test mode is
+    - used by the "linux-leaks" CI target.
+    +-static int clone_submodule(struct module_clone_data *clone_data)
+    ++static char *clone_submodule_sm_gitdir(const char *name)
+    + {
+    +-	char *p, *sm_gitdir;
+    +-	char *sm_alternate = NULL, *error_strategy = NULL;
+    + 	struct strbuf sb = STRBUF_INIT;
+    +-	struct child_process cp = CHILD_PROCESS_INIT;
+    ++	char *sm_gitdir;
+      
+    -+Set it to "check" to run with assertions that ensure that our
+    -+"TEST_PASSES_SANITIZE_LEAK=true" markings are current. The "check" is
+    -+particularly useful with "--immediate", but otherwise acts the same
+    -+for tests that have "TEST_PASSES_SANITIZE_LEAK=true" set. For those
+    -+that don't have it set it runs them, and considers them passing
+    -+without errors a failure (by providing "--invert-exit-code"). Thus the
+    -+"check" mode can be used e.g. with "git rebase --exec" to ensure that
+    -+there's a 1=1 mapping between "TEST_PASSES_SANITIZE_LEAK=true" and
+    -+those tests that pass under "SANITIZE=leak".
+    +-	submodule_name_to_gitdir(&sb, the_repository, clone_data->name);
+    ++	submodule_name_to_gitdir(&sb, the_repository, name);
+    + 	sm_gitdir = absolute_pathdup(sb.buf);
+    +-	strbuf_reset(&sb);
+    ++	strbuf_release(&sb);
+     +
+    - GIT_TEST_SANITIZE_LEAK_LOG=true will log memory leaks to
+    - "test-results/$TEST_NAME.leak/trace.*" files. Useful in combination
+    - with "GIT_TEST_PASSING_SANITIZE_LEAK" to check if we're falsely
+    -
+    - ## t/t9700-perl-git.sh ##
+    -@@ t/t9700-perl-git.sh: if ! test_have_prereq PERL; then
+    - 	test_done
+    - fi
+    - 
+    -+if test "$GIT_TEST_PASSING_SANITIZE_LEAK" = "check" && test_have_prereq SANITIZE_LEAK
+    -+then
+    -+	skip_all='SANITIZE=leak and GIT_TEST_PASSING_SANITIZE_LEAK=check do not combine with test_external'
+    -+	test_done
+    -+fi
+    ++	return sm_gitdir;
+    ++}
+     +
+    - perl -MTest::More -e 0 2>/dev/null || {
+    - 	skip_all="Perl Test::More unavailable, skipping test"
+    - 	test_done
+    -
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: fi
+    - # skip non-whitelisted tests when compiled with SANITIZE=leak
+    - if test -n "$SANITIZE_LEAK"
+    - then
+    --	if test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
+    -+	# Normalize with test_bool_env
+    -+	passes_sanitize_leak=
+    ++static int clone_submodule(struct module_clone_data *clone_data)
+    ++{
+    ++	char *p;
+    ++	char *sm_gitdir = clone_submodule_sm_gitdir(clone_data->name);
+    ++	char *sm_alternate = NULL, *error_strategy = NULL;
+    ++	struct child_process cp = CHILD_PROCESS_INIT;
+    + 
+    + 	if (!is_absolute_path(clone_data->path)) {
+    ++		struct strbuf sb = STRBUF_INIT;
+     +
+    -+	# We need to see TEST_PASSES_SANITIZE_LEAK in "git
+    -+	# env--helper" (via test_bool_env)
+    -+	export TEST_PASSES_SANITIZE_LEAK
+    -+	if test_bool_env TEST_PASSES_SANITIZE_LEAK false
+    -+	then
+    -+		passes_sanitize_leak=t
+    -+	fi
+    + 		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+    + 		clone_data->path = strbuf_detach(&sb, NULL);
+    + 	} else {
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    + 			die(_("clone of '%s' into submodule path '%s' failed"),
+    + 			    clone_data->url, clone_data->path);
+    + 	} else {
+    ++		struct strbuf sb = STRBUF_INIT;
+     +
+    -+	if test "$GIT_TEST_PASSING_SANITIZE_LEAK" = "check"
+    - 	then
+    --		# We need to see it in "git env--helper" (via
+    --		# test_bool_env)
+    --		export TEST_PASSES_SANITIZE_LEAK
+    -+		if test -n "$invert_exit_code"
+    -+		then
+    -+			BAIL_OUT "cannot use --invert-exit-code under GIT_TEST_PASSING_SANITIZE_LEAK=check"
+    -+		fi
+    + 		if (clone_data->require_init && !access(clone_data->path, X_OK) &&
+    + 		    !is_empty_dir(clone_data->path))
+    + 			die(_("directory not empty: '%s'"), clone_data->path);
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    + 			die(_("could not create directory '%s'"), clone_data->path);
+    + 		strbuf_addf(&sb, "%s/index", sm_gitdir);
+    + 		unlink_or_warn(sb.buf);
+    +-		strbuf_reset(&sb);
+    ++		strbuf_release(&sb);
+    + 	}
+      
+    --		if ! test_bool_env TEST_PASSES_SANITIZE_LEAK false
+    -+		if test -z "$passes_sanitize_leak"
+    - 		then
+    --			skip_all="skipping $this_test under GIT_TEST_PASSING_SANITIZE_LEAK=true"
+    --			test_done
+    -+			say "in GIT_TEST_PASSING_SANITIZE_LEAK=check mode, setting --invert-exit-code for TEST_PASSES_SANITIZE_LEAK != true"
+    -+			invert_exit_code=t
+    - 		fi
+    -+	elif test -z "$passes_sanitize_leak" &&
+    -+	     test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
+    -+	then
+    -+		skip_all="skipping $this_test under GIT_TEST_PASSING_SANITIZE_LEAK=true"
+    -+		test_done
+    - 	fi
+    + 	connect_work_tree_and_git_dir(clone_data->path, sm_gitdir, 0);
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    + 	free(sm_alternate);
+    + 	free(error_strategy);
+      
+    - 	if test_bool_env GIT_TEST_SANITIZE_LEAK_LOG false
+    -@@ t/test-lib.sh: then
+    - 		prepend_var LSAN_OPTIONS : log_path=\"$TEST_RESULTS_SAN_FILE\"
+    - 		export LSAN_OPTIONS
+    - 	fi
+    --elif test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
+    -+elif test "$GIT_TEST_PASSING_SANITIZE_LEAK" = "check" ||
+    -+     test_bool_env GIT_TEST_PASSING_SANITIZE_LEAK false
+    - then
+    - 	BAIL_OUT "GIT_TEST_PASSING_SANITIZE_LEAK=true has no effect except when compiled with SANITIZE=leak"
+    - fi
+    +-	strbuf_release(&sb);
+    + 	free(sm_gitdir);
+    + 	free(p);
+    + 	return 0;
+ 3:  e57e7ca898e !  3:  eee6ca28c6f test-lib.sh: fix GIT_EXIT_OK logic errors, use BAIL_OUT
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib.sh: fix GIT_EXIT_OK logic errors, use BAIL_OUT
+    +    submodule--helper: pass a "const struct module_clone_data" to clone_submodule()
+     
+    -    Change various "exit 1" checks that happened after our "die" handler
+    -    had been set up to use BAIL_OUT instead. See 234383cd401 (test-lib.sh:
+    -    use "Bail out!" syntax on bad SANITIZE=leak use, 2021-10-14) for the
+    -    benefits of the BAIL_OUT function.
+    +    Add "const" to the "struct module_clone_data" that we pass to
+    +    clone_submodule(), which makes the ownership clear, and stops us from
+    +    clobbering the "clone_data->path".
+     
+    -    The previous use of "error" here was not a logic error, but the "exit"
+    -    without "GIT_EXIT_OK" would emit the "FATAL: Unexpected exit with code
+    -    $code" message on top of the error we wanted to emit.
+    -
+    -    Since we'd also like to stop "prove" in its tracks here, the right
+    -    thing to do is to emit a "Bail out!" message.
+    -
+    -    Let's also move the "GIT_EXIT_OK=t" assignments to just above the
+    -    "exit [01]" in "test_done". It's not OK if we exit in
+    -    e.g. finalize_test_output.
+    +    We still need to add to the "reference" member, which is a "struct
+    +    string_list". We could do this by having clone_submodule() create its
+    +    own, and copy the contents over, but let's instead pass it as a
+    +    separate parameter. The main point of doing this is to make it clear
+    +    that e.g. "clone_data->path" always comes from the "argv", there's no
+    +    ambiguity about whether we can eventually free() the "struct
+    +    string_list".
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: test_done () {
+    - 	# removed, so the commands can access pidfiles and socket files.
+    - 	test_atexit_handler
+    - 
+    --	GIT_EXIT_OK=t
+    --
+    - 	finalize_test_output
+    - 
+    - 	if test -z "$HARNESS_ACTIVE"
+    -@@ t/test-lib.sh: test_done () {
+    - 		fi
+    - 		test_at_end_hook_
+    - 
+    -+		GIT_EXIT_OK=t
+    - 		exit 0 ;;
+    - 
+    - 	*)
+    -@@ t/test-lib.sh: test_done () {
+    - 			say "1..$test_count"
+    - 		fi
+    - 
+    -+		GIT_EXIT_OK=t
+    - 		exit 1 ;;
+    - 
+    - 	esac
+    -@@ t/test-lib.sh: fi
+    - GITPERLLIB="$GIT_BUILD_DIR"/perl/build/lib
+    - export GITPERLLIB
+    - test -d "$GIT_BUILD_DIR"/templates/blt || {
+    --	error "You haven't built things yet, have you?"
+    -+	BAIL_OUT "You haven't built things yet, have you?"
+    + ## builtin/submodule--helper.c ##
+    +@@ builtin/submodule--helper.c: static char *clone_submodule_sm_gitdir(const char *name)
+    + 	return sm_gitdir;
+      }
+      
+    - if ! test -x "$GIT_BUILD_DIR"/t/helper/test-tool$X
+    - then
+    --	echo >&2 'You need to build test-tool:'
+    --	echo >&2 'Run "make t/helper/test-tool" in the source (toplevel) directory'
+    --	exit 1
+    -+	BAIL_OUT 'You need to build test-tool; Run "make t/helper/test-tool" in the source (toplevel) directory'
+    - fi
+    - 
+    - # Are we running this test at all?
+    -@@ t/test-lib.sh: remove_trash_directory () {
+    - 
+    - # Test repository
+    - remove_trash_directory "$TRASH_DIRECTORY" || {
+    --	GIT_EXIT_OK=t
+    --	echo >&5 "FATAL: Cannot prepare test area"
+    --	exit 1
+    -+	BAIL_OUT 'cannot prepare test area'
+    - }
+    +-static int clone_submodule(struct module_clone_data *clone_data)
+    ++static int clone_submodule(const struct module_clone_data *clone_data,
+    ++			   struct string_list *reference)
+    + {
+    + 	char *p;
+    + 	char *sm_gitdir = clone_submodule_sm_gitdir(clone_data->name);
+    + 	char *sm_alternate = NULL, *error_strategy = NULL;
+    + 	struct child_process cp = CHILD_PROCESS_INIT;
+    ++	const char *clone_data_path;
+    + 
+    + 	if (!is_absolute_path(clone_data->path)) {
+    + 		struct strbuf sb = STRBUF_INIT;
+    + 
+    + 		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+    +-		clone_data->path = strbuf_detach(&sb, NULL);
+    ++		clone_data_path = strbuf_detach(&sb, NULL);
+    + 	} else {
+    +-		clone_data->path = xstrdup(clone_data->path);
+    ++		clone_data_path = xstrdup(clone_data_path);
+    + 	}
+    + 
+    + 	if (validate_submodule_git_dir(sm_gitdir, clone_data->name) < 0)
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    + 		if (safe_create_leading_directories_const(sm_gitdir) < 0)
+    + 			die(_("could not create directory '%s'"), sm_gitdir);
+    + 
+    +-		prepare_possible_alternates(clone_data->name, &clone_data->reference);
+    ++		prepare_possible_alternates(clone_data->name, reference);
+    + 
+    + 		strvec_push(&cp.args, "clone");
+    + 		strvec_push(&cp.args, "--no-checkout");
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    + 			strvec_push(&cp.args, "--progress");
+    + 		if (clone_data->depth && *(clone_data->depth))
+    + 			strvec_pushl(&cp.args, "--depth", clone_data->depth, NULL);
+    +-		if (clone_data->reference.nr) {
+    ++		if (reference->nr) {
+    + 			struct string_list_item *item;
+    +-			for_each_string_list_item(item, &clone_data->reference)
+    ++			for_each_string_list_item(item, reference)
+    + 				strvec_pushl(&cp.args, "--reference",
+    + 					     item->string, NULL);
+    + 		}
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+      
+    - remove_trash=t
+    -@@ t/test-lib.sh: fi
+    + 		strvec_push(&cp.args, "--");
+    + 		strvec_push(&cp.args, clone_data->url);
+    +-		strvec_push(&cp.args, clone_data->path);
+    ++		strvec_push(&cp.args, clone_data_path);
+      
+    - # Use -P to resolve symlinks in our working directory so that the cwd
+    - # in subprocesses like git equals our $PWD (for pathname comparisons).
+    --cd -P "$TRASH_DIRECTORY" || exit 1
+    -+cd -P "$TRASH_DIRECTORY" || BAIL_OUT "cannot cd -P to \"$TRASH_DIRECTORY\""
+    + 		cp.git_cmd = 1;
+    + 		prepare_submodule_repo_env(&cp.env);
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    + 
+    + 		if(run_command(&cp))
+    + 			die(_("clone of '%s' into submodule path '%s' failed"),
+    +-			    clone_data->url, clone_data->path);
+    ++			    clone_data->url, clone_data_path);
+    + 	} else {
+    + 		struct strbuf sb = STRBUF_INIT;
+    + 
+    +-		if (clone_data->require_init && !access(clone_data->path, X_OK) &&
+    +-		    !is_empty_dir(clone_data->path))
+    +-			die(_("directory not empty: '%s'"), clone_data->path);
+    +-		if (safe_create_leading_directories_const(clone_data->path) < 0)
+    +-			die(_("could not create directory '%s'"), clone_data->path);
+    ++		if (clone_data->require_init && !access(clone_data_path, X_OK) &&
+    ++		    !is_empty_dir(clone_data_path))
+    ++			die(_("directory not empty: '%s'"), clone_data_path);
+    ++		if (safe_create_leading_directories_const(clone_data_path) < 0)
+    ++			die(_("could not create directory '%s'"), clone_data_path);
+    + 		strbuf_addf(&sb, "%s/index", sm_gitdir);
+    + 		unlink_or_warn(sb.buf);
+    + 		strbuf_release(&sb);
+    + 	}
+    + 
+    +-	connect_work_tree_and_git_dir(clone_data->path, sm_gitdir, 0);
+    ++	connect_work_tree_and_git_dir(clone_data_path, sm_gitdir, 0);
+    + 
+    +-	p = git_pathdup_submodule(clone_data->path, "config");
+    ++	p = git_pathdup_submodule(clone_data_path, "config");
+    + 	if (!p)
+    +-		die(_("could not get submodule directory for '%s'"), clone_data->path);
+    ++		die(_("could not get submodule directory for '%s'"), clone_data_path);
+    + 
+    + 	/* setup alternateLocation and alternateErrorStrategy in the cloned submodule if needed */
+    + 	git_config_get_string("submodule.alternateLocation", &sm_alternate);
+    +@@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+    + 		usage_with_options(git_submodule_helper_usage,
+    + 				   module_clone_options);
+    + 
+    +-	clone_submodule(&clone_data);
+    ++	clone_submodule(&clone_data, &clone_data.reference);
+    + 	list_objects_filter_release(&filter_options);
+    + 	return 0;
+    + }
+    +@@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add_data)
+    + 		if (add_data->depth >= 0)
+    + 			clone_data.depth = xstrfmt("%d", add_data->depth);
+      
+    - start_test_output "$0"
+    +-		if (clone_submodule(&clone_data))
+    ++		if (clone_submodule(&clone_data, &clone_data.reference))
+    + 			return -1;
+      
+    + 		prepare_submodule_repo_env(&cp.env);
+ 4:  4aab7af60e3 <  -:  ----------- test-lib.sh: add a --invert-exit-code switch
+ 5:  65a2f43596d <  -:  ----------- test-lib: add a SANITIZE=leak logging mode
+ 7:  d95e586d854 <  -:  ----------- test-lib: have the "check" mode for SANITIZE=leak consider leak logs
+ 8:  df0104ccfce <  -:  ----------- leak tests: mark passing SANITIZE=leak tests as leak-free
+ 9:  ad1d33ef238 <  -:  ----------- log tests: don't use "exit 1" outside a sub-shell
+11:  130a396b837 !  4:  26f0caf0386 submodule--helper: fix a leak in "clone_submodule"
+    @@ Metadata
+      ## Commit message ##
+         submodule--helper: fix a leak in "clone_submodule"
+     
+    -    Fix a memory leak of the "path" member of the "struct
+    -    module_clone_data" in clone_submodule(). This fixes leaks in code
+    -    added in f8eaa0ba98b (submodule--helper, module_clone: always operate
+    +    Fix a memory leak of the "clone_data_path" variable that we copy or
+    +    derive from the "struct module_clone_data" in clone_submodule(). This
+    +    code was refactored in preceding commits, but the leak has been with
+    +    us since f8eaa0ba98b (submodule--helper, module_clone: always operate
+         on absolute paths, 2016-03-31).
+     
+         For the "else" case we don't need to xstrdup() the "clone_data->path",
+    -    if we're not creating a new one we'll leave it to our caller to keep
+    -    track of it.
+    +    and we don't need to free our own "clone_data_path".
+     
+         In the case of the module_clone() caller it's from "argv", and doesn't
+         need to be free'd, and in the case of the add_submodule() caller we
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/submodule--helper.c ##
+    -@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    +@@ builtin/submodule--helper.c: static int clone_submodule(const struct module_clone_data *clone_data,
+      	char *sm_alternate = NULL, *error_strategy = NULL;
+    - 	struct strbuf sb = STRBUF_INIT;
+      	struct child_process cp = CHILD_PROCESS_INIT;
+    + 	const char *clone_data_path;
+     +	char *to_free = NULL;
+      
+    - 	submodule_name_to_gitdir(&sb, the_repository, clone_data->name);
+    - 	sm_gitdir = absolute_pathdup(sb.buf);
+    -@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    - 
+      	if (!is_absolute_path(clone_data->path)) {
+    + 		struct strbuf sb = STRBUF_INIT;
+    + 
+      		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+    --		clone_data->path = strbuf_detach(&sb, NULL);
+    -+		clone_data->path = to_free = strbuf_detach(&sb, NULL);
+    +-		clone_data_path = strbuf_detach(&sb, NULL);
+    ++		clone_data_path = to_free = strbuf_detach(&sb, NULL);
+      	} else {
+    --		clone_data->path = xstrdup(clone_data->path);
+    -+		clone_data->path = clone_data->path;
+    +-		clone_data_path = xstrdup(clone_data_path);
+    ++		clone_data_path = clone_data->path;
+      	}
+      
+      	if (validate_submodule_git_dir(sm_gitdir, clone_data->name) < 0)
+    -@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    - 	strbuf_release(&sb);
+    +@@ builtin/submodule--helper.c: static int clone_submodule(const struct module_clone_data *clone_data,
+    + 
+      	free(sm_gitdir);
+      	free(p);
+     +	free(to_free);
+12:  25e17bbb058 =  5:  75775bf4f6c submodule--helper: fix trivial get_default_remote_submodule() leak
+13:  9fb60485c3e !  6:  7672ef1305f submodule--helper: fix most "struct pathspec" memory leaks
+    @@ builtin/submodule--helper.c: static int module_list(int argc, const char **argv,
+      			   N_("alternative anchor for relative paths")),
+      		OPT_END()
+      	};
+    -+	int ret;
+    ++	int ret = 1;
+      
+      	const char *const git_submodule_helper_usage[] = {
+      		N_("git submodule--helper list [--prefix=<path>] [<path>...]"),
+     @@ builtin/submodule--helper.c: static int module_list(int argc, const char **argv, const char *prefix)
+    - 	argc = parse_options(argc, argv, prefix, module_list_options,
+      			     git_submodule_helper_usage, 0);
+      
+    --	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    + 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+     -		return 1;
+    -+	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0) {
+    -+		ret = 1;
+     +		goto cleanup;
+    -+	}
+      
+      	for (i = 0; i < list.nr; i++) {
+      		const struct cache_entry *ce = list.entries[i];
+    @@ builtin/submodule--helper.c: static int module_foreach(int argc, const char **ar
+      		N_("git submodule foreach [--quiet] [--recursive] [--] <command>"),
+      		NULL
+      	};
+    -+	int ret;
+    ++	int ret = 1;
+      
+      	argc = parse_options(argc, argv, prefix, module_foreach_options,
+      			     git_submodule_helper_usage, 0);
+      
+    --	if (module_list_compute(0, NULL, prefix, &pathspec, &list) < 0)
+    + 	if (module_list_compute(0, NULL, prefix, &pathspec, &list) < 0)
+     -		return 1;
+    -+	if (module_list_compute(0, NULL, prefix, &pathspec, &list) < 0) {
+    -+		ret = 1;
+     +		goto cleanup;
+    -+	}
+      
+      	info.argc = argc;
+      	info.argv = argv;
+    @@ builtin/submodule--helper.c: static int module_init(int argc, const char **argv,
+      		N_("git submodule init [<options>] [<path>]"),
+      		NULL
+      	};
+    -+	int ret;
+    ++	int ret = 1;
+      
+      	argc = parse_options(argc, argv, prefix, module_init_options,
+      			     git_submodule_helper_usage, 0);
+      
+    --	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    + 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+     -		return 1;
+    -+	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0) {
+    -+		ret = 1;
+     +		goto cleanup;
+    -+	}
+      
+      	/*
+      	 * If there are no path args and submodule.active is set then,
+    @@ builtin/submodule--helper.c: static int module_status(int argc, const char **arg
+      		N_("git submodule status [--quiet] [--cached] [--recursive] [<path>...]"),
+      		NULL
+      	};
+    -+	int ret;
+    ++	int ret = 1;
+      
+      	argc = parse_options(argc, argv, prefix, module_status_options,
+      			     git_submodule_helper_usage, 0);
+      
+    --	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    + 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+     -		return 1;
+    -+	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0) {
+    -+		ret = 1;
+     +		goto cleanup;
+    -+	}
+      
+      	info.prefix = prefix;
+      	if (quiet)
+    @@ builtin/submodule--helper.c: static int module_status(int argc, const char **arg
+      }
+      
+      static int module_name(int argc, const char **argv, const char *prefix)
+    -@@ builtin/submodule--helper.c: static int compute_summary_module_list(struct object_id *head_oid,
+    - 	struct strvec diff_args = STRVEC_INIT;
+    - 	struct rev_info rev;
+    - 	struct module_cb_list list = MODULE_CB_LIST_INIT;
+    --	int ret = 0;
+    -+	int ret;
+    - 
+    - 	strvec_push(&diff_args, get_diff_cmd(diff_cmd));
+    - 	if (info->cached)
+    -@@ builtin/submodule--helper.c: static int compute_summary_module_list(struct object_id *head_oid,
+    - 	else
+    - 		run_diff_files(&rev, 0);
+    - 	prepare_submodule_summary(info, &list);
+    -+	ret = 0;
+    - cleanup:
+    - 	strvec_clear(&diff_args);
+    - 	release_revisions(&rev);
+     @@ builtin/submodule--helper.c: static void sync_submodule_cb(const struct cache_entry *list_item, void *cb_data
+      static int module_sync(int argc, const char **argv, const char *prefix)
+      {
+    @@ builtin/submodule--helper.c: static void sync_submodule_cb(const struct cache_en
+      	struct module_list list = MODULE_LIST_INIT;
+      	int quiet = 0;
+      	int recursive = 0;
+    -+	int ret;
+    ++	int ret = 1;
+      
+      	struct option module_sync_options[] = {
+      		OPT__QUIET(&quiet, N_("suppress output of synchronizing submodule url")),
+     @@ builtin/submodule--helper.c: static int module_sync(int argc, const char **argv, const char *prefix)
+    - 	argc = parse_options(argc, argv, prefix, module_sync_options,
+      			     git_submodule_helper_usage, 0);
+      
+    --	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    + 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+     -		return 1;
+    -+	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0) {
+    -+		ret = 1;
+     +		goto cleanup;
+    -+	}
+      
+      	info.prefix = prefix;
+      	if (quiet)
+    @@ builtin/submodule--helper.c: static int module_deinit(int argc, const char **arg
+      		N_("git submodule deinit [--quiet] [-f | --force] [--all | [--] [<path>...]]"),
+      		NULL
+      	};
+    -+	int ret;
+    ++	int ret = 1;
+      
+      	argc = parse_options(argc, argv, prefix, module_deinit_options,
+      			     git_submodule_helper_usage, 0);
+     @@ builtin/submodule--helper.c: static int module_deinit(int argc, const char **argv, const char *prefix)
+    - 	if (!argc && !all)
+      		die(_("Use '--all' if you really want to deinitialize all submodules"));
+      
+    --	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    + 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+     -		return 1;
+    -+	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0) {
+    -+		ret = 1;
+     +		goto cleanup;
+    -+	}
+      
+      	info.prefix = prefix;
+      	if (quiet)
+    @@ builtin/submodule--helper.c: static int push_check(int argc, const char **argv,
+     +	struct pathspec pathspec = { 0 };
+      	struct module_list list = MODULE_LIST_INIT;
+      	unsigned flags = ABSORB_GITDIR_RECURSE_SUBMODULES;
+    -+	int ret;
+    ++	int ret = 1;
+      
+      	struct option embed_gitdir_options[] = {
+      		OPT_STRING(0, "prefix", &prefix,
+     @@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+    - 	argc = parse_options(argc, argv, prefix, embed_gitdir_options,
+      			     git_submodule_helper_usage, 0);
+      
+    --	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    + 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+     -		return 1;
+    -+	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0) {
+    -+		ret = 1;
+     +		goto cleanup;
+    -+	}
+      
+      	for (i = 0; i < list.nr; i++)
+      		absorb_git_dir_into_superproject(list.entries[i]->name, flags);
+14:  a4672aa9c94 =  7:  325aa1521e2 submodule--helper: "struct pathspec" memory leak in module_update()
+15:  7925db18b33 =  8:  424b24961b5 submodule--helper: don't leak {run,capture}_command() cp.dir argument
+16:  30883f3aa01 =  9:  abf5c4754a4 submodule--helper: add "const" to copy of "update_data"
+17:  b7582391c91 = 10:  6ab5aabae35 submodule--helper: add and use *_release() functions
+18:  92737916083 = 11:  feec1f20bf9 submodule--helper: refactor "errmsg_str" to be a "struct strbuf"
+19:  c81a4f69179 = 12:  d368db73de7 submodule--helper: fix "errmsg_str" memory leak
+20:  c25b55c9528 ! 13:  5be941b3d1b submodule--helper: fix "sm_path" and other "module_cb_list" leaks
+    @@ builtin/submodule--helper.c: struct module_cb {
+     +	char *sm_path;
+      };
+      #define MODULE_CB_INIT { 0 }
+    + 
+     +static void module_cb_release(struct module_cb *mcb)
+     +{
+     +	free(mcb->sm_path);
+     +}
+    - 
+    ++
+      struct module_cb_list {
+      	struct module_cb **entries;
+    -@@ builtin/submodule--helper.c: struct module_cb_list {
+    + 	int alloc, nr;
+      };
+      #define MODULE_CB_LIST_INIT { 0 }
+      
+21:  303447bd4f5 = 14:  b8560e8c111 submodule--helper: fix a leak with repo_clear()
+22:  f8ededcdf77 = 15:  abfd61f9f05 submodule--helper: fix a memory leak in get_default_remote_submodule()
+23:  c7610088968 ! 16:  b8df96a9cf0 submodule--helper: fix "reference" leak is "module_clone_data"
+    @@ Commit message
+         Those commits added an xstrdup()'d member of the
+         STRING_LIST_INIT_NODUP'd "struct string_list". We need to free()
+         those, but not the ones we get from argv, let's make use of the "util"
+    -    member, if it has a pointer it's the pointer we'll need to free.
+    +    member, if it has a pointer it's the pointer we'll need to free,
+    +    otherwise it'll be NULL (i.e. from argv).
+     
+         To fix this create a a module_clone_data_release() function to go with
+         the MODULE_CLONE_DATA_INIT added in a98b02c1128 (submodule--helper:
+    @@ builtin/submodule--helper.c: static int add_possible_reference_from_superproject
+      			switch (sas->error_mode) {
+     @@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+      
+    - 	clone_submodule(&clone_data);
+    + 	clone_submodule(&clone_data, &clone_data.reference);
+      	list_objects_filter_release(&filter_options);
+     +	module_clone_data_release(&clone_data);
+      	return 0;
+    @@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add
+      {
+      	char *submod_gitdir_path;
+      	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
+    -+	int ret;
+    ++	int ret = -1;
+      
+      	/* perhaps the path already exists and is already a git repo, else clone it */
+      	if (is_directory(add_data->sm_path)) {
+    @@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add
+      		if (add_data->depth >= 0)
+      			clone_data.depth = xstrfmt("%d", add_data->depth);
+      
+    --		if (clone_submodule(&clone_data))
+    + 		if (clone_submodule(&clone_data, &clone_data.reference))
+     -			return -1;
+    -+		if (clone_submodule(&clone_data)) {
+    -+			ret = -1;
+     +			goto cleanup;
+    -+		}
+      
+      		prepare_submodule_repo_env(&cp.env);
+      		cp.git_cmd = 1;
+24:  abd8e2eef3a ! 17:  7811bdbf149 submodule--helper: fix obscure leak in module_add()
+    @@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv,
+      	struct add_data add_data = ADD_DATA_INIT;
+      	char *to_free = NULL;
+     +	struct strbuf sb = STRBUF_INIT;
+    -+	int ret;
+    ++	int ret = 1;
+      
+      	struct option options[] = {
+      		OPT_STRING('b', "branch", &add_data.branch, N_("branch"),
+    @@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv,
+      
+      	if(!add_data.sm_name)
+     @@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
+    + 	add_data.progress = !!progress;
+      	add_data.dissociate = !!dissociate;
+      
+    - 	if (add_submodule(&add_data)) {
+    +-	if (add_submodule(&add_data)) {
+     -		free(add_data.sm_path);
+     -		return 1;
+    -+		ret = 1;
+    +-	}
+    ++	if (add_submodule(&add_data))
+     +		goto cleanup;
+    - 	}
+      	configure_added_submodule(&add_data);
+     +
+     +	ret = 0;
+25:  1f01203d154 = 18:  01566d63926 submodule--helper: fix a leak in module_add()
+26:  12b8a945486 = 19:  7ef89abed86 submodule--helper: fix a memory leak in print_status()
+27:  fac2c4491f3 = 20:  b8d47fc7d70 submodule--helper: free some "displaypath" in "struct update_data"
+28:  cf0c8851954 = 21:  4fb17f0dff1 submodule--helper: rename "int res" to "int ret"
+29:  7882e33cdca ! 22:  af83925046b submodule--helper: add skeleton "goto cleanup" to update_submodule()
+    @@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data
+      
+      static int update_submodule(struct update_data *update_data)
+      {
+    -+	int ret;
+    ++	int ret = 1;
+     +
+      	ensure_core_worktree(update_data->sm_path);
+      
+    @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *upd
+      	}
+      
+     -	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force)
+    --		if (run_update_procedure(update_data))
+    --			return 1;
+     +	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
+    -+		ret = run_update_procedure(update_data);
+    -+		if (ret) {
+    -+			ret = 1;
+    + 		if (run_update_procedure(update_data))
+    +-			return 1;
+     +			goto cleanup;
+    -+		}
+     +	}
+      
+      	if (update_data->recursive) {
+30:  31395a2b4f8 ! 23:  4c60784d281 submodule--helper: don't exit() on failure, return
+    @@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data
+     +static int update_submodule(struct update_data *update_data,
+     +			    int *must_die_on_failure)
+      {
+    - 	int ret;
+    + 	int ret = 1;
+      
+     @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+      	}
+      
+      	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
+    --		ret = run_update_procedure(update_data);
+    --		if (ret) {
+    +-		if (run_update_procedure(update_data))
+     +		ret = run_update_procedure(update_data, must_die_on_failure);
+     +		if (ret && *must_die_on_failure) {
+     +			goto cleanup;
+     +		} else if (ret) {
+    - 			ret = 1;
+    ++			ret = 1;
+      			goto cleanup;
+    - 		}
+    ++		}
+    + 	}
+    + 
+    + 	if (update_data->recursive) {
+     @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+      		die_message(_("Failed to recurse into submodule path '%s'"),
+      			    update_data->displaypath);
+31:  a2168cf1378 ! 24:  7551af195ad submodule--helper: free rest of "displaypath" in "struct update_data"
+    @@ builtin/submodule--helper.c
+     @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data,
+      			    int *must_die_on_failure)
+      {
+    - 	int ret;
+    + 	int ret = 1;
+     +	char *to_free, *restore = update_data->displaypath;
+      
+      	ensure_core_worktree(update_data->sm_path);
+32:  d77c6665ca9 = 25:  f650716cd7e submodule--helper: fix bad config API usage
+33:  531db4ddae6 = 26:  581ce0872c0 submodule--helper: fix a configure_added_submodule() leak
+-- 
+2.37.1.1095.g64a1e8362fd
+

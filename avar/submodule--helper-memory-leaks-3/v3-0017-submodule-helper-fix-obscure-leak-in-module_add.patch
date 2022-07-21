@@ -1,0 +1,91 @@
+From 7811bdbf149d3a0a3687ddeecb0e37f4d874a3b0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-17.26-7811bdbf149-20220721T190920Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.26-00000000000-20220721T190920Z-avarab@gmail.com>
+References: <cover-v2-00.24-00000000000-20220719T204458Z-avarab@gmail.com>
+	<cover-v3-00.26-00000000000-20220721T190920Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 14 Jul 2022 14:48:11 +0200
+Subject: [PATCH v3 17/26] submodule--helper: fix obscure leak in module_add()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix an obscure leak in module_add()< if the "git add" command we were
+piping to failed we'd fail to strbuf_release(&sb). This fixes a leak
+introduced in a6226fd772b (submodule--helper: convert the bulk of
+cmd_add() to C, 2021-08-10).
+
+In fixing it move to a "goto cleanup" pattern, and since we need to
+introduce a "ret" variable to do that let's also get rid of the
+intermediate "exit_code" variable. The initialization to "-1" in
+a6226fd772b has always been redundant, we'd only use the "exit_code"
+value after assigning the return value of pipe_command() to it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 22 +++++++++++-----------
+ 1 file changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 80c1c1d4918..04b5141c0f9 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -3352,6 +3352,8 @@ static int module_add(int argc, const char **argv, const char *prefix)
+ 	int force = 0, quiet = 0, progress = 0, dissociate = 0;
+ 	struct add_data add_data = ADD_DATA_INIT;
+ 	char *to_free = NULL;
++	struct strbuf sb = STRBUF_INIT;
++	int ret = 1;
+ 
+ 	struct option options[] = {
+ 		OPT_STRING('b', "branch", &add_data.branch, N_("branch"),
+@@ -3423,20 +3425,16 @@ static int module_add(int argc, const char **argv, const char *prefix)
+ 	die_on_repo_without_commits(add_data.sm_path);
+ 
+ 	if (!force) {
+-		int exit_code = -1;
+-		struct strbuf sb = STRBUF_INIT;
+ 		struct child_process cp = CHILD_PROCESS_INIT;
+ 		cp.git_cmd = 1;
+ 		cp.no_stdout = 1;
+ 		strvec_pushl(&cp.args, "add", "--dry-run", "--ignore-missing",
+ 			     "--no-warn-embedded-repo", add_data.sm_path, NULL);
+-		if ((exit_code = pipe_command(&cp, NULL, 0, NULL, 0, &sb, 0))) {
++		if ((ret = pipe_command(&cp, NULL, 0, NULL, 0, &sb, 0))) {
+ 			strbuf_complete_line(&sb);
+ 			fputs(sb.buf, stderr);
+-			free(add_data.sm_path);
+-			return exit_code;
++			goto cleanup;
+ 		}
+-		strbuf_release(&sb);
+ 	}
+ 
+ 	if(!add_data.sm_name)
+@@ -3451,15 +3449,17 @@ static int module_add(int argc, const char **argv, const char *prefix)
+ 	add_data.progress = !!progress;
+ 	add_data.dissociate = !!dissociate;
+ 
+-	if (add_submodule(&add_data)) {
+-		free(add_data.sm_path);
+-		return 1;
+-	}
++	if (add_submodule(&add_data))
++		goto cleanup;
+ 	configure_added_submodule(&add_data);
++
++	ret = 0;
++cleanup:
+ 	free(add_data.sm_path);
+ 	free(to_free);
++	strbuf_release(&sb);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ #define SUPPORT_SUPER_PREFIX (1<<0)
+-- 
+2.37.1.1095.g64a1e8362fd
+
