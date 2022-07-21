@@ -1,0 +1,125 @@
+From 2d858c49243b71ae61e6a0902e6daa53576abff9 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.6-2d858c49243-20220721T111808Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20220721T111808Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220721T063543Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20220721T111808Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Jul 2022 12:00:51 +0200
+Subject: [PATCH v2 4/6] cocci: add "string_list" rule to swap "DUP" <->
+ "NODUP"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a coccinelle rule to swap "NODUP" and "DUP" initialization in
+cases such as [1], which as this change shows produces an identical
+change.
+
+We happened to have only one change in-tree that matched this
+criteria, but now we're more certain of that, and will convert these
+sorts of cases in the future.
+
+1. https://lore.kernel.org/git/xmqq7d471dns.fsf@gitster.g/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/remote.c                         |  3 +--
+ contrib/coccinelle/string-list.cocci     | 18 ++++++++++++++++++
+ contrib/coccinelle/tests/string-list.c   | 13 +++++++++++++
+ contrib/coccinelle/tests/string-list.res | 11 +++++++++++
+ 4 files changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/remote.c b/builtin/remote.c
+index d9b8746cb3c..c713463d89d 100644
+--- a/builtin/remote.c
++++ b/builtin/remote.c
+@@ -1229,10 +1229,9 @@ static int get_one_entry(struct remote *remote, void *priv)
+ 
+ static int show_all(void)
+ {
+-	struct string_list list = STRING_LIST_INIT_NODUP;
++	struct string_list list = STRING_LIST_INIT_DUP;
+ 	int result;
+ 
+-	list.strdup_strings = 1;
+ 	result = for_each_remote(get_one_entry, &list);
+ 
+ 	if (!result) {
+diff --git a/contrib/coccinelle/string-list.cocci b/contrib/coccinelle/string-list.cocci
+index 5d285d5732c..63bb2abc93a 100644
+--- a/contrib/coccinelle/string-list.cocci
++++ b/contrib/coccinelle/string-list.cocci
+@@ -6,3 +6,21 @@ struct string_list *P;
+ ... when != P
+ - (P)->strdup_strings = 1;
+ + string_list_init_dup(P);
++
++@@
++type T;
++identifier I;
++constant INIT_NODUP =~ "^STRING_LIST_INIT_NODUP$";
++constant INIT_DUP =~ "^STRING_LIST_INIT_DUP$";
++@@
++(
++- T I = INIT_NODUP;
+++ T I = STRING_LIST_INIT_DUP;
++... when != &I
++- I.strdup_strings = 1;
++|
++- T I = INIT_DUP;
+++ T I = STRING_LIST_INIT_NODUP;
++... when != &I
++- I.strdup_strings = 0;
++)
+diff --git a/contrib/coccinelle/tests/string-list.c b/contrib/coccinelle/tests/string-list.c
+index e77822b7682..1821ed4ebb4 100644
+--- a/contrib/coccinelle/tests/string-list.c
++++ b/contrib/coccinelle/tests/string-list.c
+@@ -1,7 +1,20 @@
+ int init(void)
+ {
+ 	struct string_list *list;
++	struct string_list list2 = STRING_LIST_INIT_NODUP;
++	struct string_list list3 = STRING_LIST_INIT_DUP;
++	struct string_list list4 = STRING_LIST_INIT_NODUP;
++	struct string_list list5 = STRING_LIST_INIT_DUP;
+ 
+ 	CALLOC_ARRAY(list, 1);
++
++	/* Exclude these */
++	string_list_append(&list4, "str");
++	string_list_append_nodup(&list5, xstrdup("str"));
++
+ 	list->strdup_strings = 1;
++	list2.strdup_strings = 1;
++	list3.strdup_strings = 0;
++	list4.strdup_strings = 1;
++	list5.strdup_strings = 0;
+ }
+diff --git a/contrib/coccinelle/tests/string-list.res b/contrib/coccinelle/tests/string-list.res
+index 7e666f5bf48..58b3733dec2 100644
+--- a/contrib/coccinelle/tests/string-list.res
++++ b/contrib/coccinelle/tests/string-list.res
+@@ -1,7 +1,18 @@
+ int init(void)
+ {
+ 	struct string_list *list;
++	struct string_list list2 = STRING_LIST_INIT_DUP;
++	struct string_list list3 = STRING_LIST_INIT_NODUP;
++	struct string_list list4 = STRING_LIST_INIT_NODUP;
++	struct string_list list5 = STRING_LIST_INIT_DUP;
+ 
+ 	ALLOC_ARRAY(list, 1);
++
++	/* Exclude these */
++	string_list_append(&list4, "str");
++	string_list_append_nodup(&list5, xstrdup("str"));
++
+ 	string_list_init_dup(list);
++	list4.strdup_strings = 1;
++	list5.strdup_strings = 0;
+ }
+-- 
+2.37.1.1095.g64a1e8362fd
+

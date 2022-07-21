@@ -1,0 +1,94 @@
+From b0de7a63d1c1d2c4800ab9330b52b76c37e0b02d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-6.6-b0de7a63d1c-20220721T111808Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20220721T111808Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220721T063543Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20220721T111808Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Jul 2022 12:42:13 +0200
+Subject: [PATCH v2 6/6] notes.c: make "struct string_list display_notes_refs"
+ non-static
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "struct string_list" added in 894a9d333e9 (Support showing
+notes from more than one notes tree, 2010-03-12) to be non-static. Now
+we don't need to flip-flop from "NODUP" to ".strdup_strings = 1".
+
+In 2721ce21e43 (use string_list initializer consistently, 2016-06-13)
+the statically initialized variable was made to use
+"STRING_LIST_INIT_NODUP". That was correct in the narrow sense, but
+didn't make much sense when this code was viewed as a whole. We'd set
+it to "NODUP" just to set it to "DUP" when we'd use it.
+
+This change could be smaller in just changing the "NODUP" to a "DUP",
+but let's prove to ourselves and the compiler that this data is only
+ever used when we enter load_display_notes(). We can just allocate it
+in that function, and pass it to the notes_display_config() callback.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ notes.c | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/notes.c b/notes.c
+index acc35b580b6..272fcb270a1 100644
+--- a/notes.c
++++ b/notes.c
+@@ -75,7 +75,6 @@ struct non_note {
+ 
+ struct notes_tree default_notes_tree;
+ 
+-static struct string_list display_notes_refs = STRING_LIST_INIT_NODUP;
+ static struct notes_tree **display_notes_trees;
+ 
+ static void load_subtree(struct notes_tree *t, struct leaf_node *subtree,
+@@ -967,14 +966,19 @@ void string_list_add_refs_from_colon_sep(struct string_list *list,
+ 	free(globs_copy);
+ }
+ 
++struct notes_display_config_cb {
++	struct string_list *list;
++	int *load_refs;
++};
++
+ static int notes_display_config(const char *k, const char *v, void *cb)
+ {
+-	int *load_refs = cb;
++	struct notes_display_config_cb *data = cb;
+ 
+-	if (*load_refs && !strcmp(k, "notes.displayref")) {
++	if (*data->load_refs && !strcmp(k, "notes.displayref")) {
+ 		if (!v)
+ 			return config_error_nonbool(k);
+-		string_list_add_refs_by_glob(&display_notes_refs, v);
++		string_list_add_refs_by_glob(data->list, v);
+ 	}
+ 
+ 	return 0;
+@@ -1080,7 +1084,11 @@ void load_display_notes(struct display_notes_opt *opt)
+ {
+ 	char *display_ref_env;
+ 	int load_config_refs = 0;
+-	display_notes_refs.strdup_strings = 1;
++	struct string_list display_notes_refs = STRING_LIST_INIT_DUP;
++	struct notes_display_config_cb cb_data = {
++		.list = &display_notes_refs,
++		.load_refs = &load_config_refs,
++	};
+ 
+ 	assert(!display_notes_trees);
+ 
+@@ -1096,7 +1104,7 @@ void load_display_notes(struct display_notes_opt *opt)
+ 			load_config_refs = 1;
+ 	}
+ 
+-	git_config(notes_display_config, &load_config_refs);
++	git_config(notes_display_config, &cb_data);
+ 
+ 	if (opt) {
+ 		struct string_list_item *item;
+-- 
+2.37.1.1095.g64a1e8362fd
+

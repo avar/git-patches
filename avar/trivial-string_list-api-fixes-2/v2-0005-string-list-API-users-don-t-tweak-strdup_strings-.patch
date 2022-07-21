@@ -1,0 +1,97 @@
+From 8c0ac6cbd96a12300673b538365da2011c0a7f74 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.6-8c0ac6cbd96-20220721T111808Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20220721T111808Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20220721T063543Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20220721T111808Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Jul 2022 12:24:16 +0200
+Subject: [PATCH v2 5/6] string-list API users: don't tweak "strdup_strings" to
+ free dupes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change code added in [1] and [2] used in notes.c and bisect.c to
+initialize a "struct string_list" as "DUP" and append with "nodup",
+rather than doing it the other way around.
+
+Settings up a "struct string_list" as "NODUP" and then manually
+freeing its items by flipping the "strdup_strings" breaks the
+encapsulation of the "struct string_list". It's also both more verbose
+than the alternative, and not as safe. If we miss one of the codepaths
+that appends to the list we'll end up freeing a constant string.
+
+It's better to declare it as "dup", and then when we insert into the
+list declare that the particular string we're inserting should be
+owned by the "struct string_list" with string_list_append_nodup(). The
+worst case with that API use is that we'll miss a caller, end up
+double-dup-ing the string, and have a memory leak as a result.
+
+1. 92e0d42539a (revision.c: make --no-notes reset --notes list,
+   2011-03-29)
+2. fb71a329964 (bisect--helper: `bisect_clean_state` shell function in
+   C, 2017-09-29)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ bisect.c | 7 +++----
+ notes.c  | 8 ++------
+ 2 files changed, 5 insertions(+), 10 deletions(-)
+
+diff --git a/bisect.c b/bisect.c
+index b63669cc9d7..8412feb1f69 100644
+--- a/bisect.c
++++ b/bisect.c
+@@ -1159,7 +1159,7 @@ static int mark_for_removal(const char *refname, const struct object_id *oid,
+ {
+ 	struct string_list *refs = cb_data;
+ 	char *ref = xstrfmt("refs/bisect%s", refname);
+-	string_list_append(refs, ref);
++	string_list_append_nodup(refs, ref);
+ 	return 0;
+ }
+ 
+@@ -1168,11 +1168,10 @@ int bisect_clean_state(void)
+ 	int result = 0;
+ 
+ 	/* There may be some refs packed during bisection */
+-	struct string_list refs_for_removal = STRING_LIST_INIT_NODUP;
++	struct string_list refs_for_removal = STRING_LIST_INIT_DUP;
+ 	for_each_ref_in("refs/bisect", mark_for_removal, (void *) &refs_for_removal);
+-	string_list_append(&refs_for_removal, xstrdup("BISECT_HEAD"));
++	string_list_append_nodup(&refs_for_removal, xstrdup("BISECT_HEAD"));
+ 	result = delete_refs("bisect: remove", &refs_for_removal, REF_NO_DEREF);
+-	refs_for_removal.strdup_strings = 1;
+ 	string_list_clear(&refs_for_removal, 0);
+ 	unlink_or_warn(git_path_bisect_expected_rev());
+ 	unlink_or_warn(git_path_bisect_ancestors_ok());
+diff --git a/notes.c b/notes.c
+index 7452e71cc8d..acc35b580b6 100644
+--- a/notes.c
++++ b/notes.c
+@@ -1064,19 +1064,15 @@ void enable_ref_display_notes(struct display_notes_opt *opt, int *show_notes,
+ 	struct strbuf buf = STRBUF_INIT;
+ 	strbuf_addstr(&buf, ref);
+ 	expand_notes_ref(&buf);
+-	string_list_append(&opt->extra_notes_refs,
+-			strbuf_detach(&buf, NULL));
++	string_list_append_nodup(&opt->extra_notes_refs,
++				 strbuf_detach(&buf, NULL));
+ 	*show_notes = 1;
+ }
+ 
+ void disable_display_notes(struct display_notes_opt *opt, int *show_notes)
+ {
+ 	opt->use_default_notes = -1;
+-	/* we have been strdup'ing ourselves, so trick
+-	 * string_list into free()ing strings */
+-	opt->extra_notes_refs.strdup_strings = 1;
+ 	string_list_clear(&opt->extra_notes_refs, 0);
+-	opt->extra_notes_refs.strdup_strings = 0;
+ 	*show_notes = 0;
+ }
+ 
+-- 
+2.37.1.1095.g64a1e8362fd
+
