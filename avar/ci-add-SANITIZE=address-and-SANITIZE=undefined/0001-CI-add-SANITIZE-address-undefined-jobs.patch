@@ -1,0 +1,85 @@
+From e48b6853dd506a53dfb92720d5898792a58de813 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-e48b6853dd5-20220726T110648Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 25 Jul 2022 20:59:07 +0200
+Subject: [PATCH] CI: add SANITIZE=[address|undefined] jobs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add CI targets for SANITIZE=address and SANITIZE=undefined. The former
+would have caught a regression in 18bbc795fc5 (Merge branch
+'gc/bare-repo-discovery', 2022-07-22) which made its way to
+"master"[1].
+
+Per [2] the GitHub fork of git.git runs with these in CI, so it's
+already useful to some forks of this repository.
+
+Also per [2] we could use SANITIZE=address with some ASAN_OPTIONS
+instead of our SANITIZE=leak job added in 956d2e4639b (tests: add a
+test mode for SANITIZE=leak, run it in CI, 2021-09-23), but unifying
+those two with these new jobs would be a lot harder, so let's leave
+that for now.
+
+On my system a "make test" takes around 12m of user time,
+SANITIZE=address around 44m, and SANITIZE=undefined around 18m.
+
+In practice this doesn't seem to slow down the wallclock time of the
+the GitHub CI by much This runs in about 50m, but getting through some
+of the "win build" and associated tests can take around 40m, and the
+"OSX" tests are on the order of 40m (all of this may vary with the
+available workers etc.).
+
+The "address" job will fail due to the issue reported in [1]. the
+"undefined" one succeeds, but note that "t4058-diff-duplicates.sh"
+triggers its assertions, they're just hidden by
+"test_expect_failure" (see [3] for why).
+
+1. https://lore.kernel.org/git/220725.861qu9oxl4.gmgdl@evledraar.gmail.com/
+2. https://lore.kernel.org/git/YPClS0fj2HOJE5nH@coredump.intra.peff.net/
+3. https://lore.kernel.org/git/cover-0.7-00000000000-20220318T002951Z-avarab@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml | 6 ++++++
+ ci/lib.sh                  | 6 ++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index cd1f52692a5..4f59a7aa44c 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -251,6 +251,12 @@ jobs:
+           - jobname: linux-leaks
+             cc: gcc
+             pool: ubuntu-latest
++          - jobname: SANITIZE=address
++            cc: gcc
++            pool: ubuntu-latest
++          - jobname: SANITIZE=undefined
++            cc: gcc
++            pool: ubuntu-latest
+     env:
+       CC: ${{matrix.vector.cc}}
+       CC_PACKAGE: ${{matrix.vector.cc_package}}
+diff --git a/ci/lib.sh b/ci/lib.sh
+index f095519f8db..5ad60af2e7c 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -277,6 +277,12 @@ linux-leaks)
+ 	export SANITIZE=leak
+ 	export GIT_TEST_PASSING_SANITIZE_LEAK=true
+ 	;;
++SANITIZE=address)
++	export SANITIZE=address
++	;;
++SANITIZE=undefined)
++	export SANITIZE=undefined
++	;;
+ esac
+ 
+ MAKEFLAGS="$MAKEFLAGS CC=${CC:-cc}"
+-- 
+2.37.1.1107.g76fe5d1ed7c
+
