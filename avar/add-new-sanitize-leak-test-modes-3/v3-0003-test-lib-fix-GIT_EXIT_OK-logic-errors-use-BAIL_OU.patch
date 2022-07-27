@@ -1,0 +1,103 @@
+From 385d5c52d5a1a2e3013eeec7726dd51fc464c5cf Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-03.15-385d5c52d5a-20220727T230800Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.15-00000000000-20220727T230800Z-avarab@gmail.com>
+References: <cover-v2-00.14-00000000000-20220720T211221Z-avarab@gmail.com>
+	<cover-v3-00.15-00000000000-20220727T230800Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 12 Jul 2022 19:44:48 +0200
+Subject: [PATCH v3 03/15] test-lib: fix GIT_EXIT_OK logic errors, use BAIL_OUT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change various "exit 1" checks that happened after our "die" handler
+had been set up to use BAIL_OUT instead. See 234383cd401 (test-lib.sh:
+use "Bail out!" syntax on bad SANITIZE=leak use, 2021-10-14) for the
+benefits of the BAIL_OUT function.
+
+The previous use of "error" here was not a logic error, but the "exit"
+without "GIT_EXIT_OK" would emit the "FATAL: Unexpected exit with code
+$code" message on top of the error we wanted to emit.
+
+Since we'd also like to stop "prove" in its tracks here, the right
+thing to do is to emit a "Bail out!" message.
+
+Let's also move the "GIT_EXIT_OK=t" assignments to just above the
+"exit [01]" in "test_done". It's not OK if we exit in
+e.g. finalize_test_output.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh | 16 ++++++----------
+ 1 file changed, 6 insertions(+), 10 deletions(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index c8c84ef9b14..118720493bb 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -1173,8 +1173,6 @@ test_done () {
+ 	# removed, so the commands can access pidfiles and socket files.
+ 	test_atexit_handler
+ 
+-	GIT_EXIT_OK=t
+-
+ 	finalize_test_output
+ 
+ 	if test -z "$HARNESS_ACTIVE"
+@@ -1246,6 +1244,7 @@ test_done () {
+ 		fi
+ 		test_at_end_hook_
+ 
++		GIT_EXIT_OK=t
+ 		exit 0 ;;
+ 
+ 	*)
+@@ -1255,6 +1254,7 @@ test_done () {
+ 			say "1..$test_count"
+ 		fi
+ 
++		GIT_EXIT_OK=t
+ 		exit 1 ;;
+ 
+ 	esac
+@@ -1387,14 +1387,12 @@ fi
+ GITPERLLIB="$GIT_BUILD_DIR"/perl/build/lib
+ export GITPERLLIB
+ test -d "$GIT_BUILD_DIR"/templates/blt || {
+-	error "You haven't built things yet, have you?"
++	BAIL_OUT "You haven't built things yet, have you?"
+ }
+ 
+ if ! test -x "$GIT_BUILD_DIR"/t/helper/test-tool$X
+ then
+-	echo >&2 'You need to build test-tool:'
+-	echo >&2 'Run "make t/helper/test-tool" in the source (toplevel) directory'
+-	exit 1
++	BAIL_OUT 'You need to build test-tool; Run "make t/helper/test-tool" in the source (toplevel) directory'
+ fi
+ 
+ # Are we running this test at all?
+@@ -1448,9 +1446,7 @@ remove_trash_directory () {
+ 
+ # Test repository
+ remove_trash_directory "$TRASH_DIRECTORY" || {
+-	GIT_EXIT_OK=t
+-	echo >&5 "FATAL: Cannot prepare test area"
+-	exit 1
++	BAIL_OUT 'cannot prepare test area'
+ }
+ 
+ remove_trash=t
+@@ -1466,7 +1462,7 @@ fi
+ 
+ # Use -P to resolve symlinks in our working directory so that the cwd
+ # in subprocesses like git equals our $PWD (for pathname comparisons).
+-cd -P "$TRASH_DIRECTORY" || exit 1
++cd -P "$TRASH_DIRECTORY" || BAIL_OUT "cannot cd -P to \"$TRASH_DIRECTORY\""
+ 
+ start_test_output "$0"
+ 
+-- 
+2.37.1.1127.g4ecf1c08f67
+
