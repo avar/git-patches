@@ -1,0 +1,3012 @@
+From 579560cb9a8075311be22266f8b34d00c47ecc0b Mon Sep 17 00:00:00 2001
+Message-Id: <cover-00.20-00000000000-20220728T160845Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Thu, 28 Jul 2022 18:08:45 +0200
+Subject: [PATCH 00/20] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Glen Choo (2):
+  submodule--helper: add "const" to copy of "update_data"
+  submodule--helper: refactor "errmsg_str" to be a "struct strbuf"
+
+Ævar Arnfjörð Bjarmason (18):
+  submodule tests: test usage behavior
+  submodule tests: test for "add <repository> <abs-path>"
+  submodule--helper: remove unused "name" helper
+  submodule--helper: remove unused "list" helper
+  test-tool submodule-config: remove unused "--url" handling
+  submodule--helper: move "is-active" to a test-tool
+  submodule--helper: move "check-name" to a test-tool
+  submodule--helper: move "resolve-relative-url-test" to a test-tool
+  submodule--helper style: don't separate declared variables with \n\n
+  submodule--helper style: add \n\n after variable declarations
+  submodule--helper: replace memset() with { 0 }-initialization
+  submodule--helper: convert a strbuf_detach() to xstrfmt()
+  submodule--helper: stop conflating "sb" in clone_submodule()
+  submodule--helper: pass a "const struct module_clone_data" to
+    clone_submodule()
+  submodule--helper: rename "int res" to "int ret"
+  submodule--helper: add skeleton "goto cleanup" to update_submodule()
+  submodule--helper: don't exit() on failure, return
+  submodule--helper: fix bad config API usage
+
+ Makefile                         |   1 +
+ builtin/submodule--helper.c      | 338 ++++++++++++-------------------
+ t/helper/test-submodule-config.c |  11 +-
+ t/helper/test-submodule.c        | 146 +++++++++++++
+ t/helper/test-tool-utils.h       |   9 +
+ t/helper/test-tool.c             |   7 +-
+ t/helper/test-tool.h             |   1 +
+ t/t0060-path-utils.sh            |   2 +-
+ t/t7400-submodule-basic.sh       |  56 ++---
+ t/t7413-submodule-is-active.sh   |  32 +--
+ t/t7450-bad-git-dotfiles.sh      |   2 +-
+ 11 files changed, 335 insertions(+), 270 deletions(-)
+ create mode 100644 t/helper/test-submodule.c
+ create mode 100644 t/helper/test-tool-utils.h
+
+Range-diff:
+ 1:  e53cf647b44 <  -:  ----------- test-lib: use $1, not $@ in test_known_broken_{ok,failure}_
+ 4:  668c25f4d7e !  1:  84b05bda016 test-lib: add a --invert-exit-code switch
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib: add a --invert-exit-code switch
+    +    submodule tests: test usage behavior
+     
+    -    Add the ability to have those tests that fail return 0, and those
+    -    tests that succeed return 1. This is useful e.g. to run "--stress"
+    -    tests on tests that fail 99% of the time on some setup, i.e. to smoke
+    -    out the flaky run which yielded success.
+    +    Test what exit code and output we emit on "git submodule -h", how we
+    +    handle "--" when no subcommand is specified, and how the top-level
+    +    "--recursive" option is handled.
+     
+    -    In a subsequent commit a new SANITIZE=leak mode will make use of this.
+    +    For "-h" this doesn't make sense, but let's test for it so that any
+    +    subsequent eventual behavior change will become clear.
+    +
+    +    For "--" this follows up on 68cabbfda36 (submodule: document default
+    +    behavior, 2019-02-15) and tests that when "status" isn't supplied we
+    +    don't support the "--" delimiter. There's no intrinsically good reason
+    +    not to support that. We behave this way due to edge cases in
+    +    git-submodule.sh's implementation, but as with "-h" let's assert our
+    +    current long-standing behavior for now.
+    +
+    +    For "--recursive" the exclusion of it from the top-level appears to
+    +    have been an omission in 15fc56a8536 (git submodule foreach: Add
+    +    --recursive to recurse into nested submodules, 2009-08-19), there
+    +    doesn't seem to be a reason not to support it alongside "--quiet" and
+    +    "--cached", but let's likewise assert our existing behavior for now.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/t0000-basic.sh ##
+    -@@ t/t0000-basic.sh: test_expect_success 'subtest: --run invalid range end' '
+    - 	EOF_ERR
+    - '
+    + ## t/t7400-submodule-basic.sh ##
+    +@@ t/t7400-submodule-basic.sh: export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+      
+    -+test_expect_success 'subtest: --invert-exit-code without --immediate' '
+    -+	run_sub_test_lib_test_err full-pass \
+    -+		--invert-exit-code &&
+    -+	check_sub_test_lib_test_err full-pass \
+    -+		<<-\EOF_OUT 3<<-EOF_ERR
+    -+	ok 1 - passing test #1
+    -+	ok 2 - passing test #2
+    -+	ok 3 - passing test #3
+    -+	# passed all 3 test(s)
+    -+	1..3
+    -+	# faking up non-zero exit with --invert-exit-code
+    -+	EOF_OUT
+    -+	EOF_ERR
+    -+'
+    -+
+    -+test_expect_success 'subtest: --invert-exit-code with --immediate: all passed' '
+    -+	run_sub_test_lib_test_err full-pass \
+    -+		--invert-exit-code --immediate &&
+    -+	check_sub_test_lib_test_err full-pass \
+    -+		<<-\EOF_OUT 3<<-EOF_ERR
+    -+	ok 1 - passing test #1
+    -+	ok 2 - passing test #2
+    -+	ok 3 - passing test #3
+    -+	# passed all 3 test(s)
+    -+	1..3
+    -+	# faking up non-zero exit with --invert-exit-code
+    -+	EOF_OUT
+    -+	EOF_ERR
+    -+'
+    -+
+    -+test_expect_success 'subtest: --invert-exit-code without --immediate: partial pass' '
+    -+	run_sub_test_lib_test partial-pass \
+    -+		--invert-exit-code &&
+    -+	check_sub_test_lib_test partial-pass <<-\EOF
+    -+	ok 1 - passing test #1
+    -+	not ok 2 - # TODO induced breakage (--invert-exit-code): failing test #2
+    -+	#	false
+    -+	ok 3 - passing test #3
+    -+	# failed 1 among 3 test(s)
+    -+	1..3
+    -+	# faked up failures as TODO & now exiting with 0 due to --invert-exit-code
+    -+	EOF
+    + . ./test-lib.sh
+    + 
+    ++test_expect_success 'submodule usage: -h' '
+    ++	git submodule -h >out 2>err &&
+    ++	grep "^usage: git submodule" out &&
+    ++	test_must_be_empty err
+     +'
+     +
+    -+test_expect_success 'subtest: --invert-exit-code with --immediate: partial pass' '
+    -+	run_sub_test_lib_test partial-pass \
+    -+		--invert-exit-code --immediate &&
+    -+	check_sub_test_lib_test partial-pass \
+    -+		<<-\EOF_OUT 3<<-EOF_ERR
+    -+	ok 1 - passing test #1
+    -+	not ok 2 - # TODO induced breakage (--invert-exit-code): failing test #2
+    -+	#	false
+    -+	1..2
+    -+	# faked up failures as TODO & now exiting with 0 due to --invert-exit-code
+    -+	EOF_OUT
+    -+	EOF_ERR
+    ++test_expect_success 'submodule usage: --recursive' '
+    ++	test_expect_code 1 git submodule --recursive >out 2>err &&
+    ++	grep "^usage: git submodule" err &&
+    ++	test_must_be_empty out
+     +'
+     +
+    -+test_expect_success 'subtest: --invert-exit-code --immediate: got a failure' '
+    -+	run_sub_test_lib_test partial-pass \
+    -+		--invert-exit-code --immediate &&
+    -+	check_sub_test_lib_test_err partial-pass \
+    -+		<<-\EOF_OUT 3<<-EOF_ERR
+    -+	ok 1 - passing test #1
+    -+	not ok 2 - # TODO induced breakage (--invert-exit-code): failing test #2
+    -+	#	false
+    -+	1..2
+    -+	# faked up failures as TODO & now exiting with 0 due to --invert-exit-code
+    -+	EOF_OUT
+    -+	EOF_ERR
+    ++test_expect_success 'submodule usage: status --' '
+    ++	test_expect_code 1 git submodule -- &&
+    ++	test_expect_code 1 git submodule --end-of-options
+     +'
+     +
+    - test_expect_success 'subtest: tests respect prerequisites' '
+    - 	write_and_run_sub_test_lib_test prereqs <<-\EOF &&
+    - 
+    -
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: parse_option () {
+    - 			;;
+    - 		esac
+    - 		;;
+    -+	--invert-exit-code)
+    -+		invert_exit_code=t
+    -+		;;
+    - 	*)
+    - 		echo "error: unknown test option '$opt'" >&2; exit 1 ;;
+    - 	esac
+    -@@ t/test-lib.sh: test_ok_ () {
+    - 	finalize_test_case_output ok "$@"
+    - }
+    - 
+    -+_invert_exit_code_failure_end_blurb () {
+    -+	say_color warn "# faked up failures as TODO & now exiting with 0 due to --invert-exit-code"
+    -+}
+    -+
+    - test_failure_ () {
+    - 	failure_label=$1
+    - 	test_failure=$(($test_failure + 1))
+    --	say_color error "not ok $test_count - $1"
+    -+	local pfx=""
+    -+	if test -n "$invert_exit_code" # && test -n "$HARNESS_ACTIVE"
+    -+	then
+    -+		pfx="# TODO induced breakage (--invert-exit-code):"
+    -+	fi
+    -+	say_color error "not ok $test_count - ${pfx:+$pfx }$1"
+    - 	shift
+    - 	printf '%s\n' "$*" | sed -e 's/^/#	/'
+    - 	if test -n "$immediate"
+    - 	then
+    - 		say_color error "1..$test_count"
+    -+		if test -n "$invert_exit_code"
+    -+		then
+    -+			finalize_test_output
+    -+			_invert_exit_code_failure_end_blurb
+    -+			GIT_EXIT_OK=t
+    -+			exit 0
+    -+		fi
+    - 		_error_exit
+    - 	fi
+    - 	finalize_test_case_output failure "$failure_label" "$@"
+    -@@ t/test-lib.sh: test_done () {
+    - 			esac
+    - 		fi
+    - 
+    --		if test -z "$debug" && test -n "$remove_trash"
+    -+		if test -n "$stress" && test -n "$invert_exit_code"
+    -+		then
+    -+			# We're about to move our "$TRASH_DIRECTORY"
+    -+			# to "$TRASH_DIRECTORY.stress-failed" if
+    -+			# --stress is combined with
+    -+			# --invert-exit-code.
+    -+			say "with --stress and --invert-exit-code we're not removing '$TRASH_DIRECTORY'"
+    -+		elif test -z "$debug" && test -n "$remove_trash"
+    - 		then
+    - 			test -d "$TRASH_DIRECTORY" ||
+    - 			error "Tests passed but trash directory already removed before test cleanup; aborting"
+    -@@ t/test-lib.sh: test_done () {
+    - 			} ||
+    - 			error "Tests passed but test cleanup failed; aborting"
+    - 		fi
+    -+
+    -+		if test -z "$skip_all" && test -n "$invert_exit_code"
+    -+		then
+    -+			say_color warn "# faking up non-zero exit with --invert-exit-code"
+    -+			GIT_EXIT_OK=t
+    -+			exit 1
+    -+		fi
+    -+
+    - 		test_at_end_hook_
+    - 
+    - 		GIT_EXIT_OK=t
+    -@@ t/test-lib.sh: test_done () {
+    - 			say "1..$test_count"
+    - 		fi
+    - 
+    -+		if test -n "$invert_exit_code"
+    -+		then
+    -+			_invert_exit_code_failure_end_blurb
+    -+			GIT_EXIT_OK=t
+    -+			exit 0
+    -+		fi
+    -+
+    - 		GIT_EXIT_OK=t
+    - 		exit 1 ;;
+    - 
+    ++for opt in '--quiet' '--cached'
+    ++do
+    ++	test_expect_success "submodule usage: status $opt" '
+    ++		git submodule $opt &&
+    ++		git submodule status $opt &&
+    ++		git submodule $opt status
+    ++	'
+    ++done
+    ++
+    + test_expect_success 'submodule deinit works on empty repository' '
+    + 	git submodule deinit --all
+    + '
+19:  75775bf4f6c !  2:  9671169e348 submodule--helper: fix trivial get_default_remote_submodule() leak
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    submodule--helper: fix trivial get_default_remote_submodule() leak
+    +    submodule tests: test for "add <repository> <abs-path>"
+     
+    -    Fix a leak in code added in 1012a5cbc3f (submodule--helper
+    -    run-update-procedure: learn --remote, 2022-03-04), we need to free()
+    -    the xstrdup()'d string. This gets e.g. t/t7419-submodule-set-branch.sh
+    -    closer to passing under SANITIZE=leak.
+    +    Add a missing test for ""add <repository> <path>" where "<path>" is an
+    +    absolute path. This tests code added in [1] and later turned into an
+    +    "else" branch in clone_submodule() in [2] that's never been tested.
+    +
+    +    This needs to be skipped on WINDOWS because all of $PWD, $(pwd) and
+    +    the "$(pwd -P)" we get via "$submodurl" would fail in CI with e.g.:
+    +
+    +            fatal: could not create directory 'D:/a/git/git/t/trash
+    +            directory.t7400-submodule-basic/.git/modules/D:/a/git/git/t/trash
+    +            directory.t7400-submodule-basic/add-abs'
+    +
+    +    I.e. we can't handle these sorts of paths in this context on that
+    +    platform.
+    +
+    +    I'm not sure where we run into the edges of "$PWD" behavior on
+    +    Windows (see [1] for a previous loose end on the topic), but for the
+    +    purposes of this test it's sufficient that we test this on other
+    +    platforms.
+    +
+    +    1. ee8838d1577 (submodule: rewrite `module_clone` shell function in C,
+    +       2015-09-08)
+    +    2. f8eaa0ba98b (submodule--helper, module_clone: always operate on
+    +       absolute paths, 2016-03-31)
+    +
+    +    1. https://lore.kernel.org/git/220630.86edz6c75c.gmgdl@evledraar.gmail.com/
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## builtin/submodule--helper.c ##
+    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+    - 		const char *branch = remote_submodule_branch(update_data->sm_path);
+    - 		char *remote_ref = xstrfmt("refs/remotes/%s/%s", remote_name, branch);
+    + ## t/t7400-submodule-basic.sh ##
+    +@@ t/t7400-submodule-basic.sh: test_expect_success 'submodule add' '
+    + 	test_must_be_empty untracked
+    + '
+      
+    -+		free(remote_name);
+    ++test_expect_success !WINDOWS 'submodule add (absolute path)' '
+    ++	test_when_finished "git reset --hard" &&
+    ++	git submodule add "$submodurl" "$submodurl/add-abs"
+    ++'
+     +
+    - 		if (!update_data->nofetch) {
+    - 			if (fetch_in_submodule(update_data->sm_path, update_data->depth,
+    - 					      0, NULL))
+    + test_expect_success 'setup parent and one repository' '
+    + 	test_create_repo parent &&
+    + 	test_commit -C parent one
+ 2:  00af775bd0d !  3:  7aa9c14251b test-lib: don't set GIT_EXIT_OK before calling test_atexit_handler
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib: don't set GIT_EXIT_OK before calling test_atexit_handler
+    +    submodule--helper: remove unused "name" helper
+     
+    -    Change the control flow in test_done so that we'll set GIT_EXIT_OK=t
+    -    after we call test_atexit_handler(). This seems to have been a mistake
+    -    in 900721e15c4 (test-lib: introduce 'test_atexit', 2019-03-13). It
+    -    doesn't make sense to allow our "atexit" handling to call "exit"
+    -    without us emitting the errors we'll emit without GIT_EXIT_OK=t being
+    -    set.
+    +    The "name" helper has not been used since e83e3333b57 (submodule: port
+    +    submodule subcommand 'summary' from shell to C, 2020-08-13).
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: test_atexit_handler () {
+    + ## builtin/submodule--helper.c ##
+    +@@ builtin/submodule--helper.c: static int module_status(int argc, const char **argv, const char *prefix)
+    + 	return 0;
+      }
+      
+    - test_done () {
+    --	GIT_EXIT_OK=t
+    +-static int module_name(int argc, const char **argv, const char *prefix)
+    +-{
+    +-	const struct submodule *sub;
+     -
+    - 	# Run the atexit commands _before_ the trash directory is
+    - 	# removed, so the commands can access pidfiles and socket files.
+    - 	test_atexit_handler
+    - 
+    -+	GIT_EXIT_OK=t
+    -+
+    - 	finalize_test_output
+    +-	if (argc != 2)
+    +-		usage(_("git submodule--helper name <path>"));
+    +-
+    +-	sub = submodule_from_path(the_repository, null_oid(), argv[1]);
+    +-
+    +-	if (!sub)
+    +-		die(_("no submodule mapping found in .gitmodules for path '%s'"),
+    +-		    argv[1]);
+    +-
+    +-	printf("%s\n", sub->name);
+    +-
+    +-	return 0;
+    +-}
+    +-
+    + struct module_cb {
+    + 	unsigned int mod_src;
+    + 	unsigned int mod_dst;
+    +@@ builtin/submodule--helper.c: struct cmd_struct {
+      
+    - 	if test -z "$HARNESS_ACTIVE"
+    + static struct cmd_struct commands[] = {
+    + 	{"list", module_list, 0},
+    +-	{"name", module_name, 0},
+    + 	{"clone", module_clone, SUPPORT_SUPER_PREFIX},
+    + 	{"add", module_add, 0},
+    + 	{"update", module_update, SUPPORT_SUPER_PREFIX},
+ 3:  419bc2c6a6e <  -:  ----------- test-lib: fix GIT_EXIT_OK logic errors, use BAIL_OUT
+ 5:  a26cb02db0a <  -:  ----------- t/README: reword the "GIT_TEST_PASSING_SANITIZE_LEAK" description
+ 6:  f1acf762899 <  -:  ----------- test-lib: add a SANITIZE=leak logging mode
+ 7:  0723e90df7b <  -:  ----------- t/Makefile: don't remove test-results in "clean-except-prove-cache"
+ 9:  20bd31615e4 !  4:  27df2efe718 test-lib: simplify by removing test_external
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib: simplify by removing test_external
+    +    submodule--helper: remove unused "list" helper
+     
+    -    Remove the "test_external" function added in [1]. This arguably makes
+    -    the output of t9700-perl-git.sh and friends worse. But as we'll argue
+    -    below the trade-off is worth it, since "chaining" to another TAP
+    -    emitter in test-lib.sh is more trouble than it's worth.
+    +    Remove the "submodule--helper list" sub-command, which hasn't been
+    +    used by git-submodule.sh since 2964d6e5e1e (submodule: port subcommand
+    +    'set-branch' from shell to C, 2020-06-02).
+     
+    -    The new output of t9700-perl-git.sh is now:
+    +    There was a test added in 2b56bb7a87a (submodule helper list: respect
+    +    correct path prefix, 2016-02-24) which relied on it, but the right
+    +    thing to do here is to delete that test as well.
+     
+    -            $ ./t9700-perl-git.sh
+    -            ok 1 - set up test repository
+    -            ok 2 - use t9700/test.pl to test Git.pm
+    -            # passed all 2 test(s)
+    -            1..2
+    -
+    -    Whereas before this change it would be:
+    -
+    -            $ ./t9700-perl-git.sh
+    -            ok 1 - set up test repository
+    -            # run 1: Perl API (perl /home/avar/g/git/t/t9700/test.pl)
+    -            ok 2 - use Git;
+    -            [... omitting tests 3..46 from t/t9700/test.pl ...]
+    -            ok 47 - unquote escape sequences
+    -            1..47
+    -            # test_external test Perl API was ok
+    -            # test_external_without_stderr test no stderr: Perl API was ok
+    -
+    -    At the time of its addition supporting "test_external" was easy, but
+    -    when test-lib.sh itself started to emit TAP in [2] we needed to make
+    -    everything surrounding the emission of the plan consider
+    -    "test_external". I added that support in [2] so that we could run:
+    -
+    -            prove ./t9700-perl-git.sh :: -v
+    -
+    -    But since then in [3] the door has been closed on combining
+    -    $HARNESS_ACTIVE and -v, we'll now just die:
+    -
+    -            $ prove ./t9700-perl-git.sh :: -v
+    -            Bailout called.  Further testing stopped:  verbose mode forbidden under TAP harness; try --verbose-log
+    -            FAILED--Further testing stopped: verbose mode forbidden under TAP harness; try --verbose-log
+    -
+    -    So the only use of this has been that *if* we had failure in one of
+    -    these tests we could e.g. in CI see which test failed based on the
+    -    test number. Now we'll need to look at the full verbose logs to get
+    -    that same information.
+    -
+    -    I think this trade-off is acceptable given the reduction in
+    -    complexity, and it brings these tests in line with other similar
+    -    tests, e.g. the reftable tests added in [4] will be condensed down to
+    -    just one test, which invokes the C helper:
+    -
+    -            $ ./t0032-reftable-unittest.sh
+    -            ok 1 - unittests
+    -            # passed all 1 test(s)
+    -            1..1
+    -
+    -    It would still be nice to have that ":: -v" form work again, it
+    -    never *really* worked, but even though we've had edge cases test
+    -    output screwing up the TAP it mostly worked between d998bd4ab67 and
+    -    [3], so we may have been overzealous in forbidding it outright.
+    -
+    -    I have local patches which I'm planning to submit sooner than later
+    -    that get us to that goal, and in a way that isn't buggy. In the
+    -    meantime getting rid of this special case makes hacking on this area
+    -    of test-lib.sh easier, as we'll do in subsequent commits.
+    -
+    -    The switch from "perl" to "$PERL_PATH" here is because "perl" is
+    -    defined as a shell function in the test suite, see a5bf824f3b4 (t:
+    -    prevent '-x' tracing from interfering with test helpers' stderr,
+    -    2018-02-25). On e.g. the OSX CI the "command perl"... will be part of
+    -    the emitted stderr.
+    -
+    -    1. fb32c410087 (t/test-lib.sh: add test_external and
+    -       test_external_without_stderr, 2008-06-19)
+    -    2. d998bd4ab67 (test-lib: Make the test_external_* functions
+    -       TAP-aware, 2010-06-24)
+    -    3. 614fe015212 (test-lib: bail out when "-v" used under
+    -       "prove", 2016-10-22)
+    -    4. ef8a6c62687 (reftable: utility functions, 2021-10-07)
+    +    That test was regression testing the "list" subcommand itself. We're
+    +    not getting anything useful from the "list | cut -f2" invocation that
+    +    we couldn't get from "foreach 'echo $sm_path'".
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## contrib/credential/netrc/t-git-credential-netrc.sh ##
+    -@@
+    - 		'set up test repository' \
+    - 		'git config --add gpg.program test.git-config-gpg'
+    - 
+    --	# The external test will outputs its own plan
+    --	test_external_has_tap=1
+    --
+    - 	export PERL5LIB="$GITPERLLIB"
+    --	test_external \
+    --		'git-credential-netrc' \
+    -+	test_expect_success 'git-credential-netrc' '
+    - 		perl "$GIT_BUILD_DIR"/contrib/credential/netrc/test.pl
+    -+	'
+    - 
+    - 	test_done
+    - )
+    -
+    - ## t/README ##
+    -@@ t/README: see test-lib-functions.sh for the full list and their options.
+    - 	    test_done
+    - 	fi
+    + ## builtin/submodule--helper.c ##
+    +@@ builtin/submodule--helper.c: static char *get_up_path(const char *path)
+    + 	return strbuf_detach(&sb, NULL);
+    + }
+      
+    -- - test_external [<prereq>] <message> <external> <script>
+    --
+    --   Execute a <script> with an <external> interpreter (like perl). This
+    --   was added for tests like t9700-perl-git.sh which do most of their
+    --   work in an external test script.
+    +-static int module_list(int argc, const char **argv, const char *prefix)
+    +-{
+    +-	int i;
+    +-	struct pathspec pathspec;
+    +-	struct module_list list = MODULE_LIST_INIT;
+     -
+    --	test_external \
+    --	    'GitwebCache::*FileCache*' \
+    --	    perl "$TEST_DIRECTORY"/t9503/test_cache_interface.pl
+    +-	struct option module_list_options[] = {
+    +-		OPT_STRING(0, "prefix", &prefix,
+    +-			   N_("path"),
+    +-			   N_("alternative anchor for relative paths")),
+    +-		OPT_END()
+    +-	};
+     -
+    --   If the test is outputting its own TAP you should set the
+    --   test_external_has_tap variable somewhere before calling the first
+    --   test_external* function. See t9700-perl-git.sh for an example.
+    +-	const char *const git_submodule_helper_usage[] = {
+    +-		N_("git submodule--helper list [--prefix=<path>] [<path>...]"),
+    +-		NULL
+    +-	};
+     -
+    --	# The external test will outputs its own plan
+    --	test_external_has_tap=1
+    +-	argc = parse_options(argc, argv, prefix, module_list_options,
+    +-			     git_submodule_helper_usage, 0);
+     -
+    -- - test_external_without_stderr [<prereq>] <message> <external> <script>
+    +-	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    +-		return 1;
+     -
+    --   Like test_external but fail if there's any output on stderr,
+    --   instead of checking the exit code.
+    +-	for (i = 0; i < list.nr; i++) {
+    +-		const struct cache_entry *ce = list.entries[i];
+     -
+    --	test_external_without_stderr \
+    --	    'Perl API' \
+    --	    perl "$TEST_DIRECTORY"/t9700/test.pl
+    --
+    -  - test_expect_code <exit-code> <command>
+    - 
+    -    Run a command and ensure that it exits with the given exit code.
+    -
+    - ## t/t0202-gettext-perl.sh ##
+    -@@ t/t0202-gettext-perl.sh: TEST_PASSES_SANITIZE_LEAK=true
+    - . "$TEST_DIRECTORY"/lib-perl.sh
+    - skip_all_if_no_Test_More
+    - 
+    --# The external test will outputs its own plan
+    --test_external_has_tap=1
+    --
+    --test_external_without_stderr \
+    --    'Perl Git::I18N API' \
+    --    perl "$TEST_DIRECTORY"/t0202/test.pl
+    -+test_expect_success 'run t0202/test.pl to test Git::I18N.pm' '
+    -+	"$PERL_PATH" "$TEST_DIRECTORY"/t0202/test.pl 2>stderr &&
+    -+	test_must_be_empty stderr
+    -+'
+    - 
+    - test_done
+    -
+    - ## t/t9700-perl-git.sh ##
+    -@@ t/t9700-perl-git.sh: test_expect_success \
+    -      git config --add test.pathmulti bar
+    -      '
+    - 
+    --# The external test will outputs its own plan
+    --test_external_has_tap=1
+    --
+    --test_external_without_stderr \
+    --    'Perl API' \
+    --    perl "$TEST_DIRECTORY"/t9700/test.pl
+    -+test_expect_success 'use t9700/test.pl to test Git.pm' '
+    -+	"$PERL_PATH" "$TEST_DIRECTORY"/t9700/test.pl 2>stderr &&
+    -+	test_must_be_empty stderr
+    -+'
+    - 
+    - test_done
+    -
+    - ## t/test-lib-functions.sh ##
+    -@@ t/test-lib-functions.sh: test_hook () {
+    - # - Explicitly using test_have_prereq.
+    - #
+    - # - Implicitly by specifying the prerequisite tag in the calls to
+    --#   test_expect_{success,failure} and test_external{,_without_stderr}.
+    -+#   test_expect_{success,failure}
+    - #
+    - # The single parameter is the prerequisite tag (a simple word, in all
+    - # capital letters by convention).
+    -@@ t/test-lib-functions.sh: test_expect_success () {
+    - 	test_finish_
+    - }
+    - 
+    --# test_external runs external test scripts that provide continuous
+    --# test output about their progress, and succeeds/fails on
+    --# zero/non-zero exit code.  It outputs the test output on stdout even
+    --# in non-verbose mode, and announces the external script with "# run
+    --# <n>: ..." before running it.  When providing relative paths, keep in
+    --# mind that all scripts run in "trash directory".
+    --# Usage: test_external description command arguments...
+    --# Example: test_external 'Perl API' perl ../path/to/test.pl
+    --test_external () {
+    --	test "$#" = 4 && { test_prereq=$1; shift; } || test_prereq=
+    --	test "$#" = 3 ||
+    --	BUG "not 3 or 4 parameters to test_external"
+    --	descr="$1"
+    --	shift
+    --	test_verify_prereq
+    --	export test_prereq
+    --	if ! test_skip "$descr" "$@"
+    --	then
+    --		# Announce the script to reduce confusion about the
+    --		# test output that follows.
+    --		say_color "" "# run $test_count: $descr ($*)"
+    --		# Export TEST_DIRECTORY, TRASH_DIRECTORY and GIT_TEST_LONG
+    --		# to be able to use them in script
+    --		export TEST_DIRECTORY TRASH_DIRECTORY GIT_TEST_LONG
+    --		# Run command; redirect its stderr to &4 as in
+    --		# test_run_, but keep its stdout on our stdout even in
+    --		# non-verbose mode.
+    --		"$@" 2>&4
+    --		if test "$?" = 0
+    --		then
+    --			if test $test_external_has_tap -eq 0; then
+    --				test_ok_ "$descr"
+    --			else
+    --				say_color "" "# test_external test $descr was ok"
+    --				test_success=$(($test_success + 1))
+    --			fi
+    +-		if (ce_stage(ce))
+    +-			printf("%06o %s U\t", ce->ce_mode,
+    +-			       oid_to_hex(null_oid()));
+     -		else
+    --			if test $test_external_has_tap -eq 0; then
+    --				test_failure_ "$descr" "$@"
+    --			else
+    --				say_color error "# test_external test $descr failed: $@"
+    --				test_failure=$(($test_failure + 1))
+    --			fi
+    --		fi
+    --	fi
+    --}
+    --
+    --# Like test_external, but in addition tests that the command generated
+    --# no output on stderr.
+    --test_external_without_stderr () {
+    --	# The temporary file has no (and must have no) security
+    --	# implications.
+    --	tmp=${TMPDIR:-/tmp}
+    --	stderr="$tmp/git-external-stderr.$$.tmp"
+    --	test_external "$@" 4> "$stderr"
+    --	test -f "$stderr" || error "Internal error: $stderr disappeared."
+    --	descr="no stderr: $1"
+    --	shift
+    --	say >&3 "# expecting no stderr from previous command"
+    --	if test ! -s "$stderr"
+    --	then
+    --		rm "$stderr"
+    +-			printf("%06o %s %d\t", ce->ce_mode,
+    +-			       oid_to_hex(&ce->oid), ce_stage(ce));
+     -
+    --		if test $test_external_has_tap -eq 0; then
+    --			test_ok_ "$descr"
+    --		else
+    --			say_color "" "# test_external_without_stderr test $descr was ok"
+    --			test_success=$(($test_success + 1))
+    --		fi
+    --	else
+    --		if test "$verbose" = t
+    --		then
+    --			output=$(echo; echo "# Stderr is:"; cat "$stderr")
+    --		else
+    --			output=
+    --		fi
+    --		# rm first in case test_failure exits.
+    --		rm "$stderr"
+    --		if test $test_external_has_tap -eq 0; then
+    --			test_failure_ "$descr" "$@" "$output"
+    --		else
+    --			say_color error "# test_external_without_stderr test $descr failed: $@: $output"
+    --			test_failure=$(($test_failure + 1))
+    --		fi
+    --	fi
+    +-		fprintf(stdout, "%s\n", ce->name);
+    +-	}
+    +-	return 0;
+     -}
+     -
+    - # debugging-friendly alternatives to "test [-f|-d|-e]"
+    - # The commands test the existence or non-existence of $1
+    - test_path_is_file () {
+    -
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: test_done () {
+    - 	fi
+    - 	case "$test_failure" in
+    - 	0)
+    --		if test $test_external_has_tap -eq 0
+    -+		if test $test_remaining -gt 0
+    - 		then
+    --			if test $test_remaining -gt 0
+    --			then
+    --				say_color pass "# passed all $msg"
+    --			fi
+    --
+    --			# Maybe print SKIP message
+    --			test -z "$skip_all" || skip_all="# SKIP $skip_all"
+    --			case "$test_count" in
+    --			0)
+    --				say "1..$test_count${skip_all:+ $skip_all}"
+    --				;;
+    --			*)
+    --				test -z "$skip_all" ||
+    --				say_color warn "$skip_all"
+    --				say "1..$test_count"
+    --				;;
+    --			esac
+    -+			say_color pass "# passed all $msg"
+    - 		fi
+    + static void for_each_listed_submodule(const struct module_list *list,
+    + 				      each_submodule_fn fn, void *cb_data)
+    + {
+    +@@ builtin/submodule--helper.c: struct cmd_struct {
+    + };
+      
+    -+		# Maybe print SKIP message
+    -+		test -z "$skip_all" || skip_all="# SKIP $skip_all"
+    -+		case "$test_count" in
+    -+		0)
+    -+			say "1..$test_count${skip_all:+ $skip_all}"
+    -+			;;
+    -+		*)
+    -+			test -z "$skip_all" ||
+    -+			say_color warn "$skip_all"
+    -+			say "1..$test_count"
+    -+			;;
+    -+		esac
+    -+
+    - 		if test -n "$stress" && test -n "$invert_exit_code"
+    - 		then
+    - 			# We're about to move our "$TRASH_DIRECTORY"
+    -@@ t/test-lib.sh: test_done () {
+    - 		exit 0 ;;
+    + static struct cmd_struct commands[] = {
+    +-	{"list", module_list, 0},
+    + 	{"clone", module_clone, SUPPORT_SUPER_PREFIX},
+    + 	{"add", module_add, 0},
+    + 	{"update", module_update, SUPPORT_SUPER_PREFIX},
+    +
+    + ## t/t7400-submodule-basic.sh ##
+    +@@ t/t7400-submodule-basic.sh: test_expect_success 'submodule add clone shallow submodule' '
+    + 	)
+    + '
+      
+    - 	*)
+    --		if test $test_external_has_tap -eq 0
+    --		then
+    --			say_color error "# failed $test_failure among $msg"
+    --			say "1..$test_count"
+    --		fi
+    -+		say_color error "# failed $test_failure among $msg"
+    -+		say "1..$test_count"
+    - 
+    - 		if test -n "$invert_exit_code"
+    - 		then
+    +-test_expect_success 'submodule helper list is not confused by common prefixes' '
+    +-	mkdir -p dir1/b &&
+    +-	(
+    +-		cd dir1/b &&
+    +-		git init &&
+    +-		echo hi >testfile2 &&
+    +-		git add . &&
+    +-		git commit -m "test1"
+    +-	) &&
+    +-	mkdir -p dir2/b &&
+    +-	(
+    +-		cd dir2/b &&
+    +-		git init &&
+    +-		echo hello >testfile1 &&
+    +-		git add .  &&
+    +-		git commit -m "test2"
+    +-	) &&
+    +-	git submodule add /dir1/b dir1/b &&
+    +-	git submodule add /dir2/b dir2/b &&
+    +-	git commit -m "first submodule commit" &&
+    +-	git submodule--helper list dir1/b | cut -f 2 >actual &&
+    +-	echo "dir1/b" >expect &&
+    +-	test_cmp expect actual
+    +-'
+    +-
+    + test_expect_success 'setup superproject with submodules' '
+    + 	git init sub1 &&
+    + 	test_commit -C sub1 test &&
+38:  7551af195ad !  5:  9fe8deb165a submodule--helper: free rest of "displaypath" in "struct update_data"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    submodule--helper: free rest of "displaypath" in "struct update_data"
+    +    test-tool submodule-config: remove unused "--url" handling
+     
+    -    Fix a leak in code added in c51f8f94e5b (submodule--helper: run update
+    -    procedures from C, 2021-08-24), we clobber the "displaypath" member of
+    -    the passed-in "struct update_data" both so that die() messages in this
+    -    update_submodule() function itself can use it, and for the
+    -    run_update_procedure() called within this function.
+    +    No test has used this "--url" parameter since the test code that made
+    +    use of it was removed in 32bc548329d (submodule-config: remove support
+    +    for overlaying repository config, 2017-08-03).
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## builtin/submodule--helper.c ##
+    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data,
+    - 			    int *must_die_on_failure)
+    + ## t/helper/test-submodule-config.c ##
+    +@@ t/helper/test-submodule-config.c: int cmd__submodule_config(int argc, const char **argv)
+      {
+    - 	int ret = 1;
+    -+	char *to_free, *restore = update_data->displaypath;
+    + 	const char **arg = argv;
+    + 	int my_argc = argc;
+    +-	int output_url = 0;
+    + 	int lookup_name = 0;
+      
+    - 	ensure_core_worktree(update_data->sm_path);
+    + 	arg++;
+    + 	my_argc--;
+    + 	while (arg[0] && starts_with(arg[0], "--")) {
+    +-		if (!strcmp(arg[0], "--url"))
+    +-			output_url = 1;
+    + 		if (!strcmp(arg[0], "--name"))
+    + 			lookup_name = 1;
+    + 		arg++;
+    +@@ t/helper/test-submodule-config.c: int cmd__submodule_config(int argc, const char **argv)
+    + 		if (!submodule)
+    + 			die_usage(argc, argv, "Submodule not found.");
+      
+    --	update_data->displaypath = get_submodule_displaypath(
+    -+	update_data->displaypath = to_free = get_submodule_displaypath(
+    - 		update_data->sm_path, update_data->prefix);
+    - 
+    - 	determine_submodule_update_strategy(the_repository, update_data->just_cloned,
+    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data,
+    - 
+    - 	ret = 0;
+    - cleanup:
+    -+	free(to_free);
+    -+	update_data->displaypath = restore;
+    -+
+    - 	return ret;
+    - }
+    +-		if (output_url)
+    +-			printf("Submodule url: '%s' for path '%s'\n",
+    +-					submodule->url, submodule->path);
+    +-		else
+    +-			printf("Submodule name: '%s' for path '%s'\n",
+    +-					submodule->name, submodule->path);
+    ++		printf("Submodule name: '%s' for path '%s'\n", submodule->name,
+    ++		       submodule->path);
+      
+    + 		arg += 2;
+    + 	}
+ 8:  987d9d0e98c !  6:  8e4d2b09d56 tests: move copy/pasted PERL + Test::More checks to a lib-perl.sh
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    tests: move copy/pasted PERL + Test::More checks to a lib-perl.sh
+    +    submodule--helper: move "is-active" to a test-tool
+     
+    -    Since the original "perl -MTest::More" prerequisite check was added in
+    -    [1] it's been copy/pasted in [2], [3] and [4]. As we'll be changing
+    -    these codepaths in a subsequent commit let's consolidate these.
+    +    Create a new "test-tool submodule" and move the "is-active" subcommand
+    +    over to it. It was added in 5c2bd8b77ae (submodule--helper: add
+    +    is-active subcommand, 2017-03-16), since
+    +    a452128a36c (submodule--helper: introduce add-config subcommand,
+    +    2021-08-06) it hasn't been used by git-submodule.sh.
+     
+    -    While we're at it let's move these to a lazy prereq, and make them
+    -    conform to our usual coding style (e.g. "\nthen", not "; then").
+    -
+    -    1. e46f9c8161a (t9700: skip when Test::More is not available,
+    -       2008-06-29)
+    -    2. 5e9637c6297 (i18n: add infrastructure for translating Git with
+    -       gettext, 2011-11-18)
+    -    3. 8d314d7afec (send-email: reduce dependencies impact on
+    -       parse_address_line, 2015-07-07)
+    -    4. f07eeed123b (git-credential-netrc: adapt to test framework for git,
+    -       2018-05-12)
+    +    Since we're creating a command dispatch similar to test-tool.c itself
+    +    let's split out the "struct test_cmd" into a new test-tool-utils.h,
+    +    which both this new code and test-tool.c itself can use.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## contrib/credential/netrc/t-git-credential-netrc.sh ##
+    -@@
+    - 	cd ../../../t
+    - 	test_description='git-credential-netrc'
+    - 	. ./test-lib.sh
+    -+	. "$TEST_DIRECTORY"/lib-perl.sh
+    - 
+    --	if ! test_have_prereq PERL; then
+    --		skip_all='skipping perl interface tests, perl not available'
+    --		test_done
+    --	fi
+    --
+    --	perl -MTest::More -e 0 2>/dev/null || {
+    --		skip_all="Perl Test::More unavailable, skipping test"
+    --		test_done
+    --	}
+    -+	skip_all_if_no_Test_More
+    - 
+    - 	# set up test repository
+    + ## Makefile ##
+    +@@ Makefile: TEST_BUILTINS_OBJS += test-strcmp-offset.o
+    + TEST_BUILTINS_OBJS += test-string-list.o
+    + TEST_BUILTINS_OBJS += test-submodule-config.o
+    + TEST_BUILTINS_OBJS += test-submodule-nested-repo-config.o
+    ++TEST_BUILTINS_OBJS += test-submodule.o
+    + TEST_BUILTINS_OBJS += test-subprocess.o
+    + TEST_BUILTINS_OBJS += test-trace2.o
+    + TEST_BUILTINS_OBJS += test-urlmatch-normalization.o
+    +
+    + ## builtin/submodule--helper.c ##
+    +@@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+    + 	return 0;
+    + }
+      
+    +-static int is_active(int argc, const char **argv, const char *prefix)
+    +-{
+    +-	if (argc != 2)
+    +-		die("submodule--helper is-active takes exactly 1 argument");
+    +-
+    +-	return !is_submodule_active(the_repository, argv[1]);
+    +-}
+    +-
+    + /*
+    +  * Exit non-zero if any of the submodule names given on the command line is
+    +  * invalid. If no names are given, filter stdin to print only valid names
+    +@@ builtin/submodule--helper.c: static struct cmd_struct commands[] = {
+    + 	{"summary", module_summary, 0},
+    + 	{"push-check", push_check, 0},
+    + 	{"absorbgitdirs", absorb_git_dirs, SUPPORT_SUPER_PREFIX},
+    +-	{"is-active", is_active, 0},
+    + 	{"check-name", check_name, 0},
+    + 	{"config", module_config, 0},
+    + 	{"set-url", module_set_url, 0},
+     
+    - ## t/lib-perl.sh (new) ##
+    + ## t/helper/test-submodule.c (new) ##
+     @@
+    -+# Copyright (c) 2022 Ævar Arnfjörð Bjarmason
+    ++#include "test-tool.h"
+    ++#include "test-tool-utils.h"
+    ++#include "cache.h"
+    ++#include "parse-options.h"
+    ++#include "submodule.h"
+    ++
+    ++#define TEST_TOOL_IS_ACTIVE_USAGE \
+    ++	"test-tool submodule is-active <name>"
+    ++static const char *submodule_is_active_usage[] = {
+    ++	TEST_TOOL_IS_ACTIVE_USAGE,
+    ++	NULL
+    ++};
+    ++
+    ++static const char *submodule_usage[] = {
+    ++	TEST_TOOL_IS_ACTIVE_USAGE,
+    ++	NULL
+    ++};
+    ++
+    ++static int cmd__submodule_is_active(int argc, const char **argv)
+    ++{
+    ++	struct option options[] = {
+    ++		OPT_END()
+    ++	};
+    ++	argc = parse_options(argc, argv, "test-tools", options,
+    ++			     submodule_is_active_usage, 0);
+    ++	if (argc != 1)
+    ++		usage_with_options(submodule_is_active_usage, options);
+     +
+    -+test_lazy_prereq PERL_TEST_MORE '
+    -+	perl -MTest::More -e 0
+    -+'
+    ++	setup_git_directory();
+     +
+    -+skip_all_if_no_Test_More () {
+    -+	if ! test_have_prereq PERL
+    -+	then
+    -+		skip_all='skipping perl interface tests, perl not available'
+    -+		test_done
+    -+	fi
+    ++	return !is_submodule_active(the_repository, argv[0]);
+    ++}
+    ++
+    ++static struct test_cmd cmds[] = {
+    ++	{ "is-active", cmd__submodule_is_active },
+    ++};
+    ++
+    ++int cmd__submodule(int argc, const char **argv)
+    ++{
+    ++	struct option options[] = {
+    ++		OPT_END()
+    ++	};
+    ++	size_t i;
+    ++
+    ++	argc = parse_options(argc, argv, "test-tools", options, submodule_usage,
+    ++			     PARSE_OPT_STOP_AT_NON_OPTION);
+    ++	if (argc < 1)
+    ++		usage_with_options(submodule_usage, options);
+    ++
+    ++	for (i = 0; i < ARRAY_SIZE(cmds); i++)
+    ++		if (!strcmp(cmds[i].name, argv[0]))
+    ++			return cmds[i].fn(argc, argv);
+    ++
+    ++	usage_msg_optf("unknown subcommand '%s'", submodule_usage, options,
+    ++		       argv[0]);
+     +
+    -+	if ! test_have_prereq PERL_TEST_MORE
+    -+	then
+    -+		skip_all="Perl Test::More unavailable, skipping test"
+    -+		test_done
+    -+	fi
+    ++	return 0;
+     +}
+     
+    - ## t/t0202-gettext-perl.sh ##
+    -@@ t/t0202-gettext-perl.sh: test_description='Perl gettext interface (Git::I18N)'
+    + ## t/helper/test-tool-utils.h (new) ##
+    +@@
+    ++#ifndef TEST_TOOL_UTILS_H
+    ++#define TEST_TOOL_UTILS_H
+    ++
+    ++struct test_cmd {
+    ++	const char *name;
+    ++	int (*fn)(int argc, const char **argv);
+    ++};
+    ++
+    ++#endif
+    +
+    + ## t/helper/test-tool.c ##
+    +@@
+    + #include "git-compat-util.h"
+    + #include "test-tool.h"
+    ++#include "test-tool-utils.h"
+    + #include "trace2.h"
+    + #include "parse-options.h"
+      
+    - TEST_PASSES_SANITIZE_LEAK=true
+    - . ./lib-gettext.sh
+    --
+    --if ! test_have_prereq PERL; then
+    --	skip_all='skipping perl interface tests, perl not available'
+    --	test_done
+    --fi
+    --
+    --perl -MTest::More -e 0 2>/dev/null || {
+    --	skip_all="Perl Test::More unavailable, skipping test"
+    --	test_done
+    --}
+    -+. "$TEST_DIRECTORY"/lib-perl.sh
+    -+skip_all_if_no_Test_More
+    +@@ t/helper/test-tool.c: static const char * const test_tool_usage[] = {
+    + 	NULL
+    + };
+      
+    - # The external test will outputs its own plan
+    - test_external_has_tap=1
+    +-struct test_cmd {
+    +-	const char *name;
+    +-	int (*fn)(int argc, const char **argv);
+    +-};
+    +-
+    + static struct test_cmd cmds[] = {
+    + 	{ "advise", cmd__advise_if_enabled },
+    + 	{ "bitmap", cmd__bitmap },
+    +@@ t/helper/test-tool.c: static struct test_cmd cmds[] = {
+    + 	{ "simple-ipc", cmd__simple_ipc },
+    + 	{ "strcmp-offset", cmd__strcmp_offset },
+    + 	{ "string-list", cmd__string_list },
+    ++	{ "submodule", cmd__submodule },
+    + 	{ "submodule-config", cmd__submodule_config },
+    + 	{ "submodule-nested-repo-config", cmd__submodule_nested_repo_config },
+    + 	{ "subprocess", cmd__subprocess },
+    +
+    + ## t/helper/test-tool.h ##
+    +@@ t/helper/test-tool.h: int cmd__sigchain(int argc, const char **argv);
+    + int cmd__simple_ipc(int argc, const char **argv);
+    + int cmd__strcmp_offset(int argc, const char **argv);
+    + int cmd__string_list(int argc, const char **argv);
+    ++int cmd__submodule(int argc, const char **argv);
+    + int cmd__submodule_config(int argc, const char **argv);
+    + int cmd__submodule_nested_repo_config(int argc, const char **argv);
+    + int cmd__subprocess(int argc, const char **argv);
+     
+    - ## t/t9700-perl-git.sh ##
+    + ## t/t7413-submodule-is-active.sh ##
+     @@
+    + #!/bin/sh
+      
+    - test_description='perl interface (Git.pm)'
+    - . ./test-lib.sh
+    -+. "$TEST_DIRECTORY"/lib-perl.sh
+    +-test_description='Test submodule--helper is-active
+    ++test_description='Test with test-tool submodule is-active
+      
+    --if ! test_have_prereq PERL; then
+    --	skip_all='skipping perl interface tests, perl not available'
+    --	test_done
+    --fi
+    --
+    --perl -MTest::More -e 0 2>/dev/null || {
+    --	skip_all="Perl Test::More unavailable, skipping test"
+    --	test_done
+    --}
+    -+skip_all_if_no_Test_More
+    +-This test verifies that `git submodue--helper is-active` correctly identifies
+    ++This test verifies that `test-tool submodule is-active` correctly identifies
+    + submodules which are "active" and interesting to the user.
+    + '
+    + 
+    +@@ t/t7413-submodule-is-active.sh: test_expect_success 'setup' '
+    + '
+    + 
+    + test_expect_success 'is-active works with urls' '
+    +-	git -C super submodule--helper is-active sub1 &&
+    +-	git -C super submodule--helper is-active sub2 &&
+    ++	test-tool -C super submodule is-active sub1 &&
+    ++	test-tool -C super submodule is-active sub2 &&
+    + 
+    + 	git -C super config --unset submodule.sub1.URL &&
+    +-	test_must_fail git -C super submodule--helper is-active sub1 &&
+    ++	test_must_fail test-tool -C super submodule is-active sub1 &&
+    + 	git -C super config submodule.sub1.URL ../sub &&
+    +-	git -C super submodule--helper is-active sub1
+    ++	test-tool -C super submodule is-active sub1
+    + '
+    + 
+    + test_expect_success 'is-active works with submodule.<name>.active config' '
+    +@@ t/t7413-submodule-is-active.sh: test_expect_success 'is-active works with submodule.<name>.active config' '
+    + 	test_when_finished "git -C super config submodule.sub1.URL ../sub" &&
+    + 
+    + 	git -C super config --bool submodule.sub1.active "false" &&
+    +-	test_must_fail git -C super submodule--helper is-active sub1 &&
+    ++	test_must_fail test-tool -C super submodule is-active sub1 &&
+    + 
+    + 	git -C super config --bool submodule.sub1.active "true" &&
+    + 	git -C super config --unset submodule.sub1.URL &&
+    +-	git -C super submodule--helper is-active sub1
+    ++	test-tool -C super submodule is-active sub1
+    + '
+    + 
+    + test_expect_success 'is-active works with basic submodule.active config' '
+    +@@ t/t7413-submodule-is-active.sh: test_expect_success 'is-active works with basic submodule.active config' '
+    + 	git -C super config --add submodule.active "." &&
+    + 	git -C super config --unset submodule.sub1.URL &&
+    + 
+    +-	git -C super submodule--helper is-active sub1 &&
+    +-	git -C super submodule--helper is-active sub2
+    ++	test-tool -C super submodule is-active sub1 &&
+    ++	test-tool -C super submodule is-active sub2
+    + '
+    + 
+    + test_expect_success 'is-active correctly works with paths that are not submodules' '
+    + 	test_when_finished "git -C super config --unset-all submodule.active" &&
+    + 
+    +-	test_must_fail git -C super submodule--helper is-active not-a-submodule &&
+    ++	test_must_fail test-tool -C super submodule is-active not-a-submodule &&
+    + 
+    + 	git -C super config --add submodule.active "." &&
+    +-	test_must_fail git -C super submodule--helper is-active not-a-submodule
+    ++	test_must_fail test-tool -C super submodule is-active not-a-submodule
+    + '
+    + 
+    + test_expect_success 'is-active works with exclusions in submodule.active config' '
+    +@@ t/t7413-submodule-is-active.sh: test_expect_success 'is-active works with exclusions in submodule.active config'
+    + 	git -C super config --add submodule.active "." &&
+    + 	git -C super config --add submodule.active ":(exclude)sub1" &&
+    + 
+    +-	test_must_fail git -C super submodule--helper is-active sub1 &&
+    +-	git -C super submodule--helper is-active sub2
+    ++	test_must_fail test-tool -C super submodule is-active sub1 &&
+    ++	test-tool -C super submodule is-active sub2
+    + '
+    + 
+    + test_expect_success 'is-active with submodule.active and submodule.<name>.active' '
+    +@@ t/t7413-submodule-is-active.sh: test_expect_success 'is-active with submodule.active and submodule.<name>.active
+    + 	git -C super config --bool submodule.sub1.active "false" &&
+    + 	git -C super config --bool submodule.sub2.active "true" &&
+      
+    - # set up test repository
+    +-	test_must_fail git -C super submodule--helper is-active sub1 &&
+    +-	git -C super submodule--helper is-active sub2
+    ++	test_must_fail test-tool -C super submodule is-active sub1 &&
+    ++	test-tool -C super submodule is-active sub2
+    + '
+      
+    + test_expect_success 'is-active, submodule.active and submodule add' '
+10:  78a47d2b348 <  -:  ----------- test-lib: add a GIT_TEST_PASSING_SANITIZE_LEAK=check mode
+24:  6ab5aabae35 !  7:  a2f3d812815 submodule--helper: add and use *_release() functions
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    submodule--helper: add and use *_release() functions
+    +    submodule--helper: move "check-name" to a test-tool
+     
+    -    Add release functions for "struct module_list", "struct
+    -    submodule_update_clone" and "struct update_data".
+    +    Move the "check-name" helper to a test-tool, since
+    +    a6226fd772b (submodule--helper: convert the bulk of cmd_add() to C,
+    +    2021-08-10) it has only been used by this test, not git-submodule.sh.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/submodule--helper.c ##
+    -@@ builtin/submodule--helper.c: struct module_list {
+    - };
+    - #define MODULE_LIST_INIT { 0 }
+    - 
+    -+static void module_list_release(struct module_list *ml)
+    -+{
+    -+	free(ml->entries);
+    -+}
+    -+
+    - static int module_list_compute(int argc, const char **argv,
+    - 			       const char *prefix,
+    - 			       struct pathspec *pathspec,
+    -@@ builtin/submodule--helper.c: static void module_list_active(struct module_list *list)
+    - 		active_modules.entries[active_modules.nr++] = ce;
+    - 	}
+    - 
+    --	free(list->entries);
+    -+	module_list_release(list);
+    - 	*list = active_modules;
+    - }
+    - 
+    -@@ builtin/submodule--helper.c: static int module_list(int argc, const char **argv, const char *prefix)
+    - 	}
+    - 	ret = 0;
+    - cleanup:
+    -+	module_list_release(&list);
+    - 	clear_pathspec(&pathspec);
+    - 	return ret;
+    - }
+    -@@ builtin/submodule--helper.c: static int module_foreach(int argc, const char **argv, const char *prefix)
+    - 
+    - 	ret = 0;
+    - cleanup:
+    -+	module_list_release(&list);
+    - 	clear_pathspec(&pathspec);
+    - 	return ret;
+    - }
+    -@@ builtin/submodule--helper.c: static int module_init(int argc, const char **argv, const char *prefix)
+    - 
+    - 	ret = 0;
+    - cleanup:
+    -+	module_list_release(&list);
+    - 	clear_pathspec(&pathspec);
+    - 	return ret;
+    - }
+    -@@ builtin/submodule--helper.c: static int module_status(int argc, const char **argv, const char *prefix)
+    - 
+    - 	ret = 0;
+    - cleanup:
+    -+	module_list_release(&list);
+    - 	clear_pathspec(&pathspec);
+    - 	return ret;
+    +@@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+    + 	return 0;
+      }
+    -@@ builtin/submodule--helper.c: static int module_sync(int argc, const char **argv, const char *prefix)
+      
+    - 	ret = 0;
+    - cleanup:
+    -+	module_list_release(&list);
+    - 	clear_pathspec(&pathspec);
+    - 	return ret;
+    - }
+    -@@ builtin/submodule--helper.c: static int module_deinit(int argc, const char **argv, const char *prefix)
+    +-/*
+    +- * Exit non-zero if any of the submodule names given on the command line is
+    +- * invalid. If no names are given, filter stdin to print only valid names
+    +- * (which is primarily intended for testing).
+    +- */
+    +-static int check_name(int argc, const char **argv, const char *prefix)
+    +-{
+    +-	if (argc > 1) {
+    +-		while (*++argv) {
+    +-			if (check_submodule_name(*argv) < 0)
+    +-				return 1;
+    +-		}
+    +-	} else {
+    +-		struct strbuf buf = STRBUF_INIT;
+    +-		while (strbuf_getline(&buf, stdin) != EOF) {
+    +-			if (!check_submodule_name(buf.buf))
+    +-				printf("%s\n", buf.buf);
+    +-		}
+    +-		strbuf_release(&buf);
+    +-	}
+    +-	return 0;
+    +-}
+    +-
+    + static int module_config(int argc, const char **argv, const char *prefix)
+    + {
+    + 	enum {
+    +@@ builtin/submodule--helper.c: static struct cmd_struct commands[] = {
+    + 	{"summary", module_summary, 0},
+    + 	{"push-check", push_check, 0},
+    + 	{"absorbgitdirs", absorb_git_dirs, SUPPORT_SUPER_PREFIX},
+    +-	{"check-name", check_name, 0},
+    + 	{"config", module_config, 0},
+    + 	{"set-url", module_set_url, 0},
+    + 	{"set-branch", module_set_branch, 0},
+    +
+    + ## t/helper/test-submodule.c ##
+    +@@
+    + #include "test-tool-utils.h"
+    + #include "cache.h"
+    + #include "parse-options.h"
+    ++#include "submodule-config.h"
+    + #include "submodule.h"
+    + 
+    ++#define TEST_TOOL_CHECK_NAME_USAGE \
+    ++	"test-tool submodule check-name <name>"
+    ++static const char *submodule_check_name_usage[] = {
+    ++	TEST_TOOL_CHECK_NAME_USAGE,
+    ++	NULL
+    ++};
+    ++
+    + #define TEST_TOOL_IS_ACTIVE_USAGE \
+    + 	"test-tool submodule is-active <name>"
+    + static const char *submodule_is_active_usage[] = {
+    +@@ t/helper/test-submodule.c: static const char *submodule_is_active_usage[] = {
+    + };
+      
+    - 	ret = 0;
+    - cleanup:
+    -+	module_list_release(&list);
+    - 	clear_pathspec(&pathspec);
+    - 	return ret;
+    - }
+    -@@ builtin/submodule--helper.c: struct submodule_update_clone {
+    + static const char *submodule_usage[] = {
+    ++	TEST_TOOL_CHECK_NAME_USAGE,
+    + 	TEST_TOOL_IS_ACTIVE_USAGE,
+    + 	NULL
+      };
+    - #define SUBMODULE_UPDATE_CLONE_INIT { 0 }
+      
+    -+static void submodule_update_clone_release(struct submodule_update_clone *suc)
+    ++/*
+    ++ * Exit non-zero if any of the submodule names given on the command line is
+    ++ * invalid. If no names are given, filter stdin to print only valid names
+    ++ * (which is primarily intended for testing).
+    ++ */
+    ++static int check_name(int argc, const char **argv)
+     +{
+    -+	free(suc->update_clone);
+    -+	free(suc->failed_clones);
+    ++	if (argc > 1) {
+    ++		while (*++argv) {
+    ++			if (check_submodule_name(*argv) < 0)
+    ++				return 1;
+    ++		}
+    ++	} else {
+    ++		struct strbuf buf = STRBUF_INIT;
+    ++		while (strbuf_getline(&buf, stdin) != EOF) {
+    ++			if (!check_submodule_name(buf.buf))
+    ++				printf("%s\n", buf.buf);
+    ++		}
+    ++		strbuf_release(&buf);
+    ++	}
+    ++	return 0;
+     +}
+     +
+    - struct update_data {
+    - 	const char *prefix;
+    - 	const char *displaypath;
+    -@@ builtin/submodule--helper.c: struct update_data {
+    - 	.max_jobs = 1, \
+    - }
+    - 
+    -+static void update_data_release(struct update_data *ud)
+    ++static int cmd__submodule_check_name(int argc, const char **argv)
+     +{
+    -+	module_list_release(&ud->list);
+    ++	struct option options[] = {
+    ++		OPT_END()
+    ++	};
+    ++	argc = parse_options(argc, argv, "test-tools", options,
+    ++			     submodule_check_name_usage, 0);
+    ++	if (argc)
+    ++		usage_with_options(submodule_check_name_usage, options);
+    ++
+    ++	return check_name(argc, argv);
+     +}
+     +
+    - static void next_submodule_warn_missing(struct submodule_update_clone *suc,
+    - 		struct strbuf *out, const char *displaypath)
+    + static int cmd__submodule_is_active(int argc, const char **argv)
+      {
+    -@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
+    - 	}
+    - 
+    - cleanup:
+    -+	submodule_update_clone_release(&suc);
+    - 	string_list_clear(&update_data->references, 0);
+    - 	return res;
+    + 	struct option options[] = {
+    +@@ t/helper/test-submodule.c: static int cmd__submodule_is_active(int argc, const char **argv)
+      }
+    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
+    - 
+    - 		if (module_list_compute(argc, argv, opt.prefix,
+    - 					&pathspec2, &list) < 0) {
+    -+			module_list_release(&list);
+    - 			ret = 1;
+    - 			goto cleanup;
+    - 		}
+    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
+    - 			info.flags |= OPT_QUIET;
+      
+    - 		for_each_listed_submodule(&list, init_submodule_cb, &info);
+    -+		module_list_release(&list);
+    - 	}
+    - 
+    - 	ret = update_submodules(&opt);
+    - cleanup:
+    -+	update_data_release(&opt);
+    - 	list_objects_filter_release(&filter_options);
+    - 	clear_pathspec(&pathspec);
+    - 	clear_pathspec(&pathspec2);
+    -@@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+    - 	ret = 0;
+    - cleanup:
+    - 	clear_pathspec(&pathspec);
+    -+	module_list_release(&list);
+    - 	return ret;
+    - }
+    + static struct test_cmd cmds[] = {
+    ++	{ "check-name", cmd__submodule_check_name },
+    + 	{ "is-active", cmd__submodule_is_active },
+    + };
+      
+     
+    - ## t/t6134-pathspec-in-submodule.sh ##
+    -@@
+    - 
+    - test_description='test case exclude pathspec'
+    + ## t/t7450-bad-git-dotfiles.sh ##
+    +@@ t/t7450-bad-git-dotfiles.sh: test_expect_success 'check names' '
+    + 	valid/with/paths
+    + 	EOF
+      
+    -+TEST_PASSES_SANITIZE_LEAK=true
+    - . ./test-lib.sh
+    +-	git submodule--helper check-name >actual <<-\EOF &&
+    ++	test-tool submodule check-name >actual <<-\EOF &&
+    + 	valid
+    + 	valid/with/paths
+      
+    - test_expect_success 'setup a submodule' '
+11:  8cc6ab390db !  8:  8188657cdfa test-lib: have the "check" mode for SANITIZE=leak consider leak logs
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    test-lib: have the "check" mode for SANITIZE=leak consider leak logs
+    +    submodule--helper: move "resolve-relative-url-test" to a test-tool
+     
+    -    As noted in previous on-list discussions[1] we have various tests that
+    -    will falsely report being leak-free because we're missing the relevant
+    -    exit code from LSAN as summarized below.
+    -
+    -    We should fix those issues, but in the meantime and as an additional
+    -    sanity check we can and should consider our own ASAN logs before
+    -    reporting that a test is leak-free.
+    -
+    -    Before this compiling with SANITIZE=leak and running:
+    -
+    -        ./t6407-merge-binary.sh
+    -
+    -    Will exit successfully, now we'll get an error and an informative
+    -    message on:
+    -
+    -        GIT_TEST_SANITIZE_LEAK_LOG=true ./t6407-merge-binary.sh
+    -
+    -    Even better, as noted in the updated t/README we'll now error out when
+    -    combined with the "check" mode:
+    -
+    -        GIT_TEST_PASSING_SANITIZE_LEAK=check \
+    -        GIT_TEST_SANITIZE_LEAK_LOG=true \
+    -            ./t4058-diff-duplicates.sh
+    -
+    -    Why do we miss these leaks? Because:
+    -
+    -     * We have leaks inside "test_expect_failure" blocks, which by design
+    -       will not distinguish a "normal" failure from an abort() or
+    -       segfault. See [1] for a discussion of it shortcomings.
+    -
+    -     * We have "git" invocations outside of "test_expect_success",
+    -       e.g. setup code in the main body of the test, or in test helper
+    -       functions that don't use &&-chaining.
+    -
+    -     * Our tests will otherwise catch segfaults and abort(), but if we
+    -       invoke a command that invokes another command it needs to ferry the
+    -       exit code up to us.
+    -
+    -       Notably a command that e.g. might invoke "git pack-objects" might
+    -       itself exit with status 128 if that "pack-objects" segfaults or
+    -       abort()'s. If the test invoking the parent command(s) is using
+    -       "test_must_fail" we'll consider it an expected "ok" failure.
+    -
+    -     * run-command.c doesn't (but probably should) ferry up such exit
+    -       codes, so for e.g. "git push" tests where we expect a failure and an
+    -       underlying "git" command fails we won't ferry up the segfault or
+    -       abort exit code.
+    -
+    -     * We have gitweb.perl and some other perl code ignoring return values
+    -       from close(), i.e. ignoring exit codes from "git rev-parse" et al.
+    -
+    -     * We have in-tree shellscripts like "git-merge-one-file.sh" invoking
+    -       git commands, they'll usually return their own exit codes on "git"
+    -       failure, rather then ferrying up segfault or abort() exit code.
+    -
+    -       E.g. these invocations in git-merge-one-file.sh leak, but aren't
+    -       reflected in the "git merge" exit code:
+    -
+    -            src1=$(git unpack-file $2)
+    -            src2=$(git unpack-file $3)
+    -
+    -       That case would be easily "fixed" by adding a line like this after
+    -       each assignment:
+    -
+    -            test $? -ne 0 && exit $?
+    -
+    -       But we'd then in e.g. "t6407-merge-binary.sh" run into
+    -       write_tree_trivial() in "builtin/merge.c" calling die() instead of
+    -       ferrying up the relevant exit code.
+    -
+    -    Let's remove "TEST_PASSES_SANITIZE_LEAK=true" from tests we
+    -    were falsely marking as leak-free.
+    -
+    -    In the case of t6407-merge-binary.sh it was marked as leak-free in
+    -    9081a421a6d (checkout: fix "branch info" memory leaks,
+    -    2021-11-16). I'd previously removed other bad
+    -    "TEST_PASSES_SANITIZE_LEAK=true" opt-ins in the series merged in
+    -    ea05fd5fbf7 (Merge branch 'ab/keep-git-exit-codes-in-tests',
+    -    2022-03-16). The case of t1060-object-corruption.sh is more subtle,
+    -    and will be discussed in a subsequent commit.
+    -
+    -    1. https://lore.kernel.org/git/cover-0.7-00000000000-20220318T002951Z-avarab@gmail.com/
+    +    As its name suggests the "resolve-relative-url-test" has never been
+    +    used outside of the test suite, see 63e95beb085 (submodule: port
+    +    resolve_relative_url from shell to C, 2016-04-15) for its original
+    +    addition.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## t/README ##
+    -@@ t/README: GIT_TEST_SANITIZE_LEAK_LOG=true will log memory leaks to
+    - "dedup_token" (see +"ASAN_OPTIONS=help=1 ./git") and other options to
+    - make logs +machine-readable.
+    - 
+    -+With GIT_TEST_SANITIZE_LEAK_LOG=true we'll look at the leak logs
+    -+before exiting and exit on failure if the logs showed that we had a
+    -+memory leak, even if the test itself would have otherwise passed. This
+    -+allows us to catch e.g. missing &&-chaining. This is especially useful
+    -+when combined with "GIT_TEST_PASSING_SANITIZE_LEAK", see below.
+    -+
+    - GIT_TEST_PASSING_SANITIZE_LEAK=check when combined with "--immediate"
+    - will run to completion faster, and result in the same failing
+    - tests. The only practical reason to run
+    -@@ t/README: combine it with "GIT_TEST_SANITIZE_LEAK_LOG=true". If we stop at the
+    - first failing test case our leak logs won't show subsequent leaks we
+    - might have run into.
+    - 
+    -+GIT_TEST_PASSING_SANITIZE_LEAK=(true|check) will not catch all memory
+    -+leaks unless combined with GIT_TEST_SANITIZE_LEAK_LOG=true. Some tests
+    -+run "git" (or "test-tool" etc.) without properly checking the exit
+    -+code, or git will invoke itself and fail to ferry the abort() exit
+    -+code to the original caller. When the two modes are combined we'll
+    -+look at the "test-results/$TEST_NAME.leak/trace.*" files at the end of
+    -+the test run to see if had memory leaks which the test itself didn't
+    -+catch.
+    -+
+    - GIT_TEST_PROTOCOL_VERSION=<n>, when set, makes 'protocol.version'
+    - default to n.
+    + ## builtin/submodule--helper.c ##
+    +@@ builtin/submodule--helper.c: static char *resolve_relative_url(const char *rel_url, const char *up_path, int
+    + 	return resolved_url;
+    + }
+      
+    -
+    - ## t/t1060-object-corruption.sh ##
+    +-static int resolve_relative_url_test(int argc, const char **argv, const char *prefix)
+    +-{
+    +-	char *remoteurl, *res;
+    +-	const char *up_path, *url;
+    +-
+    +-	if (argc != 4)
+    +-		die("resolve-relative-url-test only accepts three arguments: <up_path> <remoteurl> <url>");
+    +-
+    +-	up_path = argv[1];
+    +-	remoteurl = xstrdup(argv[2]);
+    +-	url = argv[3];
+    +-
+    +-	if (!strcmp(up_path, "(null)"))
+    +-		up_path = NULL;
+    +-
+    +-	res = relative_url(remoteurl, url, up_path);
+    +-	puts(res);
+    +-	free(res);
+    +-	free(remoteurl);
+    +-	return 0;
+    +-}
+    +-
+    + /* the result should be freed by the caller. */
+    + static char *get_submodule_displaypath(const char *path, const char *prefix)
+    + {
+    +@@ builtin/submodule--helper.c: static struct cmd_struct commands[] = {
+    + 	{"clone", module_clone, SUPPORT_SUPER_PREFIX},
+    + 	{"add", module_add, 0},
+    + 	{"update", module_update, SUPPORT_SUPER_PREFIX},
+    +-	{"resolve-relative-url-test", resolve_relative_url_test, 0},
+    + 	{"foreach", module_foreach, SUPPORT_SUPER_PREFIX},
+    + 	{"init", module_init, 0},
+    + 	{"status", module_status, SUPPORT_SUPER_PREFIX},
+    +
+    + ## t/helper/test-submodule.c ##
+     @@
+    + #include "test-tool-utils.h"
+    + #include "cache.h"
+    + #include "parse-options.h"
+    ++#include "remote.h"
+    + #include "submodule-config.h"
+    + #include "submodule.h"
+      
+    - test_description='see how we handle various forms of corruption'
+    - 
+    --TEST_PASSES_SANITIZE_LEAK=true
+    - . ./test-lib.sh
+    - 
+    - # convert "1234abcd" to ".git/objects/12/34abcd"
+    -
+    - ## t/t6407-merge-binary.sh ##
+    -@@ t/t6407-merge-binary.sh: test_description='ask merge-recursive to merge binary files'
+    - GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+    - export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+    - 
+    --TEST_PASSES_SANITIZE_LEAK=true
+    - . ./test-lib.sh
+    - 
+    - test_expect_success setup '
+    -
+    - ## t/test-lib.sh ##
+    -@@ t/test-lib.sh: TEST_RESULTS_SAN_FILE_PFX=trace
+    - TEST_RESULTS_SAN_DIR_SFX=leak
+    - TEST_RESULTS_SAN_FILE=
+    - TEST_RESULTS_SAN_DIR="$TEST_RESULTS_DIR/$TEST_NAME.$TEST_RESULTS_SAN_DIR_SFX"
+    -+TEST_RESULTS_SAN_DIR_NR_LEAKS_STARTUP=
+    - TRASH_DIRECTORY="trash directory.$TEST_NAME$TEST_STRESS_JOB_SFX"
+    - test -n "$root" && TRASH_DIRECTORY="$root/$TRASH_DIRECTORY"
+    - case "$TRASH_DIRECTORY" in
+    -@@ t/test-lib.sh: case "$TRASH_DIRECTORY" in
+    -  *) TRASH_DIRECTORY="$TEST_OUTPUT_DIRECTORY/$TRASH_DIRECTORY" ;;
+    - esac
+    +@@ t/helper/test-submodule.c: static const char *submodule_is_active_usage[] = {
+    + 	NULL
+    + };
+      
+    -+# Utility functions using $TEST_RESULTS_* variables
+    -+nr_san_dir_leaks_ () {
+    -+	# stderr piped to /dev/null because the directory may have
+    -+	# been "rmdir"'d already.
+    -+	find "$TEST_RESULTS_SAN_DIR" \
+    -+		-type f \
+    -+		-name "$TEST_RESULTS_SAN_FILE_PFX.*" 2>/dev/null |
+    -+	wc -l
+    -+}
+    ++#define TEST_TOOL_RESOLVE_RELATIVE_URL_USAGE \
+    ++	"test-tool submodule resolve-relative-url <up_path> <remoteurl> <url>"
+    ++static const char *submodule_resolve_relative_url_usage[] = {
+    ++	TEST_TOOL_RESOLVE_RELATIVE_URL_USAGE,
+    ++	NULL,
+    ++};
+     +
+    - # If --stress was passed, run this test repeatedly in several parallel loops.
+    - if test "$GIT_TEST_STRESS_STARTED" = "done"
+    - then
+    -@@ t/test-lib.sh: test_atexit_handler () {
+    - 	teardown_malloc_check
+    + static const char *submodule_usage[] = {
+    + 	TEST_TOOL_CHECK_NAME_USAGE,
+    + 	TEST_TOOL_IS_ACTIVE_USAGE,
+    ++	TEST_TOOL_RESOLVE_RELATIVE_URL_USAGE,
+    + 	NULL
+    + };
+    + 
+    +@@ t/helper/test-submodule.c: static int cmd__submodule_is_active(int argc, const char **argv)
+    + 	return !is_submodule_active(the_repository, argv[0]);
+      }
+      
+    -+sanitize_leak_log_message_ () {
+    -+	local new="$1" &&
+    -+	local old="$2" &&
+    -+	local file="$3" &&
+    ++static int resolve_relative_url(int argc, const char **argv)
+    ++{
+    ++	char *remoteurl, *res;
+    ++	const char *up_path, *url;
+     +
+    -+	printf "With SANITIZE=leak at exit we have %d leak logs, but started with %d
+    ++	up_path = argv[0];
+    ++	remoteurl = xstrdup(argv[1]);
+    ++	url = argv[2];
+     +
+    -+This means that we have a blindspot where git is leaking but we're
+    -+losing the exit code somewhere, or not propagating it appropriately
+    -+upwards!
+    ++	if (!strcmp(up_path, "(null)"))
+    ++		up_path = NULL;
+     +
+    -+See the logs at \"%s.*\";
+    -+those logs are reproduced below." \
+    -+	       "$new" "$old" "$file"
+    ++	res = relative_url(remoteurl, url, up_path);
+    ++	puts(res);
+    ++	free(res);
+    ++	free(remoteurl);
+    ++	return 0;
+     +}
+     +
+    -+check_test_results_san_file_ () {
+    -+	if test -z "$TEST_RESULTS_SAN_FILE"
+    -+	then
+    -+		return
+    -+	fi &&
+    -+	local old="$TEST_RESULTS_SAN_DIR_NR_LEAKS_STARTUP" &&
+    -+	local new="$(nr_san_dir_leaks_)" &&
+    -+
+    -+	if test $new -le $old
+    -+	then
+    -+		return
+    -+	fi &&
+    -+	local out="$(sanitize_leak_log_message_ "$new" "$old" "$TEST_RESULTS_SAN_FILE")" &&
+    -+	say_color error "$out" &&
+    -+	if test "$old" != 0
+    -+	then
+    -+		echo &&
+    -+		say_color error "The logs include output from past runs to avoid" &&
+    -+		say_color error "that remove 'test-results' between runs."
+    -+	fi &&
+    -+	say_color error "$(cat "$TEST_RESULTS_SAN_FILE".*)" &&
+    ++static int cmd__submodule_resolve_relative_url(int argc, const char **argv)
+    ++{
+    ++	struct option options[] = {
+    ++		OPT_END()
+    ++	};
+    ++	argc = parse_options(argc, argv, "test-tools", options,
+    ++			     submodule_resolve_relative_url_usage, 0);
+    ++	if (argc != 3)
+    ++		usage_with_options(submodule_resolve_relative_url_usage, options);
+     +
+    -+	if test -n "$passes_sanitize_leak" && test "$test_failure" = 0
+    -+	then
+    -+		say "As TEST_PASSES_SANITIZE_LEAK=true and our logs show we're leaking, exit non-zero!" &&
+    -+		invert_exit_code=t
+    -+	elif test -n "$passes_sanitize_leak"
+    -+	then
+    -+		say "As TEST_PASSES_SANITIZE_LEAK=true and our logs show we're leaking, and we're failing for other reasons too..." &&
+    -+		invert_exit_code=
+    -+	elif test -n "$sanitize_leak_check" && test "$test_failure" = 0
+    -+	then
+    -+		say "As TEST_PASSES_SANITIZE_LEAK=true isn't set the above leak is 'ok' with GIT_TEST_PASSING_SANITIZE_LEAK=check" &&
+    -+		invert_exit_code=
+    -+	elif test -n "$sanitize_leak_check"
+    -+	then
+    -+		say "As TEST_PASSES_SANITIZE_LEAK=true isn't set the above leak is 'ok' with GIT_TEST_PASSING_SANITIZE_LEAK=check" &&
+    -+		invert_exit_code=t
+    -+	else
+    -+		say "With GIT_TEST_SANITIZE_LEAK_LOG=true our logs revealed a memory leak, exit non-zero!" &&
+    -+		invert_exit_code=t
+    -+	fi
+    ++	return resolve_relative_url(argc, argv);
+     +}
+     +
+    - test_done () {
+    - 	# Run the atexit commands _before_ the trash directory is
+    - 	# removed, so the commands can access pidfiles and socket files.
+    -@@ t/test-lib.sh: test_done () {
+    - 			error "Tests passed but test cleanup failed; aborting"
+    - 		fi
+    + static struct test_cmd cmds[] = {
+    + 	{ "check-name", cmd__submodule_check_name },
+    + 	{ "is-active", cmd__submodule_is_active },
+    ++	{ "resolve-relative-url", cmd__submodule_resolve_relative_url},
+    + };
+      
+    -+		check_test_results_san_file_ "$test_failure"
+    -+
+    - 		if test -z "$skip_all" && test -n "$invert_exit_code"
+    - 		then
+    - 			say_color warn "# faking up non-zero exit with --invert-exit-code"
+    -@@ t/test-lib.sh: test_done () {
+    - 		say_color error "# failed $test_failure among $msg"
+    - 		say "1..$test_count"
+    - 
+    -+		check_test_results_san_file_ "$test_failure"
+    -+
+    - 		if test -n "$invert_exit_code"
+    - 		then
+    - 			_invert_exit_code_failure_end_blurb
+    -@@ t/test-lib.sh: then
+    - 
+    - 	if test "$GIT_TEST_PASSING_SANITIZE_LEAK" = "check"
+    - 	then
+    -+		sanitize_leak_check=t
+    - 		if test -n "$invert_exit_code"
+    - 		then
+    - 			BAIL_OUT "cannot use --invert-exit-code under GIT_TEST_PASSING_SANITIZE_LEAK=check"
+    -@@ t/test-lib.sh: then
+    - 		fi &&
+    - 		TEST_RESULTS_SAN_FILE="$TEST_RESULTS_SAN_DIR/$TEST_RESULTS_SAN_FILE_PFX"
+    - 
+    -+		# In case "test-results" is left over from a previous
+    -+		# run: Only report if new leaks show up.
+    -+		TEST_RESULTS_SAN_DIR_NR_LEAKS_STARTUP=$(nr_san_dir_leaks_)
+    -+
+    - 		# Don't litter *.leak dirs if there was nothing to report
+    - 		test_atexit "rmdir \"$TEST_RESULTS_SAN_DIR\" 2>/dev/null || :"
+    + int cmd__submodule(int argc, const char **argv)
+    +
+    + ## t/t0060-path-utils.sh ##
+    +@@ t/t0060-path-utils.sh: relative_path() {
+      
+    + test_submodule_relative_url() {
+    + 	test_expect_success "test_submodule_relative_url: $1 $2 $3 => $4" "
+    +-		actual=\$(git submodule--helper resolve-relative-url-test '$1' '$2' '$3') &&
+    ++		actual=\$(test-tool submodule resolve-relative-url '$1' '$2' '$3') &&
+    + 		test \"\$actual\" = '$4'
+    + 	"
+    + }
+12:  e3c8909207b <  -:  ----------- leak tests: mark passing SANITIZE=leak tests as leak-free
+13:  07b6572aea9 <  -:  ----------- upload-pack: fix a memory leak in create_pack_file()
+14:  eaa35d1bc59 <  -:  ----------- CI: use "GIT_TEST_SANITIZE_LEAK_LOG=true" in linux-leaks
+20:  7672ef1305f !  9:  79a47f9b94d submodule--helper: fix most "struct pathspec" memory leaks
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    submodule--helper: fix most "struct pathspec" memory leaks
+    +    submodule--helper style: don't separate declared variables with \n\n
+     
+    -    Call clear_pathspec() at the end of various functions that work with
+    -    and allocate a "struct pathspec".
+    +    The usual style in the codebase is to separate declared variables with
+    +    a single newline, not two, let's adjust this code to conform to
+    +    that. This makes the eventual addition of various "int ret" variables
+    +    more consistent.
+    +
+    +    In doing this the comment added in 2964d6e5e1e (submodule: port
+    +    subcommand 'set-branch' from shell to C, 2020-06-02) might become
+    +    ambiguous to some, although it should be clear what it's referring to,
+    +    let's move it above the 'OPT_NOOP_NOARG('q', "quiet")' to make that
+    +    clearer.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/submodule--helper.c ##
+    -@@ builtin/submodule--helper.c: static char *get_up_path(const char *path)
+    - static int module_list(int argc, const char **argv, const char *prefix)
+    - {
+    - 	int i;
+    --	struct pathspec pathspec;
+    -+	struct pathspec pathspec = { 0 };
+    +@@ builtin/submodule--helper.c: static int module_foreach(int argc, const char **argv, const char *prefix)
+    + 	struct foreach_cb info = FOREACH_CB_INIT;
+    + 	struct pathspec pathspec;
+      	struct module_list list = MODULE_LIST_INIT;
+    - 
+    - 	struct option module_list_options[] = {
+    -@@ builtin/submodule--helper.c: static int module_list(int argc, const char **argv, const char *prefix)
+    - 			   N_("alternative anchor for relative paths")),
+    +-
+    + 	struct option module_foreach_options[] = {
+    + 		OPT__QUIET(&info.quiet, N_("suppress output of entering each submodule command")),
+    + 		OPT_BOOL(0, "recursive", &info.recursive,
+    + 			 N_("recurse into nested submodules")),
+      		OPT_END()
+      	};
+    -+	int ret = 1;
+    - 
+    +-
+      	const char *const git_submodule_helper_usage[] = {
+    - 		N_("git submodule--helper list [--prefix=<path>] [<path>...]"),
+    -@@ builtin/submodule--helper.c: static int module_list(int argc, const char **argv, const char *prefix)
+    - 			     git_submodule_helper_usage, 0);
+    - 
+    - 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    --		return 1;
+    -+		goto cleanup;
+    - 
+    - 	for (i = 0; i < list.nr; i++) {
+    - 		const struct cache_entry *ce = list.entries[i];
+    -@@ builtin/submodule--helper.c: static int module_list(int argc, const char **argv, const char *prefix)
+    - 
+    - 		fprintf(stdout, "%s\n", ce->name);
+    - 	}
+    --	return 0;
+    -+	ret = 0;
+    -+cleanup:
+    -+	clear_pathspec(&pathspec);
+    -+	return ret;
+    - }
+    - 
+    - static void for_each_listed_submodule(const struct module_list *list,
+    -@@ builtin/submodule--helper.c: static void runcommand_in_submodule_cb(const struct cache_entry *list_item,
+    - static int module_foreach(int argc, const char **argv, const char *prefix)
+    - {
+    - 	struct foreach_cb info = FOREACH_CB_INIT;
+    --	struct pathspec pathspec;
+    -+	struct pathspec pathspec = { 0 };
+    - 	struct module_list list = MODULE_LIST_INIT;
+    - 
+    - 	struct option module_foreach_options[] = {
+    -@@ builtin/submodule--helper.c: static int module_foreach(int argc, const char **argv, const char *prefix)
+      		N_("git submodule foreach [--quiet] [--recursive] [--] <command>"),
+      		NULL
+    - 	};
+    -+	int ret = 1;
+    - 
+    - 	argc = parse_options(argc, argv, prefix, module_foreach_options,
+    - 			     git_submodule_helper_usage, 0);
+    - 
+    - 	if (module_list_compute(0, NULL, prefix, &pathspec, &list) < 0)
+    --		return 1;
+    -+		goto cleanup;
+    - 
+    - 	info.argc = argc;
+    - 	info.argv = argv;
+    -@@ builtin/submodule--helper.c: static int module_foreach(int argc, const char **argv, const char *prefix)
+    - 
+    - 	for_each_listed_submodule(&list, runcommand_in_submodule_cb, &info);
+    - 
+    --	return 0;
+    -+	ret = 0;
+    -+cleanup:
+    -+	clear_pathspec(&pathspec);
+    -+	return ret;
+    - }
+    - 
+    - static int starts_with_dot_slash(const char *const path)
+    -@@ builtin/submodule--helper.c: static void init_submodule_cb(const struct cache_entry *list_item, void *cb_data
+    - static int module_init(int argc, const char **argv, const char *prefix)
+    - {
+    - 	struct init_cb info = INIT_CB_INIT;
+    --	struct pathspec pathspec;
+    -+	struct pathspec pathspec = { 0 };
+    +@@ builtin/submodule--helper.c: static int module_init(int argc, const char **argv, const char *prefix)
+    + 	struct pathspec pathspec;
+      	struct module_list list = MODULE_LIST_INIT;
+      	int quiet = 0;
+    - 
+    -@@ builtin/submodule--helper.c: static int module_init(int argc, const char **argv, const char *prefix)
+    +-
+    + 	struct option module_init_options[] = {
+    + 		OPT__QUIET(&quiet, N_("suppress output for initializing a submodule")),
+    + 		OPT_END()
+    + 	};
+    +-
+    + 	const char *const git_submodule_helper_usage[] = {
+      		N_("git submodule init [<options>] [<path>]"),
+      		NULL
+    - 	};
+    -+	int ret = 1;
+    - 
+    - 	argc = parse_options(argc, argv, prefix, module_init_options,
+    - 			     git_submodule_helper_usage, 0);
+    - 
+    - 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    --		return 1;
+    -+		goto cleanup;
+    - 
+    - 	/*
+    - 	 * If there are no path args and submodule.active is set then,
+    -@@ builtin/submodule--helper.c: static int module_init(int argc, const char **argv, const char *prefix)
+    - 
+    - 	for_each_listed_submodule(&list, init_submodule_cb, &info);
+    - 
+    --	return 0;
+    -+	ret = 0;
+    -+cleanup:
+    -+	clear_pathspec(&pathspec);
+    -+	return ret;
+    - }
+    - 
+    - struct status_cb {
+    -@@ builtin/submodule--helper.c: static void status_submodule_cb(const struct cache_entry *list_item,
+    - static int module_status(int argc, const char **argv, const char *prefix)
+    - {
+    - 	struct status_cb info = STATUS_CB_INIT;
+    --	struct pathspec pathspec;
+    -+	struct pathspec pathspec = { 0 };
+    +@@ builtin/submodule--helper.c: static int module_status(int argc, const char **argv, const char *prefix)
+    + 	struct pathspec pathspec;
+      	struct module_list list = MODULE_LIST_INIT;
+      	int quiet = 0;
+    - 
+    -@@ builtin/submodule--helper.c: static int module_status(int argc, const char **argv, const char *prefix)
+    +-
+    + 	struct option module_status_options[] = {
+    + 		OPT__QUIET(&quiet, N_("suppress submodule status output")),
+    + 		OPT_BIT(0, "cached", &info.flags, N_("use commit stored in the index instead of the one stored in the submodule HEAD"), OPT_CACHED),
+    + 		OPT_BIT(0, "recursive", &info.flags, N_("recurse into nested submodules"), OPT_RECURSIVE),
+    + 		OPT_END()
+    + 	};
+    +-
+    + 	const char *const git_submodule_helper_usage[] = {
+      		N_("git submodule status [--quiet] [--cached] [--recursive] [<path>...]"),
+      		NULL
+    +@@ builtin/submodule--helper.c: static int module_summary(int argc, const char **argv, const char *prefix)
+    + 	enum diff_cmd diff_cmd = DIFF_INDEX;
+    + 	struct object_id head_oid;
+    + 	int ret;
+    +-
+    + 	struct option module_summary_options[] = {
+    + 		OPT_BOOL(0, "cached", &cached,
+    + 			 N_("use the commit stored in the index instead of the submodule HEAD")),
+    +@@ builtin/submodule--helper.c: static int module_summary(int argc, const char **argv, const char *prefix)
+    + 			     N_("limit the summary size")),
+    + 		OPT_END()
+      	};
+    -+	int ret = 1;
+    - 
+    - 	argc = parse_options(argc, argv, prefix, module_status_options,
+    - 			     git_submodule_helper_usage, 0);
+    - 
+    - 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    --		return 1;
+    -+		goto cleanup;
+    - 
+    - 	info.prefix = prefix;
+    - 	if (quiet)
+    -@@ builtin/submodule--helper.c: static int module_status(int argc, const char **argv, const char *prefix)
+    - 
+    - 	for_each_listed_submodule(&list, status_submodule_cb, &info);
+    - 
+    --	return 0;
+    -+	ret = 0;
+    -+cleanup:
+    -+	clear_pathspec(&pathspec);
+    -+	return ret;
+    - }
+    - 
+    - static int module_name(int argc, const char **argv, const char *prefix)
+    -@@ builtin/submodule--helper.c: static void sync_submodule_cb(const struct cache_entry *list_item, void *cb_data
+    - static int module_sync(int argc, const char **argv, const char *prefix)
+    - {
+    - 	struct sync_cb info = SYNC_CB_INIT;
+    --	struct pathspec pathspec;
+    -+	struct pathspec pathspec = { 0 };
+    +-
+    + 	const char *const git_submodule_helper_usage[] = {
+    + 		N_("git submodule summary [<options>] [<commit>] [--] [<path>]"),
+    + 		NULL
+    +@@ builtin/submodule--helper.c: static int module_sync(int argc, const char **argv, const char *prefix)
+      	struct module_list list = MODULE_LIST_INIT;
+      	int quiet = 0;
+      	int recursive = 0;
+    -+	int ret = 1;
+    - 
+    +-
+      	struct option module_sync_options[] = {
+      		OPT__QUIET(&quiet, N_("suppress output of synchronizing submodule url")),
+    -@@ builtin/submodule--helper.c: static int module_sync(int argc, const char **argv, const char *prefix)
+    - 			     git_submodule_helper_usage, 0);
+    - 
+    - 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    --		return 1;
+    -+		goto cleanup;
+    - 
+    - 	info.prefix = prefix;
+    - 	if (quiet)
+    -@@ builtin/submodule--helper.c: static int module_sync(int argc, const char **argv, const char *prefix)
+    - 
+    - 	for_each_listed_submodule(&list, sync_submodule_cb, &info);
+    - 
+    --	return 0;
+    -+	ret = 0;
+    -+cleanup:
+    -+	clear_pathspec(&pathspec);
+    -+	return ret;
+    - }
+    - 
+    - struct deinit_cb {
+    -@@ builtin/submodule--helper.c: static void deinit_submodule_cb(const struct cache_entry *list_item,
+    - static int module_deinit(int argc, const char **argv, const char *prefix)
+    - {
+    - 	struct deinit_cb info = DEINIT_CB_INIT;
+    --	struct pathspec pathspec;
+    -+	struct pathspec pathspec = { 0 };
+    - 	struct module_list list = MODULE_LIST_INIT;
+    + 		OPT_BOOL(0, "recursive", &recursive,
+    + 			N_("recurse into nested submodules")),
+    + 		OPT_END()
+    + 	};
+    +-
+    + 	const char *const git_submodule_helper_usage[] = {
+    + 		N_("git submodule sync [--quiet] [--recursive] [<path>]"),
+    + 		NULL
+    +@@ builtin/submodule--helper.c: static int module_deinit(int argc, const char **argv, const char *prefix)
+      	int quiet = 0;
+      	int force = 0;
+    -@@ builtin/submodule--helper.c: static int module_deinit(int argc, const char **argv, const char *prefix)
+    + 	int all = 0;
+    +-
+    + 	struct option module_deinit_options[] = {
+    + 		OPT__QUIET(&quiet, N_("suppress submodule status output")),
+    + 		OPT__FORCE(&force, N_("remove submodule working trees even if they contain local changes"), 0),
+    + 		OPT_BOOL(0, "all", &all, N_("unregister all submodules")),
+    + 		OPT_END()
+    + 	};
+    +-
+    + 	const char *const git_submodule_helper_usage[] = {
+      		N_("git submodule deinit [--quiet] [-f | --force] [--all | [--] [<path>...]]"),
+      		NULL
+    +@@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+    + 	int dissociate = 0, quiet = 0, progress = 0, require_init = 0;
+    + 	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
+    + 	struct list_objects_filter_options filter_options;
+    +-
+    + 	struct option module_clone_options[] = {
+    + 		OPT_STRING(0, "prefix", &clone_data.prefix,
+    + 			   N_("path"),
+    +@@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+    + 		OPT_PARSE_LIST_OBJECTS_FILTER(&filter_options),
+    + 		OPT_END()
+      	};
+    -+	int ret = 1;
+    - 
+    - 	argc = parse_options(argc, argv, prefix, module_deinit_options,
+    - 			     git_submodule_helper_usage, 0);
+    -@@ builtin/submodule--helper.c: static int module_deinit(int argc, const char **argv, const char *prefix)
+    - 		die(_("Use '--all' if you really want to deinitialize all submodules"));
+    - 
+    - 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    --		return 1;
+    -+		goto cleanup;
+    - 
+    - 	info.prefix = prefix;
+    - 	if (quiet)
+    -@@ builtin/submodule--helper.c: static int module_deinit(int argc, const char **argv, const char *prefix)
+    - 
+    - 	for_each_listed_submodule(&list, deinit_submodule_cb, &info);
+    - 
+    --	return 0;
+    -+	ret = 0;
+    -+cleanup:
+    -+	clear_pathspec(&pathspec);
+    -+	return ret;
+    - }
+    - 
+    - struct module_clone_data {
+    -@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
+    - 
+    - static int module_update(int argc, const char **argv, const char *prefix)
+    - {
+    --	struct pathspec pathspec;
+    -+	struct pathspec pathspec = { 0 };
+    +-
+    + 	const char *const git_submodule_helper_usage[] = {
+    + 		N_("git submodule--helper clone [--prefix=<path>] [--quiet] "
+    + 		   "[--reference <repository>] [--name <name>] [--depth <depth>] "
+    +@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
+      	struct update_data opt = UPDATE_DATA_INIT;
+    - 	struct list_objects_filter_options filter_options = { 0 };
+    + 	struct list_objects_filter_options filter_options;
+      	int ret;
+    +-
+    + 	struct option module_update_options[] = {
+    + 		OPT__FORCE(&opt.force, N_("force checkout updates"), 0),
+    + 		OPT_BOOL(0, "init", &opt.init,
+     @@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
+    - 		opt.update_strategy.type = opt.update_default;
+    - 
+    - 	if (module_list_compute(argc, argv, prefix, &pathspec, &opt.list) < 0) {
+    --		list_objects_filter_release(&filter_options);
+    --		return 1;
+    -+		ret = 1;
+    -+		goto cleanup;
+    - 	}
+    - 
+    - 	if (pathspec.nr)
+    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
+    - 		struct init_cb info = INIT_CB_INIT;
+    - 
+    - 		if (module_list_compute(argc, argv, opt.prefix,
+    --					&pathspec, &list) < 0)
+    --			return 1;
+    -+					&pathspec, &list) < 0) {
+    -+			ret = 1;
+    -+			goto cleanup;
+    -+		}
+    - 
+    - 		/*
+    - 		 * If there are no path args and submodule.active is set then,
+    -@@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
+    - 	}
+    - 
+    - 	ret = update_submodules(&opt);
+    -+cleanup:
+    - 	list_objects_filter_release(&filter_options);
+    -+	clear_pathspec(&pathspec);
+    - 	return ret;
+    - }
+    - 
+    -@@ builtin/submodule--helper.c: static int push_check(int argc, const char **argv, const char *prefix)
+    - static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+    - {
+    - 	int i;
+    --	struct pathspec pathspec;
+    -+	struct pathspec pathspec = { 0 };
+    + 		OPT_PARSE_LIST_OBJECTS_FILTER(&filter_options),
+    + 		OPT_END()
+    + 	};
+    +-
+    + 	const char *const git_submodule_helper_usage[] = {
+    + 		N_("git submodule [--quiet] update"
+    + 		" [--init [--filter=<filter-spec>]] [--remote]"
+    +@@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+    + 	struct pathspec pathspec;
+      	struct module_list list = MODULE_LIST_INIT;
+      	unsigned flags = ABSORB_GITDIR_RECURSE_SUBMODULES;
+    -+	int ret = 1;
+    - 
+    +-
+      	struct option embed_gitdir_options[] = {
+      		OPT_STRING(0, "prefix", &prefix,
+    + 			   N_("path"),
+     @@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+    - 			     git_submodule_helper_usage, 0);
+    - 
+    - 	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+    --		return 1;
+    -+		goto cleanup;
+    - 
+    - 	for (i = 0; i < list.nr; i++)
+    - 		absorb_git_dir_into_superproject(list.entries[i]->name, flags);
+    - 
+    --	return 0;
+    -+	ret = 0;
+    -+cleanup:
+    -+	clear_pathspec(&pathspec);
+    -+	return ret;
+    - }
+    - 
+    - static int is_active(int argc, const char **argv, const char *prefix)
+    + 			ABSORB_GITDIR_RECURSE_SUBMODULES),
+    + 		OPT_END()
+    + 	};
+    +-
+    + 	const char *const git_submodule_helper_usage[] = {
+    + 		N_("git submodule absorbgitdirs [<options>] [<path>...]"),
+    + 		NULL
+    +@@ builtin/submodule--helper.c: static int module_config(int argc, const char **argv, const char *prefix)
+    + 		CHECK_WRITEABLE = 1,
+    + 		DO_UNSET = 2
+    + 	} command = 0;
+    +-
+    + 	struct option module_config_options[] = {
+    + 		OPT_CMDMODE(0, "check-writeable", &command,
+    + 			    N_("check if it is safe to write to the .gitmodules file"),
+    +@@ builtin/submodule--helper.c: static int module_set_url(int argc, const char **argv, const char *prefix)
+    + 	const char *newurl;
+    + 	const char *path;
+    + 	char *config_name;
+    +-
+    + 	struct option options[] = {
+    + 		OPT__QUIET(&quiet, N_("suppress output for setting url of a submodule")),
+    + 		OPT_END()
+    +@@ builtin/submodule--helper.c: static int module_set_branch(int argc, const char **argv, const char *prefix)
+    + 	const char *opt_branch = NULL;
+    + 	const char *path;
+    + 	char *config_name;
+    +-
+    +-	/*
+    +-	 * We accept the `quiet` option for uniformity across subcommands,
+    +-	 * though there is nothing to make less verbose in this subcommand.
+    +-	 */
+    + 	struct option options[] = {
+    ++		/*
+    ++		 * We accept the `quiet` option for uniformity across subcommands,
+    ++		 * though there is nothing to make less verbose in this subcommand.
+    ++		 */
+    + 		OPT_NOOP_NOARG('q', "quiet"),
+    ++
+    + 		OPT_BOOL('d', "default", &opt_default,
+    + 			N_("set the default tracking branch to master")),
+    + 		OPT_STRING('b', "branch", &opt_branch, N_("branch"),
+    +@@ builtin/submodule--helper.c: static int module_create_branch(int argc, const char **argv, const char *prefix)
+    + {
+    + 	enum branch_track track;
+    + 	int quiet = 0, force = 0, reflog = 0, dry_run = 0;
+    +-
+    + 	struct option options[] = {
+    + 		OPT__QUIET(&quiet, N_("print only error messages")),
+    + 		OPT__FORCE(&force, N_("force creation"), 0),
+    +@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
+    + 	int force = 0, quiet = 0, progress = 0, dissociate = 0;
+    + 	struct add_data add_data = ADD_DATA_INIT;
+    + 	char *to_free = NULL;
+    +-
+    + 	struct option options[] = {
+    + 		OPT_STRING('b', "branch", &add_data.branch, N_("branch"),
+    + 			   N_("branch of repository to add as submodule")),
+    +@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
+    + 		OPT_INTEGER(0, "depth", &add_data.depth, N_("depth for shallow clones")),
+    + 		OPT_END()
+    + 	};
+    +-
+    + 	const char *const usage[] = {
+    + 		N_("git submodule add [<options>] [--] <repository> [<path>]"),
+    + 		NULL
+30:  b8df96a9cf0 ! 10:  5e13080f894 submodule--helper: fix "reference" leak is "module_clone_data"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    submodule--helper: fix "reference" leak is "module_clone_data"
+    +    submodule--helper style: add \n\n after variable declarations
+     
+    -    Fix leaks in the "reference" member of "struct module_clone_data" that
+    -    have been with us since 31224cbdc72 (clone: recursive and reference
+    -    option triggers submodule alternates, 2016-08-17) and
+    -    8c8195e9c3e (submodule--helper: introduce add-clone subcommand,
+    -    2021-07-10).
+    -
+    -    Those commits added an xstrdup()'d member of the
+    -    STRING_LIST_INIT_NODUP'd "struct string_list". We need to free()
+    -    those, but not the ones we get from argv, let's make use of the "util"
+    -    member, if it has a pointer it's the pointer we'll need to free,
+    -    otherwise it'll be NULL (i.e. from argv).
+    -
+    -    To fix this create a a module_clone_data_release() function to go with
+    -    the MODULE_CLONE_DATA_INIT added in a98b02c1128 (submodule--helper:
+    -    refactor module_clone(), 2021-07-10). We only need to add it to
+    -    add_submodule() to fix the leak, but let's add it to module_clone() as
+    -    well for consistency.
+    +    Since the preceding commit fixed style issues with \n\n among the
+    +    declared variables let's fix the minor stylistic issues with those
+    +    variables not being consistently followed by a \n\n.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/submodule--helper.c ##
+    -@@ builtin/submodule--helper.c: struct module_clone_data {
+    - 	.single_branch = -1, \
+    +@@ builtin/submodule--helper.c: static int module_list_compute(int argc, const char **argv,
+    + {
+    + 	int i, result = 0;
+    + 	char *ps_matched = NULL;
+    ++
+    + 	parse_pathspec(pathspec, 0,
+    + 		       PATHSPEC_PREFER_FULL,
+    + 		       prefix, argv);
+    +@@ builtin/submodule--helper.c: static void for_each_listed_submodule(const struct module_list *list,
+    + 				      each_submodule_fn fn, void *cb_data)
+    + {
+    + 	int i;
+    ++
+    + 	for (i = 0; i < list->nr; i++)
+    + 		fn(list->entries[i], cb_data);
+      }
+    - 
+    -+static void module_clone_data_release(struct module_clone_data *cd)
+    -+{
+    -+	string_list_clear(&cd->reference, 1);
+    -+}
+    -+
+    - struct submodule_alternate_setup {
+    - 	const char *submodule_name;
+    - 	enum SUBMODULE_ALTERNATE_ERROR_MODE {
+    -@@ builtin/submodule--helper.c: static int add_possible_reference_from_superproject(
+    - 
+    - 		sm_alternate = compute_alternate_path(sb.buf, &err);
+    - 		if (sm_alternate) {
+    --			string_list_append(sas->reference, xstrdup(sb.buf));
+    -+			char *p = strbuf_detach(&sb, NULL);
+    -+
+    -+			string_list_append(sas->reference, p)->util = p;
+    - 			free(sm_alternate);
+    - 		} else {
+    - 			switch (sas->error_mode) {
+    -@@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+    - 
+    - 	clone_submodule(&clone_data, &clone_data.reference);
+    - 	list_objects_filter_release(&filter_options);
+    -+	module_clone_data_release(&clone_data);
+    - 	return 0;
+    +@@ builtin/submodule--helper.c: static void runcommand_in_submodule_cb(const struct cache_entry *list_item,
+    + 	struct foreach_cb *info = cb_data;
+    + 	const char *path = list_item->name;
+    + 	const struct object_id *ce_oid = &list_item->oid;
+    +-
+    + 	const struct submodule *sub;
+    + 	struct child_process cp = CHILD_PROCESS_INIT;
+    + 	char *displaypath;
+    +@@ builtin/submodule--helper.c: static void init_submodule(const char *path, const char *prefix,
+    + 		if (starts_with_dot_dot_slash(url) ||
+    + 		    starts_with_dot_slash(url)) {
+    + 			char *oldurl = url;
+    ++
+    + 			url = resolve_relative_url(oldurl, NULL, 0);
+    + 			free(oldurl);
+    + 		}
+    +@@ builtin/submodule--helper.c: static void init_submodule(const char *path, const char *prefix,
+    + static void init_submodule_cb(const struct cache_entry *list_item, void *cb_data)
+    + {
+    + 	struct init_cb *info = cb_data;
+    ++
+    + 	init_submodule(list_item->name, info->prefix, info->flags);
+      }
+      
+    -@@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add_data)
+    +@@ builtin/submodule--helper.c: static int handle_submodule_head_ref(const char *refname,
+    + 				     void *cb_data)
+      {
+    - 	char *submod_gitdir_path;
+    - 	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
+    -+	int ret = -1;
+    + 	struct object_id *output = cb_data;
+    ++
+    + 	if (oid)
+    + 		oidcpy(output, oid);
+      
+    - 	/* perhaps the path already exists and is already a git repo, else clone it */
+    - 	if (is_directory(add_data->sm_path)) {
+    -@@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add_data)
+    - 		clone_data.url = add_data->realrepo;
+    - 		clone_data.quiet = add_data->quiet;
+    - 		clone_data.progress = add_data->progress;
+    --		if (add_data->reference_path)
+    --			string_list_append(&clone_data.reference,
+    --					   xstrdup(add_data->reference_path));
+    -+		if (add_data->reference_path) {
+    -+			char *p = xstrdup(add_data->reference_path);
+    -+
+    -+			string_list_append(&clone_data.reference, p)->util = p;
+    -+		}
+    - 		clone_data.dissociate = add_data->dissociate;
+    - 		if (add_data->depth >= 0)
+    - 			clone_data.depth = xstrfmt("%d", add_data->depth);
+    +@@ builtin/submodule--helper.c: static void status_submodule_cb(const struct cache_entry *list_item,
+    + 				void *cb_data)
+    + {
+    + 	struct status_cb *info = cb_data;
+    ++
+    + 	status_submodule(list_item->name, &list_item->oid, list_item->ce_flags,
+    + 			 info->prefix, info->flags);
+    + }
+    +@@ builtin/submodule--helper.c: static void generate_submodule_summary(struct summary_cb *info,
+    + 	if (!info->cached && oideq(&p->oid_dst, null_oid())) {
+    + 		if (S_ISGITLINK(p->mod_dst)) {
+    + 			struct ref_store *refs = get_submodule_ref_store(p->sm_path);
+    ++
+    + 			if (refs)
+    + 				refs_head_ref(refs, handle_submodule_head_ref, &p->oid_dst);
+    + 		} else if (S_ISLNK(p->mod_dst) || S_ISREG(p->mod_dst)) {
+    +@@ builtin/submodule--helper.c: static void sync_submodule(const char *path, const char *prefix,
+    + 		if (starts_with_dot_dot_slash(sub->url) ||
+    + 		    starts_with_dot_slash(sub->url)) {
+    + 			char *up_path = get_up_path(path);
+    ++
+    + 			sub_origin_url = resolve_relative_url(sub->url, up_path, 1);
+    + 			super_config_url = resolve_relative_url(sub->url, NULL, 1);
+    + 			free(up_path);
+    +@@ builtin/submodule--helper.c: static void sync_submodule(const char *path, const char *prefix,
+    + static void sync_submodule_cb(const struct cache_entry *list_item, void *cb_data)
+    + {
+    + 	struct sync_cb *info = cb_data;
+    ++
+    + 	sync_submodule(list_item->name, info->prefix, info->flags);
+    + }
+      
+    - 		if (clone_submodule(&clone_data, &clone_data.reference))
+    --			return -1;
+    -+			goto cleanup;
+    +@@ builtin/submodule--helper.c: static void deinit_submodule(const char *path, const char *prefix,
+      
+    - 		prepare_submodule_repo_env(&cp.env);
+    - 		cp.git_cmd = 1;
+    -@@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add_data)
+    - 		if (run_command(&cp))
+    - 			die(_("unable to checkout submodule '%s'"), add_data->sm_path);
+    + 		if (!(flags & OPT_FORCE)) {
+    + 			struct child_process cp_rm = CHILD_PROCESS_INIT;
+    ++
+    + 			cp_rm.git_cmd = 1;
+    + 			strvec_pushl(&cp_rm.args, "rm", "-qn",
+    + 				     path, NULL);
+    +@@ builtin/submodule--helper.c: static void deinit_submodule(const char *path, const char *prefix,
+    + 	/* remove the .git/config entries (unless the user already did it) */
+    + 	if (!capture_command(&cp_config, &sb_config, 0) && sb_config.len) {
+    + 		char *sub_key = xstrfmt("submodule.%s", sub->name);
+    ++
+    + 		/*
+    + 		 * remove the whole section so we have a clean state when
+    + 		 * the user later decides to init this submodule again
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    + 			strvec_pushl(&cp.args, "--depth", clone_data->depth, NULL);
+    + 		if (clone_data->reference.nr) {
+    + 			struct string_list_item *item;
+    ++
+    + 			for_each_string_list_item(item, &clone_data->reference)
+    + 				strvec_pushl(&cp.args, "--reference",
+    + 					     item->string, NULL);
+    +@@ builtin/submodule--helper.c: static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
+    + 	strvec_pushl(&child->args, "--url", url, NULL);
+    + 	if (suc->update_data->references.nr) {
+    + 		struct string_list_item *item;
+    ++
+    + 		for_each_string_list_item(item, &suc->update_data->references)
+    + 			strvec_pushl(&child->args, "--reference", item->string, NULL);
+      	}
+    --	return 0;
+    -+	ret = 0;
+    -+cleanup:
+    -+	module_clone_data_release(&clone_data);
+    -+	return ret;
+    +@@ builtin/submodule--helper.c: static int update_clone_get_next_task(struct child_process *child,
+    + 		ce = suc->update_data->list.entries[suc->current];
+    + 		if (prepare_to_clone_next_submodule(ce, child, suc, err)) {
+    + 			int *p = xmalloc(sizeof(*p));
+    ++
+    + 			*p = suc->current;
+    + 			*idx_task_cb = p;
+    + 			suc->current++;
+    +@@ builtin/submodule--helper.c: static int update_clone_get_next_task(struct child_process *child,
+    + 	index = suc->current - suc->update_data->list.nr;
+    + 	if (index < suc->failed_clones_nr) {
+    + 		int *p;
+    ++
+    + 		ce = suc->failed_clones[index];
+    + 		if (!prepare_to_clone_next_submodule(ce, child, suc, err)) {
+    + 			suc->current ++;
+    +@@ builtin/submodule--helper.c: static int update_clone_start_failure(struct strbuf *err,
+    + 				      void *idx_task_cb)
+    + {
+    + 	struct submodule_update_clone *suc = suc_cb;
+    ++
+    + 	suc->quickstop = 1;
+    + 	return 1;
+      }
+    +@@ builtin/submodule--helper.c: static int update_clone_task_finished(int result,
+    + {
+    + 	const struct cache_entry *ce;
+    + 	struct submodule_update_clone *suc = suc_cb;
+    +-
+    + 	int *idxP = idx_task_cb;
+    + 	int idx = *idxP;
+    ++
+    + 	free(idxP);
+    + 
+    + 	if (!result)
+    +@@ builtin/submodule--helper.c: static int git_update_clone_config(const char *var, const char *value,
+    + 				   void *cb)
+    + {
+    + 	int *max_jobs = cb;
+    ++
+    + 	if (!strcmp(var, "submodule.fetchjobs"))
+    + 		*max_jobs = parse_submodule_fetchjobs(var, value);
+    + 	return 0;
+    +@@ builtin/submodule--helper.c: static int fetch_in_submodule(const char *module_path, int depth, int quiet, str
+    + 	if (oid) {
+    + 		char *hex = oid_to_hex(oid);
+    + 		char *remote = get_default_remote();
+    ++
+    + 		strvec_pushl(&cp.args, remote, hex, NULL);
+    + 		free(remote);
+    + 	}
+    +@@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data *update_data, struct strvec *
+      
+    - static int config_submodule_in_gitmodules(const char *name, const char *var, const char *value)
+    + 	if (update_data->references.nr) {
+    + 		struct string_list_item *item;
+    ++
+    + 		for_each_string_list_item(item, &update_data->references)
+    + 			strvec_pushl(args, "--reference", item->string, NULL);
+    + 	}
+    +@@ builtin/submodule--helper.c: static void append_fetch_remotes(struct strbuf *msg, const char *git_dir_path)
+    + 	if (!capture_command(&cp_remote, &sb_remote_out, 0)) {
+    + 		char *next_line;
+    + 		char *line = sb_remote_out.buf;
+    ++
+    + 		while ((next_line = strchr(line, '\n')) != NULL) {
+    + 			size_t len = next_line - line;
+    ++
+    + 			if (strip_suffix_mem(line, &len, " (fetch)"))
+    + 				strbuf_addf(msg, "  %.*s\n", (int)len, line);
+    + 			line = next_line + 1;
+    +@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
+    + 		int exit_code = -1;
+    + 		struct strbuf sb = STRBUF_INIT;
+    + 		struct child_process cp = CHILD_PROCESS_INIT;
+    ++
+    + 		cp.git_cmd = 1;
+    + 		cp.no_stdout = 1;
+    + 		strvec_pushl(&cp.args, "add", "--dry-run", "--ignore-missing",
+15:  3c7ae3e0222 ! 11:  dc5ac924496 submodule--helper: replace memset() with { 0 }-initialization
+    @@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv
+      	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
+     -	struct list_objects_filter_options filter_options;
+     +	struct list_objects_filter_options filter_options = { 0 };
+    - 
+      	struct option module_clone_options[] = {
+      		OPT_STRING(0, "prefix", &clone_data.prefix,
+    + 			   N_("path"),
+     @@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+      		NULL
+      	};
+    @@ builtin/submodule--helper.c: static int module_update(int argc, const char **arg
+     -	struct list_objects_filter_options filter_options;
+     +	struct list_objects_filter_options filter_options = { 0 };
+      	int ret;
+    - 
+      	struct option module_update_options[] = {
+    + 		OPT__FORCE(&opt.force, N_("force checkout updates"), 0),
+     @@ builtin/submodule--helper.c: static int module_update(int argc, const char **argv, const char *prefix)
+      	update_clone_config_from_gitmodules(&opt.max_jobs);
+      	git_config(git_update_clone_config, &opt.max_jobs);
+31:  7811bdbf149 ! 12:  08cc9ce2e24 submodule--helper: fix obscure leak in module_add()
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    submodule--helper: fix obscure leak in module_add()
+    +    submodule--helper: convert a strbuf_detach() to xstrfmt()
+     
+    -    Fix an obscure leak in module_add()< if the "git add" command we were
+    -    piping to failed we'd fail to strbuf_release(&sb). This fixes a leak
+    -    introduced in a6226fd772b (submodule--helper: convert the bulk of
+    -    cmd_add() to C, 2021-08-10).
+    -
+    -    In fixing it move to a "goto cleanup" pattern, and since we need to
+    -    introduce a "ret" variable to do that let's also get rid of the
+    -    intermediate "exit_code" variable. The initialization to "-1" in
+    -    a6226fd772b has always been redundant, we'd only use the "exit_code"
+    -    value after assigning the return value of pipe_command() to it.
+    +    Convert a case where we had no reason to use a "struct strbuf" to use
+    +    an xstrfmt(). This code was added along with other uses of "struct
+    +    strbuf" in this function in ee8838d1577 (submodule: rewrite
+    +    `module_clone` shell function in C, 2015-09-08).
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/submodule--helper.c ##
+    -@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
+    - 	int force = 0, quiet = 0, progress = 0, dissociate = 0;
+    - 	struct add_data add_data = ADD_DATA_INIT;
+    - 	char *to_free = NULL;
+    -+	struct strbuf sb = STRBUF_INIT;
+    -+	int ret = 1;
+    - 
+    - 	struct option options[] = {
+    - 		OPT_STRING('b', "branch", &add_data.branch, N_("branch"),
+    -@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
+    - 	die_on_repo_without_commits(add_data.sm_path);
+    - 
+    - 	if (!force) {
+    --		int exit_code = -1;
+    --		struct strbuf sb = STRBUF_INIT;
+    - 		struct child_process cp = CHILD_PROCESS_INIT;
+    - 		cp.git_cmd = 1;
+    - 		cp.no_stdout = 1;
+    - 		strvec_pushl(&cp.args, "add", "--dry-run", "--ignore-missing",
+    - 			     "--no-warn-embedded-repo", add_data.sm_path, NULL);
+    --		if ((exit_code = pipe_command(&cp, NULL, 0, NULL, 0, &sb, 0))) {
+    -+		if ((ret = pipe_command(&cp, NULL, 0, NULL, 0, &sb, 0))) {
+    - 			strbuf_complete_line(&sb);
+    - 			fputs(sb.buf, stderr);
+    --			free(add_data.sm_path);
+    --			return exit_code;
+    -+			goto cleanup;
+    - 		}
+    --		strbuf_release(&sb);
+    - 	}
+    +@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    + 	sm_gitdir = absolute_pathdup(sb.buf);
+    + 	strbuf_reset(&sb);
+      
+    - 	if(!add_data.sm_name)
+    -@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
+    - 	add_data.progress = !!progress;
+    - 	add_data.dissociate = !!dissociate;
+    - 
+    --	if (add_submodule(&add_data)) {
+    --		free(add_data.sm_path);
+    --		return 1;
+    +-	if (!is_absolute_path(clone_data->path)) {
+    +-		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+    +-		clone_data->path = strbuf_detach(&sb, NULL);
+    +-	} else {
+    ++	if (!is_absolute_path(clone_data->path))
+    ++		clone_data->path = xstrfmt("%s/%s", get_git_work_tree(),
+    ++					   clone_data->path);
+    ++	else
+    + 		clone_data->path = xstrdup(clone_data->path);
+     -	}
+    -+	if (add_submodule(&add_data))
+    -+		goto cleanup;
+    - 	configure_added_submodule(&add_data);
+    -+
+    -+	ret = 0;
+    -+cleanup:
+    - 	free(add_data.sm_path);
+    - 	free(to_free);
+    -+	strbuf_release(&sb);
+    - 
+    --	return 0;
+    -+	return ret;
+    - }
+      
+    - #define SUPPORT_SUPER_PREFIX (1<<0)
+    + 	if (validate_submodule_git_dir(sm_gitdir, clone_data->name) < 0)
+    + 		die(_("refusing to create/use '%s' in another submodule's "
+16:  32e4ae7ead5 ! 13:  afe34d8b73b submodule--helper: stop conflating "sb" in clone_submodule()
+    @@ Metadata
+      ## Commit message ##
+         submodule--helper: stop conflating "sb" in clone_submodule()
+     
+    -    Refactor the three uses of a "struct strbuf sb" such that each of them
+    +    Refactor the two uses of a "struct strbuf sb" such that each of them
+         exists in its own scope. This makes the control flow clearer.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    @@ builtin/submodule--helper.c: static void prepare_possible_alternates(const char
+     +	char *sm_alternate = NULL, *error_strategy = NULL;
+     +	struct child_process cp = CHILD_PROCESS_INIT;
+      
+    - 	if (!is_absolute_path(clone_data->path)) {
+    -+		struct strbuf sb = STRBUF_INIT;
+    -+
+    - 		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+    - 		clone_data->path = strbuf_detach(&sb, NULL);
+    - 	} else {
+    + 	if (!is_absolute_path(clone_data->path))
+    + 		clone_data->path = xstrfmt("%s/%s", get_git_work_tree(),
+     @@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+      			die(_("clone of '%s' into submodule path '%s' failed"),
+      			    clone_data->url, clone_data->path);
+17:  eee6ca28c6f ! 14:  b364f3200d8 submodule--helper: pass a "const struct module_clone_data" to clone_submodule()
+    @@ Commit message
+         clobbering the "clone_data->path".
+     
+         We still need to add to the "reference" member, which is a "struct
+    -    string_list". We could do this by having clone_submodule() create its
+    -    own, and copy the contents over, but let's instead pass it as a
+    -    separate parameter. The main point of doing this is to make it clear
+    -    that e.g. "clone_data->path" always comes from the "argv", there's no
+    -    ambiguity about whether we can eventually free() the "struct
+    -    string_list".
+    +    string_list". Let's do this by having clone_submodule() create its
+    +    own, and copy the contents over, allowing us to pass it as a
+    +    separate parameter.
+    +
+    +    This new "struct string_list" still leaks memory, just as the "struct
+    +    module_clone_data" did before. let's not fix that for now, to fix that
+    +    we'll need to add some "goto cleanup" to the relevant code. That will
+    +    be done in a follow-up commits, at that point it'll be easier to fix
+    +    the memory leak.
+    +
+    +    The scope of the new "reference" variable in add_submodule() could be
+    +    narrowed to the "else" block, but as we'll eventually free it with a
+    +    "goto cleanup" let's declare it at the start of the function.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/submodule--helper.c ##
+    +@@ builtin/submodule--helper.c: struct module_clone_data {
+    + 	const char *url;
+    + 	const char *depth;
+    + 	struct list_objects_filter_options *filter_options;
+    +-	struct string_list reference;
+    + 	unsigned int quiet: 1;
+    + 	unsigned int progress: 1;
+    + 	unsigned int dissociate: 1;
+    +@@ builtin/submodule--helper.c: struct module_clone_data {
+    + 	int single_branch;
+    + };
+    + #define MODULE_CLONE_DATA_INIT { \
+    +-	.reference = STRING_LIST_INIT_NODUP, \
+    + 	.single_branch = -1, \
+    + }
+    + 
+     @@ builtin/submodule--helper.c: static char *clone_submodule_sm_gitdir(const char *name)
+      	return sm_gitdir;
+      }
+    @@ builtin/submodule--helper.c: static char *clone_submodule_sm_gitdir(const char *
+      	struct child_process cp = CHILD_PROCESS_INIT;
+     +	const char *clone_data_path;
+      
+    - 	if (!is_absolute_path(clone_data->path)) {
+    - 		struct strbuf sb = STRBUF_INIT;
+    - 
+    - 		strbuf_addf(&sb, "%s/%s", get_git_work_tree(), clone_data->path);
+    --		clone_data->path = strbuf_detach(&sb, NULL);
+    -+		clone_data_path = strbuf_detach(&sb, NULL);
+    - 	} else {
+    + 	if (!is_absolute_path(clone_data->path))
+    +-		clone_data->path = xstrfmt("%s/%s", get_git_work_tree(),
+    +-					   clone_data->path);
+    ++		clone_data_path = xstrfmt("%s/%s", get_git_work_tree(),
+    ++					  clone_data->path);
+    + 	else
+     -		clone_data->path = xstrdup(clone_data->path);
+    -+		clone_data_path = xstrdup(clone_data_path);
+    - 	}
+    ++		clone_data_path = xstrdup(clone_data->path);
+      
+      	if (validate_submodule_git_dir(sm_gitdir, clone_data->name) < 0)
+    + 		die(_("refusing to create/use '%s' in another submodule's "
+     @@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+      		if (safe_create_leading_directories_const(sm_gitdir) < 0)
+      			die(_("could not create directory '%s'"), sm_gitdir);
+    @@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data
+     -		if (clone_data->reference.nr) {
+     +		if (reference->nr) {
+      			struct string_list_item *item;
+    + 
+     -			for_each_string_list_item(item, &clone_data->reference)
+     +			for_each_string_list_item(item, reference)
+      				strvec_pushl(&cp.args, "--reference",
+    @@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data
+      
+      	/* setup alternateLocation and alternateErrorStrategy in the cloned submodule if needed */
+      	git_config_get_string("submodule.alternateLocation", &sm_alternate);
+    +@@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+    + 	int dissociate = 0, quiet = 0, progress = 0, require_init = 0;
+    + 	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
+    + 	struct list_objects_filter_options filter_options = { 0 };
+    ++	struct string_list reference = STRING_LIST_INIT_NODUP;
+    + 	struct option module_clone_options[] = {
+    + 		OPT_STRING(0, "prefix", &clone_data.prefix,
+    + 			   N_("path"),
+    +@@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+    + 		OPT_STRING(0, "url", &clone_data.url,
+    + 			   N_("string"),
+    + 			   N_("url where to clone the submodule from")),
+    +-		OPT_STRING_LIST(0, "reference", &clone_data.reference,
+    ++		OPT_STRING_LIST(0, "reference", &reference,
+    + 			   N_("repo"),
+    + 			   N_("reference repository")),
+    + 		OPT_BOOL(0, "dissociate", &dissociate,
+     @@ builtin/submodule--helper.c: static int module_clone(int argc, const char **argv, const char *prefix)
+      		usage_with_options(git_submodule_helper_usage,
+      				   module_clone_options);
+      
+     -	clone_submodule(&clone_data);
+    -+	clone_submodule(&clone_data, &clone_data.reference);
+    ++	clone_submodule(&clone_data, &reference);
+      	list_objects_filter_release(&filter_options);
+      	return 0;
+      }
+     @@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add_data)
+    + {
+    + 	char *submod_gitdir_path;
+    + 	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
+    ++	struct string_list reference = STRING_LIST_INIT_NODUP;
+    + 
+    + 	/* perhaps the path already exists and is already a git repo, else clone it */
+    + 	if (is_directory(add_data->sm_path)) {
+    +@@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add_data)
+    + 		free(submod_gitdir_path);
+    + 	} else {
+    + 		struct child_process cp = CHILD_PROCESS_INIT;
+    ++
+    + 		submod_gitdir_path = xstrfmt(".git/modules/%s", add_data->sm_name);
+    + 
+    + 		if (is_directory(submod_gitdir_path)) {
+    +@@ builtin/submodule--helper.c: static int add_submodule(const struct add_data *add_data)
+    + 		clone_data.quiet = add_data->quiet;
+    + 		clone_data.progress = add_data->progress;
+    + 		if (add_data->reference_path)
+    +-			string_list_append(&clone_data.reference,
+    ++			string_list_append(&reference,
+    + 					   xstrdup(add_data->reference_path));
+    + 		clone_data.dissociate = add_data->dissociate;
+      		if (add_data->depth >= 0)
+      			clone_data.depth = xstrfmt("%d", add_data->depth);
+      
+     -		if (clone_submodule(&clone_data))
+    -+		if (clone_submodule(&clone_data, &clone_data.reference))
+    ++		if (clone_submodule(&clone_data, &reference))
+      			return -1;
+      
+      		prepare_submodule_repo_env(&cp.env);
+18:  26f0caf0386 <  -:  ----------- submodule--helper: fix a leak in "clone_submodule"
+21:  325aa1521e2 <  -:  ----------- submodule--helper: "struct pathspec" memory leak in module_update()
+22:  424b24961b5 <  -:  ----------- submodule--helper: don't leak {run,capture}_command() cp.dir argument
+23:  abf5c4754a4 = 15:  e319f4edc54 submodule--helper: add "const" to copy of "update_data"
+25:  feec1f20bf9 = 16:  68202100d9a submodule--helper: refactor "errmsg_str" to be a "struct strbuf"
+26:  d368db73de7 <  -:  ----------- submodule--helper: fix "errmsg_str" memory leak
+27:  5be941b3d1b <  -:  ----------- submodule--helper: fix "sm_path" and other "module_cb_list" leaks
+28:  b8560e8c111 <  -:  ----------- submodule--helper: fix a leak with repo_clear()
+29:  abfd61f9f05 <  -:  ----------- submodule--helper: fix a memory leak in get_default_remote_submodule()
+32:  01566d63926 <  -:  ----------- submodule--helper: fix a leak in module_add()
+33:  7ef89abed86 <  -:  ----------- submodule--helper: fix a memory leak in print_status()
+34:  b8d47fc7d70 <  -:  ----------- submodule--helper: free some "displaypath" in "struct update_data"
+35:  4fb17f0dff1 ! 17:  e8aacb55a18 submodule--helper: rename "int res" to "int ret"
+    @@ Commit message
+     
+         Rename the "res" variable added in b3c5f5cb048 (submodule: move core
+         cmd_update() logic to C, 2022-03-15) to "ret", which is the convention
+    -    in the rest of this file. Subsequent commits will change this code to
+    -    a "goto cleanup" pattern, let's have the post image look consistent
+    -    with the rest.
+    +    in the rest of this file.
+    +
+    +    Eventual follow-up commits will change this code to a "goto cleanup"
+    +    pattern, let's have the post image look consistent with the rest.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+36:  af83925046b ! 18:  41fb22d8549 submodule--helper: add skeleton "goto cleanup" to update_submodule()
+    @@ Commit message
+         submodule--helper: add skeleton "goto cleanup" to update_submodule()
+     
+         Add a skeleton "goto cleanup" pattern to update_submodule(), rather
+    -    than having branches in it "return". This is in preparation for doing
+    -    something useful with the "cleanup" label, but for now we're using it
+    -    as the equivalent of a "done" label.
+    +    than having branches in it "return". This is in preparation for
+    +    eventually freeing data with the "cleanup" label, but for now we're
+    +    using it as the equivalent of a "done" label.
+     
+         The "exit()" branch is not handled yet, and neither is the exit() that
+         run_update_procedure() might invoke. That'll be handled in a
+37:  4c60784d281 ! 19:  5a26c9428be submodule--helper: don't exit() on failure, return
+    @@ Commit message
+         to the point where we could avoid calling exit() here.
+     
+         This introduces no functional changes, but makes it easier to both
+    -    call these routines as a library in the future, and to avoid leaking
+    -    memory.
+    +    call these routines as a library in the future, and to eventually
+    +    avoid leaking memory.
+    +
+    +    This and similar control flow in submodule--helper.c could be made
+    +    simpler by properly "libifying" it, i.e. to have it consistently
+    +    return -1 on failures, and to early return on any non-success.
+    +
+    +    But let's leave that larger project for now, and (mostly) emulate what
+    +    were doing with the "exit(128)" before this change.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+39:  f650716cd7e = 20:  579560cb9a8 submodule--helper: fix bad config API usage
+40:  581ce0872c0 <  -:  ----------- submodule--helper: fix a configure_added_submodule() leak
+-- 
+2.37.1.1167.g38fda70d8c4
+
