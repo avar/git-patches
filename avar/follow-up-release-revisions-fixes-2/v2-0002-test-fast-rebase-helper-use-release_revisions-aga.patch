@@ -1,0 +1,78 @@
+From bbd3a7e5eccee1121f3566b53698a7e629ebf532 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.6-bbd3a7e5ecc-20220729T082824Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20220729T082824Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20220713T130511Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20220729T082824Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 12 Jul 2022 10:51:14 +0200
+Subject: [PATCH v2 2/6] test-fast-rebase helper: use release_revisions()
+ (again)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a bug in 0139c58ab95 (revisions API users: add "goto cleanup" for
+release_revisions(), 2022-04-13), in that commit a release_revisions()
+call was added to this function, but it never did anything due to this
+TODO memset() added in fe1a21d5267 (fast-rebase: demonstrate
+merge-ort's API via new test-tool command, 2020-10-29).
+
+Simply removing the memset() will fix the "cmdline" which can be seen
+when running t5520-pull.sh.
+
+This sort of thing could be detected automatically with a rule similar
+to the unused.cocci merged in 7fa60d2a5b6 (Merge branch
+'ab/cocci-unused' into next, 2022-07-11). The following rule on top
+would catch the case being fixed here:
+
+	@@
+	type T;
+	identifier I;
+	identifier REL1 =~ "^[a-z_]*_(release|reset|clear|free)$";
+	identifier REL2 =~ "^(release|clear|free)_[a-z_]*$";
+	@@
+
+	- memset(\( I \| &I \), 0, ...);
+	  ... when != \( I \| &I \)
+	(
+	  \( REL1 \| REL2 \)( \( I \| &I \), ...);
+	|
+	  \( REL1 \| REL2 \)( \( &I \| I \) );
+	)
+	  ... when != \( I \| &I \)
+
+That rule should arguably use only &I, not I (as we might be passed a
+pointer). He distinction would matter if anyone cared about the
+side-effects of a memset() followed by release() of a pointer to a
+variable passed into the function.
+
+As such a pattern would be at best very confusing, and most likely
+point to buggy code as in this case, the above rule is probably fine
+as-is.
+
+But as this rule only found one such bug in the entire codebase let's
+not add it to contrib/coccinelle/unused.cocci for now, we can always
+dig it up in the future if it's deemed useful.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-fast-rebase.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/t/helper/test-fast-rebase.c b/t/helper/test-fast-rebase.c
+index 4e5553e2024..45665ec19a5 100644
+--- a/t/helper/test-fast-rebase.c
++++ b/t/helper/test-fast-rebase.c
+@@ -184,8 +184,6 @@ int cmd__fast_rebase(int argc, const char **argv)
+ 		last_picked_commit = commit;
+ 		last_commit = create_commit(result.tree, commit, last_commit);
+ 	}
+-	/* TODO: There should be some kind of rev_info_free(&revs) call... */
+-	memset(&revs, 0, sizeof(revs));
+ 
+ 	merge_switch_to_result(&merge_opt, head_tree, &result, 1, !result.clean);
+ 
+-- 
+2.37.1.1196.g8af3636bc64
+
