@@ -1,0 +1,184 @@
+From 83fc1835fe59680812be97d1cb3d1b58e07e2fa2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-3.6-83fc1835fe5-20220802T142208Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.6-00000000000-20220802T142208Z-avarab@gmail.com>
+References: <cover-v2-0.6-00000000000-20220729T082919Z-avarab@gmail.com>
+	<cover-v3-0.6-00000000000-20220802T142208Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 13 Jul 2022 12:06:43 +0200
+Subject: [PATCH v3 3/6] log: fix a memory leak in "git show <revision>..."
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in code added in 5d7eeee2ac6 (git-show: grok blobs,
+trees and tags, too, 2006-12-14). As we iterate over a "<revision>..."
+command-line and encounter ad OBJ_COMMIT we want to use our "struct
+rev_info", but with a "pending" array of one element: the one commit
+we're showing in the loop.
+
+To do this 5d7eeee2ac6 saved away a pointer to rev.pending.objects and
+rev.pending.nr for its iteration. We'd then clobber those (and alloc)
+when we needed to show an OBJ_COMMIT.
+
+We'd therefore leak the "rev.pending" we started out with, and only
+free the new "rev.pending" in the "OBJ_COMMIT" case arm as
+prepare_revision_walk() would draw it down.
+
+Let's fix this memory leak. Now when we encounter an OBJ_COMMIT we
+save away the "rev.pending" before clearing it. We then add a single
+commit to it, which our indirect invocation of prepare_revision_walk()
+will remove. After that we restore the "rev.pending".
+
+Our "rev.pending" will then get free'd by the release_revisions()
+added in f6bfea0ad01 (revisions API users: use release_revisions() in
+builtin/log.c, 2022-04-13)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/log.c                                    | 6 ++++++
+ t/t0203-gettext-setlocale-sanity.sh              | 1 +
+ t/t1020-subdirectory.sh                          | 1 +
+ t/t3307-notes-man.sh                             | 1 +
+ t/t3920-crlf-messages.sh                         | 2 ++
+ t/t4069-remerge-diff.sh                          | 1 +
+ t/t7007-show.sh                                  | 1 +
+ t/t7503-pre-commit-and-pre-merge-commit-hooks.sh | 1 +
+ t/t9122-git-svn-author.sh                        | 1 -
+ t/t9162-git-svn-dcommit-interactive.sh           | 1 -
+ 10 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/log.c b/builtin/log.c
+index 88a5e98875a..b4b1d974617 100644
+--- a/builtin/log.c
++++ b/builtin/log.c
+@@ -743,11 +743,17 @@ int cmd_show(int argc, const char **argv, const char *prefix)
+ 			rev.shown_one = 1;
+ 			break;
+ 		case OBJ_COMMIT:
++		{
++			struct object_array old;
++
++			memcpy(&old, &rev.pending, sizeof(old));
+ 			rev.pending.nr = rev.pending.alloc = 0;
+ 			rev.pending.objects = NULL;
+ 			add_object_array(o, name, &rev.pending);
+ 			ret = cmd_log_walk_no_free(&rev);
++			memcpy(&rev.pending, &old, sizeof(rev.pending));
+ 			break;
++		}
+ 		default:
+ 			ret = error(_("unknown type: %d"), o->type);
+ 		}
+diff --git a/t/t0203-gettext-setlocale-sanity.sh b/t/t0203-gettext-setlocale-sanity.sh
+index 0ce1f22eff6..86cff324ff1 100755
+--- a/t/t0203-gettext-setlocale-sanity.sh
++++ b/t/t0203-gettext-setlocale-sanity.sh
+@@ -5,6 +5,7 @@
+ 
+ test_description="The Git C functions aren't broken by setlocale(3)"
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-gettext.sh
+ 
+ test_expect_success 'git show a ISO-8859-1 commit under C locale' '
+diff --git a/t/t1020-subdirectory.sh b/t/t1020-subdirectory.sh
+index 9fdbb2af80e..45eef9457fe 100755
+--- a/t/t1020-subdirectory.sh
++++ b/t/t1020-subdirectory.sh
+@@ -6,6 +6,7 @@
+ test_description='Try various core-level commands in subdirectory.
+ '
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ . "$TEST_DIRECTORY"/lib-read-tree.sh
+ 
+diff --git a/t/t3307-notes-man.sh b/t/t3307-notes-man.sh
+index 1aa366a410e..ae316502c45 100755
+--- a/t/t3307-notes-man.sh
++++ b/t/t3307-notes-man.sh
+@@ -4,6 +4,7 @@ test_description='Examples from the git-notes man page
+ 
+ Make sure the manual is not full of lies.'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t3920-crlf-messages.sh b/t/t3920-crlf-messages.sh
+index 0276edbe3d3..4c661d4d54a 100755
+--- a/t/t3920-crlf-messages.sh
++++ b/t/t3920-crlf-messages.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='Test ref-filter and pretty APIs for commit and tag messages using CRLF'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ LIB_CRLF_BRANCHES=""
+diff --git a/t/t4069-remerge-diff.sh b/t/t4069-remerge-diff.sh
+index 35f94957fce..9e7cac68b1c 100755
+--- a/t/t4069-remerge-diff.sh
++++ b/t/t4069-remerge-diff.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='remerge-diff handling'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ # This test is ort-specific
+diff --git a/t/t7007-show.sh b/t/t7007-show.sh
+index d6cc69e0f2c..f908a4d1abc 100755
+--- a/t/t7007-show.sh
++++ b/t/t7007-show.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git show'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t7503-pre-commit-and-pre-merge-commit-hooks.sh b/t/t7503-pre-commit-and-pre-merge-commit-hooks.sh
+index ad1eb64ba0d..aa004b70a8d 100755
+--- a/t/t7503-pre-commit-and-pre-merge-commit-hooks.sh
++++ b/t/t7503-pre-commit-and-pre-merge-commit-hooks.sh
+@@ -5,6 +5,7 @@ test_description='pre-commit and pre-merge-commit hooks'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'root commit' '
+diff --git a/t/t9122-git-svn-author.sh b/t/t9122-git-svn-author.sh
+index 527ba3d2932..0fc289ae0f0 100755
+--- a/t/t9122-git-svn-author.sh
++++ b/t/t9122-git-svn-author.sh
+@@ -2,7 +2,6 @@
+ 
+ test_description='git svn authorship'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'setup svn repository' '
+diff --git a/t/t9162-git-svn-dcommit-interactive.sh b/t/t9162-git-svn-dcommit-interactive.sh
+index e2aa8ed88a9..b3ce033a0d3 100755
+--- a/t/t9162-git-svn-dcommit-interactive.sh
++++ b/t/t9162-git-svn-dcommit-interactive.sh
+@@ -4,7 +4,6 @@
+ 
+ test_description='git svn dcommit --interactive series'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'initialize repo' '
+-- 
+2.37.1.1232.gc0cde427aa7
+
