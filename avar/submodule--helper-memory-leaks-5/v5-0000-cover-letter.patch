@@ -1,9 +1,9 @@
 From 17c77ceba019f13adbd400d0d35c0f6478d655c8 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v5-00.17-00000000000-20220802T154917Z-avarab@gmail.com>
+Message-Id: <cover-v5-00.17-00000000000-20220802T154929Z-avarab@gmail.com>
 In-Reply-To: <cover-v4-00.17-00000000000-20220728T162442Z-avarab@gmail.com>
 References: <cover-v4-00.17-00000000000-20220728T162442Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 2 Aug 2022 17:49:17 +0200
+Date: Tue, 2 Aug 2022 17:49:29 +0200
 Subject: [PATCH v5 00/17] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -84,103 +84,16 @@ Range-diff against v4:
       
  7:  d4c81e04254 =  7:  1a85057cd0c submodule--helper: fix "errmsg_str" memory leak
  8:  ef9e29d5bfe =  8:  3c4f734e958 submodule--helper: fix "sm_path" and other "module_cb_list" leaks
- 9:  0798a00c9ef !  9:  3aebff9f8e3 submodule--helper: fix a leak with repo_clear()
-    @@ Commit message
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static void ensure_core_worktree(const char *path)
-    - 		free(abs_path);
-    +@@ builtin/submodule--helper.c: static int ensure_core_worktree(const char *path)
-      		strbuf_release(&sb);
-      	}
-    + 
-     +	repo_clear(&subrepo);
-    + 	return 0;
-      }
-      
-    - static const char *submodule_update_type_to_label(enum submodule_update_type type)
+ 9:  0798a00c9ef <  -:  ----------- submodule--helper: fix a leak with repo_clear()
+ -:  ----------- >  9:  3aebff9f8e3 submodule--helper: fix a leak with repo_clear()
 10:  dae2a6f8e07 = 10:  38345ec76bc submodule--helper: fix a memory leak in get_default_remote_submodule()
 11:  e7352bb8cfa = 11:  4b1e5ced969 submodule--helper: fix "reference" leak
 12:  1adb7b66656 = 12:  e74c396073b submodule--helper: fix obscure leak in module_add()
 13:  b27b665d287 = 13:  71a56c59864 submodule--helper: fix a leak in module_add()
 14:  53ba1705eb6 = 14:  2429db2f1c7 submodule--helper: fix a memory leak in print_status()
 15:  230e5f8ad14 = 15:  613d077c4ec submodule--helper: free some "displaypath" in "struct update_data"
-16:  c0fba2f1c56 ! 16:  8f150a81507 submodule--helper: free rest of "displaypath" in "struct update_data"
-    @@ Commit message
-         update_submodule() function itself can use it, and for the
-         run_update_procedure() called within this function.
-     
-    +    To make managing that clobbering easier let's wrap the
-    +    update_submodule() in a new update_submodule_outer() function, which
-    +    will do the clobbering and free(to_free) dance for us.
-    +
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data,
-    - 			    int *must_die_on_failure)
-    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-      {
-    - 	int ret = 1;
-    -+	char *to_free, *restore = update_data->displaypath;
-    - 
-    - 	ensure_core_worktree(update_data->sm_path);
-    + 	int ret;
-      
-    +-	ret = ensure_core_worktree(update_data->sm_path);
-    +-	if (ret)
-    +-		return ret;
-    +-
-     -	update_data->displaypath = get_submodule_displaypath(
-    -+	update_data->displaypath = to_free = get_submodule_displaypath(
-    - 		update_data->sm_path, update_data->prefix);
-    - 
-    - 	determine_submodule_update_strategy(the_repository, update_data->just_cloned,
-    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data,
-    +-		update_data->sm_path, update_data->prefix);
-    +-
-    + 	ret = determine_submodule_update_strategy(the_repository,
-    + 						  update_data->just_cloned,
-    + 						  update_data->sm_path,
-    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    + 	return 0;
-    + }
-      
-    - 	ret = 0;
-    - cleanup:
-    ++static int update_submodule_outer(struct update_data *update_data)
-    ++{
-    ++	char *to_free, *restore = update_data->displaypath;
-    ++	int ret;
-    ++
-    ++	ensure_core_worktree(update_data->sm_path);
-    ++
-    ++	update_data->displaypath = to_free = get_submodule_displaypath(
-    ++		update_data->sm_path, update_data->prefix);
-    ++
-    ++	ret = update_submodule(update_data);
-    ++
-     +	free(to_free);
-     +	update_data->displaypath = restore;
-     +
-    - 	return ret;
-    - }
-    ++	return ret;
-    ++}
-    ++
-    + static int update_submodules(struct update_data *update_data)
-    + {
-    + 	int i, ret = 0;
-    +@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
-    + 		update_data->just_cloned = ucd.just_cloned;
-    + 		update_data->sm_path = ucd.sub->path;
-      
-    +-		code = update_submodule(update_data);
-    ++		code = update_submodule_outer(update_data);
-    + 		if (code)
-    + 			ret = code;
-    + 		if (code == 128)
+16:  c0fba2f1c56 <  -:  ----------- submodule--helper: free rest of "displaypath" in "struct update_data"
+ -:  ----------- > 16:  8f150a81507 submodule--helper: free rest of "displaypath" in "struct update_data"
 17:  95f8b68bd41 ! 17:  17c77ceba01 submodule--helper: fix a configure_added_submodule() leak
     @@ builtin/submodule--helper.c: static void configure_added_submodule(struct add_da
       		 * current configured pathspec, set the submodule's active flag
