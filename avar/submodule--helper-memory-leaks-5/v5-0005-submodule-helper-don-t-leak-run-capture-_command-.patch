@@ -1,0 +1,62 @@
+From 509133c37fac7ec06591c91cf25af23e41b1be1f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-05.17-509133c37fa-20220802T154811Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.17-00000000000-20220802T154811Z-avarab@gmail.com>
+References: <cover-v4-00.17-00000000000-20220728T162442Z-avarab@gmail.com>
+	<cover-v5-00.17-00000000000-20220802T154811Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Jun 2022 15:16:49 +0200
+Subject: [PATCH v5 05/17] submodule--helper: don't leak
+ {run,capture}_command() cp.dir argument
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in c51f8f94e5b (submodule--helper: run update
+procedures from C, 2021-08-24) and 3c3558f0953 (submodule--helper: run
+update using child process struct, 2022-03-15) by not allocating
+memory in the first place.
+
+The "dir" member of "struct child_process" will not be modified by
+that API, and it's declared to be "const char *". So let's not
+needlessly duplicate these strings.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index dd9a62d139d..3f79908b203 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2131,7 +2131,7 @@ static int is_tip_reachable(const char *path, struct object_id *oid)
+ 	char *hex = oid_to_hex(oid);
+ 
+ 	cp.git_cmd = 1;
+-	cp.dir = xstrdup(path);
++	cp.dir = path;
+ 	cp.no_stderr = 1;
+ 	strvec_pushl(&cp.args, "rev-list", "-n", "1", hex, "--not", "--all", NULL);
+ 
+@@ -2149,7 +2149,7 @@ static int fetch_in_submodule(const char *module_path, int depth, int quiet, str
+ 
+ 	prepare_submodule_repo_env(&cp.env);
+ 	cp.git_cmd = 1;
+-	cp.dir = xstrdup(module_path);
++	cp.dir = module_path;
+ 
+ 	strvec_push(&cp.args, "fetch");
+ 	if (quiet)
+@@ -2201,7 +2201,7 @@ static int run_update_command(struct update_data *ud, int subforce)
+ 	}
+ 	strvec_push(&cp.args, oid);
+ 
+-	cp.dir = xstrdup(ud->sm_path);
++	cp.dir = ud->sm_path;
+ 	prepare_submodule_repo_env(&cp.env);
+ 	if (run_command(&cp)) {
+ 		int ret;
+-- 
+2.37.1.1233.ge8b09efaedc
+

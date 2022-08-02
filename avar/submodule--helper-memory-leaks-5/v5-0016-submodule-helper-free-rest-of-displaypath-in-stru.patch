@@ -1,0 +1,84 @@
+From 8f150a815073428e0b31b8cfb233aae751635da8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-16.17-8f150a81507-20220802T154811Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.17-00000000000-20220802T154811Z-avarab@gmail.com>
+References: <cover-v4-00.17-00000000000-20220728T162442Z-avarab@gmail.com>
+	<cover-v5-00.17-00000000000-20220802T154811Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Jul 2022 17:51:05 +0200
+Subject: [PATCH v5 16/17] submodule--helper: free rest of "displaypath" in
+ "struct update_data"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak in code added in c51f8f94e5b (submodule--helper: run update
+procedures from C, 2021-08-24), we clobber the "displaypath" member of
+the passed-in "struct update_data" both so that die() messages in this
+update_submodule() function itself can use it, and for the
+run_update_procedure() called within this function.
+
+To make managing that clobbering easier let's wrap the
+update_submodule() in a new update_submodule_outer() function, which
+will do the clobbering and free(to_free) dance for us.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 27 +++++++++++++++++++--------
+ 1 file changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 79eca6c439b..cc8f42ae6df 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2482,13 +2482,6 @@ static int update_submodule(struct update_data *update_data)
+ {
+ 	int ret;
+ 
+-	ret = ensure_core_worktree(update_data->sm_path);
+-	if (ret)
+-		return ret;
+-
+-	update_data->displaypath = get_submodule_displaypath(
+-		update_data->sm_path, update_data->prefix);
+-
+ 	ret = determine_submodule_update_strategy(the_repository,
+ 						  update_data->just_cloned,
+ 						  update_data->sm_path,
+@@ -2554,6 +2547,24 @@ static int update_submodule(struct update_data *update_data)
+ 	return 0;
+ }
+ 
++static int update_submodule_outer(struct update_data *update_data)
++{
++	char *to_free, *restore = update_data->displaypath;
++	int ret;
++
++	ensure_core_worktree(update_data->sm_path);
++
++	update_data->displaypath = to_free = get_submodule_displaypath(
++		update_data->sm_path, update_data->prefix);
++
++	ret = update_submodule(update_data);
++
++	free(to_free);
++	update_data->displaypath = restore;
++
++	return ret;
++}
++
+ static int update_submodules(struct update_data *update_data)
+ {
+ 	int i, ret = 0;
+@@ -2586,7 +2597,7 @@ static int update_submodules(struct update_data *update_data)
+ 		update_data->just_cloned = ucd.just_cloned;
+ 		update_data->sm_path = ucd.sub->path;
+ 
+-		code = update_submodule(update_data);
++		code = update_submodule_outer(update_data);
+ 		if (code)
+ 			ret = code;
+ 		if (code == 128)
+-- 
+2.37.1.1233.ge8b09efaedc
+

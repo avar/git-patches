@@ -1,0 +1,117 @@
+From 4b1e5ced969e420d52dd636ff8596b7ab17baaf2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-11.17-4b1e5ced969-20220802T154811Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.17-00000000000-20220802T154811Z-avarab@gmail.com>
+References: <cover-v4-00.17-00000000000-20220728T162442Z-avarab@gmail.com>
+	<cover-v5-00.17-00000000000-20220802T154811Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 12 Jul 2022 09:49:47 +0200
+Subject: [PATCH v5 11/17] submodule--helper: fix "reference" leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix leaks in the "reference" variable declared in add_submodule() and
+module_clone().
+
+In preceding commits this variable was refactored out of the "struct
+module_clone_data", but the leak has been with us since
+31224cbdc72 (clone: recursive and reference option triggers submodule
+alternates, 2016-08-17) and 8c8195e9c3e (submodule--helper: introduce
+add-clone subcommand, 2021-07-10).
+
+Those commits added an xstrdup()'d member of the
+STRING_LIST_INIT_NODUP'd "struct string_list". We need to free()
+those, but not the ones we get from argv, let's make use of the "util"
+member, if it has a pointer it's the pointer we'll need to free,
+otherwise it'll be NULL (i.e. from argv).
+
+Note that the free() of the "util" member is needed in both
+module_clone() and add_submodule(). The module_clone() function itself
+doesn't populate the "util" pointer as add_submodule() does, but
+module_clone() is upstream of the
+add_possible_reference_from_superproject() caller we're modifying
+here, which does do that.
+
+This does preclude the use of the "util" pointer for any other reasons
+for now, but that's OK. If we ever need to use it for something else
+we could turn it into a small "struct" with an optional "to_free"
+member, and switch to using string_list_clear_func().
+
+Alternatively we could have another "struct string_list to_free" which
+would keep a copy of the strings we've dup'd to free(). But for now
+this is perfectly adequate.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 21 +++++++++++++++------
+ 1 file changed, 15 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 902349976da..a5b0b3859c5 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1568,7 +1568,9 @@ static int add_possible_reference_from_superproject(
+ 
+ 		sm_alternate = compute_alternate_path(sb.buf, &err);
+ 		if (sm_alternate) {
+-			string_list_append(sas->reference, xstrdup(sb.buf));
++			char *p = strbuf_detach(&sb, NULL);
++
++			string_list_append(sas->reference, p)->util = p;
+ 			free(sm_alternate);
+ 		} else {
+ 			switch (sas->error_mode) {
+@@ -1800,6 +1802,7 @@ static int module_clone(int argc, const char **argv, const char *prefix)
+ 
+ 	clone_submodule(&clone_data, &reference);
+ 	list_objects_filter_release(&filter_options);
++	string_list_clear(&reference, 1);
+ 	return 0;
+ }
+ 
+@@ -3033,6 +3036,7 @@ static int add_submodule(const struct add_data *add_data)
+ 	char *submod_gitdir_path;
+ 	struct module_clone_data clone_data = MODULE_CLONE_DATA_INIT;
+ 	struct string_list reference = STRING_LIST_INIT_NODUP;
++	int ret = -1;
+ 
+ 	/* perhaps the path already exists and is already a git repo, else clone it */
+ 	if (is_directory(add_data->sm_path)) {
+@@ -3088,15 +3092,17 @@ static int add_submodule(const struct add_data *add_data)
+ 		clone_data.url = add_data->realrepo;
+ 		clone_data.quiet = add_data->quiet;
+ 		clone_data.progress = add_data->progress;
+-		if (add_data->reference_path)
+-			string_list_append(&reference,
+-					   xstrdup(add_data->reference_path));
++		if (add_data->reference_path) {
++			char *p = xstrdup(add_data->reference_path);
++
++			string_list_append(&reference, p)->util = p;
++		}
+ 		clone_data.dissociate = add_data->dissociate;
+ 		if (add_data->depth >= 0)
+ 			clone_data.depth = xstrfmt("%d", add_data->depth);
+ 
+ 		if (clone_submodule(&clone_data, &reference))
+-			return -1;
++			goto cleanup;
+ 
+ 		prepare_submodule_repo_env(&cp.env);
+ 		cp.git_cmd = 1;
+@@ -3115,7 +3121,10 @@ static int add_submodule(const struct add_data *add_data)
+ 		if (run_command(&cp))
+ 			die(_("unable to checkout submodule '%s'"), add_data->sm_path);
+ 	}
+-	return 0;
++	ret = 0;
++cleanup:
++	string_list_clear(&reference, 1);
++	return ret;
+ }
+ 
+ static int config_submodule_in_gitmodules(const char *name, const char *var, const char *value)
+-- 
+2.37.1.1233.ge8b09efaedc
+
