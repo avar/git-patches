@@ -1,9 +1,9 @@
 From 6160a1ab250d74af44cd05a9b71805e872e8edc0 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-00.28-00000000000-20220802T153514Z-avarab@gmail.com>
+Message-Id: <cover-v2-00.28-00000000000-20220802T153546Z-avarab@gmail.com>
 In-Reply-To: <cover-00.20-00000000000-20220728T161116Z-avarab@gmail.com>
 References: <cover-00.20-00000000000-20220728T161116Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 2 Aug 2022 17:35:14 +0200
+Date: Tue, 2 Aug 2022 17:35:46 +0200
 Subject: [PATCH v2 00/28] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -243,17 +243,178 @@ Range-diff against v1:
      -	connect_work_tree_and_git_dir(clone_data->path, sm_gitdir, 0);
 15:  e319f4edc54 = 15:  1ff380ec7b5 submodule--helper: add "const" to copy of "update_data"
 16:  68202100d9a = 16:  d3a7e646adc submodule--helper: refactor "errmsg_str" to be a "struct strbuf"
-17:  e8aacb55a18 <  -:  ----------- submodule--helper: rename "int res" to "int ret"
-18:  41fb22d8549 <  -:  ----------- submodule--helper: add skeleton "goto cleanup" to update_submodule()
-19:  5a26c9428be <  -:  ----------- submodule--helper: don't exit() on failure, return
  -:  ----------- > 17:  23eb07176d9 submodule--helper: don't redundantly check "else if (res)"
- -:  ----------- > 18:  78f74df6d5e submodule--helper: rename "int res" to "int ret"
+17:  e8aacb55a18 ! 18:  78f74df6d5e submodule--helper: rename "int res" to "int ret"
+    @@ Commit message
+         cmd_update() logic to C, 2022-03-15) to "ret", which is the convention
+         in the rest of this file.
+     
+    -    Eventual follow-up commits will change this code to a "goto cleanup"
+    -    pattern, let's have the post image look consistent with the rest.
+    +    Eventual follow-up commits will change the code in update_submodule()
+    +    to a "goto cleanup" pattern, let's have the post image look consistent
+    +    with the rest. For update_submodules() let's also use a "ret" for
+    +    consistency, that use was also added in b3c5f5cb048. We'll be
+    +    modifying that codepath in subsequent commits.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *upd
+      			    update_data->displaypath);
+     -		if (res == 128)
+     -			exit(res);
+    --		else if (res)
+     +		if (ret == 128)
+     +			exit(ret);
+    -+		else if (ret)
+    - 			return 1;
+    + 		return 1;
+      	}
+      
+    +@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+    + 
+    + static int update_submodules(struct update_data *update_data)
+    + {
+    +-	int i, res = 0;
+    ++	int i, ret = 0;
+    + 	struct submodule_update_clone suc = SUBMODULE_UPDATE_CLONE_INIT;
+    + 
+    + 	suc.update_data = update_data;
+    +@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
+    + 	 * - the listener can avoid doing any work if fetching failed.
+    + 	 */
+    + 	if (suc.quickstop) {
+    +-		res = 1;
+    ++		ret = 1;
+    + 		goto cleanup;
+    + 	}
+    + 
+    +@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
+    + 		update_data->sm_path = ucd.sub->path;
+    + 
+    + 		if (update_submodule(update_data))
+    +-			res = 1;
+    ++			ret = 1;
+    + 	}
+    + 
+    + cleanup:
+    + 	string_list_clear(&update_data->references, 0);
+    +-	return res;
+    ++	return ret;
+    + }
+    + 
+    + static int module_update(int argc, const char **argv, const char *prefix)
+18:  41fb22d8549 <  -:  ----------- submodule--helper: add skeleton "goto cleanup" to update_submodule()
  -:  ----------- > 19:  f0258e37ebe submodule--helper: return "ret", not "1" from update_submodule()
  -:  ----------- > 20:  70f030cca4e submodule--helper: add missing braces to "else" arm
  -:  ----------- > 21:  bce1a014a2f submodule--helper: don't call submodule_strategy_to_string() in BUG()
  -:  ----------- > 22:  98c3e562c82 submodule--helper: move submodule_strategy_to_string() to only user
  -:  ----------- > 23:  db2d2fb5a21 submodule--helper: use "code" in run_update_command()
- -:  ----------- > 24:  d33260487bd submodule--helper: don't exit() on failure, return
+19:  5a26c9428be ! 24:  d33260487bd submodule--helper: don't exit() on failure, return
+    @@ builtin/submodule--helper.c: static int fetch_in_submodule(const char *module_pa
+      
+     -static int run_update_command(struct update_data *ud, int subforce)
+     +static int run_update_command(struct update_data *ud, int subforce,
+    -+			      int *must_die_on_failurep)
+    ++			      int *must_die_on_failure)
+      {
+      	struct child_process cp = CHILD_PROCESS_INIT;
+      	char *oid = oid_to_hex(&ud->oid);
+     @@ builtin/submodule--helper.c: static int run_update_command(struct update_data *ud, int subforce)
+    - 			BUG("unexpected update strategy type: %s",
+    - 			    submodule_strategy_to_string(&ud->update_strategy));
+      		}
+    --		if (must_die_on_failure)
+    --			exit(128);
+    -+		if (must_die_on_failure) {
+    -+			*must_die_on_failurep = 1;
+    -+			return 128;
+    -+		}
+    - 
+    - 		/* the command failed, but update must continue */
+    - 		return 1;
+    + 
+    + 		if (ret == 128)
+    +-			exit(ret);
+    ++			*must_die_on_failure = 1;
+    + 		return ret;
+    + 	}
+    + 
+     @@ builtin/submodule--helper.c: static int run_update_command(struct update_data *ud, int subforce)
+      	return 0;
+      }
+    @@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data
+     +static int update_submodule(struct update_data *update_data,
+     +			    int *must_die_on_failure)
+      {
+    - 	int ret = 1;
+    + 	ensure_core_worktree(update_data->sm_path);
+      
+     @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+    + 		free(remote_ref);
+      	}
+      
+    - 	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
+    +-	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force)
+     -		if (run_update_procedure(update_data))
+    ++	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
+    ++		int ret;
+    ++
+     +		ret = run_update_procedure(update_data, must_die_on_failure);
+    -+		if (ret && *must_die_on_failure) {
+    -+			goto cleanup;
+    -+		} else if (ret) {
+    -+			ret = 1;
+    - 			goto cleanup;
+    -+		}
+    - 	}
+    ++		if (*must_die_on_failure)
+    ++			return ret;
+    ++		if (ret)
+    + 			return 1;
+    ++	}
+      
+      	if (update_data->recursive) {
+    + 		struct child_process cp = CHILD_PROCESS_INIT;
+     @@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+      		die_message(_("Failed to recurse into submodule path '%s'"),
+      			    update_data->displaypath);
+    - 		if (ret == 128) {
+    + 		if (ret == 128)
+     -			exit(ret);
+     +			*must_die_on_failure = 1;
+    -+			goto cleanup;
+    - 		} else if (ret) {
+    - 			ret = 1;
+    - 			goto cleanup;
+    + 		return ret;
+    + 	}
+    + 
+     @@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
+      
+      	for (i = 0; i < suc.update_clone_nr; i++) {
+      		struct update_clone_data ucd = suc.update_clone[i];
+    -+		int code;
+     +		int must_die_on_failure = 0;
+    ++		int code;
+      
+      		oidcpy(&update_data->oid, &ucd.oid);
+      		update_data->just_cloned = ucd.just_cloned;
+      		update_data->sm_path = ucd.sub->path;
+      
+     -		if (update_submodule(update_data))
+    --			res = 1;
+     +		code = update_submodule(update_data, &must_die_on_failure);
+     +		if (code)
+    -+			res = code;
+    ++			ret = code;
+     +		if (must_die_on_failure)
+     +			goto cleanup;
+    ++		else if (code)
+    + 			ret = 1;
+      	}
+      
+    - cleanup:
  -:  ----------- > 25:  9981a75d7e8 submodule--helper: libify determine_submodule_update_strategy()
  -:  ----------- > 26:  b48705c6cc0 submodule--helper: libify "must_die_on_failure" code paths
  -:  ----------- > 27:  93cd1ccde54 submodule--helper: libify "must_die_on_failure" code paths (for die)
