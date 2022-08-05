@@ -1,0 +1,56 @@
+From 3ff1770748183e452e95af2d2d769b643e7e7c77 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-3ff17707481-20220805T141816Z-avarab@gmail.com>
+In-Reply-To: <CAKvVO18RVye=PkBRv=trj2GHh8ccGKL5j0mMq2eHQ1SX=wsr8A@mail.gmail.com>
+References: <CAKvVO18RVye=PkBRv=trj2GHh8ccGKL5j0mMq2eHQ1SX=wsr8A@mail.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Aug 2022 12:18:39 +0200
+Subject: [PATCH] revision.c: set-up "index_state.repo", don't segfault in
+ pack-objects
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Narrowly fix a segfault that's been reported against pack-objects at
+[1] and [2].
+
+This fixes a segfault in "git pack-objects", see a reports at [1] and
+[2]. In that case we'd go through the add_index_objects_to_pending()
+codepath being modified here, and eventually call into
+new_untracked_cache().
+
+We'd then segfault in new_untracked_cache_flags() as we tried to use a
+NULL "repo" extracted from the "struct index_state".
+
+The segfault we ran into there is only a symptom of a much bigger
+problem, namely that we have various "struct index_state" variables
+constructed in various places, and then call into functions that might
+expect to have a non-NULL "repo" member. In follow-up work we'll fix
+that more general problem, but let's just fix the segfault for now.
+
+1. https://lore.kernel.org/git/977a6e0e-251c-4fa5-8b3b-fa3e2a761926@www.fastmail.com/
+2. https://lore.kernel.org/git/ecb6fa27-b918-4234-8e44-13c2a3e76e07@gmail.com/
+
+Reported-by: Paul Horn <git@knutwalker.engineer>
+Reported-by: Emily Noneman <emily.noneman@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ revision.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/revision.c b/revision.c
+index 87f1c117d13..48c2f1b91a8 100644
+--- a/revision.c
++++ b/revision.c
+@@ -1775,7 +1775,7 @@ void add_index_objects_to_pending(struct rev_info *revs, unsigned int flags)
+ 	worktrees = get_worktrees();
+ 	for (p = worktrees; *p; p++) {
+ 		struct worktree *wt = *p;
+-		struct index_state istate = { NULL };
++		struct index_state istate = { .repo = revs->repo };
+ 
+ 		if (wt->is_current)
+ 			continue; /* current index already taken care of */
+-- 
+2.37.1.1283.g2c56c4202c5
+
