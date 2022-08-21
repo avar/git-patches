@@ -1,0 +1,81 @@
+From d307c5e070609e2738b60f99f72fcdb20e5a1d28 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-17.17-d307c5e0706-20220821T123207Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.17-00000000000-20220821T123207Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20220728T161116Z-avarab@gmail.com>
+	<cover-v3-00.17-00000000000-20220821T123207Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Jul 2022 21:40:27 +0200
+Subject: [PATCH v3 17/17] submodule--helper: fix a configure_added_submodule()
+ leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix config API a memory leak added in a452128a36c (submodule--helper:
+introduce add-config subcommand, 2021-08-06) by using the *_tmp()
+variant of git_config_get_string().
+
+In this case we're only checking whether
+the (repo|git)_config_get_string() call is telling us that the
+"submodule.active" key exists.
+
+As with the preceding commit we'll find many other such patterns in
+the codebase if we go fishing. E.g. "git gc" leaks in the code added
+in 61f7a383d3b (maintenance: use 'incremental' strategy by default,
+2020-10-15). Similar code in "git gc" added in
+b08ff1fee00 (maintenance: add --schedule option and config,
+2020-09-11) doesn't leak, but we could avoid the malloc() & free() in
+that case.
+
+A coccinelle rule to find those would find and fix some leaks, and
+cases where we're doing needless malloc() + free()'s but only care
+about the key existence, or are copying
+the (repo|git)_config_get_string() return value right away.
+
+But as with the preceding commit let's punt on all of that for now,
+and just narrowly fix this specific case in submodule--helper.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c    | 4 ++--
+ t/t7413-submodule-is-active.sh | 1 +
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 070e435b13e..3061943e70d 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -3168,7 +3168,7 @@ static int config_submodule_in_gitmodules(const char *name, const char *var, con
+ static void configure_added_submodule(struct add_data *add_data)
+ {
+ 	char *key;
+-	char *val = NULL;
++	const char *val;
+ 	struct child_process add_submod = CHILD_PROCESS_INIT;
+ 	struct child_process add_gitmodules = CHILD_PROCESS_INIT;
+ 
+@@ -3213,7 +3213,7 @@ static void configure_added_submodule(struct add_data *add_data)
+ 	 * is_submodule_active(), since that function needs to find
+ 	 * out the value of "submodule.active" again anyway.
+ 	 */
+-	if (!git_config_get_string("submodule.active", &val)) {
++	if (!git_config_get_string_tmp("submodule.active", &val)) {
+ 		/*
+ 		 * If the submodule being added isn't already covered by the
+ 		 * current configured pathspec, set the submodule's active flag
+diff --git a/t/t7413-submodule-is-active.sh b/t/t7413-submodule-is-active.sh
+index ede6f02dbd5..4dc7d089423 100755
+--- a/t/t7413-submodule-is-active.sh
++++ b/t/t7413-submodule-is-active.sh
+@@ -9,6 +9,7 @@ This is a unit test of the submodule.c is_submodule_active() function,
+ which is also indirectly tested elsewhere.
+ '
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+-- 
+2.37.2.1279.g64dec4e13cf
+
