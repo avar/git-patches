@@ -1,9 +1,9 @@
-From d307c5e070609e2738b60f99f72fcdb20e5a1d28 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-00.17-00000000000-20220821T123207Z-avarab@gmail.com>
+From ec0b02d8ee2d64c2ce53044c5a55ee2635a6acea Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-00.17-00000000000-20220821T130225Z-avarab@gmail.com>
 In-Reply-To: <cover-00.20-00000000000-20220728T161116Z-avarab@gmail.com>
 References: <cover-00.20-00000000000-20220728T161116Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Sun, 21 Aug 2022 14:32:07 +0200
+Date: Sun, 21 Aug 2022 15:02:25 +0200
 Subject: [PATCH v3 00/17] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -35,17 +35,19 @@ Content-Transfer-Encoding: 8bit
  t/t2403-worktree-move.sh           |   1 +
  t/t6008-rev-list-submodule.sh      |   1 +
  t/t6134-pathspec-in-submodule.sh   |   1 +
+ t/t7401-submodule-summary.sh       |   1 +
  t/t7412-submodule-absorbgitdirs.sh |   1 +
  t/t7413-submodule-is-active.sh     |   1 +
  t/t7414-submodule-mistakes.sh      |   2 +
+ t/t7419-submodule-set-branch.sh    |   1 +
  t/t7506-status-submodule.sh        |   1 +
  t/t7507-commit-verbose.sh          |   2 +
- 10 files changed, 185 insertions(+), 65 deletions(-)
+ 12 files changed, 187 insertions(+), 65 deletions(-)
 
 Range-diff against v2:
  1:  daa5d3f9962 <  -:  ----------- submodule tests: test usage behavior
  2:  9d920326df3 <  -:  ----------- submodule tests: test for "add <repository> <abs-path>"
-24:  d33260487bd !  1:  4ba4e25c0a2 submodule--helper: don't exit() on failure, return
+24:  d33260487bd !  1:  0f60ea6f7c6 submodule--helper: don't exit() on failure, return
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -249,7 +251,7 @@ Range-diff against v2:
     + . ./test-lib.sh
       
     + write_script "check-for-diff" <<\EOF &&
-27:  93cd1ccde54 !  2:  bb6d02b14eb submodule--helper: libify "must_die_on_failure" code paths (for die)
+27:  93cd1ccde54 !  2:  c14e00f39cb submodule--helper: libify "must_die_on_failure" code paths (for die)
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -371,7 +373,7 @@ Range-diff against v2:
     - 
     - 		free(remote_ref);
     - 	}
- 9:  b0238f699ce !  3:  873a44f2ba9 submodule--helper style: don't separate declared variables with \n\n
+ 9:  b0238f699ce !  3:  a2ecdb301d3 submodule--helper style: don't separate declared variables with \n\n
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -816,7 +818,7 @@ Range-diff against v2:
     + }
     + 
     + static int module_config(int argc, const char **argv, const char *prefix)
-11:  72dcf19e1c4 !  4:  9cedfc41a44 submodule--helper: replace memset() with { 0 }-initialization
+11:  72dcf19e1c4 !  4:  8fc3dad316e submodule--helper: replace memset() with { 0 }-initialization
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -889,27 +891,22 @@ Range-diff against v2:
     + 	return ret;
     + }
       
-18:  78f74df6d5e !  5:  926c721848d submodule--helper: rename "int res" to "int ret"
+10:  5f5e68a868b !  5:  a3886d36366 submodule--helper style: add \n\n after variable declarations
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
       ## Commit message ##
-    -    submodule--helper: rename "int res" to "int ret"
+    -    submodule--helper style: add \n\n after variable declarations
     +    submodule--helper: don't leak {run,capture}_command() cp.dir argument
      
-    -    Rename the "res" variable added in b3c5f5cb048 (submodule: move core
-    -    cmd_update() logic to C, 2022-03-15) to "ret", which is the convention
-    -    in the rest of this file.
+    -    Since the preceding commit fixed style issues with \n\n among the
+    -    declared variables let's fix the minor stylistic issues with those
+    -    variables not being consistently followed by a \n\n.
     +    Fix a memory leak in c51f8f94e5b (submodule--helper: run update
     +    procedures from C, 2021-08-24) and 3c3558f0953 (submodule--helper: run
     +    update using child process struct, 2022-03-15) by not allocating
     +    memory in the first place.
-     
-    -    Eventual follow-up commits will change the code in update_submodule()
-    -    to a "goto cleanup" pattern, let's have the post image look consistent
-    -    with the rest. For update_submodules() let's also use a "ret" for
-    -    consistency, that use was also added in b3c5f5cb048. We'll be
-    -    modifying that codepath in subsequent commits.
+    +
     +    The "dir" member of "struct child_process" will not be modified by
     +    that API, and it's declared to be "const char *". So let's not
     +    needlessly duplicate these strings.
@@ -917,88 +914,218 @@ Range-diff against v2:
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
       ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    - 	if (update_data->recursive) {
-    - 		struct child_process cp = CHILD_PROCESS_INIT;
-    - 		struct update_data next = *update_data;
-    --		int res;
-    -+		int ret;
+    -@@ builtin/submodule--helper.c: static int module_list_compute(int argc, const char **argv,
+    - {
+    - 	int i, result = 0;
+    - 	char *ps_matched = NULL;
+    -+
+    - 	parse_pathspec(pathspec, 0,
+    - 		       PATHSPEC_PREFER_FULL,
+    - 		       prefix, argv);
+    -@@ builtin/submodule--helper.c: static void for_each_listed_submodule(const struct module_list *list,
+    - 				      each_submodule_fn fn, void *cb_data)
+    - {
+    - 	int i;
+    -+
+    - 	for (i = 0; i < list->nr; i++)
+    - 		fn(list->entries[i], cb_data);
+    - }
+    -@@ builtin/submodule--helper.c: static void runcommand_in_submodule_cb(const struct cache_entry *list_item,
+    - 	struct foreach_cb *info = cb_data;
+    - 	const char *path = list_item->name;
+    - 	const struct object_id *ce_oid = &list_item->oid;
+    --
+    - 	const struct submodule *sub;
+    - 	struct child_process cp = CHILD_PROCESS_INIT;
+    - 	char *displaypath;
+    -@@ builtin/submodule--helper.c: static void init_submodule(const char *path, const char *prefix,
+    - 		if (starts_with_dot_dot_slash(url) ||
+    - 		    starts_with_dot_slash(url)) {
+    - 			char *oldurl = url;
+    -+
+    - 			url = resolve_relative_url(oldurl, NULL, 0);
+    - 			free(oldurl);
+    - 		}
+    -@@ builtin/submodule--helper.c: static void init_submodule(const char *path, const char *prefix,
+    - static void init_submodule_cb(const struct cache_entry *list_item, void *cb_data)
+    - {
+    - 	struct init_cb *info = cb_data;
+    -+
+    - 	init_submodule(list_item->name, info->prefix, info->flags);
+    - }
+    - 
+    -@@ builtin/submodule--helper.c: static int handle_submodule_head_ref(const char *refname,
+    - 				     void *cb_data)
+    - {
+    - 	struct object_id *output = cb_data;
+    -+
+    - 	if (oid)
+    - 		oidcpy(output, oid);
     +@@ builtin/submodule--helper.c: static int is_tip_reachable(const char *path, struct object_id *oid)
     + 	char *hex = oid_to_hex(oid);
       
-    - 		next.prefix = NULL;
-    - 		oidcpy(&next.oid, null_oid());
-    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    - 		update_data_to_args(&next, &cp.args);
+    -@@ builtin/submodule--helper.c: static void status_submodule_cb(const struct cache_entry *list_item,
+    - 				void *cb_data)
+    - {
+    - 	struct status_cb *info = cb_data;
+    -+
+    - 	status_submodule(list_item->name, &list_item->oid, list_item->ce_flags,
+    - 			 info->prefix, info->flags);
+    - }
+    -@@ builtin/submodule--helper.c: static void generate_submodule_summary(struct summary_cb *info,
+    - 	if (!info->cached && oideq(&p->oid_dst, null_oid())) {
+    - 		if (S_ISGITLINK(p->mod_dst)) {
+    - 			struct ref_store *refs = get_submodule_ref_store(p->sm_path);
+    -+
+    - 			if (refs)
+    - 				refs_head_ref(refs, handle_submodule_head_ref, &p->oid_dst);
+    - 		} else if (S_ISLNK(p->mod_dst) || S_ISREG(p->mod_dst)) {
+    -@@ builtin/submodule--helper.c: static void sync_submodule(const char *path, const char *prefix,
+    - 		if (starts_with_dot_dot_slash(sub->url) ||
+    - 		    starts_with_dot_slash(sub->url)) {
+    - 			char *up_path = get_up_path(path);
+    -+
+    - 			sub_origin_url = resolve_relative_url(sub->url, up_path, 1);
+    - 			super_config_url = resolve_relative_url(sub->url, NULL, 1);
+    - 			free(up_path);
+    -@@ builtin/submodule--helper.c: static void sync_submodule(const char *path, const char *prefix,
+    - static void sync_submodule_cb(const struct cache_entry *list_item, void *cb_data)
+    - {
+    - 	struct sync_cb *info = cb_data;
+    -+
+    - 	sync_submodule(list_item->name, info->prefix, info->flags);
+    - }
     + 	cp.git_cmd = 1;
     +-	cp.dir = xstrdup(path);
     ++	cp.dir = path;
     + 	cp.no_stderr = 1;
     + 	strvec_pushl(&cp.args, "rev-list", "-n", "1", hex, "--not", "--all", NULL);
       
-    - 		/* die() if child process die()'d */
-    --		res = run_command(&cp);
-    --		if (!res)
-    -+		ret = run_command(&cp);
-    -+		if (!ret)
-    - 			return 0;
-    - 		die_message(_("Failed to recurse into submodule path '%s'"),
-    - 			    update_data->displaypath);
-    --		if (res == 128)
-    --			exit(res);
-    -+		if (ret == 128)
-    -+			exit(ret);
-    - 		return 1;
-    - 	}
-    - 
-    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
-    - 
-    - static int update_submodules(struct update_data *update_data)
-    - {
-    --	int i, res = 0;
-    -+	int i, ret = 0;
-    - 	struct submodule_update_clone suc = SUBMODULE_UPDATE_CLONE_INIT;
+    -@@ builtin/submodule--helper.c: static void deinit_submodule(const char *path, const char *prefix,
     +@@ builtin/submodule--helper.c: static int fetch_in_submodule(const char *module_path, int depth, int quiet, str
       
-    - 	suc.update_data = update_data;
-    -@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
-    - 	 * - the listener can avoid doing any work if fetching failed.
-    - 	 */
-    - 	if (suc.quickstop) {
-    --		res = 1;
-    -+		ret = 1;
-    - 		goto cleanup;
+    - 		if (!(flags & OPT_FORCE)) {
+    - 			struct child_process cp_rm = CHILD_PROCESS_INIT;
+    -+
+    - 			cp_rm.git_cmd = 1;
+    - 			strvec_pushl(&cp_rm.args, "rm", "-qn",
+    - 				     path, NULL);
+    -@@ builtin/submodule--helper.c: static void deinit_submodule(const char *path, const char *prefix,
+    - 	/* remove the .git/config entries (unless the user already did it) */
+    - 	if (!capture_command(&cp_config, &sb_config, 0) && sb_config.len) {
+    - 		char *sub_key = xstrfmt("submodule.%s", sub->name);
+    -+
+    - 		/*
+    - 		 * remove the whole section so we have a clean state when
+    - 		 * the user later decides to init this submodule again
+    -@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
+    - 			strvec_pushl(&cp.args, "--depth", clone_data->depth, NULL);
+    - 		if (clone_data->reference.nr) {
+    - 			struct string_list_item *item;
+    -+
+    - 			for_each_string_list_item(item, &clone_data->reference)
+    - 				strvec_pushl(&cp.args, "--reference",
+    - 					     item->string, NULL);
+    -@@ builtin/submodule--helper.c: static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
+    - 	strvec_pushl(&child->args, "--url", url, NULL);
+    - 	if (suc->update_data->references.nr) {
+    - 		struct string_list_item *item;
+    -+
+    - 		for_each_string_list_item(item, &suc->update_data->references)
+    - 			strvec_pushl(&child->args, "--reference", item->string, NULL);
     - 	}
-    - 
-    -@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
-    - 		update_data->sm_path = ucd.sub->path;
+    -@@ builtin/submodule--helper.c: static int update_clone_get_next_task(struct child_process *child,
+    - 		ce = suc->update_data->list.entries[suc->current];
+    - 		if (prepare_to_clone_next_submodule(ce, child, suc, err)) {
+    - 			int *p = xmalloc(sizeof(*p));
+    -+
+    - 			*p = suc->current;
+    - 			*idx_task_cb = p;
+    - 			suc->current++;
+    -@@ builtin/submodule--helper.c: static int update_clone_get_next_task(struct child_process *child,
+    - 	index = suc->current - suc->update_data->list.nr;
+    - 	if (index < suc->failed_clones_nr) {
+    - 		int *p;
+    -+
+    - 		ce = suc->failed_clones[index];
+    - 		if (!prepare_to_clone_next_submodule(ce, child, suc, err)) {
+    - 			suc->current ++;
+    -@@ builtin/submodule--helper.c: static int update_clone_start_failure(struct strbuf *err,
+    - 				      void *idx_task_cb)
+    - {
+    - 	struct submodule_update_clone *suc = suc_cb;
+    -+
+    - 	suc->quickstop = 1;
+    - 	return 1;
+    - }
+    -@@ builtin/submodule--helper.c: static int update_clone_task_finished(int result,
+    - {
+    - 	const struct cache_entry *ce;
+    - 	struct submodule_update_clone *suc = suc_cb;
+    --
+    - 	int *idxP = idx_task_cb;
+    - 	int idx = *idxP;
+    -+
+    - 	free(idxP);
     + 	prepare_submodule_repo_env(&cp.env);
     + 	cp.git_cmd = 1;
     +-	cp.dir = xstrdup(module_path);
     ++	cp.dir = module_path;
       
-    - 		if (update_submodule(update_data))
-    --			res = 1;
-    -+			ret = 1;
+    - 	if (!result)
+    -@@ builtin/submodule--helper.c: static int git_update_clone_config(const char *var, const char *value,
+    - 				   void *cb)
+    - {
+    - 	int *max_jobs = cb;
+    -+
+    - 	if (!strcmp(var, "submodule.fetchjobs"))
+    - 		*max_jobs = parse_submodule_fetchjobs(var, value);
+    - 	return 0;
+    -@@ builtin/submodule--helper.c: static int fetch_in_submodule(const char *module_path, int depth, int quiet, str
+    - 	if (oid) {
+    - 		char *hex = oid_to_hex(oid);
+    - 		char *remote = get_default_remote();
+    -+
+    - 		strvec_pushl(&cp.args, remote, hex, NULL);
+    - 		free(remote);
     + 	strvec_push(&cp.args, "fetch");
     + 	if (quiet)
     +@@ builtin/submodule--helper.c: static int run_update_command(struct update_data *ud, int subforce)
       	}
+    -@@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data *update_data, struct strvec *
     + 	strvec_push(&cp.args, oid);
       
-    - cleanup:
-    - 	string_list_clear(&update_data->references, 0);
-    --	return res;
-    -+	return ret;
-    - }
-    - 
-    - static int module_update(int argc, const char **argv, const char *prefix)
+    - 	if (update_data->references.nr) {
+    - 		struct string_list_item *item;
+    -+
+    - 		for_each_string_list_item(item, &update_data->references)
+    - 			strvec_pushl(args, "--reference", item->string, NULL);
+    - 	}
+    -@@ builtin/submodule--helper.c: static void append_fetch_remotes(struct strbuf *msg, const char *git_dir_path)
+    - 	if (!capture_command(&cp_remote, &sb_remote_out, 0)) {
+    - 		char *next_line;
+    - 		char *line = sb_remote_out.buf;
+    -+
+    - 		while ((next_line = strchr(line, '\n')) != NULL) {
+    - 			size_t len = next_line - line;
+    -+
+    - 			if (strip_suffix_mem(line, &len, " (fetch)"))
+    - 				strbuf_addf(msg, "  %.*s\n", (int)len, line);
+    - 			line = next_line + 1;
+    -@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
+    - 		int exit_code = -1;
+    - 		struct strbuf sb = STRBUF_INIT;
+    - 		struct child_process cp = CHILD_PROCESS_INIT;
+    -+
+    - 		cp.git_cmd = 1;
+    - 		cp.no_stdout = 1;
+    - 		strvec_pushl(&cp.args, "add", "--dry-run", "--ignore-missing",
     +-	cp.dir = xstrdup(ud->sm_path);
     ++	cp.dir = ud->sm_path;
     + 	prepare_submodule_repo_env(&cp.env);
     + 	if ((ret = run_command(&cp))) {
     + 		switch (ud->update_strategy.type) {
-26:  b48705c6cc0 !  6:  e63063c136f submodule--helper: libify "must_die_on_failure" code paths
+26:  b48705c6cc0 !  6:  173dbb7d8fc submodule--helper: libify "must_die_on_failure" code paths
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -1238,7 +1365,7 @@ Range-diff against v2:
     + . ./test-lib.sh
     + 
     + test_expect_success 'setup a submodule' '
- 3:  d981db49fa1 !  7:  85741d1776a submodule--helper: remove unused "name" helper
+ 3:  d981db49fa1 !  7:  cd394814370 submodule--helper: remove unused "name" helper
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -1296,8 +1423,7 @@ Range-diff against v2:
     + static void prepare_submodule_summary(struct summary_cb *info,
  4:  6f78f9c9274 <  -:  ----------- submodule--helper: remove unused "list" helper
  5:  43902201701 <  -:  ----------- test-tool submodule-config: remove unused "--url" handling
- 6:  e2a8bb0a28e <  -:  ----------- submodule--helper: move "is-active" to a test-tool
- 7:  b209532eb17 !  8:  8b037953852 submodule--helper: move "check-name" to a test-tool
+ 7:  b209532eb17 !  8:  2110b991913 submodule--helper: move "check-name" to a test-tool
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -1473,36 +1599,41 @@ Range-diff against v2:
     - 	{ "is-active", cmd__submodule_is_active },
     - };
     - 
-    -
+     
     - ## t/t7450-bad-git-dotfiles.sh ##
     -@@ t/t7450-bad-git-dotfiles.sh: test_expect_success 'check names' '
     - 	valid/with/paths
     - 	EOF
-    - 
+    + ## t/t7401-submodule-summary.sh ##
+    +@@ t/t7401-submodule-summary.sh: This test script tries to verify the sanity of summary subcommand of git submodu
+    + # various reasons, one of them being that there are lots of commands taking place
+    + # outside of 'test_expect_success' block, which is no longer in good-style.
+      
     --	git submodule--helper check-name >actual <<-\EOF &&
     -+	test-tool submodule check-name >actual <<-\EOF &&
     - 	valid
     - 	valid/with/paths
-    - 
-17:  23eb07176d9 !  9:  6f40dfe8c70 submodule--helper: don't redundantly check "else if (res)"
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+      
+    + add_file () {
+18:  78f74df6d5e !  9:  a0d1a03166f submodule--helper: rename "int res" to "int ret"
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
       ## Commit message ##
-    -    submodule--helper: don't redundantly check "else if (res)"
+    -    submodule--helper: rename "int res" to "int ret"
     +    submodule--helper: fix a leak with repo_clear()
      
-    -    The "res" variable must be true at this point in update_submodule(),
-    -    as just a few lines above this we've unconditionally:
+    -    Rename the "res" variable added in b3c5f5cb048 (submodule: move core
+    -    cmd_update() logic to C, 2022-03-15) to "ret", which is the convention
+    -    in the rest of this file.
     -
-    -            if (!res)
-    -                    return 0;
-    -
-    -    So we don't need to guard the "return 1" with an "else if (res)", we
-    -    an return unconditionally at this point. See b3c5f5cb048 (submodule:
-    -    move core cmd_update() logic to C, 2022-03-15) for the initial
-    -    introduction of this code, this check of "res" has always been
-    -    redundant.
+    -    Eventual follow-up commits will change the code in update_submodule()
+    -    to a "goto cleanup" pattern, let's have the post image look consistent
+    -    with the rest. For update_submodules() let's also use a "ret" for
+    -    consistency, that use was also added in b3c5f5cb048. We'll be
+    -    modifying that codepath in subsequent commits.
     +    Call repo_clear() in ensure_core_worktree() to free the "struct
     +    repository". Fixes a leak that's been here since
     +    74d4731da1f (submodule--helper: replace connect-gitdir-workingtree by
@@ -1512,21 +1643,70 @@ Range-diff against v2:
      
       ## builtin/submodule--helper.c ##
     -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+    - 	if (update_data->recursive) {
+    - 		struct child_process cp = CHILD_PROCESS_INIT;
+    - 		struct update_data next = *update_data;
+    --		int res;
+    -+		int ret;
+    - 
+    - 		next.prefix = NULL;
+    - 		oidcpy(&next.oid, null_oid());
+    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+    - 		update_data_to_args(&next, &cp.args);
+    - 
+    - 		/* die() if child process die()'d */
+    --		res = run_command(&cp);
+    --		if (!res)
+    -+		ret = run_command(&cp);
+    -+		if (!ret)
+    - 			return 0;
+    - 		die_message(_("Failed to recurse into submodule path '%s'"),
     - 			    update_data->displaypath);
-    - 		if (res == 128)
-    - 			exit(res);
-    --		else if (res)
-    --			return 1;
-    -+		return 1;
+    --		if (res == 128)
+    --			exit(res);
+    -+		if (ret == 128)
+    -+			exit(ret);
+    - 		return 1;
+    - 	}
+    - 
+    -@@ builtin/submodule--helper.c: static int update_submodule(struct update_data *update_data)
+    - 
+    - static int update_submodules(struct update_data *update_data)
+    - {
+    --	int i, res = 0;
+    -+	int i, ret = 0;
+    - 	struct submodule_update_clone suc = SUBMODULE_UPDATE_CLONE_INIT;
+    - 
+    - 	suc.update_data = update_data;
+    -@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
+    - 	 * - the listener can avoid doing any work if fetching failed.
+    - 	 */
+    - 	if (suc.quickstop) {
+    --		res = 1;
+    -+		ret = 1;
+    - 		goto cleanup;
+    - 	}
+    - 
+    -@@ builtin/submodule--helper.c: static int update_submodules(struct update_data *update_data)
+    - 		update_data->sm_path = ucd.sub->path;
+    - 
+    - 		if (update_submodule(update_data))
+    --			res = 1;
+    -+			ret = 1;
     +@@ builtin/submodule--helper.c: static int ensure_core_worktree(const char *path)
     + 		strbuf_release(&sb);
       	}
       
+    - cleanup:
+    - 	string_list_clear(&update_data->references, 0);
+    --	return res;
+    -+	return ret;
     ++	repo_clear(&subrepo);
-      	return 0;
-    + }
-    + 
-23:  db2d2fb5a21 ! 10:  29afc8e83c1 submodule--helper: use "code" in run_update_command()
+    + 	return 0;
+      }
+      
+    - static int module_update(int argc, const char **argv, const char *prefix)
+23:  db2d2fb5a21 ! 10:  84f162f320b submodule--helper: use "code" in run_update_command()
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -1651,7 +1831,7 @@ Range-diff against v2:
       
     - 	if (ud->quiet)
     + static char *get_default_remote(void)
-14:  866b8397a59 ! 11:  9893b72f643 submodule--helper: pass a "const struct module_clone_data" to clone_submodule()
+14:  866b8397a59 ! 11:  dc5e8504354 submodule--helper: pass a "const struct module_clone_data" to clone_submodule()
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -1913,7 +2093,7 @@ Range-diff against v2:
     + }
     + 
     + static int config_submodule_in_gitmodules(const char *name, const char *var, const char *value)
-25:  9981a75d7e8 ! 12:  8f297c618bc submodule--helper: libify determine_submodule_update_strategy()
+25:  9981a75d7e8 ! 12:  50d58bfb19b submodule--helper: libify determine_submodule_update_strategy()
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -2074,7 +2254,7 @@ Range-diff against v2:
     - 		next.prefix = NULL;
     - 		oidcpy(&next.oid, null_oid());
     + #define SUPPORT_SUPER_PREFIX (1<<0)
-13:  91558745e2e ! 13:  4b83ea4ca63 submodule--helper: move "sb" in clone_submodule() to its own scope
+13:  91558745e2e ! 13:  56590508180 submodule--helper: move "sb" in clone_submodule() to its own scope
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -2147,7 +2327,7 @@ Range-diff against v2:
     - 	return 0;
     + 	if (starts_with_dot_dot_slash(add_data.repo) ||
     + 	    starts_with_dot_slash(add_data.repo)) {
-16:  d3a7e646adc ! 14:  721f86ca30f submodule--helper: refactor "errmsg_str" to be a "struct strbuf"
+16:  d3a7e646adc ! 14:  38ceb0a36ab submodule--helper: refactor "errmsg_str" to be a "struct strbuf"
     @@
       ## Metadata ##
     -Author: Glen Choo <chooglen@google.com>
@@ -2237,76 +2417,47 @@ Range-diff against v2:
     - 
     - 	free(displaypath);
     + 	printf("\n");
-10:  5f5e68a868b ! 15:  289c6fd81a7 submodule--helper style: add \n\n after variable declarations
+ 6:  e2a8bb0a28e ! 15:  f3cf49dd029 submodule--helper: move "is-active" to a test-tool
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
       ## Commit message ##
-    -    submodule--helper style: add \n\n after variable declarations
+    -    submodule--helper: move "is-active" to a test-tool
     +    submodule--helper: free some "displaypath" in "struct update_data"
      
-    -    Since the preceding commit fixed style issues with \n\n among the
-    -    declared variables let's fix the minor stylistic issues with those
-    -    variables not being consistently followed by a \n\n.
+    -    Create a new "test-tool submodule" and move the "is-active" subcommand
+    -    over to it. It was added in 5c2bd8b77ae (submodule--helper: add
+    -    is-active subcommand, 2017-03-16), since
+    -    a452128a36c (submodule--helper: introduce add-config subcommand,
+    -    2021-08-06) it hasn't been used by git-submodule.sh.
     +    Make the update_data_release() function free "displaypath" member when
     +    appropriate. The "displaypath" member is always ours, the "const" on
     +    the "char *" was wrong to begin with.
-    +
+     
+    -    Since we're creating a command dispatch similar to test-tool.c itself
+    -    let's split out the "struct test_cmd" into a new test-tool-utils.h,
+    -    which both this new code and test-tool.c itself can use.
     +    This leaves a leak of "displaypath" in update_submodule(), which as
     +    we'll see in subsequent commits is harder to deal with than this
     +    trivial fix.
      
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
+    - ## Makefile ##
+    -@@ Makefile: TEST_BUILTINS_OBJS += test-strcmp-offset.o
+    - TEST_BUILTINS_OBJS += test-string-list.o
+    - TEST_BUILTINS_OBJS += test-submodule-config.o
+    - TEST_BUILTINS_OBJS += test-submodule-nested-repo-config.o
+    -+TEST_BUILTINS_OBJS += test-submodule.o
+    - TEST_BUILTINS_OBJS += test-subprocess.o
+    - TEST_BUILTINS_OBJS += test-trace2.o
+    - TEST_BUILTINS_OBJS += test-urlmatch-normalization.o
+    -
       ## builtin/submodule--helper.c ##
-    -@@ builtin/submodule--helper.c: static int module_list_compute(int argc, const char **argv,
-    - {
-    - 	int i, result = 0;
-    - 	char *ps_matched = NULL;
-    -+
-    - 	parse_pathspec(pathspec, 0,
-    - 		       PATHSPEC_PREFER_FULL,
-    - 		       prefix, argv);
-    -@@ builtin/submodule--helper.c: static void for_each_listed_submodule(const struct module_list *list,
-    - 				      each_submodule_fn fn, void *cb_data)
-    - {
-    - 	int i;
-    -+
-    - 	for (i = 0; i < list->nr; i++)
-    - 		fn(list->entries[i], cb_data);
-    - }
-    -@@ builtin/submodule--helper.c: static void runcommand_in_submodule_cb(const struct cache_entry *list_item,
-    - 	struct foreach_cb *info = cb_data;
-    - 	const char *path = list_item->name;
-    - 	const struct object_id *ce_oid = &list_item->oid;
-    --
-    - 	const struct submodule *sub;
-    - 	struct child_process cp = CHILD_PROCESS_INIT;
-    - 	char *displaypath;
-    -@@ builtin/submodule--helper.c: static void init_submodule(const char *path, const char *prefix,
-    - 		if (starts_with_dot_dot_slash(url) ||
-    - 		    starts_with_dot_slash(url)) {
-    - 			char *oldurl = url;
-    -+
-    - 			url = resolve_relative_url(oldurl, NULL, 0);
-    - 			free(oldurl);
-    - 		}
-    -@@ builtin/submodule--helper.c: static void init_submodule(const char *path, const char *prefix,
-    - static void init_submodule_cb(const struct cache_entry *list_item, void *cb_data)
-    - {
-    - 	struct init_cb *info = cb_data;
-    -+
-    - 	init_submodule(list_item->name, info->prefix, info->flags);
-    - }
+    -@@ builtin/submodule--helper.c: static int absorb_git_dirs(int argc, const char **argv, const char *prefix)
+    - 	return 0;
     +@@ builtin/submodule--helper.c: static void submodule_update_clone_release(struct submodule_update_clone *suc)
-      
-    -@@ builtin/submodule--helper.c: static int handle_submodule_head_ref(const char *refname,
-    - 				     void *cb_data)
-    - {
-    - 	struct object_id *output = cb_data;
-    -+
-    - 	if (oid)
-    - 		oidcpy(output, oid);
+    + 
     + struct update_data {
     + 	const char *prefix;
     +-	const char *displaypath;
@@ -2315,170 +2466,256 @@ Range-diff against v2:
     + 	struct object_id suboid;
     + 	struct string_list references;
     +@@ builtin/submodule--helper.c: struct update_data {
-      
-    -@@ builtin/submodule--helper.c: static void status_submodule_cb(const struct cache_entry *list_item,
-    - 				void *cb_data)
-    - {
-    - 	struct status_cb *info = cb_data;
-    -+
-    - 	status_submodule(list_item->name, &list_item->oid, list_item->ce_flags,
-    - 			 info->prefix, info->flags);
-    - }
-    -@@ builtin/submodule--helper.c: static void generate_submodule_summary(struct summary_cb *info,
-    - 	if (!info->cached && oideq(&p->oid_dst, null_oid())) {
-    - 		if (S_ISGITLINK(p->mod_dst)) {
-    - 			struct ref_store *refs = get_submodule_ref_store(p->sm_path);
-    -+
-    - 			if (refs)
-    - 				refs_head_ref(refs, handle_submodule_head_ref, &p->oid_dst);
-    - 		} else if (S_ISLNK(p->mod_dst) || S_ISREG(p->mod_dst)) {
-    -@@ builtin/submodule--helper.c: static void sync_submodule(const char *path, const char *prefix,
-    - 		if (starts_with_dot_dot_slash(sub->url) ||
-    - 		    starts_with_dot_slash(sub->url)) {
-    - 			char *up_path = get_up_path(path);
-    -+
-    - 			sub_origin_url = resolve_relative_url(sub->url, up_path, 1);
-    - 			super_config_url = resolve_relative_url(sub->url, NULL, 1);
-    - 			free(up_path);
-    -@@ builtin/submodule--helper.c: static void sync_submodule(const char *path, const char *prefix,
-    - static void sync_submodule_cb(const struct cache_entry *list_item, void *cb_data)
+    + 
     + static void update_data_release(struct update_data *ud)
-      {
-    - 	struct sync_cb *info = cb_data;
-    -+
-    - 	sync_submodule(list_item->name, info->prefix, info->flags);
+    + {
     ++	free(ud->displaypath);
     + 	module_list_release(&ud->list);
       }
       
-    -@@ builtin/submodule--helper.c: static void deinit_submodule(const char *path, const char *prefix,
-    +
-    + ## t/t2403-worktree-move.sh ##
-    +@@
-      
-    - 		if (!(flags & OPT_FORCE)) {
-    - 			struct child_process cp_rm = CHILD_PROCESS_INIT;
-    -+
-    - 			cp_rm.git_cmd = 1;
-    - 			strvec_pushl(&cp_rm.args, "rm", "-qn",
-    - 				     path, NULL);
-    -@@ builtin/submodule--helper.c: static void deinit_submodule(const char *path, const char *prefix,
-    - 	/* remove the .git/config entries (unless the user already did it) */
-    - 	if (!capture_command(&cp_config, &sb_config, 0) && sb_config.len) {
-    - 		char *sub_key = xstrfmt("submodule.%s", sub->name);
-    -+
-    - 		/*
-    - 		 * remove the whole section so we have a clean state when
-    - 		 * the user later decides to init this submodule again
-    -@@ builtin/submodule--helper.c: static int clone_submodule(struct module_clone_data *clone_data)
-    - 			strvec_pushl(&cp.args, "--depth", clone_data->depth, NULL);
-    - 		if (clone_data->reference.nr) {
-    - 			struct string_list_item *item;
-    -+
-    - 			for_each_string_list_item(item, &clone_data->reference)
-    - 				strvec_pushl(&cp.args, "--reference",
-    - 					     item->string, NULL);
-    -@@ builtin/submodule--helper.c: static int prepare_to_clone_next_submodule(const struct cache_entry *ce,
-    - 	strvec_pushl(&child->args, "--url", url, NULL);
-    - 	if (suc->update_data->references.nr) {
-    - 		struct string_list_item *item;
-    -+
-    - 		for_each_string_list_item(item, &suc->update_data->references)
-    - 			strvec_pushl(&child->args, "--reference", item->string, NULL);
-    - 	}
-    -@@ builtin/submodule--helper.c: static int update_clone_get_next_task(struct child_process *child,
-    - 		ce = suc->update_data->list.entries[suc->current];
-    - 		if (prepare_to_clone_next_submodule(ce, child, suc, err)) {
-    - 			int *p = xmalloc(sizeof(*p));
-    -+
-    - 			*p = suc->current;
-    - 			*idx_task_cb = p;
-    - 			suc->current++;
-    -@@ builtin/submodule--helper.c: static int update_clone_get_next_task(struct child_process *child,
-    - 	index = suc->current - suc->update_data->list.nr;
-    - 	if (index < suc->failed_clones_nr) {
-    - 		int *p;
-    -+
-    - 		ce = suc->failed_clones[index];
-    - 		if (!prepare_to_clone_next_submodule(ce, child, suc, err)) {
-    - 			suc->current ++;
-    -@@ builtin/submodule--helper.c: static int update_clone_start_failure(struct strbuf *err,
-    - 				      void *idx_task_cb)
-    - {
-    - 	struct submodule_update_clone *suc = suc_cb;
-    -+
-    - 	suc->quickstop = 1;
-    - 	return 1;
-    - }
-    -@@ builtin/submodule--helper.c: static int update_clone_task_finished(int result,
-    - {
-    - 	const struct cache_entry *ce;
-    - 	struct submodule_update_clone *suc = suc_cb;
+    --static int is_active(int argc, const char **argv, const char *prefix)
+    --{
+    --	if (argc != 2)
+    --		die("submodule--helper is-active takes exactly 1 argument");
     --
-    - 	int *idxP = idx_task_cb;
-    - 	int idx = *idxP;
+    --	return !is_submodule_active(the_repository, argv[1]);
+    --}
+    --
+    - /*
+    -  * Exit non-zero if any of the submodule names given on the command line is
+    -  * invalid. If no names are given, filter stdin to print only valid names
+    -@@ builtin/submodule--helper.c: static struct cmd_struct commands[] = {
+    - 	{"summary", module_summary, 0},
+    - 	{"push-check", push_check, 0},
+    - 	{"absorbgitdirs", absorb_git_dirs, SUPPORT_SUPER_PREFIX},
+    --	{"is-active", is_active, 0},
+    - 	{"check-name", check_name, 0},
+    - 	{"config", module_config, 0},
+    - 	{"set-url", module_set_url, 0},
+    -
+    - ## t/helper/test-submodule.c (new) ##
+    -@@
+    -+#include "test-tool.h"
+    -+#include "test-tool-utils.h"
+    -+#include "cache.h"
+    -+#include "parse-options.h"
+    -+#include "submodule.h"
     -+
-    - 	free(idxP);
+    -+#define TEST_TOOL_IS_ACTIVE_USAGE \
+    -+	"test-tool submodule is-active <name>"
+    -+static const char *submodule_is_active_usage[] = {
+    -+	TEST_TOOL_IS_ACTIVE_USAGE,
+    -+	NULL
+    -+};
+    -+
+    -+static const char *submodule_usage[] = {
+    -+	TEST_TOOL_IS_ACTIVE_USAGE,
+    -+	NULL
+    -+};
+    -+
+    -+static int cmd__submodule_is_active(int argc, const char **argv)
+    -+{
+    -+	struct option options[] = {
+    -+		OPT_END()
+    -+	};
+    -+	argc = parse_options(argc, argv, "test-tools", options,
+    -+			     submodule_is_active_usage, 0);
+    -+	if (argc != 1)
+    -+		usage_with_options(submodule_is_active_usage, options);
+    -+
+    -+	setup_git_directory();
+    -+
+    -+	return !is_submodule_active(the_repository, argv[0]);
+    -+}
+    -+
+    -+static struct test_cmd cmds[] = {
+    -+	{ "is-active", cmd__submodule_is_active },
+    -+};
+    -+
+    -+int cmd__submodule(int argc, const char **argv)
+    -+{
+    -+	struct option options[] = {
+    -+		OPT_END()
+    -+	};
+    -+	size_t i;
+    -+
+    -+	argc = parse_options(argc, argv, "test-tools", options, submodule_usage,
+    -+			     PARSE_OPT_STOP_AT_NON_OPTION);
+    -+	if (argc < 1)
+    -+		usage_with_options(submodule_usage, options);
+    -+
+    -+	for (i = 0; i < ARRAY_SIZE(cmds); i++)
+    -+		if (!strcmp(cmds[i].name, argv[0]))
+    -+			return cmds[i].fn(argc, argv);
+    -+
+    -+	usage_msg_optf("unknown subcommand '%s'", submodule_usage, options,
+    -+		       argv[0]);
+    -+
+    -+	return 0;
+    -+}
+    -
+    - ## t/helper/test-tool-utils.h (new) ##
+    -@@
+    -+#ifndef TEST_TOOL_UTILS_H
+    -+#define TEST_TOOL_UTILS_H
+    -+
+    -+struct test_cmd {
+    -+	const char *name;
+    -+	int (*fn)(int argc, const char **argv);
+    -+};
+    -+
+    -+#endif
+    -
+    - ## t/helper/test-tool.c ##
+    -@@
+    - #include "git-compat-util.h"
+    - #include "test-tool.h"
+    -+#include "test-tool-utils.h"
+    - #include "trace2.h"
+    - #include "parse-options.h"
+    - 
+    -@@ t/helper/test-tool.c: static const char * const test_tool_usage[] = {
+    - 	NULL
+    - };
+    - 
+    --struct test_cmd {
+    --	const char *name;
+    --	int (*fn)(int argc, const char **argv);
+    --};
+    --
+    - static struct test_cmd cmds[] = {
+    - 	{ "advise", cmd__advise_if_enabled },
+    - 	{ "bitmap", cmd__bitmap },
+    -@@ t/helper/test-tool.c: static struct test_cmd cmds[] = {
+    - 	{ "simple-ipc", cmd__simple_ipc },
+    - 	{ "strcmp-offset", cmd__strcmp_offset },
+    - 	{ "string-list", cmd__string_list },
+    -+	{ "submodule", cmd__submodule },
+    - 	{ "submodule-config", cmd__submodule_config },
+    - 	{ "submodule-nested-repo-config", cmd__submodule_nested_repo_config },
+    - 	{ "subprocess", cmd__subprocess },
+    -
+    - ## t/helper/test-tool.h ##
+    -@@ t/helper/test-tool.h: int cmd__sigchain(int argc, const char **argv);
+    - int cmd__simple_ipc(int argc, const char **argv);
+    - int cmd__strcmp_offset(int argc, const char **argv);
+    - int cmd__string_list(int argc, const char **argv);
+    -+int cmd__submodule(int argc, const char **argv);
+    - int cmd__submodule_config(int argc, const char **argv);
+    - int cmd__submodule_nested_repo_config(int argc, const char **argv);
+    - int cmd__subprocess(int argc, const char **argv);
+     
+    - ## t/t7413-submodule-is-active.sh ##
+    + ## t/t2403-worktree-move.sh ##
+     @@
+    - #!/bin/sh
+      
+    --test_description='Test submodule--helper is-active
+    -+test_description='Test with test-tool submodule is-active
+    - 
+    --This test verifies that `git submodue--helper is-active` correctly identifies
+    -+This test verifies that `test-tool submodule is-active` correctly identifies
+    - submodules which are "active" and interesting to the user.
+    -+
+    -+This is a unit test of the submodule.c is_submodule_active() function,
+    -+which is also indirectly tested elsewhere.
+    - '
     + test_description='test git worktree move, remove, lock and unlock'
       
-    - 	if (!result)
-    -@@ builtin/submodule--helper.c: static int git_update_clone_config(const char *var, const char *value,
-    - 				   void *cb)
-    - {
-    - 	int *max_jobs = cb;
-    -+
-    - 	if (!strcmp(var, "submodule.fetchjobs"))
-    - 		*max_jobs = parse_submodule_fetchjobs(var, value);
-    - 	return 0;
-    -@@ builtin/submodule--helper.c: static int fetch_in_submodule(const char *module_path, int depth, int quiet, str
-    - 	if (oid) {
-    - 		char *hex = oid_to_hex(oid);
-    - 		char *remote = get_default_remote();
-    -+
-    - 		strvec_pushl(&cp.args, remote, hex, NULL);
-    - 		free(remote);
-    - 	}
-    -@@ builtin/submodule--helper.c: static void update_data_to_args(struct update_data *update_data, struct strvec *
     ++TEST_PASSES_SANITIZE_LEAK=true
-    + . ./test-lib.sh
-    + 
+      . ./test-lib.sh
+    -@@ t/t7413-submodule-is-active.sh: test_expect_success 'setup' '
+    - '
+    - 
+    - test_expect_success 'is-active works with urls' '
+    --	git -C super submodule--helper is-active sub1 &&
+    --	git -C super submodule--helper is-active sub2 &&
+    -+	test-tool -C super submodule is-active sub1 &&
+    -+	test-tool -C super submodule is-active sub2 &&
+    - 
+    - 	git -C super config --unset submodule.sub1.URL &&
+    --	test_must_fail git -C super submodule--helper is-active sub1 &&
+    -+	test_must_fail test-tool -C super submodule is-active sub1 &&
+    - 	git -C super config submodule.sub1.URL ../sub &&
+    --	git -C super submodule--helper is-active sub1
+    -+	test-tool -C super submodule is-active sub1
+    - '
+      
+    - test_expect_success 'is-active works with submodule.<name>.active config' '
+    -@@ t/t7413-submodule-is-active.sh: test_expect_success 'is-active works with submodule.<name>.active config' '
+    - 	test_when_finished "git -C super config submodule.sub1.URL ../sub" &&
+    - 
+    - 	git -C super config --bool submodule.sub1.active "false" &&
+    --	test_must_fail git -C super submodule--helper is-active sub1 &&
+    -+	test_must_fail test-tool -C super submodule is-active sub1 &&
+    - 
+    - 	git -C super config --bool submodule.sub1.active "true" &&
+    - 	git -C super config --unset submodule.sub1.URL &&
+    --	git -C super submodule--helper is-active sub1
+    -+	test-tool -C super submodule is-active sub1
+    - '
+    - 
+    - test_expect_success 'is-active works with basic submodule.active config' '
+    -@@ t/t7413-submodule-is-active.sh: test_expect_success 'is-active works with basic submodule.active config' '
+    - 	git -C super config --add submodule.active "." &&
+    - 	git -C super config --unset submodule.sub1.URL &&
+    - 
+    --	git -C super submodule--helper is-active sub1 &&
+    --	git -C super submodule--helper is-active sub2
+    -+	test-tool -C super submodule is-active sub1 &&
+    -+	test-tool -C super submodule is-active sub2
+    - '
+    - 
+    - test_expect_success 'is-active correctly works with paths that are not submodules' '
+    - 	test_when_finished "git -C super config --unset-all submodule.active" &&
+    - 
+    --	test_must_fail git -C super submodule--helper is-active not-a-submodule &&
+    -+	test_must_fail test-tool -C super submodule is-active not-a-submodule &&
+    - 
+    - 	git -C super config --add submodule.active "." &&
+    --	test_must_fail git -C super submodule--helper is-active not-a-submodule
+    -+	test_must_fail test-tool -C super submodule is-active not-a-submodule
     + test_expect_success 'setup' '
     +
     + ## t/t7412-submodule-absorbgitdirs.sh ##
     +@@ t/t7412-submodule-absorbgitdirs.sh: This test verifies that `git submodue absorbgitdirs` moves a submodules git
     + directory into the superproject.
-    + '
-    + 
+      '
+      
+    - test_expect_success 'is-active works with exclusions in submodule.active config' '
+    -@@ t/t7413-submodule-is-active.sh: test_expect_success 'is-active works with exclusions in submodule.active config'
+    - 	git -C super config --add submodule.active "." &&
+    - 	git -C super config --add submodule.active ":(exclude)sub1" &&
     ++TEST_PASSES_SANITIZE_LEAK=true
     + . ./test-lib.sh
       
-    - 	if (update_data->references.nr) {
-    - 		struct string_list_item *item;
-    -+
-    - 		for_each_string_list_item(item, &update_data->references)
-    - 			strvec_pushl(args, "--reference", item->string, NULL);
-    - 	}
-    -@@ builtin/submodule--helper.c: static void append_fetch_remotes(struct strbuf *msg, const char *git_dir_path)
-    - 	if (!capture_command(&cp_remote, &sb_remote_out, 0)) {
-    - 		char *next_line;
-    - 		char *line = sb_remote_out.buf;
-    -+
-    - 		while ((next_line = strchr(line, '\n')) != NULL) {
-    - 			size_t len = next_line - line;
-    -+
-    - 			if (strip_suffix_mem(line, &len, " (fetch)"))
-    - 				strbuf_addf(msg, "  %.*s\n", (int)len, line);
-    - 			line = next_line + 1;
-    -@@ builtin/submodule--helper.c: static int module_add(int argc, const char **argv, const char *prefix)
-    - 		int exit_code = -1;
-    - 		struct strbuf sb = STRBUF_INIT;
-    - 		struct child_process cp = CHILD_PROCESS_INIT;
-    -+
-    - 		cp.git_cmd = 1;
-    - 		cp.no_stdout = 1;
-    - 		strvec_pushl(&cp.args, "add", "--dry-run", "--ignore-missing",
+    --	test_must_fail git -C super submodule--helper is-active sub1 &&
+    --	git -C super submodule--helper is-active sub2
+    -+	test_must_fail test-tool -C super submodule is-active sub1 &&
+    -+	test-tool -C super submodule is-active sub2
     + test_expect_success 'setup a real submodule' '
- 8:  de49f31dab0 ! 16:  49a439cdc9d submodule--helper: move "resolve-relative-url-test" to a test-tool
+    +
+    + ## t/t7419-submodule-set-branch.sh ##
+    +@@ t/t7419-submodule-set-branch.sh: This test verifies that the set-branch subcommand of git-submodule is working
+    + as expected.
+      '
+      
+    - test_expect_success 'is-active with submodule.active and submodule.<name>.active' '
+    -@@ t/t7413-submodule-is-active.sh: test_expect_success 'is-active with submodule.active and submodule.<name>.active
+    - 	git -C super config --bool submodule.sub1.active "false" &&
+    - 	git -C super config --bool submodule.sub2.active "true" &&
+    - 
+    --	test_must_fail git -C super submodule--helper is-active sub1 &&
+    --	git -C super submodule--helper is-active sub2
+    -+	test_must_fail test-tool -C super submodule is-active sub1 &&
+    -+	test-tool -C super submodule is-active sub2
+    - '
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    + TEST_NO_CREATE_REPO=1
+    + . ./test-lib.sh
+      
+    - test_expect_success 'is-active, submodule.active and submodule add' '
+ 8:  de49f31dab0 ! 16:  a99a7736fab submodule--helper: move "resolve-relative-url-test" to a test-tool
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
@@ -2662,11 +2899,12 @@ Range-diff against v2:
     + 		ret = code;
 12:  e5e267dccd5 <  -:  ----------- submodule--helper: use xstrfmt() in clone_submodule()
 15:  1ff380ec7b5 <  -:  ----------- submodule--helper: add "const" to copy of "update_data"
+17:  23eb07176d9 <  -:  ----------- submodule--helper: don't redundantly check "else if (res)"
 19:  f0258e37ebe <  -:  ----------- submodule--helper: return "ret", not "1" from update_submodule()
 20:  70f030cca4e <  -:  ----------- submodule--helper: add missing braces to "else" arm
 21:  bce1a014a2f <  -:  ----------- submodule--helper: don't call submodule_strategy_to_string() in BUG()
 22:  98c3e562c82 <  -:  ----------- submodule--helper: move submodule_strategy_to_string() to only user
-28:  6160a1ab250 ! 17:  d307c5e0706 submodule--helper: fix bad config API usage
+28:  6160a1ab250 ! 17:  ec0b02d8ee2 submodule--helper: fix bad config API usage
     @@ Metadata
      Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
      
