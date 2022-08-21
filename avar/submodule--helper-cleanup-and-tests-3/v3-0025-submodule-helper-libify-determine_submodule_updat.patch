@@ -1,0 +1,120 @@
+From 56c8c0ecb91e337ca4170c5e4173fff94f5fe181 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-25.32-56c8c0ecb91-20220821T123216Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.32-00000000000-20220821T123216Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20220728T161116Z-avarab@gmail.com>
+	<cover-v3-00.32-00000000000-20220821T123216Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Aug 2022 02:08:04 +0200
+Subject: [PATCH v3 25/32] submodule--helper: libify
+ determine_submodule_update_strategy()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Libify the determine_submodule_update_strategy() by having it invoke
+die_message() rather than die(), and returning the code die_message()
+returns on failure.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 39 ++++++++++++++++++++++++-------------
+ 1 file changed, 25 insertions(+), 14 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 84e5e3beeb5..4d102f2b32e 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1733,24 +1733,27 @@ static int module_clone(int argc, const char **argv, const char *prefix)
+ 	return 0;
+ }
+ 
+-static void determine_submodule_update_strategy(struct repository *r,
+-						int just_cloned,
+-						const char *path,
+-						enum submodule_update_type update,
+-						struct submodule_update_strategy *out)
++static int determine_submodule_update_strategy(struct repository *r,
++					       int just_cloned,
++					       const char *path,
++					       enum submodule_update_type update,
++					       struct submodule_update_strategy *out)
+ {
+ 	const struct submodule *sub = submodule_from_path(r, null_oid(), path);
+ 	char *key;
+ 	const char *val;
++	int ret;
+ 
+ 	key = xstrfmt("submodule.%s.update", sub->name);
+ 
+ 	if (update) {
+ 		out->type = update;
+ 	} else if (!repo_config_get_string_tmp(r, key, &val)) {
+-		if (parse_submodule_update_strategy(val, out) < 0)
+-			die(_("Invalid update mode '%s' configured for submodule path '%s'"),
+-				val, path);
++		if (parse_submodule_update_strategy(val, out) < 0) {
++			ret = die_message(_("Invalid update mode '%s' configured for submodule path '%s'"),
++					  val, path);
++			goto cleanup;
++		}
+ 	} else if (sub->update_strategy.type != SM_UPDATE_UNSPECIFIED) {
+ 		if (sub->update_strategy.type == SM_UPDATE_COMMAND)
+ 			BUG("how did we read update = !command from .gitmodules?");
+@@ -1765,7 +1768,10 @@ static void determine_submodule_update_strategy(struct repository *r,
+ 	     out->type == SM_UPDATE_NONE))
+ 		out->type = SM_UPDATE_CHECKOUT;
+ 
++	ret = 0;
++cleanup:
+ 	free(key);
++	return ret;
+ }
+ 
+ struct update_clone_data {
+@@ -2389,14 +2395,22 @@ static void update_data_to_args(struct update_data *update_data, struct strvec *
+ static int update_submodule(struct update_data *update_data,
+ 			    int *must_die_on_failure)
+ {
++	int ret;
++
+ 	ensure_core_worktree(update_data->sm_path);
+ 
+ 	update_data->displaypath = get_submodule_displaypath(
+ 		update_data->sm_path, update_data->prefix);
+ 
+-	determine_submodule_update_strategy(the_repository, update_data->just_cloned,
+-					    update_data->sm_path, update_data->update_default,
+-					    &update_data->update_strategy);
++	ret = determine_submodule_update_strategy(the_repository,
++						  update_data->just_cloned,
++						  update_data->sm_path,
++						  update_data->update_default,
++						  &update_data->update_strategy);
++	if (ret) {
++		*must_die_on_failure = 1;
++		return ret;
++	}
+ 
+ 	if (update_data->just_cloned)
+ 		oidcpy(&update_data->suboid, null_oid());
+@@ -2424,8 +2438,6 @@ static int update_submodule(struct update_data *update_data,
+ 	}
+ 
+ 	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
+-		int ret;
+-
+ 		ret = run_update_procedure(update_data, must_die_on_failure);
+ 		if (*must_die_on_failure)
+ 			return ret;
+@@ -2436,7 +2448,6 @@ static int update_submodule(struct update_data *update_data,
+ 	if (update_data->recursive) {
+ 		struct child_process cp = CHILD_PROCESS_INIT;
+ 		struct update_data next = *update_data;
+-		int ret;
+ 
+ 		next.prefix = NULL;
+ 		oidcpy(&next.oid, null_oid());
+-- 
+2.37.2.1279.g64dec4e13cf
+
