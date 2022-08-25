@@ -1,0 +1,71 @@
+From cda2079014655753d3c2975ce151bcd05ebd2381 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.5-cda20790146-20220825T141212Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 5 Jul 2022 11:59:20 +0200
+Subject: [PATCH 4/5] cocci: make incremental compilation even faster
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the incremental compilation of "make coccicheck" even faster, at
+the cost of losing dependency discovery for a small whitelist of *.c
+files which we can't create *.o files for.
+
+This will break obscure edge cases since e.g.:
+
+    time make -W block-sha1/sha1.h coccicheck
+
+Would correctly re-build before, as block-sha1/sha1.c uses
+block-sha1/sha1.h, but as it and these other
+$(USE_TINY_FOUND_H_SOURCES) files depended on the union of all such
+headers (and more, all of $(FOUND_H_SOURCES)) the above command would
+take ~10 seconds before.
+
+As noted in the preceding commit these obscure cases were broken
+before the preceding commit fixed them. I think it makes sense to make
+a correctness v.s. performance trade-off here. By doing this it
+becomes viable to e.g. run "make coccicheck" in the same loop that
+merges various topic branches down (along with "ccache" sped-up
+compilation).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index a374204aaca..9410a587fc0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -3160,6 +3160,16 @@ COCCICHECK_OK = $(COCCICHECK:%=.build/%.ok)
+ COCCICHECK_PENDING_OK = $(COCCICHECK_PENDING:%=.build/%.ok)
+ COCCI_TEST_RES = $(wildcard contrib/coccinelle/tests/*.res)
+ 
++USE_TINY_FOUND_H_SOURCES =
++USE_TINY_FOUND_H_SOURCES += compat/%
++USE_TINY_FOUND_H_SOURCES += block-sha1/%
++USE_TINY_FOUND_H_SOURCES += ppc/%
++
++TINY_FOUND_H_SOURCES =
++TINY_FOUND_H_SOURCES += cache.h
++TINY_FOUND_H_SOURCES += git-compat-util.h
++TINY_FOUND_H_SOURCES += strbuf.h
++
+ .build/contrib/coccinelle/FOUND_H_SOURCES: $(FOUND_H_SOURCES)
+ 	$(call mkdir_p_parent_template)
+ 	$(QUIET_GEN) >$@
+@@ -3171,7 +3181,7 @@ define cocci-rule
+ # 2 = $(2)
+ COCCI_$(1:contrib/coccinelle/%.cocci=%) += .build/$(1).patch/$(2)
+ .build/$(1).patch/$(2): GIT-SPATCH-DEFINES
+-.build/$(1).patch/$(2): $(if $(wildcard $(3)),$(3),.build/contrib/coccinelle/FOUND_H_SOURCES)
++.build/$(1).patch/$(2): $(if $(wildcard $(3)),$(3),$(if $(filter $(USE_TINY_FOUND_H_SOURCES),$(3)),$(TINY_FOUND_H_SOURCES),.build/contrib/coccinelle/FOUND_H_SOURCES))
+ .build/$(1).patch/$(2): $(1)
+ .build/$(1).patch/$(2): .build/$(1).patch/% : %
+ 	$$(call mkdir_p_parent_template)
+-- 
+2.37.2.1279.g64dec4e13cf
+

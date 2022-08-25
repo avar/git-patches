@@ -1,0 +1,93 @@
+From db3b3427668d7f4f8b9336799f330550c2d1ba7b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.5-db3b3427668-20220825T141212Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 25 Aug 2022 14:58:51 +0200
+Subject: [PATCH 2/5] Makefile: have "coccicheck" re-run if flags change
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix an issue with the "coccicheck" family of rules that's been here
+since 63f0a758a06 (add coccicheck make target, 2016-09-15), unlike
+e.g. "make grep.o" we wouldn't re-run it when $(SPATCH) or
+$(SPATCH_FLAGS) changed. To test new flags we needed to first do a
+"make clean".
+
+This now uses the same (copy/pasted) pattern as other "DEFINES"
+rules. As a result we'll re-run properly. This can be demonstrated
+e.g. on the issue noted in [1]:
+
+	$ make contrib/coccinelle/xcalloc.cocci.patch COCCI_SOURCES=promisor-remote.c V=1
+	[...]
+	    SPATCH contrib/coccinelle/xcalloc.cocci
+	$ make contrib/coccinelle/xcalloc.cocci.patch COCCI_SOURCES=promisor-remote.c SPATCH_FLAGS="--all-includes --recursive-includes"
+	    * new spatch flags
+	    SPATCH contrib/coccinelle/xcalloc.cocci
+	     SPATCH result: contrib/coccinelle/xcalloc.cocci.patch
+	$
+
+1. https://lore.kernel.org/git/20220823095602.GC1735@szeder.dev/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .gitignore |  1 +
+ Makefile   | 14 ++++++++++++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/.gitignore b/.gitignore
+index 42fd7253b44..a32ad64d4c9 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -10,6 +10,7 @@
+ /GIT-PERL-HEADER
+ /GIT-PYTHON-VARS
+ /GIT-SCRIPT-DEFINES
++/GIT-SPATCH-DEFINES
+ /GIT-USER-AGENT
+ /GIT-VERSION-FILE
+ /bin-wrappers/
+diff --git a/Makefile b/Makefile
+index bd8faac61ee..749eb9b25e3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1296,6 +1296,18 @@ SANITIZE_ADDRESS =
+ SPATCH_FLAGS = --all-includes
+ SPATCH_BATCH_SIZE = 1
+ 
++# Rebuild 'coccicheck' if $(SPATCH), its flags etc. change
++TRACK_SPATCH_DEFINES =
++TRACK_SPATCH_DEFINES += $(SPATCH)
++TRACK_SPATCH_DEFINES += $(SPATCH_FLAGS)
++TRACK_SPATCH_DEFINES += $(SPATCH_BATCH_SIZE)
++GIT-SPATCH-DEFINES: FORCE
++	@FLAGS='$(TRACK_SPATCH_DEFINES)'; \
++	    if test x"$$FLAGS" != x"`cat GIT-SPATCH-DEFINES 2>/dev/null`" ; then \
++		echo >&2 "    * new spatch flags"; \
++		echo "$$FLAGS" >GIT-SPATCH-DEFINES; \
++            fi
++
+ include config.mak.uname
+ -include config.mak.autogen
+ -include config.mak
+@@ -3142,6 +3154,7 @@ COCCICHECK = $(filter-out $(COCCICHECK_PENDING),$(COCCI_PATCHES))
+ 
+ COCCI_TEST_RES = $(wildcard contrib/coccinelle/tests/*.res)
+ 
++$(COCCI_PATCHES): GIT-SPATCH-DEFINES
+ $(COCCI_PATCHES): $(COCCI_SOURCES)
+ $(COCCI_PATCHES): %.patch: %
+ 	$(QUIET_SPATCH) \
+@@ -3165,6 +3178,7 @@ $(COCCI_PATCHES): %.patch: %
+ 	fi
+ 
+ COCCI_TEST_RES_GEN = $(addprefix .build/,$(COCCI_TEST_RES))
++$(COCCI_TEST_RES_GEN): GIT-SPATCH-DEFINES
+ $(COCCI_TEST_RES_GEN): .build/%.res : %.c
+ $(COCCI_TEST_RES_GEN): .build/%.res : %.res
+ $(COCCI_TEST_RES_GEN): .build/contrib/coccinelle/tests/%.res : contrib/coccinelle/%.cocci
+-- 
+2.37.2.1279.g64dec4e13cf
+
