@@ -1,8 +1,8 @@
-From 26e27e6ff1268baa92f391a3317ef4d198309713 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-9.9-26e27e6ff12-20220831T172643Z-avarab@gmail.com>
-In-Reply-To: <cover-v2-0.9-00000000000-20220831T172643Z-avarab@gmail.com>
+From 61cba59dc33ac4ea1305d110a66a33f8ecc4b63f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-9.9-61cba59dc33-20220831T174632Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20220831T174632Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
-	<cover-v2-0.9-00000000000-20220831T172643Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20220831T174632Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Mon, 11 Jul 2022 15:17:33 +0200
@@ -13,17 +13,21 @@ Content-Transfer-Encoding: 8bit
 
 Add a rather trivial "spatchcache", with this running e.g.:
 
-	make clean
-	make contrib/coccinelle/free.cocci.patch
+	make cocciclean
+	make contrib/coccinelle/unused.cocci.patch \
+		SPATCH=contrib/coccicheck/spatchcache \
+		SPATCH_FLAGS=--very-quiet
 
-Is cut down from ~20s to ~3s on my system (and much of it is fixable
+Is cut down from ~1m30s to ~5s on my system (and much of it is fixable
 shell overhead). This uses "redis" as a cache by default, but it's
 configurable. See the embedded documentation.
 
 This is *not* like ccache in that we won't cache failed spatch
 invocations, or those where spatch suggests changes for us. Those
 cases are so rare that I didn't think it was worth the bother, by far
-the most common case is that it has no suggested changes.
+the most common case is that it has no suggested changes. We'll also
+refuse to cache any "spatch" invocation that has output on stderr,
+which means that "--very-quiet" must be added to "SPATCH_FLAGS".
 
 Because we narrow the cache to that we don't need to save away stdout,
 stderr & the exit code. We simply cache the cases where we had no
@@ -49,16 +53,16 @@ full advantage of it (which can be fast with "ccache"):
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- contrib/coccinelle/spatchcache | 217 +++++++++++++++++++++++++++++++++
- 1 file changed, 217 insertions(+)
+ contrib/coccinelle/spatchcache | 233 +++++++++++++++++++++++++++++++++
+ 1 file changed, 233 insertions(+)
  create mode 100755 contrib/coccinelle/spatchcache
 
 diff --git a/contrib/coccinelle/spatchcache b/contrib/coccinelle/spatchcache
 new file mode 100755
-index 00000000000..f4f44700cfc
+index 00000000000..4d26e8019b6
 --- /dev/null
 +++ b/contrib/coccinelle/spatchcache
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,233 @@
 +#!/bin/sh
 +#
 +# spatchcache: a poor-man's "ccache"-alike for "spatch" in git.git
@@ -67,7 +71,7 @@ index 00000000000..f4f44700cfc
 +# driving "spatch" in git.git, in particular if we invoke:
 +#
 +#	make
-+#	make coccicheck
++#	make coccicheck SPATCH_FLAGS=--very-quiet
 +#
 +# We can with COMPUTE_HEADER_DEPENDENCIES (auto-detected as true with
 +# "gcc" and "clang") write e.g. a .depend/grep.o.d for grep.c, when we
@@ -92,11 +96,18 @@ index 00000000000..f4f44700cfc
 +# "contrib/coccinelle" makes it viable to (re-)run coccicheck
 +# e.g. when merging integration branches.
 +#
++# Note that the "--very-quiet" flag is currently critical. The cache
++# will refuse to cache anything that has output on STDERR (which might
++# be errors from spatch). The STDERR (and exit code) could in
++# principle be cached (as with ccache), but then the simple structure
++# in the Redis cache would need to change, so just supply
++# "--very-quiet" for now.
++#
 +# To use this, simply set SPATCH to
 +# contrib/coccinelle/spatchcache. Then optionally set:
 +#
 +#	[spatchCache]
-+#		# path to a custom spatch
++#		# Optional: path to a custom spatch
 +#		spatch = ~/g/coccicheck/spatch.opt
 +#
 +# As well as this trace config (debug implies trace):
@@ -105,7 +116,16 @@ index 00000000000..f4f44700cfc
 +#		debug = false
 +#
 +# Setting "trace" to "true" allows for seeing when we have a cache HIT
-+# or MISS.
++# or MISS. To debug whether the cache is working do that, and run e.g.:
++#
++#	redis-cli FLUSHALL
++#	<make && make coccicheck, as above>
++#	grep -hore HIT -e MISS -e SET .build/contrib/coccinelle | sort | uniq -c
++#	    491 MISS
++#	    491 SET
++#
++# A subsequent "make cocciclean && make coccicheck" should then have a
++# lot of "HIT"s.
 +
 +set -e
 +
