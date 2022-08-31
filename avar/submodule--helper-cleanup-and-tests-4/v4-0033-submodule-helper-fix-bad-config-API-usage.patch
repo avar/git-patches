@@ -1,0 +1,52 @@
+From 1e38bfa7f9599ee4e4f274bdaf1747046eb9ef5a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-33.33-1e38bfa7f95-20220831T230519Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.33-00000000000-20220831T230519Z-avarab@gmail.com>
+References: <cover-v3-00.32-00000000000-20220821T130231Z-avarab@gmail.com>
+	<cover-v4-00.33-00000000000-20220831T230519Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Jul 2022 21:29:07 +0200
+Subject: [PATCH v4 33/33] submodule--helper: fix bad config API usage
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix bad config API usage added in a452128a36c (submodule--helper:
+introduce add-config subcommand, 2021-08-06). After
+git_config_get_string() returns successfully we know the "char **dest"
+will be non-NULL.
+
+A coccinelle patch that transforms this turns up a couple of other
+such issues, one in fetch-pack.c, and another in upload-pack.c:
+
+	@@
+	identifier F =~ "^(repo|git)_config_get_string(_tmp)?$";
+	identifier V;
+	@@
+	  !F(..., &V)
+	- && (V)
+
+But let's focus narrowly on submodule--helper for now, we can fix
+those some other time.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 3f822eac3a1..c4149f11e7f 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -3110,7 +3110,7 @@ static void configure_added_submodule(struct add_data *add_data)
+ 	 * is_submodule_active(), since that function needs to find
+ 	 * out the value of "submodule.active" again anyway.
+ 	 */
+-	if (!git_config_get_string("submodule.active", &val) && val) {
++	if (!git_config_get_string("submodule.active", &val)) {
+ 		/*
+ 		 * If the submodule being added isn't already covered by the
+ 		 * current configured pathspec, set the submodule's active flag
+-- 
+2.37.3.1420.g76f8a3d556c
+

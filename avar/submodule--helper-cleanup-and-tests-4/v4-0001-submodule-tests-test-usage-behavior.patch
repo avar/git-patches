@@ -1,0 +1,82 @@
+From 2e88283702685622d0a47f627ecc414465cd119a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-01.33-2e882837026-20220831T230519Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.33-00000000000-20220831T230519Z-avarab@gmail.com>
+References: <cover-v3-00.32-00000000000-20220821T130231Z-avarab@gmail.com>
+	<cover-v4-00.33-00000000000-20220831T230519Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 13 Jun 2022 16:06:21 +0200
+Subject: [PATCH v4 01/33] submodule tests: test usage behavior
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Test what exit code and output we emit on "git submodule -h", how we
+handle "--" when no subcommand is specified, and how the top-level
+"--recursive" option is handled.
+
+For "-h" this doesn't make sense, but let's test for it so that any
+subsequent eventual behavior change will become clear.
+
+For "--" this follows up on 68cabbfda36 (submodule: document default
+behavior, 2019-02-15) and tests that "status" doesn't support
+the "--" delimiter. There's no intrinsically good reason not to
+support that. We behave this way due to edge cases in
+git-submodule.sh's implementation, but as with "-h" let's assert our
+current long-standing behavior for now.
+
+For "--recursive" the exclusion of it from the top-level appears to
+have been an omission in 15fc56a8536 (git submodule foreach: Add
+--recursive to recurse into nested submodules, 2009-08-19), there
+doesn't seem to be a reason not to support it alongside "--quiet" and
+"--cached", but let's likewise assert our existing behavior for now.
+
+I.e. as long as "status" is optional it would make sense to support
+all of its options when it's omitted, but we only do that with
+"--quiet" and "--cached", and curiously omit "--recursive".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7400-submodule-basic.sh | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/t/t7400-submodule-basic.sh b/t/t7400-submodule-basic.sh
+index e7cec2e457a..b858871a953 100755
+--- a/t/t7400-submodule-basic.sh
++++ b/t/t7400-submodule-basic.sh
+@@ -14,6 +14,32 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
+ . ./test-lib.sh
+ 
++test_expect_success 'submodule usage: -h' '
++	git submodule -h >out 2>err &&
++	grep "^usage: git submodule" out &&
++	test_must_be_empty err
++'
++
++test_expect_success 'submodule usage: --recursive' '
++	test_expect_code 1 git submodule --recursive >out 2>err &&
++	grep "^usage: git submodule" err &&
++	test_must_be_empty out
++'
++
++test_expect_success 'submodule usage: status --' '
++	test_expect_code 1 git submodule -- &&
++	test_expect_code 1 git submodule --end-of-options
++'
++
++for opt in '--quiet' '--cached'
++do
++	test_expect_success "submodule usage: status $opt" '
++		git submodule $opt &&
++		git submodule status $opt &&
++		git submodule $opt status
++	'
++done
++
+ test_expect_success 'submodule deinit works on empty repository' '
+ 	git submodule deinit --all
+ '
+-- 
+2.37.3.1420.g76f8a3d556c
+
