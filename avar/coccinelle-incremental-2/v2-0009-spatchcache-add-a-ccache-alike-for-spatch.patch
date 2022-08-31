@@ -1,8 +1,8 @@
-From 61cba59dc33ac4ea1305d110a66a33f8ecc4b63f Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-9.9-61cba59dc33-20220831T174632Z-avarab@gmail.com>
-In-Reply-To: <cover-v2-0.9-00000000000-20220831T174632Z-avarab@gmail.com>
+From 2b978676a56f83e6c3b42cda3df0bdfb7da5d80d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-9.9-2b978676a56-20220831T205130Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20220831T205130Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
-	<cover-v2-0.9-00000000000-20220831T174632Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20220831T205130Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Mon, 11 Jul 2022 15:17:33 +0200
@@ -14,13 +14,16 @@ Content-Transfer-Encoding: 8bit
 Add a rather trivial "spatchcache", with this running e.g.:
 
 	make cocciclean
-	make contrib/coccinelle/unused.cocci.patch \
+	make contrib/coccinelle/free.cocci.patch \
 		SPATCH=contrib/coccicheck/spatchcache \
 		SPATCH_FLAGS=--very-quiet
 
-Is cut down from ~1m30s to ~5s on my system (and much of it is fixable
-shell overhead). This uses "redis" as a cache by default, but it's
-configurable. See the embedded documentation.
+Is cut down from ~20s to ~5s on my system. Much of that is either
+fixable shell overhead, or the around 40 files we "CANTCACHE" (see the
+implementation).
+
+This uses "redis" as a cache by default, but it's configurable. See
+the embedded documentation.
 
 This is *not* like ccache in that we won't cache failed spatch
 invocations, or those where spatch suggests changes for us. Those
@@ -53,16 +56,16 @@ full advantage of it (which can be fast with "ccache"):
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- contrib/coccinelle/spatchcache | 233 +++++++++++++++++++++++++++++++++
- 1 file changed, 233 insertions(+)
+ contrib/coccinelle/spatchcache | 234 +++++++++++++++++++++++++++++++++
+ 1 file changed, 234 insertions(+)
  create mode 100755 contrib/coccinelle/spatchcache
 
 diff --git a/contrib/coccinelle/spatchcache b/contrib/coccinelle/spatchcache
 new file mode 100755
-index 00000000000..4d26e8019b6
+index 00000000000..f0b7b24e0ae
 --- /dev/null
 +++ b/contrib/coccinelle/spatchcache
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,234 @@
 +#!/bin/sh
 +#
 +# spatchcache: a poor-man's "ccache"-alike for "spatch" in git.git
@@ -120,12 +123,13 @@ index 00000000000..4d26e8019b6
 +#
 +#	redis-cli FLUSHALL
 +#	<make && make coccicheck, as above>
-+#	grep -hore HIT -e MISS -e SET .build/contrib/coccinelle | sort | uniq -c
-+#	    491 MISS
-+#	    491 SET
++#	grep -hore HIT -e MISS -e SET -e NOCACHE -e CANTCACHE .build/contrib/coccinelle | sort | uniq -c
++#	    600 CANTCACHE
++#	   7365 MISS
++#	   7365 SET
 +#
-+# A subsequent "make cocciclean && make coccicheck" should then have a
-+# lot of "HIT"s.
++# A subsequent "make cocciclean && make coccicheck" should then have
++# all "HIT"'s and "CANTCACHE"'s.
 +
 +set -e
 +
@@ -220,7 +224,7 @@ index 00000000000..4d26e8019b6
 +
 +if ! test -f "$dep"
 +then
-+	trace_it "$0: have no '$dep' for '$arg_file', can't cache!"
++	trace_it "$0: CANTCACHE have no '$dep' for '$arg_file'!"
 +	exec "$spatch" "$@"
 +fi
 +
@@ -289,7 +293,7 @@ index 00000000000..4d26e8019b6
 +		exit 128
 +	fi
 +else
-+	trace_it "$0: NO CACHE (have changes): for '$arg_file' with '$arg_sp'"
++	trace_it "$0: NOCACHE (have changes): for '$arg_file' with '$arg_sp'"
 +	cat "$out"
 +	cat "$err" >&2
 +	rm -f "$out" "$err"
@@ -297,5 +301,5 @@ index 00000000000..4d26e8019b6
 +fi
 +rm -f "$out" "$err"
 -- 
-2.37.3.1410.g550a568c198
+2.37.3.1420.g76f8a3d556c
 

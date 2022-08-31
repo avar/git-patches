@@ -1,9 +1,9 @@
-From 61cba59dc33ac4ea1305d110a66a33f8ecc4b63f Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-0.9-00000000000-20220831T174632Z-avarab@gmail.com>
+From 2b978676a56f83e6c3b42cda3df0bdfb7da5d80d Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.9-00000000000-20220831T205130Z-avarab@gmail.com>
 In-Reply-To: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Wed, 31 Aug 2022 19:46:32 +0200
+Date: Wed, 31 Aug 2022 22:51:30 +0200
 Subject: [PATCH v2 0/9] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -24,10 +24,10 @@ Content-Transfer-Encoding: 8bit
 
  .gitignore                                    |   1 +
  Makefile                                      | 113 +++++++--
- contrib/coccinelle/spatchcache                | 233 ++++++++++++++++++
+ contrib/coccinelle/spatchcache                | 234 ++++++++++++++++++
  .../coccinelle/the_repository.pending.cocci   |   1 -
  shared.mak                                    |   3 +-
- 5 files changed, 324 insertions(+), 27 deletions(-)
+ 5 files changed, 325 insertions(+), 27 deletions(-)
  create mode 100755 contrib/coccinelle/spatchcache
 
 Range-diff against v1:
@@ -526,7 +526,7 @@ Range-diff against v1:
     + endef
     + define cocci-matrix-1
     + $(foreach c,$(COCCI),$(call cocci-matrix-2,$(c)))
- 5:  ce4734e5d79 !  9:  61cba59dc33 spatchcache: add a ccache-alike for "spatch"
+ 5:  ce4734e5d79 !  9:  2b978676a56 spatchcache: add a ccache-alike for "spatch"
     @@ Commit message
      
          Add a rather trivial "spatchcache", with this running e.g.:
@@ -534,14 +534,19 @@ Range-diff against v1:
     -            make clean
     -            make contrib/coccinelle/free.cocci.patch
     +            make cocciclean
-    +            make contrib/coccinelle/unused.cocci.patch \
+    +            make contrib/coccinelle/free.cocci.patch \
     +                    SPATCH=contrib/coccicheck/spatchcache \
     +                    SPATCH_FLAGS=--very-quiet
      
     -    Is cut down from ~20s to ~3s on my system (and much of it is fixable
-    +    Is cut down from ~1m30s to ~5s on my system (and much of it is fixable
-         shell overhead). This uses "redis" as a cache by default, but it's
-         configurable. See the embedded documentation.
+    -    shell overhead). This uses "redis" as a cache by default, but it's
+    -    configurable. See the embedded documentation.
+    +    Is cut down from ~20s to ~5s on my system. Much of that is either
+    +    fixable shell overhead, or the around 40 files we "CANTCACHE" (see the
+    +    implementation).
+    +
+    +    This uses "redis" as a cache by default, but it's configurable. See
+    +    the embedded documentation.
      
          This is *not* like ccache in that we won't cache failed spatch
          invocations, or those where spatch suggests changes for us. Those
@@ -591,15 +596,34 @@ Range-diff against v1:
     ++#
     ++#	redis-cli FLUSHALL
     ++#	<make && make coccicheck, as above>
-    ++#	grep -hore HIT -e MISS -e SET .build/contrib/coccinelle | sort | uniq -c
-    ++#	    491 MISS
-    ++#	    491 SET
+    ++#	grep -hore HIT -e MISS -e SET -e NOCACHE -e CANTCACHE .build/contrib/coccinelle | sort | uniq -c
+    ++#	    600 CANTCACHE
+    ++#	   7365 MISS
+    ++#	   7365 SET
     ++#
-    ++# A subsequent "make cocciclean && make coccicheck" should then have a
-    ++# lot of "HIT"s.
+    ++# A subsequent "make cocciclean && make coccicheck" should then have
+    ++# all "HIT"'s and "CANTCACHE"'s.
      +
      +set -e
      +
+    @@ contrib/coccinelle/spatchcache (new)
+     +
+     +if ! test -f "$dep"
+     +then
+    -+	trace_it "$0: have no '$dep' for '$arg_file', can't cache!"
+    ++	trace_it "$0: CANTCACHE have no '$dep' for '$arg_file'!"
+     +	exec "$spatch" "$@"
+     +fi
+     +
+    @@ contrib/coccinelle/spatchcache (new)
+     +		exit 128
+     +	fi
+     +else
+    -+	trace_it "$0: NO CACHE (have changes): for '$arg_file' with '$arg_sp'"
+    ++	trace_it "$0: NOCACHE (have changes): for '$arg_file' with '$arg_sp'"
+     +	cat "$out"
+     +	cat "$err" >&2
+     +	rm -f "$out" "$err"
 -- 
-2.37.3.1410.g550a568c198
+2.37.3.1420.g76f8a3d556c
 
