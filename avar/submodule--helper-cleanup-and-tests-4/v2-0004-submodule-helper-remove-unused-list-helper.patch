@@ -1,0 +1,128 @@
+From 6714a04a5c8bfeddede32f801e9ad53ed7085c59 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-04.33-6714a04a5c8-20220831T230246Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+References: <cover.1657819649.git.matheus.bernardino@usp.br>
+	<cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 26 Jul 2022 11:49:16 +0200
+Subject: [PATCH v2 04/33] submodule--helper: remove unused "list" helper
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the "submodule--helper list" sub-command, which hasn't been
+used by git-submodule.sh since 2964d6e5e1e (submodule: port subcommand
+'set-branch' from shell to C, 2020-06-02).
+
+There was a test added in 2b56bb7a87a (submodule helper list: respect
+correct path prefix, 2016-02-24) which relied on it, but the right
+thing to do here is to delete that test as well.
+
+That test was regression testing the "list" subcommand itself. We're
+not getting anything useful from the "list | cut -f2" invocation that
+we couldn't get from "foreach 'echo $sm_path'".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 40 -------------------------------------
+ t/t7400-submodule-basic.sh  | 25 -----------------------
+ 2 files changed, 65 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index fc4d2779da6..24a305151d1 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -266,45 +266,6 @@ static char *get_up_path(const char *path)
+ 	return strbuf_detach(&sb, NULL);
+ }
+ 
+-static int module_list(int argc, const char **argv, const char *prefix)
+-{
+-	int i;
+-	struct pathspec pathspec;
+-	struct module_list list = MODULE_LIST_INIT;
+-
+-	struct option module_list_options[] = {
+-		OPT_STRING(0, "prefix", &prefix,
+-			   N_("path"),
+-			   N_("alternative anchor for relative paths")),
+-		OPT_END()
+-	};
+-
+-	const char *const git_submodule_helper_usage[] = {
+-		N_("git submodule--helper list [--prefix=<path>] [<path>...]"),
+-		NULL
+-	};
+-
+-	argc = parse_options(argc, argv, prefix, module_list_options,
+-			     git_submodule_helper_usage, 0);
+-
+-	if (module_list_compute(argc, argv, prefix, &pathspec, &list) < 0)
+-		return 1;
+-
+-	for (i = 0; i < list.nr; i++) {
+-		const struct cache_entry *ce = list.entries[i];
+-
+-		if (ce_stage(ce))
+-			printf("%06o %s U\t", ce->ce_mode,
+-			       oid_to_hex(null_oid()));
+-		else
+-			printf("%06o %s %d\t", ce->ce_mode,
+-			       oid_to_hex(&ce->oid), ce_stage(ce));
+-
+-		fprintf(stdout, "%s\n", ce->name);
+-	}
+-	return 0;
+-}
+-
+ static void for_each_listed_submodule(const struct module_list *list,
+ 				      each_submodule_fn fn, void *cb_data)
+ {
+@@ -3343,7 +3304,6 @@ struct cmd_struct {
+ };
+ 
+ static struct cmd_struct commands[] = {
+-	{"list", module_list, 0},
+ 	{"clone", module_clone, SUPPORT_SUPER_PREFIX},
+ 	{"add", module_add, 0},
+ 	{"update", module_update, SUPPORT_SUPER_PREFIX},
+diff --git a/t/t7400-submodule-basic.sh b/t/t7400-submodule-basic.sh
+index 6a77d817a82..b50db3f1031 100755
+--- a/t/t7400-submodule-basic.sh
++++ b/t/t7400-submodule-basic.sh
+@@ -1255,31 +1255,6 @@ test_expect_success 'submodule add clone shallow submodule' '
+ 	)
+ '
+ 
+-test_expect_success 'submodule helper list is not confused by common prefixes' '
+-	mkdir -p dir1/b &&
+-	(
+-		cd dir1/b &&
+-		git init &&
+-		echo hi >testfile2 &&
+-		git add . &&
+-		git commit -m "test1"
+-	) &&
+-	mkdir -p dir2/b &&
+-	(
+-		cd dir2/b &&
+-		git init &&
+-		echo hello >testfile1 &&
+-		git add .  &&
+-		git commit -m "test2"
+-	) &&
+-	git submodule add /dir1/b dir1/b &&
+-	git submodule add /dir2/b dir2/b &&
+-	git commit -m "first submodule commit" &&
+-	git submodule--helper list dir1/b | cut -f 2 >actual &&
+-	echo "dir1/b" >expect &&
+-	test_cmp expect actual
+-'
+-
+ test_expect_success 'setup superproject with submodules' '
+ 	git init sub1 &&
+ 	test_commit -C sub1 test &&
+-- 
+2.37.3.1420.g76f8a3d556c
+

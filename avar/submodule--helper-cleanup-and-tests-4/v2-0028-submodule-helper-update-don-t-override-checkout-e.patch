@@ -1,0 +1,83 @@
+From 72e3cdf6543184e7f6f3aa7788c530e6b0e229c4 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-28.33-72e3cdf6543-20220831T230246Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+References: <cover.1657819649.git.matheus.bernardino@usp.br>
+	<cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 3 Aug 2022 16:12:48 +0200
+Subject: [PATCH v2 28/33] submodule--helper update: don't override 'checkout'
+ exit code
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When "git submodule update" runs it might call "checkout", "merge",
+"rebase", or a custom command. Ever since run_update_command() was
+added in c51f8f94e5b (submodule--helper: run update procedures from C,
+2021-08-24) we'd either exit immediately if the
+"submodule.<name>.update" method failed, or in the case of "checkout"
+continue trying to update other submodules.
+
+This code used to use the magical "2" return code, but in
+55b3f12cb54 (submodule update: use die_message(), 2022-03-15) it was
+made to exit(128), which in preceding commits has been changed to
+return that 128 code to the top-level.
+
+Let's "libify" this code even more by not having it arbitrarily
+override the return code. In practice this doesn't change anything as
+the code "git checkout" would return on any normal failure is "1", but
+we'll now in principle properly abort the operation if "git checkout"
+were to exit with 128.
+
+It would make sense to follow-up this change with a change to allow
+the "submodule.<name>.update = !..." (SM_UPDATE_COMMAND) method the
+same liberties as "checkout", and perhaps to do the same with a failed
+"merge" or "rebase". But let's leave that for now.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 8a086723ba6..4252b6d864c 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2136,6 +2136,7 @@ static int run_update_command(const struct update_data *ud, int subforce)
+ {
+ 	struct child_process cp = CHILD_PROCESS_INIT;
+ 	char *oid = oid_to_hex(&ud->oid);
++	int ret;
+ 
+ 	switch (ud->update_strategy.type) {
+ 	case SM_UPDATE_CHECKOUT:
+@@ -2168,15 +2169,12 @@ static int run_update_command(const struct update_data *ud, int subforce)
+ 
+ 	cp.dir = xstrdup(ud->sm_path);
+ 	prepare_submodule_repo_env(&cp.env);
+-	if (run_command(&cp)) {
+-		int ret;
+-
++	if ((ret = run_command(&cp))) {
+ 		switch (ud->update_strategy.type) {
+ 		case SM_UPDATE_CHECKOUT:
+ 			die_message(_("Unable to checkout '%s' in submodule path '%s'"),
+ 				    oid, ud->displaypath);
+-			/* the command failed, but update must continue */
+-			ret = 1;
++			/* No "ret" assignment, use "git checkout"'s */
+ 			break;
+ 		case SM_UPDATE_REBASE:
+ 			ret = die_message(_("Unable to rebase '%s' in submodule path '%s'"),
+@@ -2499,7 +2497,6 @@ static int update_submodules(struct update_data *update_data)
+ 		ret = code;
+ 		if (ret == 128)
+ 			goto cleanup;
+-		ret = 1;
+ 	}
+ 
+ cleanup:
+-- 
+2.37.3.1420.g76f8a3d556c
+

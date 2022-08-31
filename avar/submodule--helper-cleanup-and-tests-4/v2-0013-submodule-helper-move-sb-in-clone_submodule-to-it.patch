@@ -1,0 +1,69 @@
+From 474d1a9e13ee634445911e04f9a49041b2fc0502 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-13.33-474d1a9e13e-20220831T230246Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+References: <cover.1657819649.git.matheus.bernardino@usp.br>
+	<cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 21 Jul 2022 18:35:11 +0200
+Subject: [PATCH v2 13/33] submodule--helper: move "sb" in clone_submodule() to
+ its own scope
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the only remaining use of a "struct strbuf sb" in
+clone_submodule() to live in its own scope. This makes the code
+clearer by limiting its lifetime.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 21 ++++++++++++++-------
+ 1 file changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index c7833bae81e..2f1f0e1bf34 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1560,16 +1560,24 @@ static void prepare_possible_alternates(const char *sm_name,
+ 	free(error_strategy);
+ }
+ 
+-static int clone_submodule(struct module_clone_data *clone_data)
++static char *clone_submodule_sm_gitdir(const char *name)
+ {
+-	char *p, *sm_gitdir;
+-	char *sm_alternate = NULL, *error_strategy = NULL;
+ 	struct strbuf sb = STRBUF_INIT;
+-	struct child_process cp = CHILD_PROCESS_INIT;
++	char *sm_gitdir;
+ 
+-	submodule_name_to_gitdir(&sb, the_repository, clone_data->name);
++	submodule_name_to_gitdir(&sb, the_repository, name);
+ 	sm_gitdir = absolute_pathdup(sb.buf);
+-	strbuf_reset(&sb);
++	strbuf_release(&sb);
++
++	return sm_gitdir;
++}
++
++static int clone_submodule(struct module_clone_data *clone_data)
++{
++	char *p;
++	char *sm_gitdir = clone_submodule_sm_gitdir(clone_data->name);
++	char *sm_alternate = NULL, *error_strategy = NULL;
++	struct child_process cp = CHILD_PROCESS_INIT;
+ 
+ 	if (!is_absolute_path(clone_data->path))
+ 		clone_data->path = xstrfmt("%s/%s", get_git_work_tree(),
+@@ -1658,7 +1666,6 @@ static int clone_submodule(struct module_clone_data *clone_data)
+ 	free(sm_alternate);
+ 	free(error_strategy);
+ 
+-	strbuf_release(&sb);
+ 	free(sm_gitdir);
+ 	free(p);
+ 	return 0;
+-- 
+2.37.3.1420.g76f8a3d556c
+

@@ -1,0 +1,161 @@
+From 2b0661907391ee7c940660854b5a24cf8e100736 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-27.33-2b066190739-20220831T230246Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+References: <cover.1657819649.git.matheus.bernardino@usp.br>
+	<cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 2 Aug 2022 02:08:05 +0200
+Subject: [PATCH v2 27/33] submodule--helper: libify "must_die_on_failure" code
+ paths
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In preceding commits the codepaths around update_submodules() were
+changed from using exit() or die() to ferrying up a
+"must_die_on_failure" in the cases where we'd exit(), and in most
+cases where we'd die().
+
+We needed to do this this to ensure that we'd early exit or otherwise
+abort the update_submodules() processing before it was completed.
+
+Now that those preceding changes have shown that we've converted those
+paths, we can remove the remaining "ret == 128" special-cases, leaving
+the only such special-case in update_submodules(). I.e. we now know
+after having gone through the various codepaths that we were only
+returning 128 if we meant to early abort.
+
+In update_submodules() we'll for now set any non-zero non-128 exit
+codes to "1", but will start ferrying up the exit code as-is in a
+subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 45 +++++++++++++------------------------
+ 1 file changed, 16 insertions(+), 29 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 2f78529736d..8a086723ba6 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2132,8 +2132,7 @@ static int fetch_in_submodule(const char *module_path, int depth, int quiet,
+ 	return run_command(&cp);
+ }
+ 
+-static int run_update_command(const struct update_data *ud, int subforce,
+-			      int *must_die_on_failure)
++static int run_update_command(const struct update_data *ud, int subforce)
+ {
+ 	struct child_process cp = CHILD_PROCESS_INIT;
+ 	char *oid = oid_to_hex(&ud->oid);
+@@ -2196,8 +2195,6 @@ static int run_update_command(const struct update_data *ud, int subforce,
+ 			    ud->update_strategy.type);
+ 		}
+ 
+-		if (ret == 128)
+-			*must_die_on_failure = 1;
+ 		return ret;
+ 	}
+ 
+@@ -2229,8 +2226,7 @@ static int run_update_command(const struct update_data *ud, int subforce,
+ 	return 0;
+ }
+ 
+-static int run_update_procedure(const struct update_data *ud,
+-				int *must_die_on_failure)
++static int run_update_procedure(const struct update_data *ud)
+ {
+ 	int subforce = is_null_oid(&ud->suboid) || ud->force;
+ 
+@@ -2257,7 +2253,7 @@ static int run_update_procedure(const struct update_data *ud,
+ 			    ud->displaypath, oid_to_hex(&ud->oid));
+ 	}
+ 
+-	return run_update_command(ud, subforce, must_die_on_failure);
++	return run_update_command(ud, subforce);
+ }
+ 
+ static const char *remote_submodule_branch(const char *path)
+@@ -2394,8 +2390,7 @@ static void update_data_to_args(const struct update_data *update_data,
+ 				    "--no-single-branch");
+ }
+ 
+-static int update_submodule(struct update_data *update_data,
+-			    int *must_die_on_failure)
++static int update_submodule(struct update_data *update_data)
+ {
+ 	int ret;
+ 
+@@ -2409,10 +2404,8 @@ static int update_submodule(struct update_data *update_data,
+ 						  update_data->sm_path,
+ 						  update_data->update_default,
+ 						  &update_data->update_strategy);
+-	if (ret) {
+-		*must_die_on_failure = 1;
++	if (ret)
+ 		return ret;
+-	}
+ 
+ 	if (update_data->just_cloned)
+ 		oidcpy(&update_data->suboid, null_oid());
+@@ -2440,11 +2433,9 @@ static int update_submodule(struct update_data *update_data,
+ 	}
+ 
+ 	if (!oideq(&update_data->oid, &update_data->suboid) || update_data->force) {
+-		ret = run_update_procedure(update_data, must_die_on_failure);
+-		if (*must_die_on_failure)
+-			return ret;
++		ret = run_update_procedure(update_data);
+ 		if (ret)
+-			return 1;
++			return ret;
+ 	}
+ 
+ 	if (update_data->recursive) {
+@@ -2461,12 +2452,9 @@ static int update_submodule(struct update_data *update_data,
+ 		update_data_to_args(&next, &cp.args);
+ 
+ 		ret = run_command(&cp);
+-		if (!ret)
+-			return 0;
+-		die_message(_("Failed to recurse into submodule path '%s'"),
+-			    update_data->displaypath);
+-		if (ret == 128)
+-			*must_die_on_failure = 1;
++		if (ret)
++			die_message(_("Failed to recurse into submodule path '%s'"),
++				    update_data->displaypath);
+ 		return ret;
+ 	}
+ 
+@@ -2499,20 +2487,19 @@ static int update_submodules(struct update_data *update_data)
+ 
+ 	for (i = 0; i < suc.update_clone_nr; i++) {
+ 		struct update_clone_data ucd = suc.update_clone[i];
+-		int must_die_on_failure = 0;
+ 		int code;
+ 
+ 		oidcpy(&update_data->oid, &ucd.oid);
+ 		update_data->just_cloned = ucd.just_cloned;
+ 		update_data->sm_path = ucd.sub->path;
+ 
+-		code = update_submodule(update_data, &must_die_on_failure);
+-		if (code)
+-			ret = code;
+-		if (must_die_on_failure)
++		code = update_submodule(update_data);
++		if (!code)
++			continue;
++		ret = code;
++		if (ret == 128)
+ 			goto cleanup;
+-		else if (code)
+-			ret = 1;
++		ret = 1;
+ 	}
+ 
+ cleanup:
+-- 
+2.37.3.1420.g76f8a3d556c
+

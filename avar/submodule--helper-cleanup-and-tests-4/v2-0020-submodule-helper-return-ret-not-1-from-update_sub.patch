@@ -1,0 +1,66 @@
+From fdd9ef8b6f6989e9ddfa1839651ab14d29713fb7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-20.33-fdd9ef8b6f6-20220831T230246Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+References: <cover.1657819649.git.matheus.bernardino@usp.br>
+	<cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 1 Aug 2022 17:22:56 +0200
+Subject: [PATCH v2 20/33] submodule--helper: return "ret", not "1" from
+ update_submodule()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Amend the update_submodule() function to return the failing "ret" on
+error, instead of overriding it with "1".
+
+This code was added in b3c5f5cb048 (submodule: move core cmd_update()
+logic to C, 2022-03-15), and this change ends up not making a
+difference as this function is only called in update_submodules(). If
+we return non-zero here we'll always in turn return "1" in
+module_update().
+
+But if we didn't do that and returned any other non-zero exit code in
+update_submodules() we'd fail the test that's being amended
+here. We're still testing the status quo here.
+
+This change makes subsequent refactoring of update_submodule() easier,
+as we'll no longer need to worry about clobbering the "ret" we get
+from the run_command().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 2 +-
+ t/t7406-submodule-update.sh | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 4fbbffb4637..59c3a9afe6e 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2448,7 +2448,7 @@ static int update_submodule(struct update_data *update_data)
+ 			    update_data->displaypath);
+ 		if (ret == 128)
+ 			exit(ret);
+-		return 1;
++		return ret;
+ 	}
+ 
+ 	return 0;
+diff --git a/t/t7406-submodule-update.sh b/t/t7406-submodule-update.sh
+index 6cc07460dd2..c5f5dbe55e0 100755
+--- a/t/t7406-submodule-update.sh
++++ b/t/t7406-submodule-update.sh
+@@ -769,7 +769,7 @@ test_expect_success 'submodule update continues after recursive checkout error'
+ 	   echo "" > file
+ 	  )
+ 	 ) &&
+-	 test_must_fail git submodule update --recursive &&
++	 test_expect_code 1 git submodule update --recursive &&
+ 	 (cd submodule2 &&
+ 	  git rev-parse --verify HEAD >../actual
+ 	 ) &&
+-- 
+2.37.3.1420.g76f8a3d556c
+

@@ -1,0 +1,84 @@
+From 52da0d60b478c388441e092f0971c06443ae5a41 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-17.33-52da0d60b47-20220831T230246Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+References: <cover.1657819649.git.matheus.bernardino@usp.br>
+	<cover-v2-00.33-00000000000-20220831T230246Z-avarab@gmail.com>
+From: Glen Choo <chooglen@google.com>
+Date: Mon, 18 Jul 2022 12:49:19 +0200
+Subject: [PATCH v2 17/33] submodule--helper: refactor "errmsg_str" to be a
+ "struct strbuf"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor code added in e83e3333b57 (submodule: port submodule
+subcommand 'summary' from shell to C, 2020-08-13) so that "errmsg" and
+"errmsg_str" are folded into one. The distinction between the empty
+string and NULL is something that's tested for by
+e.g. "t/t7401-submodule-summary.sh".
+
+This is in preparation for fixing a memory leak the "struct strbuf" in
+the pre-image.
+
+Let's also pass a "const char *" to print_submodule_summary(), as it
+should not be modifying the "errmsg".
+
+Signed-off-by: Glen Choo <chooglen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 14 ++++++--------
+ 1 file changed, 6 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 4e3bb54afa2..07a918f7373 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -761,7 +761,7 @@ static char *verify_submodule_committish(const char *sm_path,
+ 	return strbuf_detach(&result, NULL);
+ }
+ 
+-static void print_submodule_summary(struct summary_cb *info, char *errmsg,
++static void print_submodule_summary(struct summary_cb *info, const char *errmsg,
+ 				    int total_commits, const char *displaypath,
+ 				    const char *src_abbrev, const char *dst_abbrev,
+ 				    struct module_cb *p)
+@@ -819,7 +819,7 @@ static void generate_submodule_summary(struct summary_cb *info,
+ {
+ 	char *displaypath, *src_abbrev = NULL, *dst_abbrev;
+ 	int missing_src = 0, missing_dst = 0;
+-	char *errmsg = NULL;
++	struct strbuf errmsg = STRBUF_INIT;
+ 	int total_commits = -1;
+ 
+ 	if (!info->cached && oideq(&p->oid_dst, null_oid())) {
+@@ -920,23 +920,21 @@ static void generate_submodule_summary(struct summary_cb *info,
+ 		 * submodule, i.e., deleted or changed to blob
+ 		 */
+ 		if (S_ISGITLINK(p->mod_dst)) {
+-			struct strbuf errmsg_str = STRBUF_INIT;
+ 			if (missing_src && missing_dst) {
+-				strbuf_addf(&errmsg_str, "  Warn: %s doesn't contain commits %s and %s\n",
++				strbuf_addf(&errmsg, "  Warn: %s doesn't contain commits %s and %s\n",
+ 					    displaypath, oid_to_hex(&p->oid_src),
+ 					    oid_to_hex(&p->oid_dst));
+ 			} else {
+-				strbuf_addf(&errmsg_str, "  Warn: %s doesn't contain commit %s\n",
++				strbuf_addf(&errmsg, "  Warn: %s doesn't contain commit %s\n",
+ 					    displaypath, missing_src ?
+ 					    oid_to_hex(&p->oid_src) :
+ 					    oid_to_hex(&p->oid_dst));
+ 			}
+-			errmsg = strbuf_detach(&errmsg_str, NULL);
+ 		}
+ 	}
+ 
+-	print_submodule_summary(info, errmsg, total_commits,
+-				displaypath, src_abbrev,
++	print_submodule_summary(info, errmsg.len ? errmsg.buf : NULL,
++				total_commits, displaypath, src_abbrev,
+ 				dst_abbrev, p);
+ 
+ 	free(displaypath);
+-- 
+2.37.3.1420.g76f8a3d556c
+
