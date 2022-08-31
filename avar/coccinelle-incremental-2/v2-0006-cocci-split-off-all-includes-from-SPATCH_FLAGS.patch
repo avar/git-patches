@@ -1,0 +1,72 @@
+From c74d09f4825b6a2694c3d98a69ccf3474afc064b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-6.9-c74d09f4825-20220831T172643Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20220831T172643Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220825T141212Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20220831T172643Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 31 Aug 2022 12:13:20 +0200
+Subject: [PATCH v2 6/9] cocci: split off "--all-includes" from SPATCH_FLAGS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per the rationale in 7b63ea57500 (Makefile: remove mandatory "spatch"
+arguments from SPATCH_FLAGS, 2022-07-05) we have certain flags that
+are truly mandatory, such as "--sp-file" and "--patch .". The
+"--all-includes" flag is also critical, but per [1] we might want to
+ad-hoc tweak it occasionally for testing or one-offs.
+
+But being unable to set e.g. SPATCH_FLAGS="--verbose-parsing" without
+breaking how our "spatch" works isn't ideal, i.e. before this we'd
+need to know about the default include flags, and specify:
+SPATCH_FLAGS="--all-includes --verbose-parsing".
+
+If we were then to change the default include flag (e.g. to
+"--recursive-includes") in the future any such one-off commands would
+need to be correspondingly updated.
+
+Let's instead leave the SPATCH_FLAGS for the user, while creating a
+new SPATCH_INCLUDE_FLAGS to allow for ad-hoc testing of the include
+strategy itself.
+
+1. https://lore.kernel.org/git/20220823095733.58685-1-szeder.dev@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 143c012b3be..662f950e075 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1295,7 +1295,8 @@ SANITIZE_LEAK =
+ SANITIZE_ADDRESS =
+ 
+ # For the 'coccicheck' target
+-SPATCH_FLAGS = --all-includes
++SPATCH_INCLUDE_FLAGS = --all-includes
++SPATCH_FLAGS =
+ SPATCH_TEST_FLAGS =
+ # Setting SPATCH_BATCH_SIZE higher will
+ # usually result in less CPU usage at the cost of higher peak memory.
+@@ -1305,6 +1306,7 @@ SPATCH_BATCH_SIZE = 1
+ # Rebuild 'coccicheck' if $(SPATCH), its flags etc. change
+ TRACK_SPATCH_DEFINES =
+ TRACK_SPATCH_DEFINES += $(SPATCH)
++TRACK_SPATCH_DEFINES += $(SPATCH_INCLUDE_FLAGS)
+ TRACK_SPATCH_DEFINES += $(SPATCH_FLAGS)
+ TRACK_SPATCH_DEFINES += $(SPATCH_TEST_FLAGS)
+ TRACK_SPATCH_DEFINES += $(SPATCH_BATCH_SIZE)
+@@ -3172,6 +3174,7 @@ $(COCCI_PATCHES): %.patch: %
+ 	fi; \
+ 	if ! echo $(COCCI_SOURCES) | xargs $$limit \
+ 		$(SPATCH) $(SPATCH_FLAGS) \
++		$(SPATCH_INCLUDE_FLAGS) \
+ 		--sp-file $< --patch . \
+ 		>$@+ 2>$@.log; \
+ 	then \
+-- 
+2.37.3.1410.g550a568c198
+
