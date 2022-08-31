@@ -1,0 +1,84 @@
+From 63ff554e3063c4668065b4c1b5a042fe2e9cb2cd Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-16.17-63ff554e306-20220831T230905Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-00.17-00000000000-20220831T230905Z-avarab@gmail.com>
+References: <cover-v6-00.17-00000000000-20220821T130415Z-avarab@gmail.com>
+	<cover-v7-00.17-00000000000-20220831T230905Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Jul 2022 17:51:05 +0200
+Subject: [PATCH v7 16/17] submodule--helper: free rest of "displaypath" in
+ "struct update_data"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak in code added in c51f8f94e5b (submodule--helper: run update
+procedures from C, 2021-08-24), we clobber the "displaypath" member of
+the passed-in "struct update_data" both so that die() messages in this
+update_submodule() function itself can use it, and for the
+run_update_procedure() called within this function.
+
+Fix a leak in code added in 51f8f94e5b (submodule--helper: run update
+procedures from C, 2021-08-24). We'd always clobber the old
+"displaypath" member of the previously passed-in "struct update_data".
+
+A better fix for this would be to remove the "displaypath" member from
+the "struct update_data" entirely. Along with "oid", "suboid",
+"just_cloned" and "sm_path" it's managing members that mainly need to
+be passed between 1-3 stack frames of functions adjacent to this
+code. But doing so would be a much larger change (I have it locally,
+and fully untangling that in an incremental way is a 10 patch
+journey).
+
+So let's go for this much more isolated fix suggested by Glen. We
+FREE_AND_NULL() the "update_data->displaypath", the "AND_NULL()" part
+of that is needed due to the later "free(ud->displaypath)" in
+"update_data_release()" introduced in the preceding commit
+
+Moving ensure_core_worktree() out of update_submodule() may not be
+strictly required, but in doing so we are left with the exact same
+ordering as before, making this a smaller functional change.
+
+Helped-by: Glen Choo <chooglen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 94ebd8ea38e..1650bf0070b 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -2487,13 +2487,6 @@ static int update_submodule(struct update_data *update_data)
+ {
+ 	int ret;
+ 
+-	ret = ensure_core_worktree(update_data->sm_path);
+-	if (ret)
+-		return ret;
+-
+-	update_data->displaypath = get_submodule_displaypath(
+-		update_data->sm_path, update_data->prefix);
+-
+ 	ret = determine_submodule_update_strategy(the_repository,
+ 						  update_data->just_cloned,
+ 						  update_data->sm_path,
+@@ -2599,7 +2592,15 @@ static int update_submodules(struct update_data *update_data)
+ 		update_data->just_cloned = ucd.just_cloned;
+ 		update_data->sm_path = ucd.sub->path;
+ 
++		code = ensure_core_worktree(update_data->sm_path);
++		if (code)
++			goto fail;
++
++		update_data->displaypath = get_submodule_displaypath(
++			update_data->sm_path, update_data->prefix);
+ 		code = update_submodule(update_data);
++		FREE_AND_NULL(update_data->displaypath);
++fail:
+ 		if (!code)
+ 			continue;
+ 		ret = code;
+-- 
+2.37.3.1420.g76f8a3d556c
+

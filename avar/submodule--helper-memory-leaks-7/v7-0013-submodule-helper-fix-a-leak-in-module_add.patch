@@ -1,0 +1,48 @@
+From c922e04f3d1f0ab2b702b81f0a189e22bc548df0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-13.17-c922e04f3d1-20220831T230905Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-00.17-00000000000-20220831T230905Z-avarab@gmail.com>
+References: <cover-v6-00.17-00000000000-20220821T130415Z-avarab@gmail.com>
+	<cover-v7-00.17-00000000000-20220831T230905Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 14 Jul 2022 15:09:41 +0200
+Subject: [PATCH v7 13/17] submodule--helper: fix a leak in module_add()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak in module_path(), since a6226fd772b (submodule--helper:
+convert the bulk of cmd_add() to C, 2021-08-10), we've been freeing
+add_data.sm_path, but in this case we clobbered it, and didn't free
+the value we clobbered.
+
+This makes test 28 of "t/t7400-submodule-basic.sh" ("submodule add in
+subdirectory") pass when we're compiled with SANITIZE=leak..
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 675dc3f16a3..7c62916da3c 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -3317,8 +3317,12 @@ static int module_add(int argc, const char **argv, const char *prefix)
+ 	else
+ 		add_data.sm_path = xstrdup(argv[1]);
+ 
+-	if (prefix && *prefix && !is_absolute_path(add_data.sm_path))
+-		add_data.sm_path = xstrfmt("%s%s", prefix, add_data.sm_path);
++	if (prefix && *prefix && !is_absolute_path(add_data.sm_path)) {
++		char *sm_path = add_data.sm_path;
++
++		add_data.sm_path = xstrfmt("%s%s", prefix, sm_path);
++		free(sm_path);
++	}
+ 
+ 	if (starts_with_dot_dot_slash(add_data.repo) ||
+ 	    starts_with_dot_slash(add_data.repo)) {
+-- 
+2.37.3.1420.g76f8a3d556c
+

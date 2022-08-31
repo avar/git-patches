@@ -1,0 +1,50 @@
+From 33babb1a16507ebcb362373e2ad1e3e6fb37b578 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-14.17-33babb1a165-20220831T230905Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-00.17-00000000000-20220831T230905Z-avarab@gmail.com>
+References: <cover-v6-00.17-00000000000-20220821T130415Z-avarab@gmail.com>
+	<cover-v7-00.17-00000000000-20220831T230905Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 14 Jul 2022 15:15:47 +0200
+Subject: [PATCH v7 14/17] submodule--helper: fix a memory leak in
+ print_status()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak in print_status(), the compute_rev_name() function
+implemented in this file will return a strbuf_detach()'d value, or
+NULL.
+
+This leak has existed since this code was added in
+a9f8a37584a (submodule: port submodule subcommand 'status' from shell
+to C, 2017-10-06), but in 0b5e2ea7cf3 (submodule--helper: don't print
+null in 'submodule status', 2018-04-18) we added a "const"
+intermediate variable for the return value, that "const" should be
+removed.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 7c62916da3c..23c9e28deaa 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -583,10 +583,11 @@ static void print_status(unsigned int flags, char state, const char *path,
+ 	printf("%c%s %s", state, oid_to_hex(oid), displaypath);
+ 
+ 	if (state == ' ' || state == '+') {
+-		const char *name = compute_rev_name(path, oid_to_hex(oid));
++		char *name = compute_rev_name(path, oid_to_hex(oid));
+ 
+ 		if (name)
+ 			printf(" (%s)", name);
++		free(name);
+ 	}
+ 
+ 	printf("\n");
+-- 
+2.37.3.1420.g76f8a3d556c
+
