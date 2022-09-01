@@ -4,12 +4,71 @@ In-Reply-To: <sso99so6-n28s-rq86-8q20-4456r3pn869r@tzk.qr>
 References: <sso99so6-n28s-rq86-8q20-4456r3pn869r@tzk.qr>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Thu, 1 Sep 2022 15:08:17 +0200
-Subject: [PATCH 0/5] *** SUBJECT HERE ***
+Subject: [PATCH 0/5] Makefile: split up $(test_bindir_programs)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+On Thu, Sep 01 2022, Johannes Schindelin wrote:
+
+> [...]
+> On Wed, 31 Aug 2022, Victoria Dye via GitGitGadget wrote:
+> [...]
+>> @@ -3062,7 +3067,7 @@ bin-wrappers/%: wrap-for-bin.sh
+>>  	$(call mkdir_p_parent_template)
+>>  	$(QUIET_GEN)sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
+>>  	     -e 's|@@BUILD_DIR@@|$(shell pwd)|' \
+>> -	     -e 's|@@PROG@@|$(patsubst test-%,t/helper/test-%$(X),$(@F))$(patsubst git%,$(X),$(filter $(@F),$(BINDIR_PROGRAMS_NEED_X)))|' < $< > $@ && \
+>> +	     -e 's|@@PROG@@|$(patsubst test-%,t/helper/test-%,$(@F))$(if $(filter-out $(BINDIR_PROGRAMS_NO_X),$(@F)),$(X),)|' < $< > $@ && \
+>
+> It took me a good while to wrap my head around this (and let me be clear:
+> I consider none of this your fault, it's the fault of the design of the
+> Makefile syntax).
+>
+> Let me untangle this, for posterity's benefit. We substitute the
+> placeholder `@@PROG@@` with a concatenation of two strings that are both
+> derived from `@F`, i.e. the basename of the to-be-wrapped command.
+
+We could do this later, but the 3/5 here is my reply to the "fault of
+the design of the Makfile syntax".
+
+I really don't think that's the case, the problem here is something
+you'd get any any language.
+
+We have three lists which we'd like to treat differently, but for no
+particularly good reason other than incrementally building on past
+changes to end up with this we end up having to on-the-fly guess which
+list a given item came from.
+
+With this series the end result is instead to do:
+	
+	define bin_wrappers_template
+	BW_$(1) = $$($(1):%=bin-wrappers/%)
+	BIN_WRAPPERS += $$(BW_$(1))
+	all:: $$(BW_$(1))
+	$$(BW_$(1)): bin-wrappers/% : $(3)%$(4)
+	$$(BW_$(1)): wrap-for-bin.sh
+		$$(call mkdir_p_parent_template)
+		$$(QUIET_GEN)$$(call cmd_munge_bin_wrappers_script,$(2),$(3),$(4))
+	endef
+	
+	$(eval $(call bin_wrappers_template,BINDIR_PROGRAMS_NEED_X,'$$(@F)',,$$X))
+	$(eval $(call bin_wrappers_template,BINDIR_PROGRAMS_NO_X,'$$(@F)'))
+	$(eval $(call bin_wrappers_template,TEST_PROGRAMS_NEED_X,'$$(@F)',t/helper/,$$X))
+	
+	all:: $(BIN_WRAPPERS)
+
+This obviously conflicts with Victoria's changes here, but if picked
+up the conflict can be entirely solved in favor of this series, and
+this "scalar" series will benefit.
+
+I.e. the only reason this series needs to patch this one liner is
+because the Makefile is losing track of where the item(s) came from.
+
+Once we're not doing that we're perfectly capable of creating a
+bin-wrappers/scalar, because we're no longer running into the logic
+that uses git% as a heuristic to determine whether something is "not
+from the $(TEST_PROGRAMS_NEED_X) variable".
 
 Ævar Arnfjörð Bjarmason (5):
   Makefile: factor sed-powered '#!/bin/sh' munging into a variable
