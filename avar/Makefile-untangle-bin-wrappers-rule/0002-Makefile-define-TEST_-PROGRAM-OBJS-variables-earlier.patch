@@ -1,0 +1,102 @@
+From eeae7ac4ddce00eb5c29ce355465f80a8eae6e39 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.5-eeae7ac4ddc-20220901T130817Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20220901T130817Z-avarab@gmail.com>
+References: <sso99so6-n28s-rq86-8q20-4456r3pn869r@tzk.qr>
+	<cover-0.5-00000000000-20220901T130817Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 1 Sep 2022 13:08:49 +0200
+Subject: [PATCH 2/5] Makefile: define "TEST_{PROGRAM,OBJS}" variables earlier
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Define the variables that make up TEST_OBJS earlier, and don't go back
+& forth in their definition. Before we'd first append $X to
+$(TEST_PROGRAMS), and then substitute $X back out of it to define
+$(TEST_OBJS). Let's instead add a new $(TEST_PROGRAM_OBJS) variable,
+which avoids this needless back & forth substitution.
+
+See daa99a91729 (Makefile: make sure test helpers are rebuilt when
+headers change, 2010-01-26) for how we ended up with the original
+$(TEST_OBJS).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index b2304aa93a3..0d6b2caa7d9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -617,7 +617,8 @@ SCRIPT_PYTHON =
+ SCRIPT_SH =
+ SCRIPT_LIB =
+ TEST_BUILTINS_OBJS =
+-TEST_OBJS =
++TEST_PROGRAMS =
++TEST_PROGRAM_OBJS =
+ TEST_PROGRAMS_NEED_X =
+ THIRD_PARTY_SOURCES =
+ 
+@@ -794,6 +795,7 @@ TEST_BUILTINS_OBJS += test-wildmatch.o
+ TEST_BUILTINS_OBJS += test-windows-named-pipe.o
+ TEST_BUILTINS_OBJS += test-write-cache.o
+ TEST_BUILTINS_OBJS += test-xml-encode.o
++TEST_PROGRAM_OBJS += $(patsubst %,t/helper/%,$(TEST_BUILTINS_OBJS))
+ 
+ # Do not add more tests here unless they have extra dependencies. Add
+ # them in TEST_BUILTINS_OBJS above.
+@@ -801,6 +803,9 @@ TEST_PROGRAMS_NEED_X += test-fake-ssh
+ TEST_PROGRAMS_NEED_X += test-tool
+ 
+ TEST_PROGRAMS = $(patsubst %,t/helper/%$X,$(TEST_PROGRAMS_NEED_X))
++all:: $(TEST_PROGRAMS)
++TEST_PROGRAM_OBJS += $(patsubst %,t/helper/%.o,$(TEST_PROGRAMS_NEED_X))
++.PRECIOUS: $(TEST_PROGRAM_OBJS)
+ 
+ # List built-in command $C whose implementation cmd_$C() is not in
+ # builtin/$C.o but is linked in as part of some other command.
+@@ -2537,10 +2542,8 @@ REFTABLE_TEST_OBJS += reftable/stack_test.o
+ REFTABLE_TEST_OBJS += reftable/test_framework.o
+ REFTABLE_TEST_OBJS += reftable/tree_test.o
+ 
+-TEST_OBJS := $(patsubst %$X,%.o,$(TEST_PROGRAMS)) $(patsubst %,t/helper/%,$(TEST_BUILTINS_OBJS))
+-
+ .PHONY: test-objs
+-test-objs: $(TEST_OBJS)
++test-objs: $(TEST_PROGRAM_OBJS)
+ 
+ GIT_OBJS += $(LIB_OBJS)
+ GIT_OBJS += $(BUILTIN_OBJS)
+@@ -2551,7 +2554,7 @@ git-objs: $(GIT_OBJS)
+ 
+ OBJECTS += $(GIT_OBJS)
+ OBJECTS += $(PROGRAM_OBJS)
+-OBJECTS += $(TEST_OBJS)
++OBJECTS += $(TEST_PROGRAM_OBJS)
+ OBJECTS += $(XDIFF_OBJS)
+ OBJECTS += $(FUZZ_OBJS)
+ OBJECTS += $(REFTABLE_OBJS) $(REFTABLE_TEST_OBJS)
+@@ -3060,7 +3063,7 @@ endif
+ 
+ test_bindir_programs := $(patsubst %,bin-wrappers/%,$(BINDIR_PROGRAMS_NEED_X) $(BINDIR_PROGRAMS_NO_X) $(TEST_PROGRAMS_NEED_X))
+ 
+-all:: $(TEST_PROGRAMS) $(test_bindir_programs)
++all:: $(test_bindir_programs)
+ 
+ bin-wrappers/%: wrap-for-bin.sh
+ 	$(call mkdir_p_parent_template)
+@@ -3086,8 +3089,6 @@ perf: all
+ 
+ .PHONY: test perf
+ 
+-.PRECIOUS: $(TEST_OBJS)
+-
+ t/helper/test-tool$X: $(patsubst %,t/helper/%,$(TEST_BUILTINS_OBJS))
+ 
+ t/helper/test-%$X: t/helper/test-%.o GIT-LDFLAGS $(GITLIBS) $(REFTABLE_TEST_LIB)
+-- 
+2.37.3.1426.g360dd7cf8ca
+

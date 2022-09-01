@@ -1,0 +1,145 @@
+From 0f66992d5f73b8192968e89da094777e5cafe133 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.5-0f66992d5f7-20220901T130817Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20220901T130817Z-avarab@gmail.com>
+References: <sso99so6-n28s-rq86-8q20-4456r3pn869r@tzk.qr>
+	<cover-0.5-00000000000-20220901T130817Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 1 Sep 2022 12:54:51 +0200
+Subject: [PATCH 3/5] Makefile: simplify $(test_bindir_programs) rule by
+ splitting it up
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the @@PROG@@ substitution was added in [1] it was a simple matter
+of doing a:
+
+	's|@@PROG@@|$(@F)|'
+
+Then when t/helpers were added in [2] followed by the ".exe" needing
+to be appended in [3] this previously simple rule ended up as a dense
+one-liner.
+
+It has been pointed out that this is hard to read[4], but the problem
+isn't the "design of the Makefile syntax". It's we now have to
+after-the-fact determine if we were dealing with a bin-wrapper/ that
+needed to have $(X) appended, a t/helper/, or a non-binary (currently
+only git-cvsserver).
+
+That would be a problem in any language. We're starting out with three
+lists, and then end up having to heuristically determine given a
+member of any of those lists which list that member came from. Let's
+just stop doing that and keep track of what member belongs to which
+list.
+
+We can do this by splitting up the single "bin-wrappers/%" rule into a
+rule for each of the three lists. With the
+"cmd_munge_script_sed_shell_path_arg" define added in a preceding
+commit this is easy, we just need to add a sister template to the
+existing "cmd_munge_script" added in [5].
+
+There is then an an in-flight change[6] that generalizes this to
+support "scalar". That change needed to further special-case the
+pre-image here, as we couldn't rely on the "git%" heuristic to mean
+"not from the $(TEST_PROGRAMS_NEED_X) variable".
+
+With this conflicting change that special-casing becomes
+unnecessary. The conflict between the two can be resolved entirely in
+favor of this change, as the other change adds "scalar" to
+"$(BINDIR_PROGRAMS_NEED_X)", and we are no longer losing track of
+which members belong to that list.
+
+This change can be tested with e.g.:
+
+	git checkout master &&
+	make SHELL_PATH=/bin/bash X=.exe &&
+	mv bin-wrappers bin-wrappers.master &&
+	<apply this change> &&
+	make SHELL_PATH=/bin/bash X=.exe &&
+	diff -ru bin-wrappers{.master,}
+
+Which will show an empty diff, i.e. we've correctly dealt with the
+combination of $(SHELL_PATH), $(X) and these three variables here.
+
+1. ea925196f1b (build dashless "bin-wrappers" directory similar to
+   installed bindir, 2009-12-02)
+2. e6e7530d10b (test helpers: move test-* to t/helper/ subdirectory,
+   2016-04-13)
+3. 3a94cb31d52 (bin-wrappers: append `.exe` to target paths if
+   necessary, 2019-07-29)
+4. https://lore.kernel.org/git/sso99so6-n28s-rq86-8q20-4456r3pn869r@tzk.qr/
+5. 46bac904581 (Do not install shell libraries executable, 2010-01-31)
+6. https://lore.kernel.org/git/4d69e5eaccb8873eece666a3d2bb2b22abdde7ea.1661961746.git.gitgitgadget@gmail.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 35 +++++++++++++++++++++++++++--------
+ 1 file changed, 27 insertions(+), 8 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 0d6b2caa7d9..96de9e55864 100644
+--- a/Makefile
++++ b/Makefile
+@@ -597,6 +597,7 @@ export TCL_PATH TCLTK_PATH
+ PTHREAD_LIBS = -lpthread
+ 
+ # Guard against environment variables
++BIN_WRAPPERS =
+ BUILTIN_OBJS =
+ BUILT_INS =
+ COMPAT_CFLAGS =
+@@ -3061,16 +3062,34 @@ GIT-PYTHON-VARS: FORCE
+             fi
+ endif
+ 
+-test_bindir_programs := $(patsubst %,bin-wrappers/%,$(BINDIR_PROGRAMS_NEED_X) $(BINDIR_PROGRAMS_NO_X) $(TEST_PROGRAMS_NEED_X))
++define cmd_munge_bin_wrappers_script
++sed \
++	-e $(call cmd_munge_script_sed_shell_path_arg) \
++	-e 's|@@BUILD_DIR@@|$(shell pwd)|' \
++	-e 's|@@PROG@@|$(2)$(1)$(3)|' \
++	<$< >$@ && \
++	chmod +x $@
++endef
+ 
+-all:: $(test_bindir_programs)
++BW_BINDIR_PROGRAMS_NEED_X = $(BINDIR_PROGRAMS_NEED_X:%=bin-wrappers/%)
++BIN_WRAPPERS += $(BW_BINDIR_PROGRAMS_NEED_X)
++$(BW_BINDIR_PROGRAMS_NEED_X): wrap-for-bin.sh
++	$(call mkdir_p_parent_template)
++	$(QUIET_GEN)$(call cmd_munge_bin_wrappers_script,$(@F),,$X)
+ 
+-bin-wrappers/%: wrap-for-bin.sh
++BW_BINDIR_PROGRAMS_NO_X = $(BINDIR_PROGRAMS_NO_X:%=bin-wrappers/%)
++BIN_WRAPPERS += $(BW_BINDIR_PROGRAMS_NO_X)
++$(BW_BINDIR_PROGRAMS_NO_X): wrap-for-bin.sh
+ 	$(call mkdir_p_parent_template)
+-	$(QUIET_GEN)sed -e $(call cmd_munge_script_sed_shell_path_arg) \
+-	     -e 's|@@BUILD_DIR@@|$(shell pwd)|' \
+-	     -e 's|@@PROG@@|$(patsubst test-%,t/helper/test-%$(X),$(@F))$(patsubst git%,$(X),$(filter $(@F),$(BINDIR_PROGRAMS_NEED_X)))|' < $< > $@ && \
+-	chmod +x $@
++	$(QUIET_GEN)$(call cmd_munge_bin_wrappers_script,$(@F))
++
++BW_TEST_PROGRAMS_NEED_X = $(TEST_PROGRAMS_NEED_X:%=bin-wrappers/%)
++BIN_WRAPPERS += $(BW_TEST_PROGRAMS_NEED_X)
++$(BW_TEST_PROGRAMS_NEED_X): wrap-for-bin.sh
++	$(call mkdir_p_parent_template)
++	$(QUIET_GEN)$(call cmd_munge_bin_wrappers_script,$(@F),t/helper/,$X)
++
++all:: $(BIN_WRAPPERS)
+ 
+ # GNU make supports exporting all variables by "export" without parameters.
+ # However, the environment gets quite big, and some programs have problems
+@@ -3403,7 +3422,7 @@ OTHER_PROGRAMS += $(shell echo *.dll t/helper/*.dll)
+ endif
+ 
+ artifacts-tar:: $(ALL_COMMANDS_TO_INSTALL) $(SCRIPT_LIB) $(OTHER_PROGRAMS) \
+-		GIT-BUILD-OPTIONS $(TEST_PROGRAMS) $(test_bindir_programs) \
++		GIT-BUILD-OPTIONS $(TEST_PROGRAMS) $(BIN_WRAPPERS) \
+ 		$(MOFILES)
+ 	$(QUIET_SUBDIR0)templates $(QUIET_SUBDIR1) \
+ 		SHELL_PATH='$(SHELL_PATH_SQ)' PERL_PATH='$(PERL_PATH_SQ)'
+-- 
+2.37.3.1426.g360dd7cf8ca
+
