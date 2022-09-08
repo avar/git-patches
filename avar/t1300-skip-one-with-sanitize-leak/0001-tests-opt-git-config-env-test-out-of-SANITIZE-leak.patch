@@ -1,0 +1,53 @@
+From fb2f0a660c0f7095737acb794f6fa207a488adae Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-fb2f0a660c0-20220908T153252Z-avarab@gmail.com>
+In-Reply-To: <Yxl91jfycCo7O7Pp@coredump.intra.peff.net>
+References: <Yxl91jfycCo7O7Pp@coredump.intra.peff.net>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 8 Sep 2022 10:46:12 +0200
+Subject: [PATCH] tests: opt "git --config-env" test out of SANITIZE=leak
+
+In 676063016ad (leak tests: mark some config tests as passing with
+SANITIZE=leak, 2021-10-31) t1300*.sh as a whole was marked as passing
+with SANITIZE=leak, but as reported[1] certain compiler options and
+optimization levels will re-arrange the generated code to have the
+sanitizer fire.
+
+This issue is reproducible with e.g. clang v12 with CFLAGS=-O2. The
+issue is that -fsanitize=leak will combine with other optimization
+options, and as we eliminate functions, variables etc. the
+-fsanitize=leak criteria for considering something a leak might
+effectively change.
+
+This is arguably not a compiler issue or bug, as the very notion of a
+variable being "in scope" as far as the leak checker is concerned is
+fuzzy at best in the face of compiler optimizations.
+
+A similar issue came up before related to the config.c code in
+[2]. There the consensus seemed to be to avoid hacks in the C code to
+work around these compiler edge cases. In this case however skipping
+one test is easy enough. We can deal with these "!SANITIZE_LEAK"
+issues later, when we have fewer overall leaks.
+
+1. https://lore.kernel.org/git/Yxl91jfycCo7O7Pp@coredump.intra.peff.net/
+2. https://lore.kernel.org/git/patch-v3-5.6-9a44204c4c9-20211022T175227Z-avarab@gmail.com/
+---
+ t/t1300-config.sh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/t/t1300-config.sh b/t/t1300-config.sh
+index c6661e61af5..a4953881db6 100755
+--- a/t/t1300-config.sh
++++ b/t/t1300-config.sh
+@@ -1398,7 +1398,7 @@ test_expect_success 'git --config-env with missing value' '
+ 	grep "invalid config format: config" error
+ '
+ 
+-test_expect_success 'git --config-env fails with invalid parameters' '
++test_expect_success !SANITIZE_LEAK 'git --config-env fails with invalid parameters' '
+ 	test_must_fail git --config-env=foo.flag config --bool foo.flag 2>error &&
+ 	test_i18ngrep "invalid config format: foo.flag" error &&
+ 	test_must_fail git --config-env=foo.flag= config --bool foo.flag 2>error &&
+-- 
+2.37.3.1492.gbb5af15b83b
+
