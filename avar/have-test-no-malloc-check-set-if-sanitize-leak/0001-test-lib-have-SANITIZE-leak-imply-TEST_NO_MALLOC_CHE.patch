@@ -1,0 +1,53 @@
+From e31681731b7b5277a523827b524e023d08beebff Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-e31681731b7-20220928T095041Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 26 Sep 2022 18:40:33 +0200
+Subject: [PATCH] test-lib: have SANITIZE=leak imply TEST_NO_MALLOC_CHECK
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since 131b94a10a7 (test-lib.sh: Use GLIBC_TUNABLES instead of
+MALLOC_CHECK_ on glibc >= 2.34, 2022-03-04) compiling with
+SANITIZE=leak has missed reporting some leaks. The old MALLOC_CHECK
+method used before glibc 2.34 seems to have been (mostly?) compatible
+with it, but after 131b94a10a7 e.g. running:
+
+	TEST_NO_MALLOC_CHECK=1 make SANITIZE=leak test T=t6437-submodule-merge.sh
+
+Would report a leak in builtin/commit.c, but this would not:
+
+	TEST_NO_MALLOC_CHECK= make SANITIZE=leak test T=t6437-submodule-merge.sh
+
+Since the interaction is clearly breaking the SANITIZE=leak mode,
+let's mark them as explicitly incompatible.
+
+A related regression for SANITIZE=address was fixed in
+067109a5e7d (tests: make SANITIZE=address imply TEST_NO_MALLOC_CHECK,
+2022-04-09).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/test-lib.sh | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index a65df2fd220..02f438d47ec 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -563,8 +563,10 @@ case $GIT_TEST_FSYNC in
+ esac
+ 
+ # Add libc MALLOC and MALLOC_PERTURB test only if we are not executing
+-# the test with valgrind and have not compiled with SANITIZE=address.
++# the test with valgrind and have not compiled with conflict SANITIZE
++# options.
+ if test -n "$valgrind" ||
++   test -n "$SANITIZE_LEAK" ||
+    test -n "$SANITIZE_ADDRESS" ||
+    test -n "$TEST_NO_MALLOC_CHECK"
+ then
+-- 
+2.38.0.rc1.925.gb61c5ccd7da
+
