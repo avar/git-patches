@@ -1,0 +1,95 @@
+From c92a4f52a8c961b9153647d88c22941cba93b087 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-35.35-c92a4f52a8c-20220928T082458Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.35-00000000000-20220928T082458Z-avarab@gmail.com>
+References: <cover-00.34-00000000000-20220902T092734Z-avarab@gmail.com>
+	<cover-v2-00.35-00000000000-20220928T082458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 26 Sep 2022 14:18:09 +0200
+Subject: [PATCH v2 35/35] tests: assert consistent whitespace in -h output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a test for the *.txt and *.c output assertions which asserts that
+for "-h" lines that aren't the "usage: " or " or: " lines they start
+with the same amount of whitespace. This ensures that we won't have
+buggy output like:
+
+   [...]
+   or: git tag [-n[<num>]]
+               [...]
+       [--create-reflog] [...]
+
+Which should instead be like this instead, i.e. the options lines
+should be aligned:
+
+   [...]
+   or: git tag [-n[<num>]]
+               [...]
+               [--create-reflog] [...]
+
+It would be better to be able to use "test_cmp" here, i.e. to
+construct the output we expect, and compare it against the actual
+output.
+
+For most built-in commands this would be rather straightforward. In
+"t0450-txt-doc-vs-help.sh" we already compute the whitespace that a
+"git-$builtin" needs, and strip away "usage: " or " or: " from the
+start of lines. The problem is:
+
+ * For commands that implement subcommands, such as "git bundle", we
+   don't know whether e.g. "git bundle create" is the subcommand
+   "create", or the argument "create" to "bundle" for the purposes of
+   alignment.
+
+   We *do* have that information from the *.txt version, since the
+   part within the ''-quotes should be the command & subcommand, but
+   that isn't consistent (e.g. see "git bundle" and "git
+   commit-graph", only the latter is correct), and parsing that out
+   would be non-trivial.
+
+ * If we were to make this stricter we have various
+   non-parse_options() users (e.g. "git diff-tree") that don't have the
+   nicely aligned output which we've had since
+   4631cfc20bd (parse-options: properly align continued usage output,
+   2021-09-21).
+
+So rather than make perfect the enemy of the good let's assert that
+for those lines that are indented they should all use the same
+indentation.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0450-txt-doc-vs-help.sh | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/t/t0450-txt-doc-vs-help.sh b/t/t0450-txt-doc-vs-help.sh
+index 9b1c70ef40c..5c1d01d2c66 100755
+--- a/t/t0450-txt-doc-vs-help.sh
++++ b/t/t0450-txt-doc-vs-help.sh
+@@ -129,6 +129,21 @@ do
+ 		! grep "$HT" help.raw
+ 	'
+ 
++	test_expect_success "$builtin -h output has consistent spacing" '
++		builtin_to_synopsis "$builtin" >help.raw &&
++		sed -n \
++			-e "/^ / {
++				s/[^ ].*//;
++				p;
++			}" \
++			<help.raw >help &&
++		sort -u help >help.ws &&
++		if test -s help.ws
++		then
++			test_line_count = 1 help.ws
++		fi
++	'
++
+ 	txt="$(builtin_to_txt "$builtin")" &&
+ 	preq="$(echo BUILTIN_TXT_$builtin | tr '[:lower:]-' '[:upper:]_')" &&
+ 
+-- 
+2.38.0.rc1.925.gb61c5ccd7da
+
