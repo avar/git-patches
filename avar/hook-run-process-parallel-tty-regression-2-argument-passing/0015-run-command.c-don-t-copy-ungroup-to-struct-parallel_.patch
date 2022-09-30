@@ -1,0 +1,111 @@
+From 60d66fbd90a22ed0dbb1bed601deb04c26cfc748 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-15.15-60d66fbd90a-20220930T111343Z-avarab@gmail.com>
+In-Reply-To: <cover-00.15-00000000000-20220930T111343Z-avarab@gmail.com>
+References: <cover-00.15-00000000000-20220930T111343Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 27 Sep 2022 14:08:59 +0200
+Subject: [PATCH 15/15] run-command.c: don't copy "ungroup" to "struct
+ parallel_processes"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As with the *_fn members removed in the preceding commit, let's not
+copy the "ungroup" member of the "struct run_process_parallel_opts"
+over to the "struct parallel_processes". Now that we're passing the
+"opts" down there's no reason to do so.
+
+This makes the code easier to follow, as we have a "const" attribute
+on the "struct run_process_parallel_opts", but not "struct
+parallel_processes". We do not alter the "ungroup" argument, so
+storing it in the non-const structure would make this control flow
+less obvious.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c | 18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/run-command.c b/run-command.c
+index b25e74fcc06..da026319335 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1515,7 +1515,6 @@ struct parallel_processes {
+ 	struct pollfd *pfd;
+ 
+ 	unsigned shutdown : 1;
+-	unsigned ungroup : 1;
+ 
+ 	int output_owner;
+ 	struct strbuf buffered_output; /* of finished children */
+@@ -1563,9 +1562,8 @@ static void pp_init(struct parallel_processes *pp,
+ 	pp->nr_processes = 0;
+ 	pp->output_owner = 0;
+ 	pp->shutdown = 0;
+-	pp->ungroup = opts->ungroup;
+ 	CALLOC_ARRAY(pp->children, opts->jobs);
+-	if (!pp->ungroup)
++	if (!opts->ungroup)
+ 		CALLOC_ARRAY(pp->pfd, opts->jobs);
+ 
+ 	for (i = 0; i < opts->jobs; i++) {
+@@ -1623,17 +1621,17 @@ static int pp_start_one(struct parallel_processes *pp,
+ 		BUG("bookkeeping is hard");
+ 
+ 	code = opts->get_next_task(&pp->children[i].process,
+-				   pp->ungroup ? NULL : &pp->children[i].err,
++				   opts->ungroup ? NULL : &pp->children[i].err,
+ 				   pp->data,
+ 				   &pp->children[i].data);
+ 	if (!code) {
+-		if (!pp->ungroup) {
++		if (!opts->ungroup) {
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+ 			strbuf_reset(&pp->children[i].err);
+ 		}
+ 		return 1;
+ 	}
+-	if (!pp->ungroup) {
++	if (!opts->ungroup) {
+ 		pp->children[i].process.err = -1;
+ 		pp->children[i].process.stdout_to_stderr = 1;
+ 	}
+@@ -1641,14 +1639,14 @@ static int pp_start_one(struct parallel_processes *pp,
+ 
+ 	if (start_command(&pp->children[i].process)) {
+ 		if (opts->start_failure)
+-			code = opts->start_failure(pp->ungroup ? NULL :
++			code = opts->start_failure(opts->ungroup ? NULL :
+ 						   &pp->children[i].err,
+ 						   pp->data,
+ 						   pp->children[i].data);
+ 		else
+ 			code = 0;
+ 
+-		if (!pp->ungroup) {
++		if (!opts->ungroup) {
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+ 			strbuf_reset(&pp->children[i].err);
+ 		}
+@@ -1719,7 +1717,7 @@ static int pp_collect_finished(struct parallel_processes *pp,
+ 		code = finish_command(&pp->children[i].process);
+ 
+ 		if (opts->task_finished)
+-			code = opts->task_finished(code, pp->ungroup ? NULL :
++			code = opts->task_finished(code, opts->ungroup ? NULL :
+ 						   &pp->children[i].err, pp->data,
+ 						   pp->children[i].data);
+ 		else
+@@ -1736,7 +1734,7 @@ static int pp_collect_finished(struct parallel_processes *pp,
+ 			pp->pfd[i].fd = -1;
+ 		child_process_init(&pp->children[i].process);
+ 
+-		if (pp->ungroup) {
++		if (opts->ungroup) {
+ 			; /* no strbuf_*() work to do here */
+ 		} else if (i != pp->output_owner) {
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+-- 
+2.38.0.rc2.935.g6b421ae1592
+

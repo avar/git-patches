@@ -1,0 +1,78 @@
+From 605b15fceab1e2c8b4f9b6bdaa4b48a22afa2cd8 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.15-605b15fceab-20220930T111343Z-avarab@gmail.com>
+In-Reply-To: <cover-00.15-00000000000-20220930T111343Z-avarab@gmail.com>
+References: <cover-00.15-00000000000-20220930T111343Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 27 Sep 2022 16:18:57 +0200
+Subject: [PATCH 02/15] submodule tests: reset "trace.out" between "grep"
+ invocations
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix test patterns added in 62104ba14af (submodules: allow parallel
+fetching, add tests and documentation, 2015-12-15) and
+a028a1930c6 (fetching submodules: respect `submodule.fetchJobs` config
+option, 2016-02-29).
+
+In the former case we were leaving a trace.out file at the top-level
+for any subsequent tests (there are none, currently). Let's clean the
+file up instead.
+
+In the latter case we were testing that a given configuration would
+result in "N tasks" in the log, but we were grepping through the log
+for all previous such tests, when we really meant to clear the logs
+between the "grep" invocations.
+
+In practice this resulted in no logic error, as e.g. "--fetch 7" would
+not print out a "9 tasks" line, but let's be paranoid and stop
+implicitly assuming that that's the case.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5526-fetch-submodules.sh | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/t/t5526-fetch-submodules.sh b/t/t5526-fetch-submodules.sh
+index a301b56db89..e36f9fdf242 100755
+--- a/t/t5526-fetch-submodules.sh
++++ b/t/t5526-fetch-submodules.sh
+@@ -177,6 +177,7 @@ test_expect_success "submodule.recurse option triggers recursive fetch" '
+ '
+ 
+ test_expect_success "fetch --recurse-submodules -j2 has the same output behaviour" '
++	test_when_finished "rm -f trace.out" &&
+ 	add_submodule_commits &&
+ 	(
+ 		cd downstream &&
+@@ -704,17 +705,25 @@ test_expect_success "'fetch.recurseSubmodules=on-demand' works also without .git
+ 
+ test_expect_success 'fetching submodules respects parallel settings' '
+ 	git config fetch.recurseSubmodules true &&
++	test_when_finished "rm -f downstream/trace.out" &&
+ 	(
+ 		cd downstream &&
+ 		GIT_TRACE=$(pwd)/trace.out git fetch &&
+ 		grep "1 tasks" trace.out &&
++		>trace.out &&
++
+ 		GIT_TRACE=$(pwd)/trace.out git fetch --jobs 7 &&
+ 		grep "7 tasks" trace.out &&
++		>trace.out &&
++
+ 		git config submodule.fetchJobs 8 &&
+ 		GIT_TRACE=$(pwd)/trace.out git fetch &&
+ 		grep "8 tasks" trace.out &&
++		>trace.out &&
++
+ 		GIT_TRACE=$(pwd)/trace.out git fetch --jobs 9 &&
+-		grep "9 tasks" trace.out
++		grep "9 tasks" trace.out &&
++		>trace.out &&
+ 	)
+ '
+ 
+-- 
+2.38.0.rc2.935.g6b421ae1592
+
