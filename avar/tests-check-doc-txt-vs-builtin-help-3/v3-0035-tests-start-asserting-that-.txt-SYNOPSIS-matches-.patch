@@ -1,0 +1,274 @@
+From 22da68abce352a7f9043394a7cd9adadccf89af2 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-35.36-22da68abce3-20220930T180415Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.36-00000000000-20220930T180414Z-avarab@gmail.com>
+References: <cover-v2-00.35-00000000000-20220928T082458Z-avarab@gmail.com>
+	<cover-v3-00.36-00000000000-20220930T180414Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 5 Apr 2022 15:44:11 +0200
+Subject: [PATCH v3 35/36] tests: start asserting that *.txt SYNOPSIS matches
+ -h output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There's been a lot of incremental effort to make the SYNOPSIS output
+in our documentation consistent with the -h output,
+e.g. cbe485298bf (git reflog [expire|delete]: make -h output
+consistent with SYNOPSIS, 2022-03-17) is one recent example, but that
+effort has been an uphill battle due to the lack of regression
+testing.
+
+This adds such regression testing, we can parse out the SYNOPSIS
+output with "sed", and is turns out it's relatively easy to normalize
+it and the "-h" output to match on another.
+
+We now ensure that we won't have regressions when it comes to the list
+of commands in "expect_help_to_match_txt" below, and in subsequent
+commits we'll make more of them consistent.
+
+The naïve parser here gets quite a few things wrong, but it doesn't
+need to be perfect, just good enough that we can compare /some/ of
+this help output. There's no cases where the output would match except
+for the parser's stupidity, it's all cases of e.g. comparing the *.txt
+to non-parse_options() output.
+
+Since that output is wildly different than the *.txt anyway let's
+leave this for now, we can fix the parser some other time, or it won't
+become necessary as we'll e.g. convert more things to using
+parse_options().
+
+Having a special-case for "merge-tree"'s 1f0c3a29da3 (merge-tree:
+implement real merges, 2022-06-18) is a bit ugly, but preferred to
+blessing that " (deprecated)" pattern for other commands. We'd
+probably want to add some other way of marking deprecated commands in
+the SYNOPSIS syntax. Syntactically 1f0c3a29da3's way of doing it is
+indistinguishable from the command taking an optional literal
+"deprecated" string as an argument.
+
+Some of the issues that are left:
+
+ * "git show -h", "git whatchanged -h" and "git reflog --oneline -h"
+   all showing "git log" and "git show" usage output. I.e. the
+   "builtin_log_usage" in builtin/log.c doesn't take into account what
+   command we're running.
+
+ * Likewise "git stage -h" shows "git add" usage, but should be aware
+   of what command it's running. The same for "annotate" and "blame".
+
+ * Commands which implement subcommands such as like
+   "multi-pack-index", "notes", "remote" etc. having their subcommands
+   in a very different order in the *.txt and *.c. Fixing it would
+   require some verbose diffs, so it's been left alone for onw.
+
+ * Commands such as "format-patch" have a very long argument list in
+   the *.txt, but just "[<options>]" in the *.c.
+
+   What to do about these has been left out of this series, except to
+   the extent that preceding commits changed "[<options>]" (or
+   equivalent) to the list of options in cases where that list of
+   options was tiny, or we clearly meant to exhaustively list the
+   options in both *.txt and *.c.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0450-txt-doc-vs-help.sh  | 121 ++++++++++++++++++++++++++++++++++++
+ t/t0450/txt-help-mismatches |  58 +++++++++++++++++
+ 2 files changed, 179 insertions(+)
+ create mode 100755 t/t0450-txt-doc-vs-help.sh
+ create mode 100644 t/t0450/txt-help-mismatches
+
+diff --git a/t/t0450-txt-doc-vs-help.sh b/t/t0450-txt-doc-vs-help.sh
+new file mode 100755
+index 00000000000..6a710b07408
+--- /dev/null
++++ b/t/t0450-txt-doc-vs-help.sh
+@@ -0,0 +1,121 @@
++#!/bin/sh
++
++test_description='compare (unbuilt) Documentation/*.txt to -h output
++
++Run this with --debug to see a summary of where we still fail to make
++the two versions consistent with one another.'
++
++. ./test-lib.sh
++
++test_expect_success 'setup: list of builtins' '
++	git --list-cmds=builtins >builtins
++'
++
++test_expect_success 'list of txt and help mismatches is sorted' '
++	sort -u "$TEST_DIRECTORY"/t0450/txt-help-mismatches >expect &&
++	if ! test_cmp expect "$TEST_DIRECTORY"/t0450/txt-help-mismatches
++	then
++		BUG "please keep the list of txt and help mismatches sorted"
++	fi
++'
++
++builtin_to_synopsis () {
++	builtin="$1" &&
++	test_when_finished "rm -f out" &&
++	test_expect_code 129 git $builtin -h >out 2>&1 &&
++	sed -n \
++		-e '1,/^$/ {
++			/^$/d;
++			s/^usage: //;
++			s/^ *or: //;
++			p;
++		}' <out
++}
++
++builtin_to_txt () {
++	echo "$GIT_BUILD_DIR/Documentation/git-$1.txt"
++}
++
++txt_synopsis () {
++	sed -n \
++		-e '/^\[verse\]$/,/^$/ {
++			/^$/d;
++			/^\[verse\]$/d;
++			s/{litdd}/--/g;
++
++			s/'\''\(git[ a-z-]*\)'\''/\1/g;
++			p;
++		}' \
++		<"$1"
++}
++
++HT="	"
++align_after_nl () {
++	builtin="$1" &&
++	len=$(printf "git %s " "$builtin" | wc -c) &&
++	pad=$(printf "%${len}s" "") &&
++
++	sed "s/^[ $HT][ $HT]*/$pad/"
++}
++
++test_debug '>failing'
++while read builtin
++do
++	test_expect_success "$builtin -h output has no \t" '
++		builtin_to_synopsis "$builtin" >help.raw &&
++		! grep "$HT" help.raw
++	'
++
++	txt="$(builtin_to_txt "$builtin")" &&
++	preq="$(echo BUILTIN_TXT_$builtin | tr '[:lower:]-' '[:upper:]_')" &&
++
++	if test -f "$txt"
++	then
++		test_set_prereq "$preq"
++	fi &&
++
++	result=
++	if grep -q "^$builtin$" "$TEST_DIRECTORY"/t0450/txt-help-mismatches
++	then
++		result=failure
++	else
++		result=success
++	fi &&
++
++	test_expect_$result "$preq" "$builtin -h output and SYNOPSIS agree" '
++		txt_synopsis "$txt" >txt.raw &&
++		if test "$builtin" = "merge-tree"
++		then
++			sed -e '\''s/ (deprecated)$//g'\'' <txt.raw >txt.raw.new &&
++			mv txt.raw.new txt.raw
++		fi &&
++		builtin_to_synopsis "$builtin" >help.raw &&
++
++		# The *.txt and -h use different spacing for the
++		# alignment of continued usage output, normalize it.
++		align_after_nl "$builtin" <txt.raw >txt &&
++		align_after_nl "$builtin" <help.raw >help &&
++		test_cmp txt help
++	'
++
++	if test_have_prereq "$preq" && test -e txt && test -e help
++	then
++		test_debug '
++			if test_cmp txt help >cmp 2>/dev/null
++			then
++				echo "=== DONE: $builtin ==="
++			else
++				echo "=== TODO: $builtin ===" &&
++				cat cmp
++			fi >>failing
++		'
++
++		# Not in test_expect_success in case --run is being
++		# used with --debug
++		rm -f txt help tmp 2>/dev/null
++	fi
++done <builtins
++
++test_debug 'say "$(cat failing)"'
++
++test_done
+diff --git a/t/t0450/txt-help-mismatches b/t/t0450/txt-help-mismatches
+new file mode 100644
+index 00000000000..a0777acd667
+--- /dev/null
++++ b/t/t0450/txt-help-mismatches
+@@ -0,0 +1,58 @@
++add
++am
++apply
++archive
++bisect
++blame
++branch
++check-ref-format
++checkout
++checkout-index
++clone
++column
++config
++credential
++credential-cache
++credential-store
++fast-export
++fast-import
++fetch-pack
++fmt-merge-msg
++for-each-ref
++format-patch
++fsck-objects
++fsmonitor--daemon
++gc
++grep
++index-pack
++init-db
++log
++ls-files
++ls-tree
++mailinfo
++mailsplit
++maintenance
++merge
++merge-file
++merge-index
++merge-one-file
++multi-pack-index
++name-rev
++notes
++pack-objects
++push
++range-diff
++rebase
++remote
++remote-ext
++remote-fd
++repack
++reset
++restore
++rev-parse
++show
++stage
++switch
++update-index
++update-ref
++whatchanged
+-- 
+2.38.0.rc2.935.g6b421ae1592
+
