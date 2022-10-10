@@ -1,0 +1,90 @@
+From 044bbe831af1c9df2e6ba6509927f795fc0a8ce0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-044bbe831af-20221010T165629Z-avarab@gmail.com>
+In-Reply-To: <o2ijhZAUIi7nPTwQmsJfpvPIEeLbhvn1AP8rhW2hCNbC380Z2ogDHzZigqJsHI6RwphsIZR3OSJSy-wYvyWv5un632tKynHKFLFPLPEDH2g=@protonmail.com>
+References: <o2ijhZAUIi7nPTwQmsJfpvPIEeLbhvn1AP8rhW2hCNbC380Z2ogDHzZigqJsHI6RwphsIZR3OSJSy-wYvyWv5un632tKynHKFLFPLPEDH2g=@protonmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 10 Oct 2022 18:26:13 +0200
+Subject: [PATCH] log: require --grep for --invert-grep and --all-match, fix
+ segfault
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Neither the "--invert-grep" option added in [1] nor the earlier
+"--all-match" option added in 0ab7befa31d (grep --all-match,
+2006-09-27) were intended to be used stand-alone.
+
+But due to how the built-in and the revision API interacted those
+options without the corresponding --grep would be ignored.
+
+Then in f41fb662f57 (revisions API: have release_revisions() release
+"grep_filter", 2022-04-13) this turned into a segfault, as we'd
+attempt to free() the non-existing --grep patterns.
+
+Arguably it makes more sense to add this check to
+compile_grep_patterns(), since it's possible to use the C API in the
+same way and trigger this segfault. But in practice the revision.c API
+is the only user of "no_body_match", and by placing the check here we
+can more sensibly emit a message that assumes that the user used
+"--invert-grep" without "--grep".
+
+1. 22dfa8a23de (log: teach --invert-grep option, 2015-01-12)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ revision.c      | 6 ++++++
+ t/t4202-log.sh  | 4 ++++
+ t/t7810-grep.sh | 4 ++++
+ 3 files changed, 14 insertions(+)
+
+diff --git a/revision.c b/revision.c
+index 36e31942cee..a55ead48448 100644
+--- a/revision.c
++++ b/revision.c
+@@ -2986,6 +2986,12 @@ int setup_revisions(int argc, const char **argv, struct rev_info *revs, struct s
+ 		die(_("options '%s' and '%s' cannot be used together"), "--no-walk", "--graph");
+ 	if (!revs->reflog_info && revs->grep_filter.use_reflog_filter)
+ 		die(_("the option '%s' requires '%s'"), "--grep-reflog", "--walk-reflogs");
++	if (!revs->grep_filter.pattern_expression) {
++		if (revs->grep_filter.no_body_match)
++			die(_("the option '%s' requires '%s'"), "--invert-grep", "--grep");
++		if (revs->grep_filter.all_match)
++			die(_("the option '%s' requires '%s'"), "--all-match", "--grep");
++	}
+ 
+ 	if (revs->line_level_traverse &&
+ 	    (revs->diffopt.output_format & ~(DIFF_FORMAT_PATCH | DIFF_FORMAT_NO_OUTPUT)))
+diff --git a/t/t4202-log.sh b/t/t4202-log.sh
+index cc15cb4ff62..298678fb7c8 100755
+--- a/t/t4202-log.sh
++++ b/t/t4202-log.sh
+@@ -249,6 +249,10 @@ test_expect_success 'log --grep' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'log --invert-grep usage' '
++	test_expect_code 128 git log --invert-grep
++'
++
+ cat > expect << EOF
+ second
+ initial
+diff --git a/t/t7810-grep.sh b/t/t7810-grep.sh
+index 8eded6ab274..6dd750349e1 100755
+--- a/t/t7810-grep.sh
++++ b/t/t7810-grep.sh
+@@ -914,6 +914,10 @@ test_expect_success 'log with multiple --grep uses union' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'log --all-match usage' '
++	test_expect_code 128 git log --all-match
++'
++
+ test_expect_success 'log --all-match with multiple --grep uses intersection' '
+ 	git log --all-match --grep=i --grep=r --format=%s >actual &&
+ 	{
+-- 
+2.38.0.971.ge79ff6d20e7
+
