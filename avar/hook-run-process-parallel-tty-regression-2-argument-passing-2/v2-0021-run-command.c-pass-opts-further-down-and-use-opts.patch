@@ -1,0 +1,87 @@
+From c1a286a8ebb9108183235beec65ba339cf12d6ae Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-21.22-c1a286a8ebb-20221012T084850Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+References: <cover-00.15-00000000000-20220930T111343Z-avarab@gmail.com>
+	<cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 6 Oct 2022 11:53:25 +0200
+Subject: [PATCH v2 21/22] run-command.c: pass "opts" further down, and use
+ "opts->processes"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Continue the migration away from the "max_processes" member of "struct
+parallel_processes" to the "processes" member of the "struct
+run_process_parallel_opts", in this case we needed to pass the "opts"
+further down into pp_cleanup() and pp_buffer_stderr().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/run-command.c b/run-command.c
+index b19b62749e0..6b91235ff2d 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1563,10 +1563,11 @@ static void pp_init(struct parallel_processes *pp,
+ 	sigchain_push_common(handle_children_on_signal);
+ }
+ 
+-static void pp_cleanup(struct parallel_processes *pp)
++static void pp_cleanup(struct parallel_processes *pp,
++		       const struct run_process_parallel_opts *opts)
+ {
+ 	trace_printf("run_processes_parallel: done");
+-	for (size_t i = 0; i < pp->max_processes; i++) {
++	for (size_t i = 0; i < opts->processes; i++) {
+ 		strbuf_release(&pp->children[i].err);
+ 		child_process_clear(&pp->children[i].process);
+ 	}
+@@ -1645,17 +1646,19 @@ static int pp_start_one(struct parallel_processes *pp,
+ 	return 0;
+ }
+ 
+-static void pp_buffer_stderr(struct parallel_processes *pp, int output_timeout)
++static void pp_buffer_stderr(struct parallel_processes *pp,
++			     const struct run_process_parallel_opts *opts,
++			     int output_timeout)
+ {
+-	while (poll(pp->pfd, pp->max_processes, output_timeout) < 0) {
++	while (poll(pp->pfd, opts->processes, output_timeout) < 0) {
+ 		if (errno == EINTR)
+ 			continue;
+-		pp_cleanup(pp);
++		pp_cleanup(pp, opts);
+ 		die_errno("poll");
+ 	}
+ 
+ 	/* Buffer output from all pipes. */
+-	for (size_t i = 0; i < pp->max_processes; i++) {
++	for (size_t i = 0; i < opts->processes; i++) {
+ 		if (pp->children[i].state == GIT_CP_WORKING &&
+ 		    pp->pfd[i].revents & (POLLIN | POLLHUP)) {
+ 			int n = strbuf_read_once(&pp->children[i].err,
+@@ -1786,7 +1789,7 @@ void run_processes_parallel(const struct run_process_parallel_opts *opts)
+ 			for (size_t i = 0; i < opts->processes; i++)
+ 				pp.children[i].state = GIT_CP_WAIT_CLEANUP;
+ 		} else {
+-			pp_buffer_stderr(&pp, output_timeout);
++			pp_buffer_stderr(&pp, opts, output_timeout);
+ 			pp_output(&pp);
+ 		}
+ 		code = pp_collect_finished(&pp, opts);
+@@ -1797,7 +1800,7 @@ void run_processes_parallel(const struct run_process_parallel_opts *opts)
+ 		}
+ 	}
+ 
+-	pp_cleanup(&pp);
++	pp_cleanup(&pp, opts);
+ 
+ 	if (do_trace2)
+ 		trace2_region_leave(tr2_category, tr2_label, NULL);
+-- 
+2.38.0.971.ge79ff6d20e7
+

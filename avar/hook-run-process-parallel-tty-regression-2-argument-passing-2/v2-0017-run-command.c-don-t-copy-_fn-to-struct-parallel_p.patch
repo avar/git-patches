@@ -1,0 +1,184 @@
+From fdd642369854fce6d79bafa5d93d03447be7e91a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-17.22-fdd64236985-20221012T084850Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+References: <cover-00.15-00000000000-20220930T111343Z-avarab@gmail.com>
+	<cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 27 Sep 2022 14:08:59 +0200
+Subject: [PATCH v2 17/22] run-command.c: don't copy *_fn to "struct
+ parallel_processes"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The only remaining reason for copying the callbacks in the "struct
+run_process_parallel_opts" over to the "struct parallel_processes" was
+to avoid two if/else statements in case the "start_failure" and
+"task_finished" callbacks were NULL.
+
+Let's handle those cases in pp_start_one() and pp_collect_finished()
+instead, and avoid the default_* stub functions, and the need to copy
+this data around.
+
+Organizing the code like this made more sense before the "struct
+run_parallel_parallel_opts" existed, as we'd have needed to pass each
+of these as a separate parameter.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c | 67 +++++++++++++++++++--------------------------------
+ 1 file changed, 25 insertions(+), 42 deletions(-)
+
+diff --git a/run-command.c b/run-command.c
+index 6c343b9b77b..4fce1193b66 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1500,10 +1500,6 @@ struct parallel_processes {
+ 	const size_t max_processes;
+ 	size_t nr_processes;
+ 
+-	get_next_task_fn get_next_task;
+-	start_failure_fn start_failure;
+-	task_finished_fn task_finished;
+-
+ 	struct {
+ 		enum child_state state;
+ 		struct child_process process;
+@@ -1523,21 +1519,6 @@ struct parallel_processes {
+ 	struct strbuf buffered_output; /* of finished children */
+ };
+ 
+-static int default_start_failure(struct strbuf *out,
+-				 void *pp_cb,
+-				 void *pp_task_cb)
+-{
+-	return 0;
+-}
+-
+-static int default_task_finished(int result,
+-				 struct strbuf *out,
+-				 void *pp_cb,
+-				 void *pp_task_cb)
+-{
+-	return 0;
+-}
+-
+ static void kill_children(const struct parallel_processes *pp, int signo)
+ {
+ 	for (size_t i = 0; i < pp->max_processes; i++)
+@@ -1558,9 +1539,6 @@ static void pp_init(struct parallel_processes *pp,
+ 		    const struct run_process_parallel_opts *opts)
+ {
+ 	const size_t n = opts->processes;
+-	get_next_task_fn get_next_task = opts->get_next_task;
+-	start_failure_fn start_failure = opts->start_failure;
+-	task_finished_fn task_finished = opts->task_finished;
+ 
+ 	if (!n)
+ 		BUG("you must provide a non-zero number of processes!");
+@@ -1568,12 +1546,8 @@ static void pp_init(struct parallel_processes *pp,
+ 	trace_printf("run_processes_parallel: preparing to run up to %"PRIuMAX" tasks",
+ 		     (uintmax_t)n);
+ 
+-	if (!get_next_task)
++	if (!opts->get_next_task)
+ 		BUG("you need to specify a get_next_task function");
+-	pp->get_next_task = get_next_task;
+-
+-	pp->start_failure = start_failure ? start_failure : default_start_failure;
+-	pp->task_finished = task_finished ? task_finished : default_task_finished;
+ 
+ 	CALLOC_ARRAY(pp->children, n);
+ 	if (!pp->ungroup)
+@@ -1620,7 +1594,8 @@ static void pp_cleanup(struct parallel_processes *pp)
+  * <0 no new job was started, user wishes to shutdown early. Use negative code
+  *    to signal the children.
+  */
+-static int pp_start_one(struct parallel_processes *pp)
++static int pp_start_one(struct parallel_processes *pp,
++			const struct run_process_parallel_opts *opts)
+ {
+ 	size_t i;
+ 	int code;
+@@ -1631,10 +1606,10 @@ static int pp_start_one(struct parallel_processes *pp)
+ 	if (i == pp->max_processes)
+ 		BUG("bookkeeping is hard");
+ 
+-	code = pp->get_next_task(&pp->children[i].process,
+-				 pp->ungroup ? NULL : &pp->children[i].err,
+-				 pp->data,
+-				 &pp->children[i].data);
++	code = opts->get_next_task(&pp->children[i].process,
++				   pp->ungroup ? NULL : &pp->children[i].err,
++				   pp->data,
++				   &pp->children[i].data);
+ 	if (!code) {
+ 		if (!pp->ungroup) {
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+@@ -1649,10 +1624,14 @@ static int pp_start_one(struct parallel_processes *pp)
+ 	pp->children[i].process.no_stdin = 1;
+ 
+ 	if (start_command(&pp->children[i].process)) {
+-		code = pp->start_failure(pp->ungroup ? NULL :
+-					 &pp->children[i].err,
+-					 pp->data,
+-					 pp->children[i].data);
++		if (opts->start_failure)
++			code = opts->start_failure(pp->ungroup ? NULL :
++						   &pp->children[i].err,
++						   pp->data,
++						   pp->children[i].data);
++		else
++			code = 0;
++
+ 		if (!pp->ungroup) {
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+ 			strbuf_reset(&pp->children[i].err);
+@@ -1705,7 +1684,8 @@ static void pp_output(const struct parallel_processes *pp)
+ 	}
+ }
+ 
+-static int pp_collect_finished(struct parallel_processes *pp)
++static int pp_collect_finished(struct parallel_processes *pp,
++			       const struct run_process_parallel_opts *opts)
+ {
+ 	int code;
+ 	size_t i, n = pp->max_processes;
+@@ -1720,9 +1700,12 @@ static int pp_collect_finished(struct parallel_processes *pp)
+ 
+ 		code = finish_command(&pp->children[i].process);
+ 
+-		code = pp->task_finished(code, pp->ungroup ? NULL :
+-					 &pp->children[i].err, pp->data,
+-					 pp->children[i].data);
++		if (opts->task_finished)
++			code = opts->task_finished(code, pp->ungroup ? NULL :
++						   &pp->children[i].err, pp->data,
++						   pp->children[i].data);
++		else
++			code = 0;
+ 
+ 		if (code)
+ 			result = code;
+@@ -1791,7 +1774,7 @@ void run_processes_parallel(const struct run_process_parallel_opts *opts)
+ 		    i < spawn_cap && !pp.shutdown &&
+ 		    pp.nr_processes < pp.max_processes;
+ 		    i++) {
+-			code = pp_start_one(&pp);
++			code = pp_start_one(&pp, opts);
+ 			if (!code)
+ 				continue;
+ 			if (code < 0) {
+@@ -1809,7 +1792,7 @@ void run_processes_parallel(const struct run_process_parallel_opts *opts)
+ 			pp_buffer_stderr(&pp, output_timeout);
+ 			pp_output(&pp);
+ 		}
+-		code = pp_collect_finished(&pp);
++		code = pp_collect_finished(&pp, opts);
+ 		if (code) {
+ 			pp.shutdown = 1;
+ 			if (code < 0)
+-- 
+2.38.0.971.ge79ff6d20e7
+

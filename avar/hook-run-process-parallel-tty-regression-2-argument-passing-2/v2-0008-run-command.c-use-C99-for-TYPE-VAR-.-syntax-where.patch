@@ -1,0 +1,109 @@
+From 279b0430c5d554f6521e07387c92609b5de1ce1e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-08.22-279b0430c5d-20221012T084850Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+References: <cover-00.15-00000000000-20220930T111343Z-avarab@gmail.com>
+	<cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 6 Oct 2022 09:10:18 +0200
+Subject: [PATCH v2 08/22] run-command.c: use C99 "for (TYPE VAR = ..." syntax
+ where useful
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor code in run-command.c where the "i" iteration variable is
+being compared to an unsigned type, or where it's being shadowed.
+
+In a subsequent commit the type of the "n" variable will be changed,
+this also helps to avoid some of the warnings we've had under
+"DEVOPTS=extra-all" since 8d133a4653a (strvec: use size_t to store nr
+and alloc, 2021-09-11).
+
+Per the thread ending at [1] we already have this C99 syntax in the
+v2.38.0 release, per 6563706568b (CodingGuidelines: give deadline for
+"for (int i = 0; ...", 2022-03-30) we should re-visit the wider use of
+this syntax for November 2022, meaning within the window of v2.39.0.
+
+As of writing it's earlier than that deadline and per [1] we want to
+"avoid open[ing] the floodgate and deliberately add more [this C99
+syntax]". But in this case the use of the syntax solves a real problem
+of conflating types, which we'd otherwise need to avoid by using
+differently named iteration variables (and the associated larger
+refactoring).
+
+1. https://lore.kernel.org/git/xmqqy1wgwkbj.fsf@gitster.g/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/run-command.c b/run-command.c
+index bd45828fe2c..7b27e4de78d 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -443,7 +443,6 @@ static char **prep_childenv(const char *const *deltaenv)
+ 	struct string_list env = STRING_LIST_INIT_DUP;
+ 	struct strbuf key = STRBUF_INIT;
+ 	const char *const *p;
+-	int i;
+ 
+ 	/* Construct a sorted string list consisting of the current environ */
+ 	for (p = (const char *const *) environ; p && *p; p++) {
+@@ -476,7 +475,7 @@ static char **prep_childenv(const char *const *deltaenv)
+ 
+ 	/* Create an array of 'char *' to be used as the childenv */
+ 	ALLOC_ARRAY(childenv, env.nr + 1);
+-	for (i = 0; i < env.nr; i++)
++	for (size_t i = 0; i < env.nr; i++)
+ 		childenv[i] = env.items[i].util;
+ 	childenv[env.nr] = NULL;
+ 
+@@ -581,7 +580,6 @@ static void trace_add_env(struct strbuf *dst, const char *const *deltaenv)
+ {
+ 	struct string_list envs = STRING_LIST_INIT_DUP;
+ 	const char *const *e;
+-	int i;
+ 	int printed_unset = 0;
+ 
+ 	/* Last one wins, see run-command.c:prep_childenv() for context */
+@@ -599,7 +597,7 @@ static void trace_add_env(struct strbuf *dst, const char *const *deltaenv)
+ 	}
+ 
+ 	/* "unset X Y...;" */
+-	for (i = 0; i < envs.nr; i++) {
++	for (size_t i = 0; i < envs.nr; i++) {
+ 		const char *var = envs.items[i].string;
+ 		const char *val = envs.items[i].util;
+ 
+@@ -616,7 +614,7 @@ static void trace_add_env(struct strbuf *dst, const char *const *deltaenv)
+ 		strbuf_addch(dst, ';');
+ 
+ 	/* ... followed by "A=B C=D ..." */
+-	for (i = 0; i < envs.nr; i++) {
++	for (size_t i = 0; i < envs.nr; i++) {
+ 		const char *var = envs.items[i].string;
+ 		const char *val = envs.items[i].util;
+ 		const char *oldval;
+@@ -1789,7 +1787,7 @@ void run_processes_parallel(int n,
+ 			    task_finished_fn task_finished,
+ 			    void *pp_cb)
+ {
+-	int i, code;
++	int code;
+ 	int output_timeout = 100;
+ 	int spawn_cap = 4;
+ 	int ungroup = run_processes_parallel_ungroup;
+@@ -1801,7 +1799,7 @@ void run_processes_parallel(int n,
+ 	pp_init(&pp, n, get_next_task, start_failure, task_finished, pp_cb,
+ 		ungroup);
+ 	while (1) {
+-		for (i = 0;
++		for (int i = 0;
+ 		    i < spawn_cap && !pp.shutdown &&
+ 		    pp.nr_processes < pp.max_processes;
+ 		    i++) {
+-- 
+2.38.0.971.ge79ff6d20e7
+
