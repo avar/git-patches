@@ -1,0 +1,113 @@
+From e230701dff62dba1cac1bbfb466a37dc877a5319 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-05.15-e230701dff6-20221012T205631Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.15-00000000000-20221012T205631Z-avarab@gmail.com>
+References: <cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+	<cover-v3-00.15-00000000000-20221012T205631Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 27 Sep 2022 13:36:48 +0200
+Subject: [PATCH v3 05/15] run-command API: don't fall back on online_cpus()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When a "jobs = 0" is passed let's BUG() out rather than fall back on
+online_cpus(). The default behavior was added when this API was
+implemented in c553c72eed6 (run-command: add an asynchronous parallel
+child processor, 2015-12-15).
+
+Most of our code in-tree that scales up to "online_cpus()" by default
+calls that function by itself. Keeping this default behavior just for
+the sake of two callers means that we'd need to maintain this one spot
+where we're second-guessing the config passed down into pp_init().
+
+The preceding commit has an overview of the API callers that passed
+"jobs = 0". There were only two of them (actually three, but they
+resolved to these two config parsing codepaths).
+
+The "fetch.parallel" caller already had a test for the
+"fetch.parallel=0" case added in 0353c688189 (fetch: do not run a
+redundant fetch from submodule, 2022-05-16), but there was no such
+test for "submodule.fetchJobs". Let's add one here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/fetch.c             | 2 ++
+ run-command.c               | 7 +++----
+ submodule-config.c          | 2 ++
+ t/t5526-fetch-submodules.sh | 8 +++++++-
+ 4 files changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/fetch.c b/builtin/fetch.c
+index 78043fb67ef..82f1da14ec1 100644
+--- a/builtin/fetch.c
++++ b/builtin/fetch.c
+@@ -122,6 +122,8 @@ static int git_fetch_config(const char *k, const char *v, void *cb)
+ 		fetch_parallel_config = git_config_int(k, v);
+ 		if (fetch_parallel_config < 0)
+ 			die(_("fetch.parallel cannot be negative"));
++		if (!fetch_parallel_config)
++			fetch_parallel_config = online_cpus();
+ 		return 0;
+ 	}
+ 
+diff --git a/run-command.c b/run-command.c
+index 14a6e38e804..14ea409375a 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1564,8 +1564,8 @@ static void pp_init(struct parallel_processes *pp,
+ 		    task_finished_fn task_finished,
+ 		    void *data, int ungroup)
+ {
+-	if (n < 1)
+-		n = online_cpus();
++	if (!n)
++		BUG("you must provide a non-zero number of processes!");
+ 
+ 	pp->max_processes = n;
+ 
+@@ -1835,8 +1835,7 @@ void run_processes_parallel_tr2(size_t n, get_next_task_fn get_next_task,
+ 				task_finished_fn task_finished, void *pp_cb,
+ 				const char *tr2_category, const char *tr2_label)
+ {
+-	trace2_region_enter_printf(tr2_category, tr2_label, NULL, "max:%d",
+-				   ((n < 1) ? online_cpus() : n));
++	trace2_region_enter_printf(tr2_category, tr2_label, NULL, "max:%d", n);
+ 
+ 	run_processes_parallel(n, get_next_task, start_failure,
+ 			       task_finished, pp_cb);
+diff --git a/submodule-config.c b/submodule-config.c
+index cd7ee236a12..4dc61b3a78a 100644
+--- a/submodule-config.c
++++ b/submodule-config.c
+@@ -303,6 +303,8 @@ int parse_submodule_fetchjobs(const char *var, const char *value)
+ 	int fetchjobs = git_config_int(var, value);
+ 	if (fetchjobs < 0)
+ 		die(_("negative values not allowed for submodule.fetchJobs"));
++	if (!fetchjobs)
++		fetchjobs = online_cpus();
+ 	return fetchjobs;
+ }
+ 
+diff --git a/t/t5526-fetch-submodules.sh b/t/t5526-fetch-submodules.sh
+index a301b56db89..a5f494dfcfb 100755
+--- a/t/t5526-fetch-submodules.sh
++++ b/t/t5526-fetch-submodules.sh
+@@ -714,7 +714,13 @@ test_expect_success 'fetching submodules respects parallel settings' '
+ 		GIT_TRACE=$(pwd)/trace.out git fetch &&
+ 		grep "8 tasks" trace.out &&
+ 		GIT_TRACE=$(pwd)/trace.out git fetch --jobs 9 &&
+-		grep "9 tasks" trace.out
++		grep "9 tasks" trace.out &&
++		>trace.out &&
++
++		GIT_TRACE=$(pwd)/trace.out git -c submodule.fetchJobs=0 fetch &&
++		grep "preparing to run up to [0-9]* tasks" trace.out &&
++		! grep "up to 0 tasks" trace.out &&
++		>trace.out
+ 	)
+ '
+ 
+-- 
+2.38.0.971.ge79ff6d20e7
+

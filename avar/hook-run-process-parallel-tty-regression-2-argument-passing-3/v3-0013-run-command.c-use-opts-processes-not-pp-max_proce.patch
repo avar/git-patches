@@ -1,0 +1,89 @@
+From b7c10f6a23fe5f39710a485bd1f90968173edf15 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-13.15-b7c10f6a23f-20221012T205631Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.15-00000000000-20221012T205631Z-avarab@gmail.com>
+References: <cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+	<cover-v3-00.15-00000000000-20221012T205631Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 6 Oct 2022 11:50:59 +0200
+Subject: [PATCH v3 13/15] run-command.c: use "opts->processes", not
+ "pp->max_processes"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Neither the "processes" nor "max_processes" members ever change after
+their initialization, and they're always equivalent, but some existing
+code used "pp->max_processes" when we were already passing the "opts"
+to the function, let's use the "opts" directly instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/run-command.c b/run-command.c
+index d382c42f82d..719a5b58e29 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1599,10 +1599,10 @@ static int pp_start_one(struct parallel_processes *pp,
+ 	size_t i;
+ 	int code;
+ 
+-	for (i = 0; i < pp->max_processes; i++)
++	for (i = 0; i < opts->processes; i++)
+ 		if (pp->children[i].state == GIT_CP_FREE)
+ 			break;
+-	if (i == pp->max_processes)
++	if (i == opts->processes)
+ 		BUG("bookkeeping is hard");
+ 
+ 	code = opts->get_next_task(&pp->children[i].process,
+@@ -1689,14 +1689,14 @@ static int pp_collect_finished(struct parallel_processes *pp,
+ 			       const struct run_process_parallel_opts *opts)
+ {
+ 	int code;
+-	size_t i, n = pp->max_processes;
++	size_t i;
+ 	int result = 0;
+ 
+ 	while (pp->nr_processes > 0) {
+-		for (i = 0; i < pp->max_processes; i++)
++		for (i = 0; i < opts->processes; i++)
+ 			if (pp->children[i].state == GIT_CP_WAIT_CLEANUP)
+ 				break;
+-		if (i == pp->max_processes)
++		if (i == opts->processes)
+ 			break;
+ 
+ 		code = finish_command(&pp->children[i].process);
+@@ -1725,6 +1725,8 @@ static int pp_collect_finished(struct parallel_processes *pp,
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+ 			strbuf_reset(&pp->children[i].err);
+ 		} else {
++			const size_t n = opts->processes;
++
+ 			strbuf_write(&pp->children[i].err, stderr);
+ 			strbuf_reset(&pp->children[i].err);
+ 
+@@ -1771,7 +1773,7 @@ void run_processes_parallel(const struct run_process_parallel_opts *opts)
+ 	while (1) {
+ 		for (i = 0;
+ 		    i < spawn_cap && !pp.shutdown &&
+-		    pp.nr_processes < pp.max_processes;
++		    pp.nr_processes < opts->processes;
+ 		    i++) {
+ 			code = pp_start_one(&pp, opts);
+ 			if (!code)
+@@ -1785,7 +1787,7 @@ void run_processes_parallel(const struct run_process_parallel_opts *opts)
+ 		if (!pp.nr_processes)
+ 			break;
+ 		if (opts->ungroup) {
+-			for (size_t i = 0; i < pp.max_processes; i++)
++			for (size_t i = 0; i < opts->processes; i++)
+ 				pp.children[i].state = GIT_CP_WAIT_CLEANUP;
+ 		} else {
+ 			pp_buffer_stderr(&pp, output_timeout);
+-- 
+2.38.0.971.ge79ff6d20e7
+

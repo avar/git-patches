@@ -1,0 +1,118 @@
+From 06de42adc2ef38262a114e8f63c7551d629b58ce Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-11.15-06de42adc2e-20221012T205631Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.15-00000000000-20221012T205631Z-avarab@gmail.com>
+References: <cover-v2-00.22-00000000000-20221012T084850Z-avarab@gmail.com>
+	<cover-v3-00.15-00000000000-20221012T205631Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 27 Sep 2022 14:08:59 +0200
+Subject: [PATCH v3 11/15] run-command.c: don't copy "ungroup" to "struct
+ parallel_processes"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As with the *_fn members removed in the preceding commit, let's not
+copy the "ungroup" member of the "struct run_process_parallel_opts"
+over to the "struct parallel_processes". Now that we're passing the
+"opts" down there's no reason to do so.
+
+This makes the code easier to follow, as we have a "const" attribute
+on the "struct run_process_parallel_opts", but not "struct
+parallel_processes". We do not alter the "ungroup" argument, so
+storing it in the non-const structure would make this control flow
+less obvious.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c | 18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/run-command.c b/run-command.c
+index e10b1b97390..19d5cff8c65 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1515,7 +1515,6 @@ struct parallel_processes {
+ 	struct pollfd *pfd;
+ 
+ 	unsigned shutdown : 1;
+-	const unsigned ungroup : 1;
+ 
+ 	size_t output_owner;
+ 	struct strbuf buffered_output; /* of finished children */
+@@ -1552,7 +1551,7 @@ static void pp_init(struct parallel_processes *pp,
+ 		BUG("you need to specify a get_next_task function");
+ 
+ 	CALLOC_ARRAY(pp->children, n);
+-	if (!pp->ungroup)
++	if (!opts->ungroup)
+ 		CALLOC_ARRAY(pp->pfd, n);
+ 
+ 	for (size_t i = 0; i < n; i++) {
+@@ -1609,17 +1608,17 @@ static int pp_start_one(struct parallel_processes *pp,
+ 		BUG("bookkeeping is hard");
+ 
+ 	code = opts->get_next_task(&pp->children[i].process,
+-				   pp->ungroup ? NULL : &pp->children[i].err,
++				   opts->ungroup ? NULL : &pp->children[i].err,
+ 				   pp->data,
+ 				   &pp->children[i].data);
+ 	if (!code) {
+-		if (!pp->ungroup) {
++		if (!opts->ungroup) {
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+ 			strbuf_reset(&pp->children[i].err);
+ 		}
+ 		return 1;
+ 	}
+-	if (!pp->ungroup) {
++	if (!opts->ungroup) {
+ 		pp->children[i].process.err = -1;
+ 		pp->children[i].process.stdout_to_stderr = 1;
+ 	}
+@@ -1627,14 +1626,14 @@ static int pp_start_one(struct parallel_processes *pp,
+ 
+ 	if (start_command(&pp->children[i].process)) {
+ 		if (opts->start_failure)
+-			code = opts->start_failure(pp->ungroup ? NULL :
++			code = opts->start_failure(opts->ungroup ? NULL :
+ 						   &pp->children[i].err,
+ 						   pp->data,
+ 						   pp->children[i].data);
+ 		else
+ 			code = 0;
+ 
+-		if (!pp->ungroup) {
++		if (!opts->ungroup) {
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+ 			strbuf_reset(&pp->children[i].err);
+ 		}
+@@ -1705,7 +1704,7 @@ static int pp_collect_finished(struct parallel_processes *pp,
+ 		code = finish_command(&pp->children[i].process);
+ 
+ 		if (opts->task_finished)
+-			code = opts->task_finished(code, pp->ungroup ? NULL :
++			code = opts->task_finished(code, opts->ungroup ? NULL :
+ 						   &pp->children[i].err, pp->data,
+ 						   pp->children[i].data);
+ 		else
+@@ -1722,7 +1721,7 @@ static int pp_collect_finished(struct parallel_processes *pp,
+ 			pp->pfd[i].fd = -1;
+ 		child_process_init(&pp->children[i].process);
+ 
+-		if (pp->ungroup) {
++		if (opts->ungroup) {
+ 			; /* no strbuf_*() work to do here */
+ 		} else if (i != pp->output_owner) {
+ 			strbuf_addbuf(&pp->buffered_output, &pp->children[i].err);
+@@ -1761,7 +1760,6 @@ void run_processes_parallel(const struct run_process_parallel_opts *opts)
+ 		.max_processes = opts->processes,
+ 		.data = opts->data,
+ 		.buffered_output = STRBUF_INIT,
+-		.ungroup = opts->ungroup,
+ 	};
+ 	/* options */
+ 	const char *tr2_category = opts->tr2_category;
+-- 
+2.38.0.971.ge79ff6d20e7
+
