@@ -1,0 +1,115 @@
+From 00b4cc7dfcc41bb29376cb9b994223bcc5b3d031 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-15.34-00b4cc7dfcc-20221013T153626Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.34-00000000000-20221013T153625Z-avarab@gmail.com>
+References: <cover-v3-00.34-00000000000-20221004T131009Z-avarab@gmail.com>
+	<cover-v5-00.34-00000000000-20221013T153625Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 4 Oct 2022 10:07:30 +0200
+Subject: [PATCH v5 15/34] doc SYNOPSIS & -h: use "-" to separate words in
+ labels, not "_"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change "builtin/credential-cache--daemon.c" to use "<socket-path>" not
+"<socket_path>" in a placeholder label, almost all of our
+documentation uses this form.
+
+This is now consistent with the "If a placeholder has multiple words,
+they are separated by dashes" guideline added in
+9c9b4f2f8b7 (standardize usage info string format, 2015-01-13), let's
+add a now-passing test to assert that that's the case.
+
+To do this we need to introduce a very sed-powered parser to extract
+the SYNOPSIS from the *.txt, and handle not all commands with "-h"
+having a corresponding *.txt (e.g. "bisect--helper"). We'll still want
+to handle syntax edge cases in the *.txt in subsequent commits for
+other checks, but let's do that then.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/credential-cache--daemon.c |  2 +-
+ t/t0450-txt-doc-vs-help.sh         | 46 ++++++++++++++++++++++++++++++
+ 2 files changed, 47 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/credential-cache--daemon.c b/builtin/credential-cache--daemon.c
+index 4c6c89ab0de..ca672a6a619 100644
+--- a/builtin/credential-cache--daemon.c
++++ b/builtin/credential-cache--daemon.c
+@@ -267,7 +267,7 @@ int cmd_credential_cache_daemon(int argc, const char **argv, const char *prefix)
+ 	const char *socket_path;
+ 	int ignore_sighup = 0;
+ 	static const char *usage[] = {
+-		"git-credential-cache--daemon [opts] <socket_path>",
++		"git-credential-cache--daemon [opts] <socket-path>",
+ 		NULL
+ 	};
+ 	int debug = 0;
+diff --git a/t/t0450-txt-doc-vs-help.sh b/t/t0450-txt-doc-vs-help.sh
+index c8820bdd38f..efd00cfc51a 100755
+--- a/t/t0450-txt-doc-vs-help.sh
++++ b/t/t0450-txt-doc-vs-help.sh
+@@ -30,6 +30,35 @@ help_to_synopsis () {
+ 	echo "$out"
+ }
+ 
++builtin_to_txt () {
++       echo "$GIT_BUILD_DIR/Documentation/git-$1.txt"
++}
++
++txt_to_synopsis () {
++	builtin="$1" &&
++	out_dir="out/$builtin" &&
++	out="$out_dir/txt.synopsis" &&
++	if test -f "$out"
++	then
++		echo "$out" &&
++		return 0
++	fi &&
++	b2t="$(builtin_to_txt "$builtin")" &&
++	sed -n \
++		-e '/^\[verse\]$/,/^$/ {
++			/^$/d;
++			/^\[verse\]$/d;
++
++			p;
++		}' \
++		<"$b2t" >"$out" &&
++	echo "$out"
++}
++
++check_dashed_labels () {
++	! grep -E "<[^>_-]+_" "$1"
++}
++
+ HT="	"
+ 
+ while read builtin
+@@ -39,6 +68,23 @@ do
+ 		h2s="$(help_to_synopsis "$builtin")" &&
+ 		! grep "$HT" "$h2s"
+ 	'
++
++	test_expect_success "$builtin -h output has dashed labels" '
++		check_dashed_labels "$(help_to_synopsis "$builtin")"
++	'
++
++	txt="$(builtin_to_txt "$builtin")" &&
++	preq="$(echo BUILTIN_TXT_$builtin | tr '[:lower:]-' '[:upper:]_')" &&
++
++	if test -f "$txt"
++	then
++		test_set_prereq "$preq"
++	fi &&
++
++	# *.txt output assertions
++	test_expect_success "$preq" "$builtin *.txt SYNOPSIS has dashed labels" '
++		check_dashed_labels "$(txt_to_synopsis "$builtin")"
++	'
+ done <builtins
+ 
+ test_done
+-- 
+2.38.0.1085.gb7e61c3016c
+
