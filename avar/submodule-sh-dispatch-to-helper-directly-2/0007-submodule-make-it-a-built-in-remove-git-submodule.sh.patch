@@ -1,61 +1,85 @@
-From 4b5746382bde0659cc52685b32ee641935abb7f1 Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-08.11-4b5746382bd-20220613T220044Z-avarab@gmail.com>
-In-Reply-To: <cover-v2-00.11-00000000000-20220613T220044Z-avarab@gmail.com>
-References: <kl6lzgig5qmc.fsf@chooglen-macbookpro.roam.corp.google.com>
-	<cover-v2-00.11-00000000000-20220613T220044Z-avarab@gmail.com>
+From 2c77ed38d9006de161288106a3fb39fb6120ab0a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-07.10-2c77ed38d90-20221017T115431Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20221017T115431Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221017T115431Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 9 Jun 2022 18:18:42 +0200
-Subject: [PATCH v2 08/11] submodule: make it a built-in, remove
- git-submodule.sh
+Subject: [PATCH 07/10] submodule: make it a built-in, remove git-submodule.sh
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Replace the now-trivial git-submodule.sh script with a built-in
-builtin/submodule.c. For now this new command is only a dumb
+Replace the "git-submodule.sh" script with a built-in
+"builtin/submodule.c. For" now this new command is only a dumb
 dispatcher that uses run-command.c to invoke "git submodule--helper",
 just as "git-submodule.sh" used to do.
 
-This is obviously not ideal, and we should follow-up and merge the
-builtin/submodule--helper.c code into builtin/submodule.c, but doing it
-this way makes it easy to review that this new C implementation isn't
-doing anything more clever than the old shellscript implementation.
+This is obviously not ideal, and we should eventually follow-up and
+merge the "builtin/submodule--helper.c" code into
+"builtin/submodule.c". Doing it this way makes it easy to review that
+this new C implementation isn't doing anything more clever than the
+old shellscript implementation.
 
-The "define BUILTIN_" macros will help with that, i.e. the usage
-information we emit can be merged with what
-builtin/submodule--helper.c is now emitting. See
-8757b35d443 (commit-graph: define common usage with a macro,
-2021-08-23) and 1e91d3faf6c (reflog: move "usage" variables and use
-macros, 2022-03-17) for prior art using this pattern.
+This is a large win for performance, we're now more than 4x as fast as
+before in terms of the fixed cost of invoking any "git submodule"
+command[1]:
+
+	$ git hyperfine -L rev HEAD~1,HEAD -s 'make CFLAGS=-O3' './git --exec-path=$PWD submodule foreach "echo \$name"'
+	Benchmark 1: ./git --exec-path=$PWD submodule foreach "echo \$name"' in 'HEAD~1
+	  Time (mean ± σ):      42.2 ms ±   0.4 ms    [User: 34.9 ms, System: 9.1 ms]
+	  Range (min … max):    41.3 ms …  43.2 ms    70 runs
+
+	Benchmark 2: ./git --exec-path=$PWD submodule foreach "echo \$name"' in 'HEAD
+	  Time (mean ± σ):       9.7 ms ±   0.1 ms    [User: 7.6 ms, System: 2.2 ms]
+	  Range (min … max):     9.5 ms …  10.3 ms    282 runs
+
+	Summary
+	  './git --exec-path=$PWD submodule foreach "echo \$name"' in 'HEAD' ran
+	    4.33 ± 0.07 times faster than './git --exec-path=$PWD submodule foreach "echo \$name"' in 'HEAD~1'
+
+We're taking pains here to faithfully reproduce existing
+"git-submodule.sh" behavior, even when that behavior is stupid. Some
+of it we'll fix in subsequent commits, but let's first faithfully
+reproduce the behavior.
+
+One exception is the change in the behavior of the exit code
+stand-alone "-h" and "--" yield, see the altered tests. Returning 129
+instead of 0 and 1 for "-h" and "--" respectively is a concession to
+basic sanity.
+
+The pattern of using "define BUILTIN_" macros here isn't needed for
+now, but as we'll move code out of "builtin/submodule--helper.c" we'll
+want to re-use these strings. See 8757b35d443 (commit-graph: define
+common usage with a macro, 2021-08-23) and 1e91d3faf6c (reflog: move
+"usage" variables and use macros, 2022-03-17) for prior art using this
+pattern.
 
 The "(argc < 2 || !strcmp(argv[1], "-h"))" path at the top of
 cmd_submodule__helper() could now be a "(argc < 2)" if not for
 t0012-help.sh (which invokes all built-ins manually with "-h"). Let's
 leave it for now, eventually we'll consolidate the two.
 
-This changes the behavior for "-h" and "--", see the altered
-tests. Returning 129 instead of 0 and 1 for "-h" and "--" respectively
-is a concession to basic sanity. As noted the "--" edge case doesn't
-make sense, but let's address that in a follow-up commit.
+1. Using the "git hyperfine" wrapper for "hyperfine":
+   https://lore.kernel.org/git/211201.86r1aw9gbd.gmgdl@evledraar.gmail.com/
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
  Makefile                   |   2 +-
  builtin.h                  |   1 +
- builtin/submodule.c        | 153 +++++++++++++++++++++++++++++++++++++
+ builtin/submodule.c        | 151 +++++++++++++++++++++++++++++++++++++
  git-submodule.sh           |  91 ----------------------
  git.c                      |   1 +
  t/t7400-submodule-basic.sh |  12 ++-
- 6 files changed, 161 insertions(+), 99 deletions(-)
+ 6 files changed, 159 insertions(+), 99 deletions(-)
  create mode 100644 builtin/submodule.c
  delete mode 100755 git-submodule.sh
 
 diff --git a/Makefile b/Makefile
-index 04d0fd1fe60..c2aca906135 100644
+index 6bfb62cbe94..d8e2c02ad42 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -628,7 +628,6 @@ SCRIPT_SH += git-merge-resolve.sh
+@@ -635,7 +635,6 @@ SCRIPT_SH += git-merge-resolve.sh
  SCRIPT_SH += git-mergetool.sh
  SCRIPT_SH += git-quiltimport.sh
  SCRIPT_SH += git-request-pull.sh
@@ -63,7 +87,7 @@ index 04d0fd1fe60..c2aca906135 100644
  SCRIPT_SH += git-web--browse.sh
  
  SCRIPT_LIB += git-mergetool--lib
-@@ -1220,6 +1219,7 @@ BUILTIN_OBJS += builtin/show-ref.o
+@@ -1235,6 +1234,7 @@ BUILTIN_OBJS += builtin/show-ref.o
  BUILTIN_OBJS += builtin/sparse-checkout.o
  BUILTIN_OBJS += builtin/stash.o
  BUILTIN_OBJS += builtin/stripspace.o
@@ -72,10 +96,10 @@ index 04d0fd1fe60..c2aca906135 100644
  BUILTIN_OBJS += builtin/symbolic-ref.o
  BUILTIN_OBJS += builtin/tag.o
 diff --git a/builtin.h b/builtin.h
-index 40e9ecc8485..c8cf4a2ae3b 100644
+index 8901a34d6bf..475c79b6a5a 100644
 --- a/builtin.h
 +++ b/builtin.h
-@@ -223,6 +223,7 @@ int cmd_sparse_checkout(int argc, const char **argv, const char *prefix);
+@@ -224,6 +224,7 @@ int cmd_sparse_checkout(int argc, const char **argv, const char *prefix);
  int cmd_status(int argc, const char **argv, const char *prefix);
  int cmd_stash(int argc, const char **argv, const char *prefix);
  int cmd_stripspace(int argc, const char **argv, const char *prefix);
@@ -85,10 +109,10 @@ index 40e9ecc8485..c8cf4a2ae3b 100644
  int cmd_symbolic_ref(int argc, const char **argv, const char *prefix);
 diff --git a/builtin/submodule.c b/builtin/submodule.c
 new file mode 100644
-index 00000000000..0a694ae5011
+index 00000000000..7e3499f3376
 --- /dev/null
 +++ b/builtin/submodule.c
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,151 @@
 +/*
 + * Copyright (c) 2007-2022 Lars Hjemli & others
 + * Copyright(c) 2022 Ævar Arnfjörð Bjarmason
@@ -222,7 +246,6 @@ index 00000000000..0a694ae5011
 +			 N_("print the OID of submodules")),
 +		OPT_END()
 +	};
-+	int ret;
 +
 +	argc = parse_options(argc, argv, prefix, options, git_submodule_usage,
 +			     PARSE_OPT_STOP_AT_NON_OPTION | PARSE_OPT_KEEP_DASHDASH);
@@ -238,9 +261,8 @@ index 00000000000..0a694ae5011
 +	cp.git_cmd = 1;
 +	cp.no_stdin = 0; /* for git submodule foreach */
 +	cp.dir = startup_info->original_cwd;
-+	ret = run_command(&cp);
 +
-+	return ret;
++	return run_command(&cp);
 +}
 diff --git a/git-submodule.sh b/git-submodule.sh
 deleted file mode 100755
@@ -340,10 +362,10 @@ index 4f8f62ce981..00000000000
 -	;;
 -esac
 diff --git a/git.c b/git.c
-index d7a7a82008b..991897be68f 100644
+index da411c53822..2ad14f1e38f 100644
 --- a/git.c
 +++ b/git.c
-@@ -609,6 +609,7 @@ static struct cmd_struct commands[] = {
+@@ -610,6 +610,7 @@ static struct cmd_struct commands[] = {
  	{ "stash", cmd_stash, RUN_SETUP | NEED_WORK_TREE },
  	{ "status", cmd_status, RUN_SETUP | NEED_WORK_TREE },
  	{ "stripspace", cmd_stripspace },
@@ -352,7 +374,7 @@ index d7a7a82008b..991897be68f 100644
  	{ "switch", cmd_switch, RUN_SETUP | NEED_WORK_TREE },
  	{ "symbolic-ref", cmd_symbolic_ref, RUN_SETUP },
 diff --git a/t/t7400-submodule-basic.sh b/t/t7400-submodule-basic.sh
-index 4aead0a1104..3632282d8fe 100755
+index d8f7d6ee29a..19df3407ef1 100755
 --- a/t/t7400-submodule-basic.sh
 +++ b/t/t7400-submodule-basic.sh
 @@ -15,20 +15,18 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
@@ -390,5 +412,5 @@ index 4aead0a1104..3632282d8fe 100755
  		test_must_be_empty out
  	'
 -- 
-2.36.1.1239.gfba91521d90
+2.38.0.1091.gf9d18265e59
 
