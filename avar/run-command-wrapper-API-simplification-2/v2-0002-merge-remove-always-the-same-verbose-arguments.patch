@@ -1,0 +1,98 @@
+From 8b00172ef832cc64eca3c0ea033838e11fc63c69 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-02.10-8b00172ef83-20221017T170316Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.10-00000000000-20221017T170316Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221014T153426Z-avarab@gmail.com>
+	<cover-v2-00.10-00000000000-20221017T170316Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 5 Oct 2022 11:07:18 +0200
+Subject: [PATCH v2 02/10] merge: remove always-the-same "verbose" arguments
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Simplify the code that builds the arguments for the "read-tree"
+invocation in reset_hard() and read_empty() to remove the "verbose"
+parameter.
+
+Before 172b6428d06 (do not overwrite untracked during merge from
+unborn branch, 2010-11-14) there was a "reset_hard()" function that
+would be called in two places, one of those passed a "verbose=1", the
+other a "verbose=0".
+
+After 172b6428d06 when read_empty() was split off from reset_hard()
+both of these functions only had one caller. The "verbose" in
+read_empty() would always be false, and the one in reset_hard() would
+always be true.
+
+There was never a good reason for the code to act this way, it
+happened because the read_empty() function was a copy/pasted and
+adjusted version of reset_hard().
+
+Since we're no longer conditionally adding the "-v" parameter
+here (and we'd only add it for "reset_hard()" we'll be able to move to
+a simpler and safer run-command API in the subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/merge.c | 13 +++++--------
+ 1 file changed, 5 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/merge.c b/builtin/merge.c
+index 5900b81729d..3bb49d805b4 100644
+--- a/builtin/merge.c
++++ b/builtin/merge.c
+@@ -345,14 +345,12 @@ static int save_state(struct object_id *stash)
+ 	return rc;
+ }
+ 
+-static void read_empty(const struct object_id *oid, int verbose)
++static void read_empty(const struct object_id *oid)
+ {
+ 	int i = 0;
+ 	const char *args[7];
+ 
+ 	args[i++] = "read-tree";
+-	if (verbose)
+-		args[i++] = "-v";
+ 	args[i++] = "-m";
+ 	args[i++] = "-u";
+ 	args[i++] = empty_tree_oid_hex();
+@@ -363,14 +361,13 @@ static void read_empty(const struct object_id *oid, int verbose)
+ 		die(_("read-tree failed"));
+ }
+ 
+-static void reset_hard(const struct object_id *oid, int verbose)
++static void reset_hard(const struct object_id *oid)
+ {
+ 	int i = 0;
+ 	const char *args[6];
+ 
+ 	args[i++] = "read-tree";
+-	if (verbose)
+-		args[i++] = "-v";
++	args[i++] = "-v";
+ 	args[i++] = "--reset";
+ 	args[i++] = "-u";
+ 	args[i++] = oid_to_hex(oid);
+@@ -385,7 +382,7 @@ static void restore_state(const struct object_id *head,
+ {
+ 	struct strvec args = STRVEC_INIT;
+ 
+-	reset_hard(head, 1);
++	reset_hard(head);
+ 
+ 	if (is_null_oid(stash))
+ 		goto refresh_cache;
+@@ -1470,7 +1467,7 @@ int cmd_merge(int argc, const char **argv, const char *prefix)
+ 					       check_trust_level);
+ 
+ 		remote_head_oid = &remoteheads->item->object.oid;
+-		read_empty(remote_head_oid, 0);
++		read_empty(remote_head_oid);
+ 		update_ref("initial pull", "HEAD", remote_head_oid, NULL, 0,
+ 			   UPDATE_REFS_DIE_ON_ERR);
+ 		goto done;
+-- 
+2.38.0.1091.gf9d18265e59
+

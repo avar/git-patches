@@ -1,0 +1,99 @@
+From 99c5688797a4ab0ba7d14b9f38070e7e84c6855f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-09.10-99c5688797a-20221017T170316Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.10-00000000000-20221017T170316Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221014T153426Z-avarab@gmail.com>
+	<cover-v2-00.10-00000000000-20221017T170316Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 5 Oct 2022 11:42:06 +0200
+Subject: [PATCH v2 09/10] gc: use strvec_pushf(), avoid redundant
+ strbuf_detach()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adjust code added in 3797a0a7b7a (maintenance: use Windows scheduled
+tasks, 2021-01-05) to use strvec_pushf() directly. Rather than having
+a function that returns a strbuf_detach() we need to free and have the
+"strvec_pushl()" do its own "xstrdup()" we can format this in-place.
+
+By changing this we only have the "strvec_clear()" between the
+"run_command_v_opt()" and the "return result" in
+"schtasks_remove_task()". In the subsequent commit we'll start using a
+helper which'll allow us to skip the "strvec_clear()".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/gc.c | 22 ++++++++--------------
+ 1 file changed, 8 insertions(+), 14 deletions(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 075b4637660..519e64e86ee 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -1894,12 +1894,7 @@ static int is_schtasks_available(void)
+ #endif
+ }
+ 
+-static char *schtasks_task_name(const char *frequency)
+-{
+-	struct strbuf label = STRBUF_INIT;
+-	strbuf_addf(&label, "Git Maintenance (%s)", frequency);
+-	return strbuf_detach(&label, NULL);
+-}
++#define SCHTASKS_NAME_FMT "Git Maintenance (%s)"
+ 
+ static int schtasks_remove_task(enum schedule_priority schedule)
+ {
+@@ -1907,16 +1902,15 @@ static int schtasks_remove_task(enum schedule_priority schedule)
+ 	int result;
+ 	struct strvec args = STRVEC_INIT;
+ 	const char *frequency = get_frequency(schedule);
+-	char *name = schtasks_task_name(frequency);
+ 
+ 	get_schedule_cmd(&cmd, NULL);
+ 	strvec_split(&args, cmd);
+-	strvec_pushl(&args, "/delete", "/tn", name, "/f", NULL);
++	strvec_pushl(&args, "/delete", "/tn", NULL);
++	strvec_pushf(&args, SCHTASKS_NAME_FMT, frequency);
++	strvec_pushl(&args, "/f", NULL);
+ 
+ 	result = run_command_v_opt(args.v, 0);
+-
+ 	strvec_clear(&args);
+-	free(name);
+ 	return result;
+ }
+ 
+@@ -1935,7 +1929,6 @@ static int schtasks_schedule_task(const char *exec_path, enum schedule_priority
+ 	const char *xml;
+ 	struct tempfile *tfile;
+ 	const char *frequency = get_frequency(schedule);
+-	char *name = schtasks_task_name(frequency);
+ 	struct strbuf tfilename = STRBUF_INIT;
+ 
+ 	get_schedule_cmd(&cmd, NULL);
+@@ -2028,8 +2021,10 @@ static int schtasks_schedule_task(const char *exec_path, enum schedule_priority
+ 	      "</Task>\n";
+ 	fprintf(tfile->fp, xml, exec_path, exec_path, frequency);
+ 	strvec_split(&child.args, cmd);
+-	strvec_pushl(&child.args, "/create", "/tn", name, "/f", "/xml",
+-				  get_tempfile_path(tfile), NULL);
++	strvec_pushl(&child.args, "/create", "/tn", NULL);
++	strvec_pushf(&child.args, SCHTASKS_NAME_FMT, frequency);
++	strvec_pushl(&child.args, "/f", "/xml",
++		     get_tempfile_path(tfile), NULL);
+ 	close_tempfile_gently(tfile);
+ 
+ 	child.no_stdout = 1;
+@@ -2040,7 +2035,6 @@ static int schtasks_schedule_task(const char *exec_path, enum schedule_priority
+ 	result = finish_command(&child);
+ 
+ 	delete_tempfile(&tfile);
+-	free(name);
+ 	return result;
+ }
+ 
+-- 
+2.38.0.1091.gf9d18265e59
+

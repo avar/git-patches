@@ -1,0 +1,322 @@
+From 138af632a36c5fdc21ea3051a45f1a8d8e9541b0 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-00.10-00000000000-20221017T170316Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20221014T153426Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221014T153426Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 17 Oct 2022 19:03:16 +0200
+Subject: [PATCH v2 00/10] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (10):
+  run-command.c: refactor run_command_*_tr2() to internal helpers
+  merge: remove always-the-same "verbose" arguments
+  run-command API: add and use a run_command_l_opt()
+  am: use run_command_l_opt() for show_patch()
+  run-command API docs: clarify & fleshen out run_command_v_opt*() docs
+  run-command API: remove RUN_COMMAND_STDOUT_TO_STDERR flag
+  run-command API & diff.c: remove run_command_v_opt_cd_env()
+  run-command API & users: remove run_command_v_opt_tr2()
+  gc: use strvec_pushf(), avoid redundant strbuf_detach()
+  run-command API: add and use a run_command_sv_opt()
+
+ add-interactive.c        |  3 +-
+ bisect.c                 | 19 ++++++-----
+ builtin/add.c            |  6 ++--
+ builtin/am.c             | 14 +++-----
+ builtin/clone.c          | 19 ++++-------
+ builtin/difftool.c       | 14 ++++----
+ builtin/gc.c             | 49 ++++++++++------------------
+ builtin/merge.c          | 46 ++++++--------------------
+ builtin/pull.c           | 15 ++-------
+ builtin/remote.c         |  5 +--
+ compat/mingw.c           |  8 ++---
+ diff.c                   | 26 +++++++--------
+ fsmonitor-ipc.c          | 10 ++++--
+ git.c                    | 15 +++++----
+ ll-merge.c               |  4 +--
+ merge.c                  |  3 +-
+ run-command.c            | 52 +++++++++++++++++------------
+ run-command.h            | 70 ++++++++++++++++++++++++++--------------
+ scalar.c                 |  6 +---
+ sequencer.c              | 15 ++-------
+ t/helper/test-fake-ssh.c |  4 +--
+ tmp-objdir.h             |  6 ++--
+ 22 files changed, 179 insertions(+), 230 deletions(-)
+
+Range-diff against v1:
+ 1:  c1f701af6e8 !  1:  3842204371e run-command.c: refactor run_command_*_tr2() to internal helpers
+    @@ run-command.c: int run_command(struct child_process *cmd)
+     +	cmd->close_object_store = opt & RUN_CLOSE_OBJECT_STORE ? 1 : 0;
+     +}
+     +
+    - int run_command_v_opt(const char **argv, int opt)
+    - {
+    - 	return run_command_v_opt_cd_env(argv, opt, NULL, NULL);
+    -@@ run-command.c: int run_command_v_opt_cd_env(const char **argv, int opt, const char *dir, const
+    - 	return run_command_v_opt_cd_env_tr2(argv, opt, dir, env, NULL);
+    - }
+    - 
+    -+static int run_command_v_opt_cd_env_tr2_1(struct child_process *cmd, int opt,
+    -+					  const char *dir,
+    -+					  const char *const *env,
+    -+					  const char *tr2_class)
+    ++static int run_command_v_opt_1(struct child_process *cmd, int opt)
+     +{
+     +	run_command_set_opts(cmd, opt);
+    -+	cmd->dir = dir;
+    -+	if (env)
+    -+		strvec_pushv(&cmd->env, (const char **)env);
+    -+	cmd->trace2_child_class = tr2_class;
+     +	return run_command(cmd);
+     +}
+     +
+    - int run_command_v_opt_cd_env_tr2(const char **argv, int opt, const char *dir,
+    - 				 const char *const *env, const char *tr2_class)
+    + int run_command_v_opt(const char **argv, int opt)
+    + {
+    + 	return run_command_v_opt_cd_env(argv, opt, NULL, NULL);
+    +@@ run-command.c: int run_command_v_opt_cd_env_tr2(const char **argv, int opt, const char *dir,
+      {
+      	struct child_process cmd = CHILD_PROCESS_INIT;
+    -+
+      	strvec_pushv(&cmd.args, argv);
+     -	cmd.no_stdin = opt & RUN_COMMAND_NO_STDIN ? 1 : 0;
+     -	cmd.git_cmd = opt & RUN_GIT_CMD ? 1 : 0;
+    @@ run-command.c: int run_command_v_opt_cd_env(const char **argv, int opt, const ch
+     -	cmd.clean_on_exit = opt & RUN_CLEAN_ON_EXIT ? 1 : 0;
+     -	cmd.wait_after_clean = opt & RUN_WAIT_AFTER_CLEAN ? 1 : 0;
+     -	cmd.close_object_store = opt & RUN_CLOSE_OBJECT_STORE ? 1 : 0;
+    --	cmd.dir = dir;
+    --	if (env)
+    --		strvec_pushv(&cmd.env, (const char **)env);
+    --	cmd.trace2_child_class = tr2_class;
+    + 	cmd.dir = dir;
+    + 	if (env)
+    + 		strvec_pushv(&cmd.env, (const char **)env);
+    + 	cmd.trace2_child_class = tr2_class;
+     -	return run_command(&cmd);
+    -+	return run_command_v_opt_cd_env_tr2_1(&cmd, opt, dir, env, tr2_class);
+    ++	return run_command_v_opt_1(&cmd, opt);
+      }
+      
+      #ifndef NO_PTHREADS
+ 2:  543ccbb1ee1 =  2:  8b00172ef83 merge: remove always-the-same "verbose" arguments
+ 3:  fd81d44f221 !  3:  680a42a878e run-command API: add and use a run_command_l_opt()
+    @@ builtin/clone.c: static void write_refspec_config(const char *src_ref_prefix,
+      	if (!access(alternates, F_OK)) {
+     -		if (run_command_v_opt(argv, RUN_GIT_CMD|RUN_COMMAND_NO_STDIN))
+     +		if (run_command_l_opt(RUN_GIT_CMD|RUN_COMMAND_NO_STDIN,
+    -+				      "repack",  "-a", "-d", NULL))
+    ++				      "repack", "-a", "-d", NULL))
+      			die(_("cannot repack to clean up"));
+      		if (unlink(alternates) && errno != ENOENT)
+      			die_errno(_("cannot unlink temporary alternates file"));
+    @@ builtin/merge.c: static int save_state(struct object_id *stash)
+      refresh_cache:
+      	if (discard_cache() < 0 || read_cache() < 0)
+     
+    - ## builtin/remote.c ##
+    -@@ builtin/remote.c: static int verbose;
+    - 
+    - static int fetch_remote(const char *name)
+    - {
+    --	const char *argv[] = { "fetch", name, NULL, NULL };
+    --	if (verbose) {
+    --		argv[1] = "-v";
+    --		argv[2] = name;
+    --	}
+    - 	printf_ln(_("Updating %s"), name);
+    --	if (run_command_v_opt(argv, RUN_GIT_CMD))
+    -+	if (verbose && run_command_l_opt(RUN_GIT_CMD, "-v", "fetch", name,
+    -+					 NULL))
+    -+		return error(_("Could not fetch %s"), name);
+    -+	else if (run_command_l_opt(RUN_GIT_CMD, "fetch", name, NULL))
+    - 		return error(_("Could not fetch %s"), name);
+    - 	return 0;
+    - }
+    -
+      ## compat/mingw.c ##
+     @@ compat/mingw.c: static int read_yes_no_answer(void)
+      static int ask_yes_no_if_possible(const char *format, ...)
+    @@ run-command.c: static void run_command_set_opts(struct child_process *cmd, int o
+     +	return run_command(&cmd);
+     +}
+     +
+    - int run_command_v_opt(const char **argv, int opt)
+    + static int run_command_v_opt_1(struct child_process *cmd, int opt)
+      {
+    - 	return run_command_v_opt_cd_env(argv, opt, NULL, NULL);
+    + 	run_command_set_opts(cmd, opt);
+     
+      ## run-command.h ##
+     @@ run-command.h: struct child_process {
+ 4:  4cd61aaa981 !  4:  5cfd6a94ce3 am: use run_command_l_opt() for show_patch()
+    @@ Commit message
+         am: use run_command_l_opt() for show_patch()
+     
+         The "git show" invocation added in 66335298a47 (rebase: add
+    -    --show-current-patch, 2018-02-11) is a one-off, and one where we're
+    -    not calling oid_to_hex() twice. So we can rely on the static buffer
+    -    that oid_to_hex() points to, rather than xstrdup()-ing it. As a result
+    -    we can use the run_command_l_opt() function.
+    +    --show-current-patch, 2018-02-11) is one where we're not calling
+    +    oid_to_hex() twice. So we can rely on the static buffer that
+    +    oid_to_hex() points to, rather than xstrdup()-ing it. As a result we
+    +    can use the run_command_l_opt() function.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+ 5:  b6a3c4c66f8 =  5:  4fca38bb4d6 run-command API docs: clarify & fleshen out run_command_v_opt*() docs
+ 6:  9d0286fbf64 =  6:  75eccc152ad run-command API: remove RUN_COMMAND_STDOUT_TO_STDERR flag
+ 7:  31e8536f28c !  7:  3b3d3777232 run-command API & diff.c: remove run_command_v_opt_cd_env()
+    @@ diff.c: static void run_external_diff(const char *pgm,
+      static int similarity_index(struct diff_filepair *p)
+     
+      ## run-command.c ##
+    -@@ run-command.c: int run_command_l_opt(int opt, ...)
+    +@@ run-command.c: static int run_command_v_opt_1(struct child_process *cmd, int opt)
+      
+      int run_command_v_opt(const char **argv, int opt)
+      {
+    @@ run-command.c: int run_command_v_opt_tr2(const char **argv, int opt, const char
+     -	return run_command_v_opt_cd_env_tr2(argv, opt, dir, env, NULL);
+     -}
+     -
+    - static int run_command_v_opt_cd_env_tr2_1(struct child_process *cmd, int opt,
+    - 					  const char *dir,
+    - 					  const char *const *env,
+    + int run_command_v_opt_cd_env_tr2(const char **argv, int opt, const char *dir,
+    + 				 const char *const *env, const char *tr2_class)
+    + {
+     
+      ## run-command.h ##
+     @@ run-command.h: struct child_process {
+ 8:  88e063f3b05 !  8:  4f1a051823f run-command API & users: remove run_command_v_opt_tr2()
+    @@ run-command.c: static void run_command_set_opts(struct child_process *cmd, int o
+      	cmd->close_object_store = opt & RUN_CLOSE_OBJECT_STORE ? 1 : 0;
+      }
+     @@ run-command.c: int run_command_l_opt(int opt, ...)
+    + 	return run_command(&cmd);
+      }
+      
+    +-static int run_command_v_opt_1(struct child_process *cmd, int opt)
+    +-{
+    +-	run_command_set_opts(cmd, opt);
+    +-	return run_command(cmd);
+    +-}
+    +-
+      int run_command_v_opt(const char **argv, int opt)
+     -{
+     -	return run_command_v_opt_cd_env_tr2(argv, opt, NULL, NULL, NULL);
+    @@ run-command.c: int run_command_l_opt(int opt, ...)
+     -	return run_command_v_opt_cd_env_tr2(argv, opt, NULL, NULL, tr2_class);
+     -}
+     -
+    --static int run_command_v_opt_cd_env_tr2_1(struct child_process *cmd, int opt,
+    --					  const char *dir,
+    --					  const char *const *env,
+    --					  const char *tr2_class)
+    --{
+    --	run_command_set_opts(cmd, opt);
+    --	cmd->dir = dir;
+    --	if (env)
+    --		strvec_pushv(&cmd->env, (const char **)env);
+    --	cmd->trace2_child_class = tr2_class;
+    --	return run_command(cmd);
+    --}
+    --
+     -int run_command_v_opt_cd_env_tr2(const char **argv, int opt, const char *dir,
+     -				 const char *const *env, const char *tr2_class)
+      {
+      	struct child_process cmd = CHILD_PROCESS_INIT;
+    - 
+    ++
+      	strvec_pushv(&cmd.args, argv);
+    --	return run_command_v_opt_cd_env_tr2_1(&cmd, opt, dir, env, tr2_class);
+    +-	cmd.dir = dir;
+    +-	if (env)
+    +-		strvec_pushv(&cmd.env, (const char **)env);
+    +-	cmd.trace2_child_class = tr2_class;
+    +-	return run_command_v_opt_1(&cmd, opt);
+     +	run_command_set_opts(&cmd, opt);
+     +	return run_command(&cmd);
+      }
+ 9:  0f5524e40ad =  9:  99c5688797a gc: use strvec_pushf(), avoid redundant strbuf_detach()
+10:  874cb72c2f4 ! 10:  138af632a36 run-command API: add and use a run_command_sv_opt()
+    @@ Commit message
+         carry over to "return" after a "strvec_clear()" to use this new
+         function instead.
+     
+    +    Because we pass the "struct strvec *" to the function we can also
+    +    avoid copying the arguments to the "args" member of the "struct
+    +    child_process", as we were doing with run_command_v_opt().
+    +
+    +    Instead we can use memcpy() and strvec_clear() to do the moral
+    +    equivalent of a strbuf_{detach,attach}(). The strvec API doesn't have
+    +    a strvec_attach(), we could add it here while at it, but let's avoid
+    +    generalizing the interface for now and migrate the "struct strvec *"
+    +    in the "run_command_sv_opt()" instead.
+    +
+         Let's leave aside the user in "builtin/bisect--helper.c"'s
+         bisect_visualize(). There's an outstanding topic that's extensively
+         modifying it.
+    @@ merge.c: int try_merge_command(struct repository *r,
+      	discard_index(r->index);
+      	if (repo_read_index(r) < 0)
+     
+    + ## run-command.c ##
+    +@@ run-command.c: int run_command_v_opt(const char **argv, int opt)
+    + 	return run_command(&cmd);
+    + }
+    + 
+    ++int run_command_sv_opt(struct strvec *args, int opt)
+    ++{
+    ++	struct child_process cmd = CHILD_PROCESS_INIT;
+    ++
+    ++	/* TODO: We could encapsulate this with a strvec_attach() */
+    ++	memcpy(&cmd.args, args, sizeof(*args));
+    ++	strvec_init(args);
+    ++	run_command_set_opts(&cmd, opt);
+    ++	return run_command(&cmd);
+    ++}
+    ++
+    + #ifndef NO_PTHREADS
+    + static pthread_t main_thread;
+    + static int main_thread_set;
+    +
+      ## run-command.h ##
+     @@ run-command.h: struct child_process {
+      
+    @@ run-command.h: int run_command_v_opt(const char **argv, int opt);
+     +/**
+     + * The run_command_sv_opt() function is a wrapper for
+     + * run_command_v_opt(). It takes a "struct strvec *args" which
+    -+ * similarly to run_command() (but not run_command_sv_opt()) will be
+    -+ * strvec_clear()'d before returning.
+    ++ * similarly will be strvec_clear()'d before returning.
+     + *
+     + * Use it for the common case of constructing a "struct strvec" for a
+     + * one-shot run_command_v_opt() invocation.
+    ++ *
+    ++ * The "args" will migrated the "cmd.args" member of an underlying
+    ++ * "struct child_process", in a way that avoids making an extra copy.
+     + */
+     +RESULT_MUST_BE_USED
+    -+static inline int run_command_sv_opt(struct strvec *args, int opt)
+    -+{
+    -+	int ret = run_command_v_opt(args->v, opt);
+    -+
+    -+	strvec_clear(args);
+    -+	return ret;
+    -+}
+    ++int run_command_sv_opt(struct strvec *args, int opt);
+     +
+      /**
+       * Execute the given command, sending "in" to its stdin, and capturing its
+-- 
+2.38.0.1091.gf9d18265e59
+

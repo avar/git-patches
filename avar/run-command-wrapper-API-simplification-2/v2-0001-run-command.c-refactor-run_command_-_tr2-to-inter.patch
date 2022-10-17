@@ -1,0 +1,80 @@
+From 3842204371eb8f6d44ad0d449857417ec1767ade Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-01.10-3842204371e-20221017T170316Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.10-00000000000-20221017T170316Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221014T153426Z-avarab@gmail.com>
+	<cover-v2-00.10-00000000000-20221017T170316Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 11 Oct 2022 20:41:36 +0200
+Subject: [PATCH v2 01/10] run-command.c: refactor run_command_*_tr2() to
+ internal helpers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the run_command_v_opt_cd_env_tr2() function to helpers which
+takes a "struct child_process *cmd" argument. This will allow for
+adding a helper which won't need to copy a set of arguments to the
+"cmd.args" we'd otherwise have to populate from the "argv".
+
+Splitting out the part of the function that sets the various members
+from "opt" will help in the subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ run-command.c | 28 +++++++++++++++++++---------
+ 1 file changed, 19 insertions(+), 9 deletions(-)
+
+diff --git a/run-command.c b/run-command.c
+index 5ec3a46dccf..4e75f83b5e7 100644
+--- a/run-command.c
++++ b/run-command.c
+@@ -1004,6 +1004,24 @@ int run_command(struct child_process *cmd)
+ 	return finish_command(cmd);
+ }
+ 
++static void run_command_set_opts(struct child_process *cmd, int opt)
++{
++	cmd->no_stdin = opt & RUN_COMMAND_NO_STDIN ? 1 : 0;
++	cmd->git_cmd = opt & RUN_GIT_CMD ? 1 : 0;
++	cmd->stdout_to_stderr = opt & RUN_COMMAND_STDOUT_TO_STDERR ? 1 : 0;
++	cmd->silent_exec_failure = opt & RUN_SILENT_EXEC_FAILURE ? 1 : 0;
++	cmd->use_shell = opt & RUN_USING_SHELL ? 1 : 0;
++	cmd->clean_on_exit = opt & RUN_CLEAN_ON_EXIT ? 1 : 0;
++	cmd->wait_after_clean = opt & RUN_WAIT_AFTER_CLEAN ? 1 : 0;
++	cmd->close_object_store = opt & RUN_CLOSE_OBJECT_STORE ? 1 : 0;
++}
++
++static int run_command_v_opt_1(struct child_process *cmd, int opt)
++{
++	run_command_set_opts(cmd, opt);
++	return run_command(cmd);
++}
++
+ int run_command_v_opt(const char **argv, int opt)
+ {
+ 	return run_command_v_opt_cd_env(argv, opt, NULL, NULL);
+@@ -1024,19 +1042,11 @@ int run_command_v_opt_cd_env_tr2(const char **argv, int opt, const char *dir,
+ {
+ 	struct child_process cmd = CHILD_PROCESS_INIT;
+ 	strvec_pushv(&cmd.args, argv);
+-	cmd.no_stdin = opt & RUN_COMMAND_NO_STDIN ? 1 : 0;
+-	cmd.git_cmd = opt & RUN_GIT_CMD ? 1 : 0;
+-	cmd.stdout_to_stderr = opt & RUN_COMMAND_STDOUT_TO_STDERR ? 1 : 0;
+-	cmd.silent_exec_failure = opt & RUN_SILENT_EXEC_FAILURE ? 1 : 0;
+-	cmd.use_shell = opt & RUN_USING_SHELL ? 1 : 0;
+-	cmd.clean_on_exit = opt & RUN_CLEAN_ON_EXIT ? 1 : 0;
+-	cmd.wait_after_clean = opt & RUN_WAIT_AFTER_CLEAN ? 1 : 0;
+-	cmd.close_object_store = opt & RUN_CLOSE_OBJECT_STORE ? 1 : 0;
+ 	cmd.dir = dir;
+ 	if (env)
+ 		strvec_pushv(&cmd.env, (const char **)env);
+ 	cmd.trace2_child_class = tr2_class;
+-	return run_command(&cmd);
++	return run_command_v_opt_1(&cmd, opt);
+ }
+ 
+ #ifndef NO_PTHREADS
+-- 
+2.38.0.1091.gf9d18265e59
+
