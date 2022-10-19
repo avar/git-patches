@@ -1,9 +1,9 @@
 From f1fb9775b33526ab0fac50e66db591cc0e15d299 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v2-0.4-00000000000-20221019T005942Z-avarab@gmail.com>
+Message-Id: <cover-v2-0.4-00000000000-20221019T010222Z-avarab@gmail.com>
 In-Reply-To: <cover-0.5-00000000000-20220422T094624Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20220422T094624Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Wed, 19 Oct 2022 02:59:42 +0200
+Date: Wed, 19 Oct 2022 03:02:22 +0200
 Subject: [PATCH v2 0/4] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -27,79 +27,7 @@ Content-Transfer-Encoding: 8bit
  7 files changed, 198 insertions(+), 130 deletions(-)
 
 Range-diff against v1:
-5:  730d08da6fe ! 1:  392fabdb456 Makefile: use $(OBJECTS) instead of $(C_OBJ)
-    @@ Metadata
-     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    Makefile: use $(OBJECTS) instead of $(C_OBJ)
-    +    fsmonitor OSX: compile with DC_SHA1=YesPlease
-     
-    -    In the preceding commit $(C_OBJ) added in c373991375a (Makefile: list
-    -    generated object files in OBJECTS, 2010-01-26) became synonymous with
-    -    $(OBJECTS). Let's avoid the indirection and use the $(OBJECTS)
-    -    variable directly instead.
-    +    As we'll address in subsequent commits the "DC_SHA1=YesPlease" is not
-    +    on by default on OSX, instead we use Apple Common Crypto's SHA-1
-    +    implementation.
-     
-    +    In 6beb2688d33 (fsmonitor: relocate socket file if .git directory is
-    +    remote, 2022-10-04) the build was broken with "DC_SHA1=YesPlease" (and
-    +    probably other non-"APPLE_COMMON_CRYPTO" SHA-1 backends).
-    +
-    +    So let's extract the fix for this from [1] to get the build working
-    +    again with "DC_SHA1=YesPlease". In addition to the fix in [1] we also
-    +    need to replace "SHA_DIGEST_LENGTH" with "GIT_MAX_RAWSZ".
-    +
-    +    1. https://lore.kernel.org/git/c085fc15b314abcb5e5ca6b4ee5ac54a28327cab.1665326258.git.gitgitgadget@gmail.com/
-    +
-    +    Signed-off-by: Eric DeCosta <edecosta@mathworks.com>
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-    - ## Makefile ##
-    -@@ Makefile: missing_compdb_dir =
-    - compdb_args =
-    - endif
-    + ## compat/fsmonitor/fsm-ipc-darwin.c ##
-    +@@ compat/fsmonitor/fsm-ipc-darwin.c: static GIT_PATH_FUNC(fsmonitor_ipc__get_default_path, "fsmonitor--daemon.ipc")
-    + const char *fsmonitor_ipc__get_path(struct repository *r)
-    + {
-    + 	static const char *ipc_path = NULL;
-    +-	SHA_CTX sha1ctx;
-    ++	git_SHA_CTX sha1ctx;
-    + 	char *sock_dir = NULL;
-    + 	struct strbuf ipc_file = STRBUF_INIT;
-    +-	unsigned char hash[SHA_DIGEST_LENGTH];
-    ++	unsigned char hash[GIT_MAX_RAWSZ];
-      
-    --C_OBJ = $(OBJECTS)
-    --
-    --$(C_OBJ): %.o: %.c GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
-    -+$(OBJECTS): %.o: %.c GIT-CFLAGS $(missing_dep_dirs) $(missing_compdb_dir)
-    - 	$(QUIET_CC)$(CC) -o $*.o -c $(dep_args) $(compdb_args) $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) $<
-    + 	if (!r)
-    + 		BUG("No repository passed into fsmonitor_ipc__get_path");
-    +@@ compat/fsmonitor/fsm-ipc-darwin.c: const char *fsmonitor_ipc__get_path(struct repository *r)
-    + 		return ipc_path;
-    + 	}
-      
-    - %.s: %.c GIT-CFLAGS FORCE
-    -@@ Makefile: t/helper/test-%$X: t/helper/test-%.o GIT-LDFLAGS $(GITLIBS) $(REFTABLE_TEST_LIB)
-    - check-sha1:: t/helper/test-tool$X
-    - 	t/helper/test-sha1.sh
-    +-	SHA1_Init(&sha1ctx);
-    +-	SHA1_Update(&sha1ctx, r->worktree, strlen(r->worktree));
-    +-	SHA1_Final(hash, &sha1ctx);
-    ++	git_SHA1_Init(&sha1ctx);
-    ++	git_SHA1_Update(&sha1ctx, r->worktree, strlen(r->worktree));
-    ++	git_SHA1_Final(hash, &sha1ctx);
-      
-    --SP_OBJ = $(patsubst %.o,%.sp,$(C_OBJ))
-    -+SP_OBJ = $(patsubst %.o,%.sp,$(OBJECTS))
-    + 	repo_config_get_string(r, "fsmonitor.socketdir", &sock_dir);
-      
-    - $(SP_OBJ): %.sp: %.c %.o
-    - 	$(QUIET_SP)cgcc -no-compile $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) \
+-:  ----------- > 1:  392fabdb456 fsmonitor OSX: compile with DC_SHA1=YesPlease
 1:  3a80fcb6784 ! 2:  7ae22276aa7 Makefile: create and use sections for "define" flag listing
     @@ Makefile: include shared.mak
      -# Define BLK_SHA1 environment variable to make use of the bundled
@@ -369,6 +297,7 @@ Range-diff against v1:
       # Define APPLE_SHA1 to use Apple's CommonCrypto SHA-1 routines on
       # Darwin/Mac OS X.
 4:  ae464dbd228 < -:  ----------- Makefile + hash.h: remove PPC_SHA1 implementation
+5:  730d08da6fe < -:  ----------- Makefile: use $(OBJECTS) instead of $(C_OBJ)
 -- 
 2.38.0.1093.gcd4a685f0b1
 
