@@ -1,12 +1,12 @@
-From 7c246fdd9f562380a2424970314e596fa050bfca Mon Sep 17 00:00:00 2001
-Message-Id: <patch-v2-2.3-7c246fdd9f5-20221018T085329Z-avarab@gmail.com>
-In-Reply-To: <cover-v2-0.3-00000000000-20221018T085329Z-avarab@gmail.com>
+From 78ef8636c57294e199ff24918748c110ebfc3c0c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.4-78ef8636c57-20221019T005942Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-00000000000-20221019T005942Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20220422T094624Z-avarab@gmail.com>
-	<cover-v2-0.3-00000000000-20221018T085329Z-avarab@gmail.com>
+	<cover-v2-0.4-00000000000-20221019T005942Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Tue, 19 Apr 2022 12:46:29 +0200
-Subject: [PATCH v2 2/3] Makefile: really use and document
+Subject: [PATCH v2 3/4] Makefile: really use and document
  sha1collisiondetection by default
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -38,6 +38,15 @@ Instead off all of this we now:
 * Have a rewritten discussion of SHA-1 and SHA-256 in the Makefile
   which covers all of this.
 
+Let's also change the CI for "osx-clang" to test with the new
+APPLE_SHA1 knob ("osx-gcc" uses the new sha1collisiondetection
+default).
+
+In practice this will spot issues like the one noted in [7], as
+testing with just two backends should be enough to spot unportable
+code. Ideally we'd have other CI jobs to test the various SHA-1
+combinations, but for now we have better CI coverage than before.
+
 1. 48b3693d3ce (Merge branch 'jk/sha1dc', 2017-03-24)
 2. 8325e43b82d (Makefile: add DC_SHA1 knob, 2017-03-16)
 3. e6b07da2780 (Makefile: make DC_SHA1 the default, 2017-03-17)
@@ -47,15 +56,17 @@ Instead off all of this we now:
    2013-05-19)
 6. 3ef2bcad02e (imap-send: use Apple's Security framework for base64
    encoding, 2013-07-29)
+7. https://lore.kernel.org/git/kl6l7d0yyu6r.fsf@chooglen-macbookpro.roam.corp.google.com/
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- INSTALL                             |  10 ++-
- Makefile                            | 101 +++++++++++++++++++---------
- contrib/buildsystems/CMakeLists.txt |   3 +-
- hash.h                              |  10 +--
- t/t0013-sha1dc.sh                   |   4 +-
- 5 files changed, 86 insertions(+), 42 deletions(-)
+ INSTALL                             | 10 ++-
+ Makefile                            | 98 ++++++++++++++++++++---------
+ ci/lib.sh                           |  3 +
+ contrib/buildsystems/CMakeLists.txt |  3 +-
+ hash.h                              | 10 +--
+ t/t0013-sha1dc.sh                   |  4 +-
+ 6 files changed, 86 insertions(+), 42 deletions(-)
 
 diff --git a/INSTALL b/INSTALL
 index 89b15d71df5..065ed81bd54 100644
@@ -79,10 +90,10 @@ index 89b15d71df5..065ed81bd54 100644
  	- "libcurl" library is used for fetching and pushing
  	  repositories over http:// or https://, as well as by
 diff --git a/Makefile b/Makefile
-index 18ad487274e..b4dfd9b5e27 100644
+index 18ad487274e..7a7411df8c3 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -479,30 +479,65 @@ include shared.mak
+@@ -479,30 +479,62 @@ include shared.mak
  #
  # == SHA-1 and SHA-256 defines ==
  #
@@ -140,9 +151,6 @@ index 18ad487274e..b4dfd9b5e27 100644
 -# Define SHA1_MAX_BLOCK_SIZE to limit the amount of data that will be hashed
 -# in one call to the platform's SHA1_Update(). e.g. APPLE_COMMON_CRYPTO
 -# wants 'SHA1_MAX_BLOCK_SIZE=1024L*1024L*1024L' defined.
-+# Define PPC_SHA1 environment variable when running make to make use of
-+# a bundled SHA1 routine optimized for PowerPC.
-+#
 +# Define APPLE_SHA1 to use Apple's CommonCrypto SHA-1 routines on
 +# Darwin/Mac OS X.
 +#
@@ -158,7 +166,7 @@ index 18ad487274e..b4dfd9b5e27 100644
  #
  # Define BLK_SHA256 to use the built-in SHA-256 routines.
  #
-@@ -1464,7 +1499,6 @@ ifeq ($(uname_S),Darwin)
+@@ -1464,7 +1496,6 @@ ifeq ($(uname_S),Darwin)
  	endif
  	ifndef NO_APPLE_COMMON_CRYPTO
  		NO_OPENSSL = YesPlease
@@ -166,7 +174,7 @@ index 18ad487274e..b4dfd9b5e27 100644
  		COMPAT_CFLAGS += -DAPPLE_COMMON_CRYPTO
  	endif
  	PTHREAD_LIBS =
-@@ -1825,30 +1859,19 @@ ifdef NO_POSIX_GOODIES
+@@ -1825,30 +1856,19 @@ ifdef NO_POSIX_GOODIES
  	BASIC_CFLAGS += -DNO_POSIX_GOODIES
  endif
  
@@ -205,7 +213,7 @@ index 18ad487274e..b4dfd9b5e27 100644
  ifdef DC_SHA1_EXTERNAL
  	ifdef DC_SHA1_SUBMODULE
  		ifneq ($(DC_SHA1_SUBMODULE),auto)
-@@ -1872,6 +1895,22 @@ endif
+@@ -1872,6 +1892,22 @@ endif
  		-DSHA1DC_CUSTOM_INCLUDE_SHA1_C="\"cache.h\"" \
  		-DSHA1DC_CUSTOM_INCLUDE_UBC_CHECK_C="\"git-compat-util.h\""
  endif
@@ -228,7 +236,7 @@ index 18ad487274e..b4dfd9b5e27 100644
  endif
  endif
  endif
-@@ -3009,7 +3048,7 @@ GIT-BUILD-OPTIONS: FORCE
+@@ -3009,7 +3045,7 @@ GIT-BUILD-OPTIONS: FORCE
  	@echo NO_REGEX=\''$(subst ','\'',$(subst ','\'',$(NO_REGEX)))'\' >>$@+
  	@echo NO_UNIX_SOCKETS=\''$(subst ','\'',$(subst ','\'',$(NO_UNIX_SOCKETS)))'\' >>$@+
  	@echo PAGER_ENV=\''$(subst ','\'',$(subst ','\'',$(PAGER_ENV)))'\' >>$@+
@@ -237,6 +245,20 @@ index 18ad487274e..b4dfd9b5e27 100644
  	@echo SANITIZE_LEAK=\''$(subst ','\'',$(subst ','\'',$(SANITIZE_LEAK)))'\' >>$@+
  	@echo SANITIZE_ADDRESS=\''$(subst ','\'',$(subst ','\'',$(SANITIZE_ADDRESS)))'\' >>$@+
  	@echo X=\'$(X)\' >>$@+
+diff --git a/ci/lib.sh b/ci/lib.sh
+index 1b0cc2b57db..320f992680a 100755
+--- a/ci/lib.sh
++++ b/ci/lib.sh
+@@ -264,6 +264,9 @@ macos-latest)
+ esac
+ 
+ case "$jobname" in
++osx-clang)
++	MAKEFLAGS="$MAKEFLAGS NO_DC_SHA1=Yes APPLE_SHA1=Yes"
++	;;
+ linux32)
+ 	CC=gcc
+ 	;;
 diff --git a/contrib/buildsystems/CMakeLists.txt b/contrib/buildsystems/CMakeLists.txt
 index 787738e6fa3..14ac3d49849 100644
 --- a/contrib/buildsystems/CMakeLists.txt

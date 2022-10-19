@@ -1,0 +1,66 @@
+From 392fabdb45630c893f543cc123d0937b47f77a6c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.4-392fabdb456-20221019T005942Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-00000000000-20221019T005942Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20220422T094624Z-avarab@gmail.com>
+	<cover-v2-0.4-00000000000-20221019T005942Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 18 Oct 2022 14:57:47 +0200
+Subject: [PATCH v2 1/4] fsmonitor OSX: compile with DC_SHA1=YesPlease
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As we'll address in subsequent commits the "DC_SHA1=YesPlease" is not
+on by default on OSX, instead we use Apple Common Crypto's SHA-1
+implementation.
+
+In 6beb2688d33 (fsmonitor: relocate socket file if .git directory is
+remote, 2022-10-04) the build was broken with "DC_SHA1=YesPlease" (and
+probably other non-"APPLE_COMMON_CRYPTO" SHA-1 backends).
+
+So let's extract the fix for this from [1] to get the build working
+again with "DC_SHA1=YesPlease". In addition to the fix in [1] we also
+need to replace "SHA_DIGEST_LENGTH" with "GIT_MAX_RAWSZ".
+
+1. https://lore.kernel.org/git/c085fc15b314abcb5e5ca6b4ee5ac54a28327cab.1665326258.git.gitgitgadget@gmail.com/
+
+Signed-off-by: Eric DeCosta <edecosta@mathworks.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ compat/fsmonitor/fsm-ipc-darwin.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/compat/fsmonitor/fsm-ipc-darwin.c b/compat/fsmonitor/fsm-ipc-darwin.c
+index ce843d63348..d67b0ee50d3 100644
+--- a/compat/fsmonitor/fsm-ipc-darwin.c
++++ b/compat/fsmonitor/fsm-ipc-darwin.c
+@@ -10,10 +10,10 @@ static GIT_PATH_FUNC(fsmonitor_ipc__get_default_path, "fsmonitor--daemon.ipc")
+ const char *fsmonitor_ipc__get_path(struct repository *r)
+ {
+ 	static const char *ipc_path = NULL;
+-	SHA_CTX sha1ctx;
++	git_SHA_CTX sha1ctx;
+ 	char *sock_dir = NULL;
+ 	struct strbuf ipc_file = STRBUF_INIT;
+-	unsigned char hash[SHA_DIGEST_LENGTH];
++	unsigned char hash[GIT_MAX_RAWSZ];
+ 
+ 	if (!r)
+ 		BUG("No repository passed into fsmonitor_ipc__get_path");
+@@ -28,9 +28,9 @@ const char *fsmonitor_ipc__get_path(struct repository *r)
+ 		return ipc_path;
+ 	}
+ 
+-	SHA1_Init(&sha1ctx);
+-	SHA1_Update(&sha1ctx, r->worktree, strlen(r->worktree));
+-	SHA1_Final(hash, &sha1ctx);
++	git_SHA1_Init(&sha1ctx);
++	git_SHA1_Update(&sha1ctx, r->worktree, strlen(r->worktree));
++	git_SHA1_Final(hash, &sha1ctx);
+ 
+ 	repo_config_get_string(r, "fsmonitor.socketdir", &sock_dir);
+ 
+-- 
+2.38.0.1093.gcd4a685f0b1
+
