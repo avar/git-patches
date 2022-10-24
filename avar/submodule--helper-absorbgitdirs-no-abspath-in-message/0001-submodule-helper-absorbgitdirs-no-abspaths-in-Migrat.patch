@@ -1,0 +1,152 @@
+From a11116d389b5cfa23d1693608066172dc8a5936b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-a11116d389b-20221024T105355Z-avarab@gmail.com>
+In-Reply-To: <7a4e2fc6-3e01-5683-2be5-13b7e67c7fe5@web.de>
+References: <7a4e2fc6-3e01-5683-2be5-13b7e67c7fe5@web.de>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 24 Oct 2022 12:30:23 +0200
+Subject: [PATCH] submodule--helper absorbgitdirs: no abspaths in "Migrating
+ git..."
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "Migrating git directory" messages to avoid emitting
+absolute paths. We could use "old_git_dir" and "new_gitdir.buf" here
+sometimes, but not in all the cases covered by these tests,
+i.e. sometimes the latter will be an absolute path with a different
+prefix.
+
+So let's just strip off the common prefix of the two strings, which
+handles the cases where we have nested submodules nicely. Note that
+this case is different than the one in get_submodule_displaypath() in
+"builtin/submodule--helper.c" handles, as we're dealing with the paths
+to the two ".git" here, not worktree paths.
+
+Before this change we had no tests at all for this "Migrating git
+directory" output.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ submodule.c                        |  8 +++++--
+ t/t7412-submodule-absorbgitdirs.sh | 36 ++++++++++++++++++++++++------
+ 2 files changed, 35 insertions(+), 9 deletions(-)
+
+diff --git a/submodule.c b/submodule.c
+index bf7a2c79183..b94fbfbcef8 100644
+--- a/submodule.c
++++ b/submodule.c
+@@ -2268,6 +2268,7 @@ static void relocate_single_git_dir_into_superproject(const char *path)
+ 	char *old_git_dir = NULL, *real_old_git_dir = NULL, *real_new_git_dir = NULL;
+ 	struct strbuf new_gitdir = STRBUF_INIT;
+ 	const struct submodule *sub;
++	size_t off = 0;
+ 
+ 	if (submodule_uses_worktrees(path))
+ 		die(_("relocate_gitdir for submodule '%s' with "
+@@ -2292,9 +2293,12 @@ static void relocate_single_git_dir_into_superproject(const char *path)
+ 		die(_("could not create directory '%s'"), new_gitdir.buf);
+ 	real_new_git_dir = real_pathdup(new_gitdir.buf, 1);
+ 
+-	fprintf(stderr, _("Migrating git directory of '%s%s' from\n'%s' to\n'%s'\n"),
++	while (real_old_git_dir[off] && real_new_git_dir[off] &&
++	       real_old_git_dir[off] == real_new_git_dir[off])
++		off++;
++	fprintf(stderr, _("Migrating git directory of '%s%s' from '%s' to '%s'\n"),
+ 		get_super_prefix_or_empty(), path,
+-		real_old_git_dir, real_new_git_dir);
++		real_old_git_dir + off, real_new_git_dir + off);
+ 
+ 	relocate_gitdir(path, real_old_git_dir, real_new_git_dir);
+ 
+diff --git a/t/t7412-submodule-absorbgitdirs.sh b/t/t7412-submodule-absorbgitdirs.sh
+index 2859695c6d2..a5cd6db7ac2 100755
+--- a/t/t7412-submodule-absorbgitdirs.sh
++++ b/t/t7412-submodule-absorbgitdirs.sh
+@@ -18,13 +18,19 @@ test_expect_success 'setup a real submodule' '
+ '
+ 
+ test_expect_success 'absorb the git dir' '
++	>expect &&
++	>actual &&
+ 	>expect.1 &&
+ 	>expect.2 &&
+ 	>actual.1 &&
+ 	>actual.2 &&
+ 	git status >expect.1 &&
+ 	git -C sub1 rev-parse HEAD >expect.2 &&
+-	git submodule absorbgitdirs &&
++	cat >expect <<-\EOF &&
++	Migrating git directory of '\''sub1'\'' from '\''sub1/.git'\'' to '\''.git/modules/sub1'\''
++	EOF
++	git submodule absorbgitdirs 2>actual &&
++	test_cmp expect actual &&
+ 	git fsck &&
+ 	test -f sub1/.git &&
+ 	test -d .git/modules/sub1 &&
+@@ -37,7 +43,8 @@ test_expect_success 'absorb the git dir' '
+ test_expect_success 'absorbing does not fail for deinitialized submodules' '
+ 	test_when_finished "git submodule update --init" &&
+ 	git submodule deinit --all &&
+-	git submodule absorbgitdirs &&
++	git submodule absorbgitdirs 2>err &&
++	test_must_be_empty err &&
+ 	test -d .git/modules/sub1 &&
+ 	test -d sub1 &&
+ 	! test -e sub1/.git
+@@ -56,7 +63,11 @@ test_expect_success 'setup nested submodule' '
+ test_expect_success 'absorb the git dir in a nested submodule' '
+ 	git status >expect.1 &&
+ 	git -C sub1/nested rev-parse HEAD >expect.2 &&
+-	git submodule absorbgitdirs &&
++	cat >expect <<-\EOF &&
++	Migrating git directory of '\''sub1/nested'\'' from '\''sub1/nested/.git'\'' to '\''.git/modules/sub1/modules/nested'\''
++	EOF
++	git submodule absorbgitdirs 2>actual &&
++	test_cmp expect actual &&
+ 	test -f sub1/nested/.git &&
+ 	test -d .git/modules/sub1/modules/nested &&
+ 	git status >actual.1 &&
+@@ -87,7 +98,11 @@ test_expect_success 're-setup nested submodule' '
+ test_expect_success 'absorb the git dir in a nested submodule' '
+ 	git status >expect.1 &&
+ 	git -C sub1/nested rev-parse HEAD >expect.2 &&
+-	git submodule absorbgitdirs &&
++	cat >expect <<-\EOF &&
++	Migrating git directory of '\''sub1'\'' from '\''sub1/.git'\'' to '\''.git/modules/sub1'\''
++	EOF
++	git submodule absorbgitdirs 2>actual &&
++	test_cmp expect actual &&
+ 	test -f sub1/.git &&
+ 	test -f sub1/nested/.git &&
+ 	test -d .git/modules/sub1/modules/nested &&
+@@ -107,7 +122,11 @@ test_expect_success 'setup a gitlink with missing .gitmodules entry' '
+ test_expect_success 'absorbing the git dir fails for incomplete submodules' '
+ 	git status >expect.1 &&
+ 	git -C sub2 rev-parse HEAD >expect.2 &&
+-	test_must_fail git submodule absorbgitdirs &&
++	cat >expect <<-\EOF &&
++	fatal: could not lookup name for submodule '\''sub2'\''
++	EOF
++	test_must_fail git submodule absorbgitdirs 2>actual &&
++	test_cmp expect actual &&
+ 	git -C sub2 fsck &&
+ 	test -d sub2/.git &&
+ 	git status >actual &&
+@@ -127,8 +146,11 @@ test_expect_success 'setup a submodule with multiple worktrees' '
+ '
+ 
+ test_expect_success 'absorbing fails for a submodule with multiple worktrees' '
+-	test_must_fail git submodule absorbgitdirs sub3 2>error &&
+-	test_i18ngrep "not supported" error
++	cat >expect <<-\EOF &&
++	fatal: could not lookup name for submodule '\''sub2'\''
++	EOF
++	test_must_fail git submodule absorbgitdirs 2>actual &&
++	test_cmp expect actual
+ '
+ 
+ test_done
+-- 
+2.38.0.1208.g75aaa948ca8
+
