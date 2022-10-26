@@ -1,0 +1,91 @@
+From e7568dbe6fe148657a352792220f0036363c6c2b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-08.10-e7568dbe6fe-20221026T151328Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20221026T151328Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221026T151328Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 29 Sep 2022 12:37:53 +0200
+Subject: [PATCH 08/10] config tests: add "NULL" tests for *_get_value_multi()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A less well known edge case in the config format is that keys can be
+value-less, a shorthand syntax for "true" boolean keys. I.e. these two
+are equivalent as far as "--type=bool" is concerned:
+
+	[a]key
+	[a]key = true
+
+But as far as our parser is concerned the values for these two are
+NULL, and "true". I.e. for a sequence like:
+
+	[a]key=x
+	[a]key
+	[a]key=y
+
+We get a "struct string_list" with "string" members with ".string"
+values of:
+
+	{ "x", NULL, "y" }
+
+This behavior goes back to the initial implementation of
+git_config_bool() in 17712991a59 (Add ".git/config" file parser,
+2005-10-10).
+
+When the "t/t1308-config-set.sh" tests were added in [1] only one of
+the three "(NULL)" lines in "t/helper/test-config.c" had any test
+coverage. This change adds tests that stress the remaining two.
+
+1. 4c715ebb96a (test-config: add tests for the config_set API,
+   2014-07-28)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1308-config-set.sh | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/t/t1308-config-set.sh b/t/t1308-config-set.sh
+index b38e158d3b2..561e82f1808 100755
+--- a/t/t1308-config-set.sh
++++ b/t/t1308-config-set.sh
+@@ -146,6 +146,36 @@ test_expect_success 'find multiple values' '
+ 	check_config get_value_multi case.baz sam bat hask
+ '
+ 
++test_expect_success 'emit multi values from configset with NULL entry' '
++	test_when_finished "rm -f my.config" &&
++	cat >my.config <<-\EOF &&
++	[a]key=x
++	[a]key
++	[a]key=y
++	EOF
++	cat >expect <<-\EOF &&
++	x
++	(NULL)
++	y
++	EOF
++	test-tool config configset_get_value_multi a.key my.config >actual &&
++	test_cmp expect actual
++'
++
++test_expect_success 'multi values from configset with a last NULL entry' '
++	test_when_finished "rm -f my.config" &&
++	cat >my.config <<-\EOF &&
++	[a]key=x
++	[a]key=y
++	[a]key
++	EOF
++	cat >expect <<-\EOF &&
++	(NULL)
++	EOF
++	test-tool config configset_get_value a.key my.config >actual &&
++	test_cmp expect actual
++'
++
+ test_expect_success 'find value from a configset' '
+ 	cat >config2 <<-\EOF &&
+ 	[case]
+-- 
+2.38.0.1251.g3eefdfb5e7a
+

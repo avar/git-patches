@@ -1,0 +1,78 @@
+From e17de2a2664da83fc6ded8475882bc0bab8a1a76 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.10-e17de2a2664-20221026T151328Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20221026T151328Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221026T151328Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 27 Sep 2022 20:21:15 +0200
+Subject: [PATCH 02/10] for-each-repo: error on bad --config
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in 6c62f015520 (for-each-repo: do nothing on empty config,
+2021-01-08) this command wants to ignore a non-existing config key,
+but let's not conflate that with bad config.
+
+We could preserve the comment added in 6c62f015520, but now that we're
+directly using the documented repo_config_get_value_multi() value it's
+just narrating something that should be obvious from the API use, so
+let's drop it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/for-each-repo.c  | 15 +++++++--------
+ t/t0068-for-each-repo.sh |  6 ++++++
+ 2 files changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/for-each-repo.c b/builtin/for-each-repo.c
+index b01721762ef..16e9a76d04a 100644
+--- a/builtin/for-each-repo.c
++++ b/builtin/for-each-repo.c
+@@ -28,7 +28,8 @@ int cmd_for_each_repo(int argc, const char **argv, const char *prefix)
+ {
+ 	static const char *config_key = NULL;
+ 	int i, result = 0;
+-	const struct string_list *values = NULL;
++	const struct string_list *values;
++	int err;
+ 
+ 	const struct option options[] = {
+ 		OPT_STRING(0, "config", &config_key, N_("config"),
+@@ -42,13 +43,11 @@ int cmd_for_each_repo(int argc, const char **argv, const char *prefix)
+ 	if (!config_key)
+ 		die(_("missing --config=<config>"));
+ 
+-	repo_config_get_value_multi(the_repository, config_key, &values);
+-
+-	/*
+-	 * Do nothing on an empty list, which is equivalent to the case
+-	 * where the config variable does not exist at all.
+-	 */
+-	if (!values)
++	err = repo_config_get_value_multi(the_repository, config_key, &values);
++	if (err < 0)
++		usage_msg_optf(_("got bad config --config=%s"),
++			       for_each_repo_usage, options, config_key);
++	else if (err)
+ 		return 0;
+ 
+ 	for (i = 0; !result && i < values->nr; i++)
+diff --git a/t/t0068-for-each-repo.sh b/t/t0068-for-each-repo.sh
+index 4675e852517..115221c9ca5 100755
+--- a/t/t0068-for-each-repo.sh
++++ b/t/t0068-for-each-repo.sh
+@@ -33,4 +33,10 @@ test_expect_success 'do nothing on empty config' '
+ 	git for-each-repo --config=bogus.config -- help --no-such-option
+ '
+ 
++test_expect_success 'error on bad config keys' '
++	test_expect_code 129 git for-each-repo --config=a &&
++	test_expect_code 129 git for-each-repo --config=a.b. &&
++	test_expect_code 129 git for-each-repo --config="'\''.b"
++'
++
+ test_done
+-- 
+2.38.0.1251.g3eefdfb5e7a
+
