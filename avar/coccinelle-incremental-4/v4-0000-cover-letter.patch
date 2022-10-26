@@ -1,0 +1,245 @@
+From f7ccf464b7c376261aec4c7aa96be83d1d0118d8 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-00.12-00000000000-20221026T135826Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.11-00000000000-20221014T152552Z-avarab@gmail.com>
+References: <cover-v3-00.11-00000000000-20221014T152552Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 26 Oct 2022 15:58:26 +0200
+Subject: [PATCH v4 00/12] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (12):
+  Makefile + shared.mak: rename and indent $(QUIET_SPATCH_T)
+  cocci rules: remove unused "F" metavariable from pending rule
+  Makefile: add ability to TAB-complete cocci *.patch rules
+  Makefile: have "coccicheck" re-run if flags change
+  Makefile: split off SPATCH_BATCH_SIZE comment from "cocci" heading
+  cocci: split off include-less "tests" from SPATCH_FLAGS
+  cocci: split off "--all-includes" from SPATCH_FLAGS
+  cocci: make "coccicheck" rule incremental
+  cocci: optimistically use COMPUTE_HEADER_DEPENDENCIES
+  cocci rules: remove <id>'s from rules that don't need them
+  cocci: run against a generated ALL.cocci
+  spatchcache: add a ccache-alike for "spatch"
+
+ .gitignore                                    |   1 +
+ Makefile                                      | 159 +++++++--
+ contrib/coccinelle/.gitignore                 |   1 +
+ contrib/coccinelle/README                     |  44 +++
+ contrib/coccinelle/hashmap.cocci              |   2 +-
+ contrib/coccinelle/preincr.cocci              |   2 +-
+ contrib/coccinelle/spatchcache                | 304 ++++++++++++++++++
+ contrib/coccinelle/strbuf.cocci               |   2 +-
+ contrib/coccinelle/swap.cocci                 |   2 +-
+ .../coccinelle/the_repository.pending.cocci   |   1 -
+ shared.mak                                    |  10 +-
+ 11 files changed, 496 insertions(+), 32 deletions(-)
+ create mode 100755 contrib/coccinelle/spatchcache
+
+Range-diff against v3:
+ 1:  4494c91df9a =  1:  c0306e3c397 Makefile + shared.mak: rename and indent $(QUIET_SPATCH_T)
+ 2:  8219b1b12f2 =  2:  14e757cc020 cocci rules: remove unused "F" metavariable from pending rule
+ 3:  6dbfafa08fd =  3:  210dbc6b101 Makefile: add ability to TAB-complete cocci *.patch rules
+ 4:  f779a2d22aa =  4:  b859dae7509 Makefile: have "coccicheck" re-run if flags change
+ 5:  ab25b586f38 !  5:  11b9227722b Makefile: split off SPATCH_BATCH_SIZE comment from "cocci" heading
+    @@ Commit message
+         preceded it. As subsequent commits will add such comments we need to
+         split the existing comment up.
+     
+    +    The wrapping for the "SPATCH_BATCH_SIZE" is now a bit odd, but
+    +    minimizes the diff size. As a subsequent commit will remove that
+    +    feature altogether this is worth it.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Makefile ##
+ 6:  691be73b6fb =  6:  1c30f4b543b cocci: split off include-less "tests" from SPATCH_FLAGS
+ 7:  2ca5ea5beca =  7:  86827388627 cocci: split off "--all-includes" from SPATCH_FLAGS
+ 8:  2072a508064 =  8:  340ce523436 cocci: make "coccicheck" rule incremental
+ 9:  739652eada9 !  9:  134b3743a60 cocci: optimistically use COMPUTE_HEADER_DEPENDENCIES
+    @@ Makefile: endef
+      endef
+      
+      ifdef COCCI_GOALS
+    +
+    + ## contrib/coccinelle/README ##
+    +@@ contrib/coccinelle/README: There are two types of semantic patches:
+    + 
+    +    This allows to expose plans of pending large scale refactorings without
+    +    impacting the bad pattern checks.
+    ++
+    ++Git-specific tips & things to know about how we run "spatch":
+    ++
+    ++ * The "make coccicheck" will piggy-back on
+    ++   "COMPUTE_HEADER_DEPENDENCIES". If you've built a given object file
+    ++   the "coccicheck" target will consider its depednency to decide if
+    ++   it needs to re-run on the corresponding source file.
+    ++
+    ++   This means that a "make coccicheck" will re-compile object files
+    ++   before running. This might be unexpected, but speeds up the run in
+    ++   the common case, as e.g. a change to "column.h" won't require all
+    ++   coccinelle rules to be re-run against "grep.c" (or another file
+    ++   that happens not to use "column.h").
+    ++
+    ++   To disable this behavior use the "SPATCH_USE_O_DEPENDENCIES=NoThanks"
+    ++   flag.
+ -:  ----------- > 10:  89f778ac055 cocci rules: remove <id>'s from rules that don't need them
+10:  52177ea2a68 ! 11:  93efc4405e8 cocci: run against a generated ALL.cocci
+    @@ contrib/coccinelle/.gitignore
+     +/ALL.cocci
+      *.patch*
+     
+    + ## contrib/coccinelle/README ##
+    +@@ contrib/coccinelle/README: Git-specific tips & things to know about how we run "spatch":
+    + 
+    +    To disable this behavior use the "SPATCH_USE_O_DEPENDENCIES=NoThanks"
+    +    flag.
+    ++
+    ++ * To speed up our rules the "make coccicheck" target will by default
+    ++   concatenate all of the *.cocci files here into an "ALL.cocci", and
+    ++   apply it to each source file.
+    ++
+    ++   This makes the run faster, as we don't need to run each rule
+    ++   against each source file. See the Makefile for further discussion,
+    ++   this behavior can be disabled with "SPATCH_CONCAT_COCCI=".
+    ++
+    +
+      ## shared.mak ##
+     @@ shared.mak: ifndef V
+      ## Used in "Makefile": SPATCH
+11:  f7ca3f9c9af ! 12:  f7ccf464b7c spatchcache: add a ccache-alike for "spatch"
+    @@ Commit message
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    + ## contrib/coccinelle/README ##
+    +@@ contrib/coccinelle/README: Git-specific tips & things to know about how we run "spatch":
+    +    against each source file. See the Makefile for further discussion,
+    +    this behavior can be disabled with "SPATCH_CONCAT_COCCI=".
+    + 
+    ++ * To speed up incremental runs even more use the "spatchcache" tool
+    ++   in this directory as your "SPATCH". It aimns to be a "ccache" for
+    ++   coccinelle, and piggy-backs on "COMPUTE_HEADER_DEPENDENCIES".
+    ++
+    ++   It caches in Redis by default, see it source for a how-to.
+    ++
+    ++   In one setup with a primed cache "make coccicheck" followed by a
+    ++   "make clean && make" takes around 10s to run, but 2m30s with the
+    ++   default of "SPATCH_CONCAT_COCCI=Y".
+    ++
+    ++   With "SPATCH_CONCAT_COCCI=" the total runtime is around ~6m, sped
+    ++   up to ~1m with "spatchcache".
+    ++
+    ++   Most of the 10s (or ~1m) being spent on re-running "spatch" on
+    ++   files we couldn't cache, as we didn't compile them (in contrib/*
+    ++   and compat/* mostly).
+    ++
+    ++   The absolute times will differ for you, but the relative speedup
+    ++   from caching should be on that order.
+    +
+      ## contrib/coccinelle/spatchcache (new) ##
+     @@
+     +#!/bin/sh
+    @@ contrib/coccinelle/spatchcache (new)
+     +# driving "spatch" in git.git, in particular if we invoke:
+     +#
+     +#	make
+    ++#	# See "spatchCache.cacheWhenStderr" for why "--very-quiet" is
+    ++#	# used
+     +#	make coccicheck SPATCH_FLAGS=--very-quiet
+     +#
+     +# We can with COMPUTE_HEADER_DEPENDENCIES (auto-detected as true with
+    @@ contrib/coccinelle/spatchcache (new)
+     +# spatchCache.{trace,debug} to debug whether something is set in the
+     +# cache, as we'll write to the spatch logs in .build/* we'd otherwise
+     +# always emit a NOCACHE.
+    ++#
+    ++# Reading the config can make the command much slower, to work around
+    ++# this the config can be set in the environment, with environment
+    ++# variable name corresponding to the config key. "default" can be used
+    ++# to use whatever's the script default, e.g. setting
+    ++# spatchCache.cacheWhenStderr=true and deferring to the defaults for
+    ++# the rest is:
+    ++#
+    ++#	export GIT_CONTRIB_SPATCHCACHE_DEBUG=default
+    ++#	export GIT_CONTRIB_SPATCHCACHE_TRACE=default
+    ++#	export GIT_CONTRIB_SPATCHCACHE_CACHEWHENSTDERR=true
+    ++#	export GIT_CONTRIB_SPATCHCACHE_SPATCH=default
+    ++#	export GIT_CONTRIB_SPATCHCACHE_DEPENDFORMAT=default
+    ++#	export GIT_CONTRIB_SPATCHCACHE_SETCMD=default
+    ++#	export GIT_CONTRIB_SPATCHCACHE_GETCMD=default
+     +
+     +set -e
+     +
+    ++env_or_config () {
+    ++	env="$1"
+    ++	shift
+    ++	if test "$env" = "default"
+    ++	then
+    ++		# Avoid expensive "git config" invocation
+    ++		return
+    ++	elif test -n "$env"
+    ++	then
+    ++		echo "$env"
+    ++	else
+    ++		git config $@ || :
+    ++	fi
+    ++}
+    ++
+     +## Our own configuration & options
+    -+debug=$(git config --bool "spatchCache.debug")
+    ++debug=$(env_or_config "$GIT_CONTRIB_SPATCHCACHE_DEBUG" --bool "spatchCache.debug")
+     +if test "$debug" != "true"
+     +then
+     +	debug=
+    @@ contrib/coccinelle/spatchcache (new)
+     +	set -x
+     +fi
+     +
+    -+trace=$(git config --bool "spatchCache.trace")
+    ++trace=$(env_or_config "$GIT_CONTRIB_SPATCHCACHE_TRACE" --bool "spatchCache.trace")
+     +if test "$trace" != "true"
+     +then
+     +	trace=
+    @@ contrib/coccinelle/spatchcache (new)
+     +	trace=true
+     +fi
+     +
+    -+cacheWhenStderr=$(git config --bool "spatchCache.cacheWhenStderr")
+    ++cacheWhenStderr=$(env_or_config "$GIT_CONTRIB_SPATCHCACHE_CACHEWHENSTDERR" --bool "spatchCache.cacheWhenStderr")
+     +if test "$cacheWhenStderr" != "true"
+     +then
+     +	cacheWhenStderr=
+    @@ contrib/coccinelle/spatchcache (new)
+     +	echo "$@" >&2
+     +}
+     +
+    -+spatch=$(git config --path "spatchCache.spatch" || :)
+    ++spatch=$(env_or_config "$GIT_CONTRIB_SPATCHCACHE_SPATCH" --path "spatchCache.spatch")
+     +if test -n "$spatch"
+     +then
+     +	if test -n "$debug"
+    @@ contrib/coccinelle/spatchcache (new)
+     +fi
+     +
+     +dependFormat='$dirname/.depend/${basename%.c}.o.d'
+    -+dependFormatCfg=$(git config "spatchCache.dependFormat" || :)
+    ++dependFormatCfg=$(env_or_config "$GIT_CONTRIB_SPATCHCACHE_DEPENDFORMAT" "spatchCache.dependFormat")
+     +if test -n "$dependFormatCfg"
+     +then
+     +	dependFormat="$dependFormatCfg"
+     +fi
+     +
+    -+set=$(git config spatchCache.setCmd || :)
+    -+get=$(git config spatchCache.getCmd || :)
+    ++set=$(env_or_config "$GIT_CONTRIB_SPATCHCACHE_SETCMD" "spatchCache.setCmd")
+    ++get=$(env_or_config "$GIT_CONTRIB_SPATCHCACHE_GETCMD" "spatchCache.getCmd")
+     +
+     +## Parse spatch()-like command-line for caching info
+     +arg_sp=
+-- 
+2.38.0.1251.g3eefdfb5e7a
+
