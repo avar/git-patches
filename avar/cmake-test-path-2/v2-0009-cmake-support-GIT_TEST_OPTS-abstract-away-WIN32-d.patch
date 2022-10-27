@@ -1,0 +1,132 @@
+From 9f5276d79c961b8d814a79d133c723287a8dd9ba Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-09.11-9f5276d79c9-20221027T032553Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20221027T032553Z-avarab@gmail.com>
+References: <cover-0.9-00000000000-20221021T091013Z-avarab@gmail.com>
+	<cover-v2-00.11-00000000000-20221027T032553Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 20 Oct 2022 20:44:46 +0200
+Subject: [PATCH v2 09/11] cmake: support GIT_TEST_OPTS, abstract away WIN32
+ defaults
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The rationale for adding "--no-bin-wrappers" and "--no-chain-lint" in
+2ea1d8b5563 (cmake: make it easier to diagnose regressions in CTest
+runs, 2022-10-18) was those options slowed down the tests considerably
+on Windows.
+
+But since f31b6244950 (Merge branch 'yw/cmake-updates', 2022-06-07)
+and with the preceding commits cmake and ctest are not
+Windows-specific anymore.
+
+So let's set those same options by default on Windows, but do so with
+the set() facility. As noted in cmake's documentation[1] this
+integrates nicely with e.g. cmake-gui.
+
+On *nix we don't set any custom options. The change in 2ea1d8b5563
+didn't discuss why Windows should have divergent defaults with "cmake"
+and "make", but such reasons presumably don't apply on *nix. I for one
+am happy with the same defaults as the tests have when running via the
+Makefile.
+
+With the "message()" addition we'll emit this when running cmake:
+
+	Generating hook-list.h
+	-- Using user-selected test options: -vixd
+	-- Configuring done
+	-- Generating done
+	-- Build files have been written to: /home/avar/g/git/contrib/buildsystems/out
+
+Unfortunately cmake doesn't support a non-hacky way to pass variables
+to ctest without re-running cmake itself, so when re-running tests via
+cmake and wanting to change the test defaults we'll need:
+
+	GIT_TEST_OPTS=-i cmake -S contrib/buildsystems -B contrib/buildsystems/out &&
+	ctest --jobs=$(nproc) --test-dir contrib/buildsystems/out -R t0071 --verbose
+
+1. https://cmake.org/cmake/help/latest/command/set.html#set-cache-entry
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ contrib/buildsystems/CMakeLists.txt | 46 +++++++++++++++++++++++++++--
+ 1 file changed, 44 insertions(+), 2 deletions(-)
+
+diff --git a/contrib/buildsystems/CMakeLists.txt b/contrib/buildsystems/CMakeLists.txt
+index 0bd4a36b2bf..35b12493cbc 100644
+--- a/contrib/buildsystems/CMakeLists.txt
++++ b/contrib/buildsystems/CMakeLists.txt
+@@ -49,7 +49,7 @@ To use this in Visual Studio:
+ 
+ Open the worktree as a folder. Visual Studio 2019 and later will detect
+ the CMake configuration automatically and set everything up for you,
+-ready to build. You can then run the tests in `t/` via a regular Git Bash.
++ready to build. See "== Running the tests ==" below for running the tests.
+ 
+ Note: Visual Studio also has the option of opening `CMakeLists.txt`
+ directly; Using this option, Visual Studio will not find the source code,
+@@ -74,6 +74,35 @@ empty(default) :
+ 
+ NOTE: -DCMAKE_BUILD_TYPE is optional. For multi-config generators like Visual Studio
+ this option is ignored
++
++== Running the tests ==
++
++Once we've built in "contrib/buildsystems/out" the tests can be run at
++the top-level (note: not the generated "contrib/buildsystems/out/t/"
++drectory). If no top-level build is found (as created with the
++Makefile) the t/test-lib.sh will discover the git in
++"contrib/buildsystems/out" on e.g.:
++
++	(cd t && ./t0001-init.sh)
++	setup: had no ../git, but found & used cmake built git in ../contrib/buildsystems/out/git
++	[...]
++
++The tests can also be run with ctest, e.g. after building with "cmake"
++and "make" or "msbuild" run, from the top-level e.g.:
++
++	ctest --test-dir contrib/buildsystems/out --jobs="$(nproc)"--output-on-failure
++
++Options can be passed by setting GIT_TEST_OPTIONS before invoking
++cmake. E.g. on a Linux system with systemd the tests can be sped up by
++using a ramdisk for the scratch files:
++
++	GIT_TEST_OPTS="--root=/run/user/$(id -u)/ctest" cmake -S contrib/buildsystems -B contrib/buildsystems/out
++	[...]
++	-- Using user-selected test options: --root=/run/user/1001/ctest
++
++Then running the tests with "ctest" (here with --jobs="$(nproc)"):
++
++	ctest --jobs=$(nproc) --test-dir contrib/buildsystems/out
+ ]]
+ cmake_minimum_required(VERSION 3.14)
+ 
+@@ -1110,10 +1139,23 @@ endif()
+ 
+ file(GLOB test_scipts "${CMAKE_SOURCE_DIR}/t/t[0-9]*.sh")
+ 
++string(COMPARE NOTEQUAL "$ENV{GIT_TEST_OPTS}" "" HAVE_USER_GIT_TEST_OPTS)
++if(HAVE_USER_GIT_TEST_OPTS)
++	set(GIT_TEST_OPTS "$ENV{GIT_TEST_OPTS}")
++	message(STATUS "Using user-selected test options: ${GIT_TEST_OPTS}")
++elseif(WIN32)
++	set(GIT_TEST_OPTS "--no-bin-wrappers --no-chain-lint -vx")
++	message(STATUS "Using Windowns-specific default test options: ${GIT_TEST_OPTS}")
++else()
++	set(GIT_TEST_OPTS "")
++	message(STATUS "No custom test options selected, set e.g. GIT_TEST_OPTS=\"-vixd\"")
++endif()
++separate_arguments(GIT_TEST_OPTS)
++
+ #test
+ foreach(tsh ${test_scipts})
+ 	add_test(NAME ${tsh}
+-		COMMAND ${SH_EXE} ${tsh} --no-bin-wrappers --no-chain-lint -vx
++		COMMAND ${SH_EXE} ${tsh} ${GIT_TEST_OPTS}
+ 		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/t)
+        set_property(TEST ${tsh} APPEND PROPERTY ENVIRONMENT
+ 		    GIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR})		
+-- 
+2.38.0.1250.ge066ede4da3
+

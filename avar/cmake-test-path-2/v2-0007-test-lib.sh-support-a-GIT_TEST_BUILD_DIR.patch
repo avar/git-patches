@@ -1,0 +1,74 @@
+From a9ea3867f5fa6bd7d91daaf2e1d7f9fd03d38ebe Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-07.11-a9ea3867f5f-20221027T032553Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.11-00000000000-20221027T032553Z-avarab@gmail.com>
+References: <cover-0.9-00000000000-20221021T091013Z-avarab@gmail.com>
+	<cover-v2-00.11-00000000000-20221027T032553Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 14 Oct 2022 15:41:01 +0200
+Subject: [PATCH v2 07/11] test-lib.sh: support a "GIT_TEST_BUILD_DIR"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Compliment the existing GIT_TEST_INSTALLED variable added in [1] with
+one that allows for testing a git built in a directory that's not
+"../".
+
+Instead of "test this installed git" ("GIT_TEST_INSTALLED"), this new
+"GIT_TEST_BUILD_DIR" is a "test this built directory over
+there". E.g. this will pass all tests:
+
+	git clone --depth=1 https://github.com/git/git.git git1
+	cp -R git1 git2
+	make -C git1
+	[apply this change to git2]
+	(cd git2 && GIT_TEST_BUILD_DIR="$PWD/../git1" make -C t prove)
+
+This facility and file-based instructions to have the test suite use
+another build directory[2] are mutually exclusive, but in a subsequent
+commit we'll make CMake use this instead.
+
+1. 6720721e152 (test-lib.sh: Allow running the test suite against
+   installed git, 2009-03-16)
+2. 350a005e366 (cmake: avoid editing t/test-lib.sh, 2022-10-18)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/README      | 3 +++
+ t/test-lib.sh | 5 ++++-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/t/README b/t/README
+index 979b2d4833d..fc0daef2e41 100644
+--- a/t/README
++++ b/t/README
+@@ -231,6 +231,9 @@ override the location of the dashed-form subcommands (what
+ GIT_EXEC_PATH would be used for during normal operation).
+ GIT_TEST_EXEC_PATH defaults to `$GIT_TEST_INSTALLED/git --exec-path`.
+ 
++Similar to GIT_TEST_INSTALLED, GIT_TEST_BUILD_DIR can be pointed to
++another git.git checkout's build directory, to test its built binaries
++against the tests in this checkout.
+ 
+ Skipping Tests
+ --------------
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 36358811a0f..388774a0aa0 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -51,7 +51,10 @@ fi
+ # For CMake the top-level source directory is different from our build
+ # directory. With the top-level Makefile they're the same.
+ GIT_SOURCE_DIR="$GIT_BUILD_DIR"
+-if test -f "$GIT_BUILD_DIR/GIT-BUILD-DIR"
++if test -n "$GIT_TEST_BUILD_DIR"
++then
++	GIT_BUILD_DIR="$GIT_TEST_BUILD_DIR"
++elif test -f "$GIT_BUILD_DIR/GIT-BUILD-DIR"
+ then
+ 	GIT_BUILD_DIR="$(cat "$GIT_BUILD_DIR/GIT-BUILD-DIR")" || exit 1
+ 	# On Windows, we must convert Windows paths lest they contain a colon
+-- 
+2.38.0.1250.ge066ede4da3
+
