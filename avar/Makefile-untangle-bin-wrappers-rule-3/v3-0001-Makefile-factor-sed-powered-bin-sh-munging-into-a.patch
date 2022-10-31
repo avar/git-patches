@@ -1,0 +1,71 @@
+From c9ce5b78a3afb7cbaa2db9d232e6e2db13813366 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.4-c9ce5b78a3a-20221031T222221Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.4-00000000000-20221031T222221Z-avarab@gmail.com>
+References: <cover-v2-0.3-00000000000-20221026T143533Z-avarab@gmail.com>
+	<cover-v3-0.4-00000000000-20221031T222221Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 1 Sep 2022 13:06:51 +0200
+Subject: [PATCH v3 1/4] Makefile: factor sed-powered '#!/bin/sh' munging into
+ a variable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reduce the amount of magical copy/pasting in the Makefile by factoring
+the munging of "#!/bin/sh" on the first line of a shellscript into a
+variable we can re-use in the various rules that need to do so.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 4927379184c..679c24377f4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2347,8 +2347,12 @@ GIT-SCRIPT-DEFINES: FORCE
+ 		echo "$$FLAGS" >$@; \
+             fi
+ 
++define cmd_munge_script_sed_shell_path_arg
++'1s|#!.*/sh|#!$(SHELL_PATH_SQ)|'
++endef
++
+ define cmd_munge_script
+-sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
++sed -e $(call cmd_munge_script_sed_shell_path_arg) \
+     -e 's|@SHELL_PATH@|$(SHELL_PATH_SQ)|' \
+     -e 's|@@DIFF@@|$(DIFF_SQ)|' \
+     -e 's|@@LOCALEDIR@@|$(localedir_SQ)|g' \
+@@ -2450,7 +2454,7 @@ git-instaweb: git-instaweb.sh GIT-SCRIPT-DEFINES
+ else # NO_PERL
+ $(SCRIPT_PERL_GEN) git-instaweb: % : unimplemented.sh
+ 	$(QUIET_GEN) \
+-	sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
++	sed -e $(call cmd_munge_script_sed_shell_path_arg) \
+ 	    -e 's|@@REASON@@|NO_PERL=$(NO_PERL)|g' \
+ 	    unimplemented.sh >$@+ && \
+ 	chmod +x $@+ && \
+@@ -2471,7 +2475,7 @@ $(SCRIPT_PYTHON_GEN): % : %.py
+ else # NO_PYTHON
+ $(SCRIPT_PYTHON_GEN): % : unimplemented.sh
+ 	$(QUIET_GEN) \
+-	sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
++	sed -e $(call cmd_munge_script_sed_shell_path_arg) \
+ 	    -e 's|@@REASON@@|NO_PYTHON=$(NO_PYTHON)|g' \
+ 	    unimplemented.sh >$@+ && \
+ 	chmod +x $@+ && \
+@@ -3065,7 +3069,7 @@ all:: $(TEST_PROGRAMS) $(test_bindir_programs)
+ 
+ bin-wrappers/%: wrap-for-bin.sh
+ 	$(call mkdir_p_parent_template)
+-	$(QUIET_GEN)sed -e '1s|#!.*/sh|#!$(SHELL_PATH_SQ)|' \
++	$(QUIET_GEN)sed -e $(call cmd_munge_script_sed_shell_path_arg) \
+ 	     -e 's|@@BUILD_DIR@@|$(shell pwd)|' \
+ 	     -e 's|@@PROG@@|$(patsubst test-%,t/helper/test-%,$(@F))$(if $(filter-out $(BINDIR_PROGRAMS_NO_X),$(@F)),$(X),)|' < $< > $@ && \
+ 	chmod +x $@
+-- 
+2.38.0.1280.g8136eb6fab2
+
