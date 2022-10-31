@@ -1,9 +1,9 @@
 From 0ff094954769f6a3913acecfc8d0daaf2a2cbceb Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-0.4-00000000000-20221031T222221Z-avarab@gmail.com>
+Message-Id: <cover-v3-0.4-00000000000-20221031T222249Z-avarab@gmail.com>
 In-Reply-To: <cover-v2-0.3-00000000000-20221026T143533Z-avarab@gmail.com>
 References: <cover-v2-0.3-00000000000-20221026T143533Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Mon, 31 Oct 2022 23:22:21 +0100
+Date: Mon, 31 Oct 2022 23:22:49 +0100
 Subject: [PATCH v3 0/4] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -21,10 +21,84 @@ Content-Transfer-Encoding: 8bit
  1 file changed, 51 insertions(+), 19 deletions(-)
 
 Range-diff against v2:
--:  ----------- > 1:  c9ce5b78a3a Makefile: factor sed-powered '#!/bin/sh' munging into a variable
--:  ----------- > 2:  b95c296b6de Makefile: define "TEST_{PROGRAM,OBJS}" variables earlier
+1:  fc6c5a6a8df = 1:  c9ce5b78a3a Makefile: factor sed-powered '#!/bin/sh' munging into a variable
+2:  6dcb49f25c4 = 2:  b95c296b6de Makefile: define "TEST_{PROGRAM,OBJS}" variables earlier
 -:  ----------- > 3:  fea93c45898 Makefile: rename "test_bindir_programs" variable, pre-declare
--:  ----------- > 4:  0ff09495476 Makefile: simplify $(test_bindir_programs) rule by splitting it up
+3:  400f487e30d ! 4:  0ff09495476 Makefile: simplify $(test_bindir_programs) rule by splitting it up
+    @@ Commit message
+         Which will show an empty diff, i.e. we've correctly dealt with the
+         combination of $(SHELL_PATH), $(X) and these three variables here.
+     
+    -    This also fixes an issue with the "bin-wrappers/" scripts have never had properly declared
+    -    dependency information, i.e. this has never worked:
+    +    This also fixes an issue with the "bin-wrappers/" scripts have never
+    +    had properly declared dependency information, i.e. this has never
+    +    worked:
+     
+                 make clean &&
+                 make bin-wrappers/git &&
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Makefile ##
+    -@@ Makefile: export TCL_PATH TCLTK_PATH
+    - PTHREAD_LIBS = -lpthread
+    - 
+    - # Guard against environment variables
+    -+BIN_WRAPPERS =
+    - BUILTIN_OBJS =
+    - BUILT_INS =
+    - COMPAT_CFLAGS =
+     @@ Makefile: GIT-PYTHON-VARS: FORCE
+                  fi
+      endif
+      
+    --test_bindir_programs := $(patsubst %,bin-wrappers/%,$(BINDIR_PROGRAMS_NEED_X) $(BINDIR_PROGRAMS_NO_X) $(TEST_PROGRAMS_NEED_X))
+    +-BIN_WRAPPERS = $(patsubst %,bin-wrappers/%,$(BINDIR_PROGRAMS_NEED_X) $(BINDIR_PROGRAMS_NO_X) $(TEST_PROGRAMS_NEED_X))
+     +define cmd_munge_bin_wrappers_script
+     +sed \
+     +	-e $(call cmd_munge_script_sed_shell_path_arg) \
+    @@ Makefile: GIT-PYTHON-VARS: FORCE
+     +	chmod +x $@
+     +endef
+      
+    --all:: $(test_bindir_programs)
+    +-all:: $(BIN_WRAPPERS)
+     +define bin_wrappers_template
+     +
+    -+## bin_wrappers_template
+    -+# 1 = $(1)
+    -+# 2 = $(2)
+    -+# 3 = $(3)
+    -+# 4 = $(4)
+    ++### bin_wrappers_template; Parameters:
+    ++## E.g. "BINDIR_PROGRAMS_NEED_X": Variable reference
+    ++# 1='$(1)'
+    ++## E.g. "$(@F)": Passed as $$(1)) to "cmd_munge_bin_wrappers_script"
+    ++# 2='$(2)'
+    ++## E.g. "" or "t/helper": Directory prefix for the wrapped binary
+    ++# 3='$(3)'
+    ++## E.g. "" or "$$X": If $$X: wrapped binary needs X=.exe (for Windows)
+    ++# 4='$(4)'
+     +BW_$(1) = $$($(1):%=bin-wrappers/%)
+     +BIN_WRAPPERS += $$(BW_$(1))
+    -+all:: $$(BW_$(1))
+     +$$(BW_$(1)): bin-wrappers/% : $(3)%$(4)
+     +$$(BW_$(1)): wrap-for-bin.sh
+     +	$$(call mkdir_p_parent_template)
+    @@ Makefile: GIT-PYTHON-VARS: FORCE
+      
+      # GNU make supports exporting all variables by "export" without parameters.
+      # However, the environment gets quite big, and some programs have problems
+    -@@ Makefile: OTHER_PROGRAMS += $(shell echo *.dll t/helper/*.dll)
+    - endif
+    - 
+    - artifacts-tar:: $(ALL_COMMANDS_TO_INSTALL) $(SCRIPT_LIB) $(OTHER_PROGRAMS) \
+    --		GIT-BUILD-OPTIONS $(TEST_PROGRAMS) $(test_bindir_programs) \
+    -+		GIT-BUILD-OPTIONS $(TEST_PROGRAMS) $(BIN_WRAPPERS) \
+    - 		$(MOFILES)
+    - 	$(QUIET_SUBDIR0)templates $(QUIET_SUBDIR1) \
+    - 		SHELL_PATH='$(SHELL_PATH_SQ)' PERL_PATH='$(PERL_PATH_SQ)'
 -- 
 2.38.0.1280.g8136eb6fab2
 
