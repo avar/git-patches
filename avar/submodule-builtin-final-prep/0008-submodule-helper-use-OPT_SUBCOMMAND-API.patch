@@ -1,0 +1,137 @@
+From 105853cd3587697e2996f082ebc4c1fa389ff202 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-8.8-105853cd358-20221102T074148Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20221102T074148Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20221102T074148Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 22 Oct 2022 18:21:51 +0200
+Subject: [PATCH 8/8] submodule--helper: use OPT_SUBCOMMAND() API
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Have the cmd_submodule__helper() use the OPT_SUBCOMMAND() API
+introduced in fa83cc834da (parse-options: add support for parsing
+subcommands, 2022-08-19).
+
+This is only a marginal reduction in line count, but once we start
+unifying this with a yet-to-be-added "builtin/submodule.c" it'll be
+much easier to reason about those changes, as they'll both use
+OPT_SUBCOMMAND().
+
+We don't need to worry about "argv[0]" being NULL in the die() because
+we'd have errored out in parse_options() as we're not using
+"PARSE_OPT_SUBCOMMAND_OPTIONAL".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 78 ++++++++++++++++++-------------------
+ git.c                       |  2 +-
+ 2 files changed, 39 insertions(+), 41 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 2012ad31d7f..0bc25dcf5ae 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -3350,47 +3350,45 @@ static int module_add(int argc, const char **argv, const char *prefix)
+ 	return ret;
+ }
+ 
+-#define SUPPORT_SUPER_PREFIX (1<<0)
+-
+-struct cmd_struct {
+-	const char *cmd;
+-	int (*fn)(int, const char **, const char *);
+-	unsigned option;
+-};
+-
+-static struct cmd_struct commands[] = {
+-	{"clone", module_clone, SUPPORT_SUPER_PREFIX},
+-	{"add", module_add, 0},
+-	{"update", module_update, SUPPORT_SUPER_PREFIX},
+-	{"foreach", module_foreach, SUPPORT_SUPER_PREFIX},
+-	{"init", module_init, 0},
+-	{"status", module_status, SUPPORT_SUPER_PREFIX},
+-	{"sync", module_sync, SUPPORT_SUPER_PREFIX},
+-	{"deinit", module_deinit, 0},
+-	{"summary", module_summary, 0},
+-	{"push-check", push_check, 0},
+-	{"absorbgitdirs", absorb_git_dirs, SUPPORT_SUPER_PREFIX},
+-	{"set-url", module_set_url, 0},
+-	{"set-branch", module_set_branch, 0},
+-	{"create-branch", module_create_branch, 0},
+-};
+-
+ int cmd_submodule__helper(int argc, const char **argv, const char *prefix)
+ {
+-	int i;
+-	if (argc < 2 || !strcmp(argv[1], "-h"))
+-		usage("git submodule--helper <command>");
+-
+-	for (i = 0; i < ARRAY_SIZE(commands); i++) {
+-		if (!strcmp(argv[1], commands[i].cmd)) {
+-			if (get_super_prefix() &&
+-			    !(commands[i].option & SUPPORT_SUPER_PREFIX))
+-				die(_("%s doesn't support --super-prefix"),
+-				    commands[i].cmd);
+-			return commands[i].fn(argc - 1, argv + 1, prefix);
+-		}
+-	}
++	const char *cmd = argv[0];
++	const char *subcmd;
++	parse_opt_subcommand_fn *fn = NULL;
++	const char *const usage[] = {
++		N_("git submodule--helper <command>"),
++		NULL
++	};
++	struct option options[] = {
++		OPT_SUBCOMMAND("clone", &fn, module_clone),
++		OPT_SUBCOMMAND("add", &fn, module_add),
++		OPT_SUBCOMMAND("update", &fn, module_update),
++		OPT_SUBCOMMAND("foreach", &fn, module_foreach),
++		OPT_SUBCOMMAND("init", &fn, module_init),
++		OPT_SUBCOMMAND("status", &fn, module_status),
++		OPT_SUBCOMMAND("sync", &fn, module_sync),
++		OPT_SUBCOMMAND("deinit", &fn, module_deinit),
++		OPT_SUBCOMMAND("summary", &fn, module_summary),
++		OPT_SUBCOMMAND("push-check", &fn, push_check),
++		OPT_SUBCOMMAND("absorbgitdirs", &fn, absorb_git_dirs),
++		OPT_SUBCOMMAND("set-url", &fn, module_set_url),
++		OPT_SUBCOMMAND("set-branch", &fn, module_set_branch),
++		OPT_SUBCOMMAND("create-branch", &fn, module_create_branch),
++		OPT_END()
++	};
++	argc = parse_options(argc, argv, prefix, options, usage, 0);
++	subcmd = argv[0];
++
++	if (strcmp(subcmd, "clone") && strcmp(subcmd, "update") &&
++	    strcmp(subcmd, "foreach") && strcmp(subcmd, "status") &&
++	    strcmp(subcmd, "sync") && strcmp(subcmd, "absorbgitdirs") &&
++	    get_super_prefix())
++		/*
++		 * xstrfmt() rather than "%s %s" to keep the translated
++		 * string identical to git.c's.
++		 */
++		die(_("%s doesn't support --super-prefix"),
++		    xstrfmt("'%s %s'", cmd, subcmd));
+ 
+-	die(_("'%s' is not a valid submodule--helper "
+-	      "subcommand"), argv[1]);
++	return fn(argc, argv, prefix);
+ }
+diff --git a/git.c b/git.c
+index ee7758dcb0e..fb69e605912 100644
+--- a/git.c
++++ b/git.c
+@@ -610,7 +610,7 @@ static struct cmd_struct commands[] = {
+ 	{ "stash", cmd_stash, RUN_SETUP | NEED_WORK_TREE },
+ 	{ "status", cmd_status, RUN_SETUP | NEED_WORK_TREE },
+ 	{ "stripspace", cmd_stripspace },
+-	{ "submodule--helper", cmd_submodule__helper, RUN_SETUP | SUPPORT_SUPER_PREFIX | NO_PARSEOPT },
++	{ "submodule--helper", cmd_submodule__helper, RUN_SETUP | SUPPORT_SUPER_PREFIX },
+ 	{ "switch", cmd_switch, RUN_SETUP | NEED_WORK_TREE },
+ 	{ "symbolic-ref", cmd_symbolic_ref, RUN_SETUP },
+ 	{ "tag", cmd_tag, RUN_SETUP | DELAY_PAGER_CONFIG },
+-- 
+2.38.0.1280.g8136eb6fab2
+
