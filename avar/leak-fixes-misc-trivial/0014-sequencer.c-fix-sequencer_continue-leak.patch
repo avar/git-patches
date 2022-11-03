@@ -1,0 +1,48 @@
+From 02e1dddf1494eaa383cc28d7e0b24de9b8c1332d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-14.17-02e1dddf149-20221103T164632Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Nov 2022 01:28:27 +0100
+Subject: [PATCH 14/17] sequencer.c: fix sequencer_continue() leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak in the recent da1d63363f1 (rebase --merge: fix reflog when
+continuing, 2022-10-12), per [1] the author was under the impression
+that by calling "setenv()" the C library took possession of the
+string, but we need to free() it.
+
+As [1] also notes there's upcoming changes to do some larger rewrite
+of these codepaths in sequencer.c, but let's first do this much
+smaller and isolated leak fix.
+
+1. https://lore.kernel.org/git/86699708-d631-fb49-482c-af27204a3570@dunelm.org.uk/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/sequencer.c b/sequencer.c
+index 14ca0af2ade..3095d0d2b3b 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -5069,10 +5069,12 @@ int sequencer_continue(struct repository *r, struct replay_opts *opts)
+ 		previous_reflog_action = xstrdup(getenv(GIT_REFLOG_ACTION));
+ 		setenv(GIT_REFLOG_ACTION, reflog_message(opts, "continue", NULL), 1);
+ 		if (commit_staged_changes(r, opts, &todo_list)) {
++			free(previous_reflog_action);
+ 			res = -1;
+ 			goto release_todo_list;
+ 		}
+ 		setenv(GIT_REFLOG_ACTION, previous_reflog_action, 1);
++		free(previous_reflog_action);
+ 	} else if (!file_exists(get_todo_path(opts)))
+ 		return continue_single_pick(r, opts);
+ 	else if ((res = read_populate_todo(r, &todo_list, opts)))
+-- 
+2.38.0.1451.g86b35f4140a
+

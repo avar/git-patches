@@ -1,0 +1,63 @@
+From d592439760e363e8f31c19f572f3329524657a9f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.17-d592439760e-20221103T164632Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 19 Aug 2022 02:43:17 +0200
+Subject: [PATCH 09/17] ls-files: fix a --with-tree memory leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak in overlay_tree_on_index(), we need to
+clear_pathspec() at some point, which might as well be after the last
+time we use it in the function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-files.c            | 1 +
+ t/t3060-ls-files-with-tree.sh | 2 ++
+ t/t9148-git-svn-propset.sh    | 1 -
+ 3 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/ls-files.c b/builtin/ls-files.c
+index 4cf8a236483..a03b559ecaa 100644
+--- a/builtin/ls-files.c
++++ b/builtin/ls-files.c
+@@ -613,6 +613,7 @@ void overlay_tree_on_index(struct index_state *istate,
+ 	if (!fn)
+ 		fn = read_one_entry_quick;
+ 	err = read_tree(the_repository, tree, &pathspec, fn, istate);
++	clear_pathspec(&pathspec);
+ 	if (err)
+ 		die("unable to read tree entries %s", tree_name);
+ 
+diff --git a/t/t3060-ls-files-with-tree.sh b/t/t3060-ls-files-with-tree.sh
+index 52f76f7b57f..c4a72ae4462 100755
+--- a/t/t3060-ls-files-with-tree.sh
++++ b/t/t3060-ls-files-with-tree.sh
+@@ -8,6 +8,8 @@ test_description='git ls-files test (--with-tree).
+ This test runs git ls-files --with-tree and in particular in
+ a scenario known to trigger a crash with some versions of git.
+ '
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t9148-git-svn-propset.sh b/t/t9148-git-svn-propset.sh
+index 6cc76a07b39..aebb28995e5 100755
+--- a/t/t9148-git-svn-propset.sh
++++ b/t/t9148-git-svn-propset.sh
+@@ -5,7 +5,6 @@
+ 
+ test_description='git svn propset tests'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'setup propset via import' '
+-- 
+2.38.0.1451.g86b35f4140a
+

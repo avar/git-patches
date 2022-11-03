@@ -1,0 +1,150 @@
+From 7fe724599a7104a09d6e6100f9484041c53b3c90 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.17-7fe724599a7-20221103T164632Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 15 Sep 2022 03:55:34 +0200
+Subject: [PATCH 01/17] tests: mark tests as passing with SANITIZE=leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This marks tests that have been leak-free since various recent
+commits, but which were not marked us such when the memory leak was
+fixed. These were mostly discovered with the "check" mode added in
+faececa53f9 (test-lib: have the "check" mode for SANITIZE=leak
+consider leak logs, 2022-07-28).
+
+Commits that fixed the last memory leak in these tests. Per narrowing
+down when they started to pass under SANITIZE=leak with "bisect":
+
+- t1022-read-tree-partial-clone.sh:
+  7e2619d8ff0 (list_objects_filter_options: plug leak of filter_spec
+  strings, 2022-09-08)
+
+- t4053-diff-no-index.sh: 07a6f94a6d0 (diff-no-index: release prefixed
+  filenames, 2022-09-07)
+
+- t6415-merge-dir-to-symlink.sh: bac92b1f39f (Merge branch
+  'js/ort-clean-up-after-failed-merge', 2022-08-08).
+
+- t5554-noop-fetch-negotiator.sh:
+  66eede4a37c (prepare_repo_settings(): plug leak of config values,
+  2022-09-08)
+
+Let's mark all of these as passing with
+"TEST_PASSES_SANITIZE_LEAK=true", to have it regression tested,
+including as part of the "linux-leaks" CI job.
+
+Additionally, let's remove the "!SANITIZE_LEAK" prerequisite from
+tests that now pass, these were marked as failing in:
+
+- 77e56d55ba6 (diff.c: fix a double-free regression in a18d66cefb,
+  2022-03-17)
+- c4d1d526312 (tests: change some 'test $(git) = "x"' to test_cmp,
+  2022-03-07)
+
+These were not spotted with the new "check" mode, but manually, it
+doesn't cover these sort of prerequisites. There's few enough that we
+shouldn't bother to automate it. They'll be going away sooner than
+later.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t1022-read-tree-partial-clone.sh | 2 +-
+ t/t4015-diff-whitespace.sh         | 4 ++--
+ t/t4053-diff-no-index.sh           | 1 +
+ t/t5554-noop-fetch-negotiator.sh   | 2 ++
+ t/t6415-merge-dir-to-symlink.sh    | 1 +
+ t/t7103-reset-bare.sh              | 2 +-
+ 6 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/t/t1022-read-tree-partial-clone.sh b/t/t1022-read-tree-partial-clone.sh
+index a9953b6a71c..d08563de5c9 100755
+--- a/t/t1022-read-tree-partial-clone.sh
++++ b/t/t1022-read-tree-partial-clone.sh
+@@ -3,7 +3,7 @@
+ test_description='git read-tree in partial clones'
+ 
+ TEST_NO_CREATE_REPO=1
+-
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'read-tree in partial clone prefetches in one batch' '
+diff --git a/t/t4015-diff-whitespace.sh b/t/t4015-diff-whitespace.sh
+index f3e20dd5bba..b298f220e01 100755
+--- a/t/t4015-diff-whitespace.sh
++++ b/t/t4015-diff-whitespace.sh
+@@ -1638,7 +1638,7 @@ test_expect_success 'no effect on diff from --color-moved with --word-diff' '
+ 	test_cmp expect actual
+ '
+ 
+-test_expect_success !SANITIZE_LEAK 'no effect on show from --color-moved with --word-diff' '
++test_expect_success 'no effect on show from --color-moved with --word-diff' '
+ 	git show --color-moved --word-diff >actual &&
+ 	git show --word-diff >expect &&
+ 	test_cmp expect actual
+@@ -2024,7 +2024,7 @@ test_expect_success '--color-moved rewinds for MIN_ALNUM_COUNT' '
+ 	test_cmp expected actual
+ '
+ 
+-test_expect_success !SANITIZE_LEAK 'move detection with submodules' '
++test_expect_success 'move detection with submodules' '
+ 	test_create_repo bananas &&
+ 	echo ripe >bananas/recipe &&
+ 	git -C bananas add recipe &&
+diff --git a/t/t4053-diff-no-index.sh b/t/t4053-diff-no-index.sh
+index 3feadf0e359..4e9fa0403d3 100755
+--- a/t/t4053-diff-no-index.sh
++++ b/t/t4053-diff-no-index.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='diff --no-index'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t5554-noop-fetch-negotiator.sh b/t/t5554-noop-fetch-negotiator.sh
+index 2ac7b5859e7..06991e8e8aa 100755
+--- a/t/t5554-noop-fetch-negotiator.sh
++++ b/t/t5554-noop-fetch-negotiator.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='test noop fetch negotiator'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'noop negotiator does not emit any "have"' '
+diff --git a/t/t6415-merge-dir-to-symlink.sh b/t/t6415-merge-dir-to-symlink.sh
+index 2655e295f5a..ae00492c768 100755
+--- a/t/t6415-merge-dir-to-symlink.sh
++++ b/t/t6415-merge-dir-to-symlink.sh
+@@ -4,6 +4,7 @@ test_description='merging when a directory was replaced with a symlink'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'create a commit where dir a/b changed to symlink' '
+diff --git a/t/t7103-reset-bare.sh b/t/t7103-reset-bare.sh
+index a60153f9f32..18bbd9975eb 100755
+--- a/t/t7103-reset-bare.sh
++++ b/t/t7103-reset-bare.sh
+@@ -63,7 +63,7 @@ test_expect_success '"mixed" reset is not allowed in bare' '
+ 	test_must_fail git reset --mixed HEAD^
+ '
+ 
+-test_expect_success !SANITIZE_LEAK '"soft" reset is allowed in bare' '
++test_expect_success '"soft" reset is allowed in bare' '
+ 	git reset --soft HEAD^ &&
+ 	git show --pretty=format:%s >out &&
+ 	echo one >expect &&
+-- 
+2.38.0.1451.g86b35f4140a
+

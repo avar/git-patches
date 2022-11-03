@@ -1,0 +1,171 @@
+From 7429151b5c48814e2d266a69d4d3c0d6781cd2b6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-12.17-7429151b5c4-20221103T164632Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 17 Aug 2022 03:49:17 +0200
+Subject: [PATCH 12/17] sequencer.c: fix a pick_commits() leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak introduced in 1f6965f994f (sequencer: honor
+GIT_REFLOG_ACTION, 2020-04-07), we should free() the xstrdup()'d
+"prev_reflog_action" string.
+
+We only needed to xstrdup() the previous action if we took this branch
+within the "while" statement, and needed to set the GIT_REFLOG_ACTION
+for the duration of the do_pick_commit(). Let's just query and restore
+it there instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c                              | 9 ++++++---
+ t/t2012-checkout-last.sh                 | 1 +
+ t/t3409-rebase-environ.sh                | 1 +
+ t/t3413-rebase-hook.sh                   | 1 +
+ t/t3433-rebase-across-mode-change.sh     | 1 +
+ t/t7504-commit-msg-hook.sh               | 1 +
+ t/t9115-git-svn-dcommit-funky-renames.sh | 1 -
+ t/t9146-git-svn-empty-dirs.sh            | 1 -
+ t/t9160-git-svn-preserve-empty-dirs.sh   | 1 -
+ 9 files changed, 11 insertions(+), 6 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index 07d7062bfb8..14ca0af2ade 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -4567,11 +4567,9 @@ static int pick_commits(struct repository *r,
+ 			struct replay_opts *opts)
+ {
+ 	int res = 0, reschedule = 0;
+-	char *prev_reflog_action;
+ 
+ 	/* Note that 0 for 3rd parameter of setenv means set only if not set */
+ 	setenv(GIT_REFLOG_ACTION, action_name(opts), 0);
+-	prev_reflog_action = xstrdup(getenv(GIT_REFLOG_ACTION));
+ 	if (opts->allow_ff)
+ 		assert(!(opts->signoff || opts->no_commit ||
+ 			 opts->record_origin || should_edit(opts) ||
+@@ -4618,15 +4616,20 @@ static int pick_commits(struct repository *r,
+ 			}
+ 		}
+ 		if (item->command <= TODO_SQUASH) {
+-			if (is_rebase_i(opts))
++			char *prev_reflog_action = NULL;
++
++			if (is_rebase_i(opts)) {
++				prev_reflog_action = xstrdup(getenv(GIT_REFLOG_ACTION));
+ 				setenv(GIT_REFLOG_ACTION, reflog_message(opts,
+ 					command_to_string(item->command), NULL),
+ 					1);
++			}
+ 			res = do_pick_commit(r, item, opts,
+ 					     is_final_fixup(todo_list),
+ 					     &check_todo);
+ 			if (is_rebase_i(opts))
+ 				setenv(GIT_REFLOG_ACTION, prev_reflog_action, 1);
++			free(prev_reflog_action);
+ 			if (is_rebase_i(opts) && res < 0) {
+ 				/* Reschedule */
+ 				advise(_(rescheduled_advice),
+diff --git a/t/t2012-checkout-last.sh b/t/t2012-checkout-last.sh
+index 1f6c4ed0428..4b6372f4c3e 100755
+--- a/t/t2012-checkout-last.sh
++++ b/t/t2012-checkout-last.sh
+@@ -5,6 +5,7 @@ test_description='checkout can switch to last branch and merge base'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t3409-rebase-environ.sh b/t/t3409-rebase-environ.sh
+index 83ffb39d9ff..acaf5558dbe 100755
+--- a/t/t3409-rebase-environ.sh
++++ b/t/t3409-rebase-environ.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git rebase interactive environment'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t3413-rebase-hook.sh b/t/t3413-rebase-hook.sh
+index 9fab0d779bb..e8456831e8b 100755
+--- a/t/t3413-rebase-hook.sh
++++ b/t/t3413-rebase-hook.sh
+@@ -5,6 +5,7 @@ test_description='git rebase with its hook(s)'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t3433-rebase-across-mode-change.sh b/t/t3433-rebase-across-mode-change.sh
+index 05df964670f..c8172b08522 100755
+--- a/t/t3433-rebase-across-mode-change.sh
++++ b/t/t3433-rebase-across-mode-change.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git rebase across mode change'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t7504-commit-msg-hook.sh b/t/t7504-commit-msg-hook.sh
+index a39de8c1126..07ca46fb0d5 100755
+--- a/t/t7504-commit-msg-hook.sh
++++ b/t/t7504-commit-msg-hook.sh
+@@ -5,6 +5,7 @@ test_description='commit-msg hook'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'with no hook' '
+diff --git a/t/t9115-git-svn-dcommit-funky-renames.sh b/t/t9115-git-svn-dcommit-funky-renames.sh
+index 419f055721d..743fbe1fe46 100755
+--- a/t/t9115-git-svn-dcommit-funky-renames.sh
++++ b/t/t9115-git-svn-dcommit-funky-renames.sh
+@@ -5,7 +5,6 @@
+ 
+ test_description='git svn dcommit can commit renames of files with ugly names'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'load repository with strange names' '
+diff --git a/t/t9146-git-svn-empty-dirs.sh b/t/t9146-git-svn-empty-dirs.sh
+index 79c26ed69c1..09606f1b3cf 100755
+--- a/t/t9146-git-svn-empty-dirs.sh
++++ b/t/t9146-git-svn-empty-dirs.sh
+@@ -4,7 +4,6 @@
+ 
+ test_description='git svn creates empty directories'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'initialize repo' '
+diff --git a/t/t9160-git-svn-preserve-empty-dirs.sh b/t/t9160-git-svn-preserve-empty-dirs.sh
+index 9cf7a1427ab..36c6b1a12ff 100755
+--- a/t/t9160-git-svn-preserve-empty-dirs.sh
++++ b/t/t9160-git-svn-preserve-empty-dirs.sh
+@@ -9,7 +9,6 @@ This test uses git to clone a Subversion repository that contains empty
+ directories, and checks that corresponding directories are created in the
+ local Git repository with placeholder files.'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ GIT_REPO=git-svn-repo
+-- 
+2.38.0.1451.g86b35f4140a
+

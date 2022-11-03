@@ -1,0 +1,79 @@
+From 29123e6239158422fe48e7d58b4635e7d1809fab Mon Sep 17 00:00:00 2001
+Message-Id: <patch-05.17-29123e62391-20221103T164632Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 27 Oct 2022 21:42:20 +0200
+Subject: [PATCH 05/17] dir.c: free "ident" and "exclude_per_dir" in "struct
+ untracked_cache"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the "ident" member of the structure was added in
+1e8fef609e7 (untracked cache: guard and disable on system changes,
+2015-03-08) this function wasn't updated to free it. Let's do so.
+
+Let's also free the "exclude_per_dir" memory we've been leaking
+since[1], while making sure not to free() the constant ".gitignore"
+string we add by default[2].
+
+As we now have three struct members we're freeing let's change
+free_untracked_cache() to return early if "uc" isn't defined. We won't
+hand it to free() now, but that was just for convenience, once we're
+dealing with >=2 struct members this pattern is more convenient.
+
+1. f9e6c649589 (untracked cache: load from UNTR index extension,
+   2015-03-08)
+2. 039bc64e886 (core.excludesfile clean-up, 2007-11-14)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ dir.c | 10 +++++++---
+ dir.h |  1 +
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/dir.c b/dir.c
+index d604d1bab98..fbdb24fc819 100644
+--- a/dir.c
++++ b/dir.c
+@@ -3581,8 +3581,12 @@ static void free_untracked(struct untracked_cache_dir *ucd)
+ 
+ void free_untracked_cache(struct untracked_cache *uc)
+ {
+-	if (uc)
+-		free_untracked(uc->root);
++	if (!uc)
++		return;
++
++	free(uc->exclude_per_dir_to_free);
++	strbuf_release(&uc->ident);
++	free_untracked(uc->root);
+ 	free(uc);
+ }
+ 
+@@ -3739,7 +3743,7 @@ struct untracked_cache *read_untracked_extension(const void *data, unsigned long
+ 		      next + offset + hashsz);
+ 	uc->dir_flags = get_be32(next + ouc_offset(dir_flags));
+ 	exclude_per_dir = (const char *)next + exclude_per_dir_offset;
+-	uc->exclude_per_dir = xstrdup(exclude_per_dir);
++	uc->exclude_per_dir = uc->exclude_per_dir_to_free = xstrdup(exclude_per_dir);
+ 	/* NUL after exclude_per_dir is covered by sizeof(*ouc) */
+ 	next += exclude_per_dir_offset + strlen(exclude_per_dir) + 1;
+ 	if (next >= end)
+diff --git a/dir.h b/dir.h
+index 674747d93af..8acfc044181 100644
+--- a/dir.h
++++ b/dir.h
+@@ -188,6 +188,7 @@ struct untracked_cache {
+ 	struct oid_stat ss_info_exclude;
+ 	struct oid_stat ss_excludes_file;
+ 	const char *exclude_per_dir;
++	char *exclude_per_dir_to_free;
+ 	struct strbuf ident;
+ 	/*
+ 	 * dir_struct#flags must match dir_flags or the untracked
+-- 
+2.38.0.1451.g86b35f4140a
+

@@ -1,0 +1,149 @@
+From c7722f68ae21a28c6fde896ca13b7389dd6d402b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-11.17-c7722f68ae2-20221103T164632Z-avarab@gmail.com>
+In-Reply-To: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 28 Oct 2022 02:48:56 +0200
+Subject: [PATCH 11/17] connected.c: free the "struct packed_git"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "new_pack" we allocate in check_connected() wasn't being
+free'd. Let's do that before we return from the function. This has
+leaked ever since "new_pack" was added to this function in
+c6807a40dcd (clone: open a shortcut for connectivity check,
+2013-05-26).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ connected.c                         | 6 +++++-
+ t/t3050-subprojects-fetch.sh        | 1 +
+ t/t4067-diff-partial-clone.sh       | 1 +
+ t/t5544-pack-objects-hook.sh        | 2 ++
+ t/t5610-clone-detached.sh           | 1 +
+ t/t5611-clone-config.sh             | 1 +
+ t/t5614-clone-submodules-shallow.sh | 1 +
+ t/t5617-clone-submodules-remote.sh  | 1 +
+ 8 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/connected.c b/connected.c
+index 74a20cb32e7..b7770825c7b 100644
+--- a/connected.c
++++ b/connected.c
+@@ -85,6 +85,7 @@ int check_connected(oid_iterate_fn fn, void *cb_data,
+ promisor_pack_found:
+ 			;
+ 		} while ((oid = fn(cb_data)) != NULL);
++		free(new_pack);
+ 		return 0;
+ 	}
+ 
+@@ -118,8 +119,10 @@ int check_connected(oid_iterate_fn fn, void *cb_data,
+ 	else
+ 		rev_list.no_stderr = opt->quiet;
+ 
+-	if (start_command(&rev_list))
++	if (start_command(&rev_list)) {
++		free(new_pack);
+ 		return error(_("Could not run 'git rev-list'"));
++	}
+ 
+ 	sigchain_push(SIGPIPE, SIG_IGN);
+ 
+@@ -151,5 +154,6 @@ int check_connected(oid_iterate_fn fn, void *cb_data,
+ 		err = error_errno(_("failed to close rev-list's stdin"));
+ 
+ 	sigchain_pop(SIGPIPE);
++	free(new_pack);
+ 	return finish_command(&rev_list) || err;
+ }
+diff --git a/t/t3050-subprojects-fetch.sh b/t/t3050-subprojects-fetch.sh
+index f1f09abdd9b..38846941655 100755
+--- a/t/t3050-subprojects-fetch.sh
++++ b/t/t3050-subprojects-fetch.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='fetching and pushing project with subproject'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t4067-diff-partial-clone.sh b/t/t4067-diff-partial-clone.sh
+index 28f42a4046e..f60f5cbd65f 100755
+--- a/t/t4067-diff-partial-clone.sh
++++ b/t/t4067-diff-partial-clone.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='behavior of diff when reading objects in a partial clone'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'git show batches blobs' '
+diff --git a/t/t5544-pack-objects-hook.sh b/t/t5544-pack-objects-hook.sh
+index 54f54f8d2eb..1a9e14bbccd 100755
+--- a/t/t5544-pack-objects-hook.sh
++++ b/t/t5544-pack-objects-hook.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='test custom script in place of pack-objects'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'create some history to fetch' '
+diff --git a/t/t5610-clone-detached.sh b/t/t5610-clone-detached.sh
+index a7ec21eda5a..022ed3d87c3 100755
+--- a/t/t5610-clone-detached.sh
++++ b/t/t5610-clone-detached.sh
+@@ -4,6 +4,7 @@ test_description='test cloning a repository with detached HEAD'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ head_is_detached() {
+diff --git a/t/t5611-clone-config.sh b/t/t5611-clone-config.sh
+index 4b3877216ee..727caff4433 100755
+--- a/t/t5611-clone-config.sh
++++ b/t/t5611-clone-config.sh
+@@ -4,6 +4,7 @@ test_description='tests for git clone -c key=value'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'clone -c sets config in cloned repo' '
+diff --git a/t/t5614-clone-submodules-shallow.sh b/t/t5614-clone-submodules-shallow.sh
+index 0c85ef834ab..c2a2bb453ee 100755
+--- a/t/t5614-clone-submodules-shallow.sh
++++ b/t/t5614-clone-submodules-shallow.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='Test shallow cloning of repos with submodules'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ pwd=$(pwd)
+diff --git a/t/t5617-clone-submodules-remote.sh b/t/t5617-clone-submodules-remote.sh
+index 68843382493..5a4d7936a72 100755
+--- a/t/t5617-clone-submodules-remote.sh
++++ b/t/t5617-clone-submodules-remote.sh
+@@ -5,6 +5,7 @@ test_description='Test cloning repos with submodules using remote-tracking branc
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ pwd=$(pwd)
+-- 
+2.38.0.1451.g86b35f4140a
+
