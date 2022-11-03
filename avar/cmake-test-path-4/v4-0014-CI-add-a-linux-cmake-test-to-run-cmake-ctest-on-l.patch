@@ -1,0 +1,93 @@
+From 277028678c873f30cc9edecd7a7745b36fafea79 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-14.14-277028678c8-20221103T160156Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.14-00000000000-20221103T160155Z-avarab@gmail.com>
+References: <cover-v3-00.12-00000000000-20221101T225022Z-avarab@gmail.com>
+	<cover-v4-00.14-00000000000-20221103T160155Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 20 Oct 2022 17:37:36 +0200
+Subject: [PATCH v4 14/14] CI: add a "linux-cmake-test" to run cmake & ctest on
+ linux
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since [1] the "cmake" build method should work properly on Linux, but
+as seen in preceding commits there were various bugs in it, which are
+hopefully now all fixed.
+
+To ensure that it doesn't break again let's add a "linux-cmake-ctest"
+target to build and test "cmake" on Linux, in addition to that we'll
+also run the tests with "ctest" instead of "make" or "prove", so we
+can assert that testing with that method works..
+
+This also stress tests running "cmake" (and "ctest") out of a build
+directory that isn't the top-level. The "vs-build" job uses "cmake"
+since [2], but clobbers the top-level "Makefile" and builds in the
+top-level directory.
+
+That was the reason for why we didn't spot that various tests still
+required missing "mergetools/*" etc, which was fixed by using
+"$GIT_SOURCE_DIR" in a preceding commit.
+
+Since the "ci/lib.sh" already creates and exports a
+GIT_TEST_OPTS="..." we'll pick that up in our CI, see the preceding
+commit. Because we pass the "--verbose-log -x
+--github-workflow-markup" in the GitHub CI as a result the interaction
+with "handle_failed_tests" here works correctly. I.e. on failure we'll
+have saved "t/test-results/*.{exit,out,markup}" files relevant to the
+failing test(s).
+
+1. f31b6244950 (Merge branch 'yw/cmake-updates', 2022-06-07)
+2. 4c2c38e800f (ci: modification of main.yml to use cmake for vs-build
+   job, 2020-06-26)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ .github/workflows/main.yml |  3 +++
+ ci/run-build-and-tests.sh  | 13 +++++++++++--
+ 2 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/.github/workflows/main.yml b/.github/workflows/main.yml
+index bd6f75b8e0f..68c2e134646 100644
+--- a/.github/workflows/main.yml
++++ b/.github/workflows/main.yml
+@@ -238,6 +238,9 @@ jobs:
+             os: ubuntu
+             cc_package: gcc-8
+             pool: ubuntu-latest
++          - jobname: linux-cmake-ctest
++            cc: gcc
++            pool: ubuntu-latest
+           - jobname: osx-clang
+             cc: clang
+             pool: macos-latest
+diff --git a/ci/run-build-and-tests.sh b/ci/run-build-and-tests.sh
+index 8ebff425967..a3ae5ff3972 100755
+--- a/ci/run-build-and-tests.sh
++++ b/ci/run-build-and-tests.sh
+@@ -45,10 +45,19 @@ pedantic)
+ 	;;
+ esac
+ 
+-group Build make
++mc=
++if test "$jobname" = "linux-cmake-ctest"
++then
++	cb=contrib/buildsystems
++	group CMake cmake -S "$cb" -B "$cb/out"
++	mc="-C $cb/out"
++fi
++
++group Build make $mc
++
+ if test -n "$run_tests"
+ then
+-	group "Run tests" make test ||
++	group "Run tests" make $mc test ||
+ 	handle_failed_tests
+ fi
+ check_unignored_build_artifacts
+-- 
+2.38.0.1451.g86b35f4140a
+
