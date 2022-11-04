@@ -1,0 +1,66 @@
+From e2a69bf8f3b930e4f492d9525b3c2fffc6e7ed95 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.13-e2a69bf8f3b-20221104T130740Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+References: <1cb1c033-0525-7e62-8c09-81019bf26060@redhat.com>
+	<cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 4 Nov 2022 02:04:05 +0100
+Subject: [PATCH 06/13] bisect test: test exit codes on bad usage
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Address a test blindspot, the "log" command is the odd one out because
+"git-bisect.sh" ignores any arguments it receives. Let's test both the
+exit codes we expect, and the stderr and stdout we're emitting.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6030-bisect-porcelain.sh | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/t/t6030-bisect-porcelain.sh b/t/t6030-bisect-porcelain.sh
+index 69fad3f94f6..eace0af637e 100755
+--- a/t/t6030-bisect-porcelain.sh
++++ b/t/t6030-bisect-porcelain.sh
+@@ -34,6 +34,36 @@ HASH2=
+ HASH3=
+ HASH4=
+ 
++test_bisect_usage () {
++	local code="$1" &&
++	shift &&
++	cat >expect &&
++	test_expect_code $code "$@" >out 2>actual &&
++	test_must_be_empty out &&
++	test_cmp expect actual
++}
++
++test_expect_success 'bisect usage' '
++	test_bisect_usage 255 git bisect reset extra1 extra2 <<-\EOF &&
++	error: --bisect-reset requires either no argument or a commit
++	EOF
++	test_bisect_usage 255 git bisect terms extra1 extra2 <<-\EOF &&
++	error: --bisect-terms requires 0 or 1 argument
++	EOF
++	test_bisect_usage 255 git bisect next extra1 <<-\EOF &&
++	error: --bisect-next requires 0 arguments
++	EOF
++	test_bisect_usage 1 git bisect log extra1 <<-\EOF &&
++	error: We are not bisecting.
++	EOF
++	test_bisect_usage 255 git bisect replay <<-\EOF &&
++	error: no logfile given
++	EOF
++	test_bisect_usage 255 git bisect run <<-\EOF
++	error: bisect run failed: no command provided.
++	EOF
++'
++
+ test_expect_success 'set up basic repo with 1 file (hello) and 4 commits' '
+      add_line_into_file "1: Hello World" hello &&
+      HASH1=$(git rev-parse --verify HEAD) &&
+-- 
+2.38.0.1452.g710f45c7951
+

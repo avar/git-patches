@@ -1,0 +1,113 @@
+From 13745e3f18ff5a828ad29eba7fcb587a0be4c118 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-12.13-13745e3f18f-20221104T130740Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+References: <1cb1c033-0525-7e62-8c09-81019bf26060@redhat.com>
+	<cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Tue, 30 Aug 2022 18:50:15 +0000
+Subject: [PATCH 12/13] bisect--helper: make `state` optional
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In preparation for making `git bisect` a real built-in, let's prepare
+the `bisect--helper` built-in to handle `git bisect--helper good` and
+`git bisect--helper bad`, i.e. do not require the `state` subcommand to
+be passed explicitly.
+
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bisect--helper.c | 21 ++++++++++++++++++---
+ git-bisect.sh            | 17 +----------------
+ 2 files changed, 19 insertions(+), 19 deletions(-)
+
+diff --git a/builtin/bisect--helper.c b/builtin/bisect--helper.c
+index b62d3f4d418..c92197b0ea5 100644
+--- a/builtin/bisect--helper.c
++++ b/builtin/bisect--helper.c
+@@ -1348,10 +1348,12 @@ int cmd_bisect__helper(int argc, const char **argv, const char *prefix)
+ 	struct bisect_terms terms = { .term_good = NULL, .term_bad = NULL };
+ 
+ 	argc = parse_options(argc, argv, prefix, options, git_bisect_usage,
+-			     0);
++			     PARSE_OPT_SUBCOMMAND_OPTIONAL);
+ 
+-	argc--;
+-	argv++;
++	if (fn) {
++		argc--;
++		argv++;
++	}
+ 
+ 	if (fn == bisect_reset) {
+ 		if (argc > 1)
+@@ -1386,6 +1388,19 @@ int cmd_bisect__helper(int argc, const char **argv, const char *prefix)
+ 		get_terms(&terms);
+ 	}
+ 
++	if (!fn) {
++		if (!argc)
++			usage_msg_opt(_("need a command"), git_bisect_usage,
++				      options);
++
++		set_terms(&terms, "bad", "good");
++		get_terms(&terms);
++		if (check_and_set_terms(&terms, argv[0]))
++			usage_msg_optf(_("unknown command: '%s'"),
++				       git_bisect_usage, options, argv[0]);
++		fn = bisect_state;
++	}
++
+ 	res = fn(&terms, argc, argv, prefix);
+ 	free_terms(&terms);
+ 
+diff --git a/git-bisect.sh b/git-bisect.sh
+index e19847eba0d..c6e12f60f83 100755
+--- a/git-bisect.sh
++++ b/git-bisect.sh
+@@ -34,33 +34,18 @@ Please use "git help bisect" to get the full man page.'
+ OPTIONS_SPEC=
+ . git-sh-setup
+ 
+-TERM_BAD=bad
+-TERM_GOOD=good
+-
+-get_terms () {
+-	if test -s "$GIT_DIR/BISECT_TERMS"
+-	then
+-		{
+-		read TERM_BAD
+-		read TERM_GOOD
+-		} <"$GIT_DIR/BISECT_TERMS"
+-	fi
+-}
+ 
+ case "$#" in
+ 0)
+ 	usage ;;
+ *)
+ 	cmd="$1"
+-	get_terms
+ 	shift
+ 	case "$cmd" in
+ 	help)
+ 		git bisect -h ;;
+ 	start)
+ 		git bisect--helper start "$@" ;;
+-	bad|good|new|old|"$TERM_BAD"|"$TERM_GOOD")
+-		git bisect--helper state "$cmd" "$@" ;;
+ 	skip)
+ 		git bisect--helper skip "$@" || exit;;
+ 	next)
+@@ -79,6 +64,6 @@ case "$#" in
+ 	terms)
+ 		git bisect--helper terms "$@" || exit;;
+ 	*)
+-		usage ;;
++		git bisect--helper "$cmd" "$@" ;;
+ 	esac
+ esac
+-- 
+2.38.0.1452.g710f45c7951
+

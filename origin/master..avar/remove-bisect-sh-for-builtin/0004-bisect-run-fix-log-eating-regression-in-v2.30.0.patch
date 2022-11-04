@@ -1,0 +1,75 @@
+From b10deee4827b619025ed96b6827ba0461cf9b152 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-04.13-b10deee4827-20221104T130740Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+References: <1cb1c033-0525-7e62-8c09-81019bf26060@redhat.com>
+	<cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 4 Nov 2022 13:49:31 +0100
+Subject: [PATCH 04/13] bisect run: fix "--log" eating regression in v2.30.0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When d1bbbe45df8 (bisect--helper: reimplement `bisect_run` shell
+function in C, 2021-09-13) reimplemented parts of "git bisect run" in
+C we started parsing the command line that we'd pass to "run" with
+cmd_bisect__helper().
+
+Unfortunately this meant that we started eating "--log" and "--no-log"
+on the command-line.
+
+In the general case the fix for this would be more involved, but
+luckily we don't support any other option here (well, the other
+CMDMODE options, but that edge case is too obscure to worry about).
+
+As noted in [1] we can simply remove the "--no-log" option. It was
+added in 0f30233a11f (bisect--helper: `bisect_write` shell function in
+C, 2019-01-02), but has never been used.
+
+Reported-by: Lukáš Doktor <ldoktor@redhat.com>
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bisect--helper.c    | 4 +---
+ t/t6030-bisect-porcelain.sh | 2 +-
+ 2 files changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/builtin/bisect--helper.c b/builtin/bisect--helper.c
+index ee1509c198a..eb66ad491cd 100644
+--- a/builtin/bisect--helper.c
++++ b/builtin/bisect--helper.c
+@@ -1294,7 +1294,7 @@ int cmd_bisect__helper(int argc, const char **argv, const char *prefix)
+ 		BISECT_VISUALIZE,
+ 		BISECT_RUN,
+ 	} cmdmode = 0;
+-	int res = 0, nolog = 0;
++	int res = 0;
+ 	struct option options[] = {
+ 		OPT_CMDMODE(0, "bisect-reset", &cmdmode,
+ 			 N_("reset the bisection state"), BISECT_RESET),
+@@ -1318,8 +1318,6 @@ int cmd_bisect__helper(int argc, const char **argv, const char *prefix)
+ 			 N_("visualize the bisection"), BISECT_VISUALIZE),
+ 		OPT_CMDMODE(0, "bisect-run", &cmdmode,
+ 			 N_("use <cmd>... to automatically bisect"), BISECT_RUN),
+-		OPT_BOOL(0, "no-log", &nolog,
+-			 N_("no log for BISECT_WRITE")),
+ 		OPT_END()
+ 	};
+ 	struct bisect_terms terms = { .term_good = NULL, .term_bad = NULL };
+diff --git a/t/t6030-bisect-porcelain.sh b/t/t6030-bisect-porcelain.sh
+index 30124b6f059..dc83034f036 100755
+--- a/t/t6030-bisect-porcelain.sh
++++ b/t/t6030-bisect-porcelain.sh
+@@ -306,7 +306,7 @@ test_expect_success 'git bisect run: args, stdout and stderr: "--" argument' '
+ 	EOF_ERR
+ '
+ 
+-test_expect_failure 'git bisect run: args, stdout and stderr: "--log foo --no-log bar" arguments' '
++test_expect_success 'git bisect run: args, stdout and stderr: "--log foo --no-log bar" arguments' '
+ 	test_bisect_run_args --log foo --no-log bar <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
+ 	<--log>
+ 	<foo>
+-- 
+2.38.0.1452.g710f45c7951
+

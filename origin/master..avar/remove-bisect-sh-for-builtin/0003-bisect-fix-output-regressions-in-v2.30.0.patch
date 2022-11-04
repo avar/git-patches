@@ -1,0 +1,94 @@
+From 03d704ca26f5d454294a5b544429415063ea0bc7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.13-03d704ca26f-20221104T130740Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+References: <1cb1c033-0525-7e62-8c09-81019bf26060@redhat.com>
+	<cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 4 Nov 2022 12:29:12 +0100
+Subject: [PATCH 03/13] bisect: fix output regressions in v2.30.0
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When d1bbbe45df8 (bisect--helper: reimplement `bisect_run` shell
+function in C, 2021-09-13) reimplemented parts of "git bisect run" in
+C it changed the output we emitted so that:
+
+ - The "running ..." line was now quoted
+ - We lost the \n after our output
+ - We started saying "bisect found ..." instead of "bisect run success"
+
+Arguably some of this is better now, but as d1bbbe45df8 did not
+advocate for changing the output, let's revert this for now. It'll be
+easy to change it back if that's what we'd prefer.
+
+This does not change the one remaining use of "command.buf" to emit
+the quoted argument, as that's new in d1bbbe45df8.
+
+Some of these cases were not tested for in the tests added in the
+preceding commit, I didn't have time to fleshen those out, but a look
+at f1de981e8b6 will show that the other output being adjusted here is
+now equivalent to what it was before d1bbbe45df8.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bisect--helper.c    | 8 +++++---
+ t/t6030-bisect-porcelain.sh | 4 ++--
+ 2 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/builtin/bisect--helper.c b/builtin/bisect--helper.c
+index 7dd90da72d3..ee1509c198a 100644
+--- a/builtin/bisect--helper.c
++++ b/builtin/bisect--helper.c
+@@ -1192,6 +1192,8 @@ static int bisect_run(struct bisect_terms *terms, const char **argv, int argc)
+ 
+ 	sq_quote_argv(&command, argv);
+ 	strvec_push(&run_args, command.buf);
++	strbuf_reset(&command);
++	strbuf_join_argv(&command, argc, argv, ' ');
+ 
+ 	while (1) {
+ 		printf(_("running %s\n"), command.buf);
+@@ -1257,13 +1259,13 @@ static int bisect_run(struct bisect_terms *terms, const char **argv, int argc)
+ 		if (res == BISECT_ONLY_SKIPPED_LEFT)
+ 			error(_("bisect run cannot continue any more"));
+ 		else if (res == BISECT_INTERNAL_SUCCESS_MERGE_BASE) {
+-			printf(_("bisect run success"));
++			puts(_("bisect run success"));
+ 			res = BISECT_OK;
+ 		} else if (res == BISECT_INTERNAL_SUCCESS_1ST_BAD_FOUND) {
+-			printf(_("bisect found first bad commit"));
++			puts(_("bisect run success"));
+ 			res = BISECT_OK;
+ 		} else if (res) {
+-			error(_("bisect run failed: 'git bisect--helper --bisect-state"
++			error(_("bisect run failed: 'bisect-state"
+ 				" %s' exited with error code %d"), new_state, res);
+ 		} else {
+ 			continue;
+diff --git a/t/t6030-bisect-porcelain.sh b/t/t6030-bisect-porcelain.sh
+index 478e74e1f0f..30124b6f059 100755
+--- a/t/t6030-bisect-porcelain.sh
++++ b/t/t6030-bisect-porcelain.sh
+@@ -285,7 +285,7 @@ test_bisect_run_args () {
+ 	test_cmp expect.args actual.args
+ }
+ 
+-test_expect_failure 'git bisect run: args, stdout and stderr with no arguments' '
++test_expect_success 'git bisect run: args, stdout and stderr with no arguments' '
+ 	test_bisect_run_args <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
+ 	EOF_ARGS
+ 	running ./run.sh
+@@ -295,7 +295,7 @@ test_expect_failure 'git bisect run: args, stdout and stderr with no arguments'
+ 	EOF_ERR
+ '
+ 
+-test_expect_failure 'git bisect run: args, stdout and stderr: "--" argument' '
++test_expect_success 'git bisect run: args, stdout and stderr: "--" argument' '
+ 	test_bisect_run_args -- <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
+ 	<-->
+ 	EOF_ARGS
+-- 
+2.38.0.1452.g710f45c7951
+

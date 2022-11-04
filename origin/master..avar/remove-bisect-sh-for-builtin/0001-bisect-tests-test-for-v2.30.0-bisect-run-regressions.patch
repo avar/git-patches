@@ -1,0 +1,127 @@
+From beb1ea22a2737ce270ca029e5b96c58a60143c2a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-01.13-beb1ea22a27-20221104T130740Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+References: <1cb1c033-0525-7e62-8c09-81019bf26060@redhat.com>
+	<cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 4 Nov 2022 11:45:15 +0100
+Subject: [PATCH 01/13] bisect tests: test for v2.30.0 "bisect run" regressions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add three failing tests which succeed on v2.29.0, but due to the topic
+merged at [1] (specifically [2]) have been failing since then. We'll
+address those regressions in subsequent commits.
+
+There was also a "regression" where:
+
+	git bisect run ./missing-script.sh
+
+Would count a non-existing script as "good", as the shell would exit
+with 127. That edge case is a bit too insane to preserve, so let's not
+add it to these regression tests.
+
+1. 0a4cb1f1f2f (Merge branch 'mr/bisect-in-c-4', 2021-09-23)
+2. d1bbbe45df8 (bisect--helper: reimplement `bisect_run` shell
+   function in C, 2021-09-13)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6030-bisect-porcelain.sh | 79 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 79 insertions(+)
+
+diff --git a/t/t6030-bisect-porcelain.sh b/t/t6030-bisect-porcelain.sh
+index 83931d482fb..478e74e1f0f 100755
+--- a/t/t6030-bisect-porcelain.sh
++++ b/t/t6030-bisect-porcelain.sh
+@@ -252,6 +252,85 @@ test_expect_success 'bisect skip: with commit both bad and skipped' '
+ 	grep $HASH4 my_bisect_log.txt
+ '
+ 
++test_bisect_run_args () {
++	test_when_finished "rm -f run.sh actual" &&
++	>actual &&
++	cat >expect.args &&
++	cat <&6 >expect.out &&
++	cat <&7 >expect.err &&
++	write_script run.sh <<-\EOF &&
++	while test $# != 0
++	do
++		echo "<$1>" &&
++		shift
++	done >actual.args
++	EOF
++
++	test_when_finished "git bisect reset" &&
++	git bisect start &&
++	git bisect good $HASH1 &&
++	git bisect bad $HASH4 &&
++	git bisect run ./run.sh $@ >actual.out.raw 2>actual.err &&
++	# Prune just the log output
++	sed -n \
++		-e '/^Author:/d' \
++		-e '/^Date:/d' \
++		-e '/^$/d' \
++		-e '/^commit /d' \
++ 		-e '/^ /d' \
++		-e 'p' \
++		<actual.out.raw >actual.out &&
++	test_cmp expect.out actual.out &&
++	test_cmp expect.err actual.err &&
++	test_cmp expect.args actual.args
++}
++
++test_expect_failure 'git bisect run: args, stdout and stderr with no arguments' '
++	test_bisect_run_args <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
++	EOF_ARGS
++	running ./run.sh
++	$HASH4 is the first bad commit
++	bisect run success
++	EOF_OUT
++	EOF_ERR
++'
++
++test_expect_failure 'git bisect run: args, stdout and stderr: "--" argument' '
++	test_bisect_run_args -- <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
++	<-->
++	EOF_ARGS
++	running ./run.sh --
++	$HASH4 is the first bad commit
++	bisect run success
++	EOF_OUT
++	EOF_ERR
++'
++
++test_expect_failure 'git bisect run: args, stdout and stderr: "--log foo --no-log bar" arguments' '
++	test_bisect_run_args --log foo --no-log bar <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
++	<--log>
++	<foo>
++	<--no-log>
++	<bar>
++	EOF_ARGS
++	running ./run.sh --log foo --no-log bar
++	$HASH4 is the first bad commit
++	bisect run success
++	EOF_OUT
++	EOF_ERR
++'
++
++test_expect_failure 'git bisect run: args, stdout and stderr: "--bisect-start" argument' '
++	test_bisect_run_args --bisect-start <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
++	<--bisect-start>
++	EOF_ARGS
++	running ./run.sh --bisect-start
++	$HASH4 is the first bad commit
++	bisect run success
++	EOF_OUT
++	EOF_ERR
++'
++
+ # We want to automatically find the commit that
+ # added "Another" into hello.
+ test_expect_success '"git bisect run" simple case' '
+-- 
+2.38.0.1452.g710f45c7951
+

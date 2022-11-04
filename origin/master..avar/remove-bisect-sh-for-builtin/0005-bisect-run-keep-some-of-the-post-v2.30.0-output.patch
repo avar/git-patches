@@ -1,0 +1,112 @@
+From 30626dd507a07f017c7c22be9f2f61950ce5f728 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-05.13-30626dd507a-20221104T130740Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+References: <1cb1c033-0525-7e62-8c09-81019bf26060@redhat.com>
+	<cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 4 Nov 2022 13:25:27 +0100
+Subject: [PATCH 05/13] bisect run: keep some of the post-v2.30.0 output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Preceding commits fixed output and behavior regressions in
+d1bbbe45df8 (bisect--helper: reimplement `bisect_run` shell function
+in C, 2021-09-13), which did not claim to be changing the output of
+"git bisect run".
+
+But some of the output it emitted was subjectively better, so once
+we've asserted that we're back on v2.29.0 behavior, let's change some
+of it back:
+
+- We now quote the arguments again, but omit the first " " when
+  printing the "running" line.
+- Ditto for other cases where we emitted the argument
+- We say "found first bad commit" again, not just "run success"
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bisect--helper.c    |  6 +++---
+ t/t6030-bisect-porcelain.sh | 16 ++++++++--------
+ 2 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/builtin/bisect--helper.c b/builtin/bisect--helper.c
+index eb66ad491cd..5c0572d0672 100644
+--- a/builtin/bisect--helper.c
++++ b/builtin/bisect--helper.c
+@@ -1192,8 +1192,8 @@ static int bisect_run(struct bisect_terms *terms, const char **argv, int argc)
+ 
+ 	sq_quote_argv(&command, argv);
+ 	strvec_push(&run_args, command.buf);
+-	strbuf_reset(&command);
+-	strbuf_join_argv(&command, argc, argv, ' ');
++	/* Quoted, but skip initial " " */
++	strbuf_ltrim(&command);
+ 
+ 	while (1) {
+ 		printf(_("running %s\n"), command.buf);
+@@ -1262,7 +1262,7 @@ static int bisect_run(struct bisect_terms *terms, const char **argv, int argc)
+ 			puts(_("bisect run success"));
+ 			res = BISECT_OK;
+ 		} else if (res == BISECT_INTERNAL_SUCCESS_1ST_BAD_FOUND) {
+-			puts(_("bisect run success"));
++			puts(_("bisect found first bad commit"));
+ 			res = BISECT_OK;
+ 		} else if (res) {
+ 			error(_("bisect run failed: 'bisect-state"
+diff --git a/t/t6030-bisect-porcelain.sh b/t/t6030-bisect-porcelain.sh
+index dc83034f036..69fad3f94f6 100755
+--- a/t/t6030-bisect-porcelain.sh
++++ b/t/t6030-bisect-porcelain.sh
+@@ -288,9 +288,9 @@ test_bisect_run_args () {
+ test_expect_success 'git bisect run: args, stdout and stderr with no arguments' '
+ 	test_bisect_run_args <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
+ 	EOF_ARGS
+-	running ./run.sh
++	running '\''./run.sh'\''
+ 	$HASH4 is the first bad commit
+-	bisect run success
++	bisect found first bad commit
+ 	EOF_OUT
+ 	EOF_ERR
+ '
+@@ -299,9 +299,9 @@ test_expect_success 'git bisect run: args, stdout and stderr: "--" argument' '
+ 	test_bisect_run_args -- <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
+ 	<-->
+ 	EOF_ARGS
+-	running ./run.sh --
++	running '\''./run.sh'\'' '\''--'\''
+ 	$HASH4 is the first bad commit
+-	bisect run success
++	bisect found first bad commit
+ 	EOF_OUT
+ 	EOF_ERR
+ '
+@@ -313,9 +313,9 @@ test_expect_success 'git bisect run: args, stdout and stderr: "--log foo --no-lo
+ 	<--no-log>
+ 	<bar>
+ 	EOF_ARGS
+-	running ./run.sh --log foo --no-log bar
++	running '\''./run.sh'\'' '\''--log'\'' '\''foo'\'' '\''--no-log'\'' '\''bar'\''
+ 	$HASH4 is the first bad commit
+-	bisect run success
++	bisect found first bad commit
+ 	EOF_OUT
+ 	EOF_ERR
+ '
+@@ -324,9 +324,9 @@ test_expect_failure 'git bisect run: args, stdout and stderr: "--bisect-start" a
+ 	test_bisect_run_args --bisect-start <<-\EOF_ARGS 6<<-EOF_OUT 7<<-\EOF_ERR
+ 	<--bisect-start>
+ 	EOF_ARGS
+-	running ./run.sh --bisect-start
++	running '\''./run.sh'\'' '\''--bisect-start'\''
+ 	$HASH4 is the first bad commit
+-	bisect run success
++	bisect found first bad commit
+ 	EOF_OUT
+ 	EOF_ERR
+ '
+-- 
+2.38.0.1452.g710f45c7951
+

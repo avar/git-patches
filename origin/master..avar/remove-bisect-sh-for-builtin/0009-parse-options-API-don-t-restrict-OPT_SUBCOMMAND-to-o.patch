@@ -1,0 +1,129 @@
+From 2cb3807aa173a7b5746f73bf73023063bbf1a743 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-09.13-2cb3807aa17-20221104T130740Z-avarab@gmail.com>
+In-Reply-To: <cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+References: <1cb1c033-0525-7e62-8c09-81019bf26060@redhat.com>
+	<cover-00.13-00000000000-20221104T130740Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 3 Nov 2022 23:11:54 +0100
+Subject: [PATCH 09/13] parse-options API: don't restrict OPT_SUBCOMMAND() to
+ one *_fn  type
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the OPT_SUBCOMMAND() API was implemented in [1] it did so by
+adding a new "subcommand_fn" member to "struct option", rather than
+allowing the user of the API to pick the type of the function.
+
+An advantage of mandating that "parse_opt_subcommand_fn" must be used
+is that we'll get type checking for the function we're passing in, a
+disadvantage is that we can't convert e.g. "builtin/bisect--helper.c"
+easily to it, as its callbacks need their own argument.
+
+Let's generalize this interface, while leaving in place a small hack
+to give the existing API users their type safety. We assign to
+"typecheck_subcommand_fn", but don't subsequently use it for
+anything. Instead we use the "defval" and "value" members.
+
+A subsequent commit will add a OPT_SUBCOMMAND() variant where the
+"callback" isn't our default "parse_options_pick_subcommand" (and that
+caller won't be able to use the type checking).
+
+1. fa83cc834da (parse-options: add support for parsing subcommands,
+   2022-08-19)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ parse-options.c |  9 ++++++---
+ parse-options.h | 25 +++++++++++++++++++++----
+ 2 files changed, 27 insertions(+), 7 deletions(-)
+
+diff --git a/parse-options.c b/parse-options.c
+index a1ec932f0f9..1d9e46c9dc7 100644
+--- a/parse-options.c
++++ b/parse-options.c
+@@ -427,7 +427,8 @@ static enum parse_opt_result parse_subcommand(const char *arg,
+ 	for (; options->type != OPTION_END; options++)
+ 		if (options->type == OPTION_SUBCOMMAND &&
+ 		    !strcmp(options->long_name, arg)) {
+-			*(parse_opt_subcommand_fn **)options->value = options->subcommand_fn;
++			if (options->callback(options, arg, 0))
++				BUG("OPT_SUBCOMMAND callback returning non-zero");
+ 			return PARSE_OPT_SUBCOMMAND;
+ 		}
+ 
+@@ -506,8 +507,10 @@ static void parse_options_check(const struct option *opts)
+ 			       "That case is not supported yet.");
+ 			break;
+ 		case OPTION_SUBCOMMAND:
+-			if (!opts->value || !opts->subcommand_fn)
+-				optbug(opts, "OPTION_SUBCOMMAND needs a value and a subcommand function");
++			if (!opts->value || !opts->callback)
++				optbug(opts, "OPTION_SUBCOMMAND needs a value and a callback function");
++			if (opts->ll_callback)
++				optbug(opts, "OPTION_SUBCOMMAND uses callback, not ll_callback");
+ 			if (!subcommand_value)
+ 				subcommand_value = opts->value;
+ 			else if (subcommand_value != opts->value)
+diff --git a/parse-options.h b/parse-options.h
+index b6ef86e0d15..61e3016c3fc 100644
+--- a/parse-options.h
++++ b/parse-options.h
+@@ -128,19 +128,24 @@ typedef int parse_opt_subcommand_fn(int argc, const char **argv,
+  *			 the option takes optional argument.
+  *
+  * `callback`::
+- *   pointer to the callback to use for OPTION_CALLBACK
++ *   pointer to the callback to use for OPTION_CALLBACK and OPTION_SUBCOMMAND.
+  *
+  * `defval`::
+  *   default value to fill (*->value) with for PARSE_OPT_OPTARG.
+  *   OPTION_{BIT,SET_INT} store the {mask,integer} to put in the value when met.
++ *   OPTION_SUBCOMMAND stores the pointer the function selected for
++ *   the subcommand.
++ *
+  *   CALLBACKS can use it like they want.
+  *
+  * `ll_callback`::
+  *   pointer to the callback to use for OPTION_LOWLEVEL_CALLBACK
+  *
+  * `subcommand_fn`::
+- *   pointer to a function to use for OPTION_SUBCOMMAND.
+- *   It will be put in value when the subcommand is given on the command line.
++ *   pointer to the callback used with OPT_SUBCOMMAND() and
++ *   OPT_SUBCOMMAND_F(). Internally we store the same value in
++ *   `defval`. This is only here to give the OPT_SUBCOMMAND{,_F}()
++ *   common case type safety.
+  */
+ struct option {
+ 	enum parse_opt_type type;
+@@ -217,12 +222,24 @@ struct option {
+ #define OPT_ALIAS(s, l, source_long_name) \
+ 	{ OPTION_ALIAS, (s), (l), (source_long_name) }
+ 
++static inline int parse_options_pick_subcommand_cb(const struct option *option,
++						   const char *arg UNUSED,
++						   int unset UNUSED)
++{
++	parse_opt_subcommand_fn *fn = (parse_opt_subcommand_fn *)option->defval;
++	*(parse_opt_subcommand_fn **)option->value = fn;
++	return 0;
++}
++
+ #define OPT_SUBCOMMAND_F(l, v, fn, f) { \
+ 	.type = OPTION_SUBCOMMAND, \
+ 	.long_name = (l), \
+ 	.value = (v), \
+ 	.flags = (f), \
+-	.subcommand_fn = (fn) }
++	.defval = (intptr_t)(fn), \
++	.subcommand_fn = (fn), \
++	.callback = parse_options_pick_subcommand_cb, \
++}
+ #define OPT_SUBCOMMAND(l, v, fn)    OPT_SUBCOMMAND_F((l), (v), (fn), 0)
+ 
+ /*
+-- 
+2.38.0.1452.g710f45c7951
+
