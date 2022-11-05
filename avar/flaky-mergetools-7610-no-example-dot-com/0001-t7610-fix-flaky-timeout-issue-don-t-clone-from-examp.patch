@@ -1,0 +1,76 @@
+From 83eca7b5a7cdddcc1b9b470c32ef14a481135874 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-83eca7b5a7c-20221105T115408Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 5 Nov 2022 12:26:17 +0100
+Subject: [PATCH] t7610: fix flaky timeout issue, don't clone from example.com
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When t7610-mergetool.sh runs without failures the git://example.com
+submodule URLs will never be used. That's because we "git submodule
+add" it, but then manually populate them so that subsequent "git
+submodule update -N" won't attempt to clone it, only update it without
+fetching.
+
+But if we fail in an earlier test it'll have the knock-on effect of
+having later tests hang on that "git submodule update -N" as we
+attempt to clone this repository from example.com.
+
+This can be reproduced on "master" by running the test with
+SANITIZE=leak without "--immediate". With
+"GIT_TEST_PASSING_SANITIZE_LEAK=true" (which the linux-leaks job uses)
+we'll skip the test entirely. So we'll only run into this when running
+it manually, or with the "GIT_TEST_PASSING_SANITIZE_LEAK=check" mode.
+
+That's not because the failure has anything to do with leak detection
+per-se. It just so happens that we have a leak that'll fail before
+we've managed to fully set these up, and therefore "git submodule
+update -N" ends up spawning "git clone".
+
+Let's instead continue lying about the origin of this submodule by
+providing a URL for it that doesn't work, but now one that *really*
+doesn't work: /dev/null. If the test is passing we won't ever use
+this, and if we have knock-on failures we'll fail early, instead of
+waiting for a timeout.
+
+The behavior of "-N" here might be surprising to some, since it's
+explained as "[if you use -N we] don’t fetch new objects from the
+remote site". But (perhaps counter-intuitively) it's only talking
+about if it needs to do so via "git fetch". In this case we'll end up
+spawning a "git clone", as we have no submodule set up.
+
+See ff7f089ed10 (mergetool: Teach about submodules, 2011-04-13) for
+the commit that implemented these "example.com" tests.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7610-mergetool.sh | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/t/t7610-mergetool.sh b/t/t7610-mergetool.sh
+index 8cc64729adb..b1ba0d9a088 100755
+--- a/t/t7610-mergetool.sh
++++ b/t/t7610-mergetool.sh
+@@ -33,7 +33,7 @@ test_expect_success 'setup' '
+ 		git add foo &&
+ 		git commit -m "Add foo"
+ 	) &&
+-	git submodule add git://example.com/submod submod &&
++	git submodule add /dev/null submod &&
+ 	git add file1 "spaced name" file1[1-4] subdir/file3 .gitmodules submod &&
+ 	git commit -m "add initial versions" &&
+ 
+@@ -614,7 +614,7 @@ test_expect_success 'submodule in subdirectory' '
+ 		)
+ 	) &&
+ 	test_when_finished "rm -rf subdir/subdir_module" &&
+-	git submodule add git://example.com/subsubmodule subdir/subdir_module &&
++	git submodule add /dev/null subdir/subdir_module &&
+ 	git add subdir/subdir_module &&
+ 	git commit -m "add submodule in subdirectory" &&
+ 
+-- 
+2.38.0.1452.g710f45c7951
+
