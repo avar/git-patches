@@ -1,0 +1,63 @@
+From f6d76250174b7c700ea08583d73c8048ab9be206 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-12.15-f6d76250174-20221108T172650Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.15-00000000000-20221108T172650Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+	<cover-v2-00.15-00000000000-20221108T172650Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Nov 2022 01:16:43 +0100
+Subject: [PATCH v2 12/15] rebase: don't leak on "--abort"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak in the recent 6159e7add49 (rebase --abort: improve reflog
+message, 2022-10-12). Before that commit we'd strbuf_release() the
+reflog message we were formatting, but when that code was refactored
+to use "ropts.head_msg" the strbuf_release() was omitted.
+
+Ideally the three users of "ropts" in cmd_rebase() should use
+different "ropts" variables, in practice they're completely separate,
+as this and the other user in the "switch" statement will "goto
+cleanup", which won't touch "ropts".
+
+The third caller after the "switch" is then unreachable if we take
+these two branches, so all of them are getting a "{ 0 }" init'd
+"ropts".
+
+So it's OK that we're leaving a stale pointer in "ropts.head_msg",
+cleaning it up was our responsibility, and it won't be used again.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c          | 1 +
+ t/t7517-per-repo-email.sh | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index 6a831320313..3f360eb2f37 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -1322,6 +1322,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 		if (reset_head(the_repository, &ropts) < 0)
+ 			die(_("could not move back to %s"),
+ 			    oid_to_hex(&options.orig_head->object.oid));
++		strbuf_release(&head_msg);
+ 		remove_branch_state(the_repository, 0);
+ 		ret = finish_rebase(&options);
+ 		goto cleanup;
+diff --git a/t/t7517-per-repo-email.sh b/t/t7517-per-repo-email.sh
+index 163ae804685..efc6496e2b2 100755
+--- a/t/t7517-per-repo-email.sh
++++ b/t/t7517-per-repo-email.sh
+@@ -9,6 +9,7 @@ test_description='per-repo forced setting of email address'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup a likely user.useConfigOnly use case' '
+-- 
+2.38.0.1467.g709fbdff1a9
+

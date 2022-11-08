@@ -1,0 +1,106 @@
+From a2cc6f10d0d83faba3af132a5297cc794355cbff Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-07.15-a2cc6f10d0d-20221108T172650Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.15-00000000000-20221108T172650Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+	<cover-v2-00.15-00000000000-20221108T172650Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Jun 2022 11:02:50 +0200
+Subject: [PATCH v2 07/15] unpack-file: fix ancient leak in create_temp_file()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak that's been with us since 3407bb4940c (Add "unpack-file"
+helper that unpacks a sha1 blob into a tmpfile., 2005-04-18). See
+00c8fd493af (cat-file: use streaming API to print blobs, 2012-03-07)
+for prior art which shows the same API pattern, i.e. free()-ing the
+result of read_object_file() after it's used.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/unpack-file.c        | 1 +
+ t/t6060-merge-index.sh       | 2 ++
+ t/t6401-merge-criss-cross.sh | 2 ++
+ t/t6406-merge-attr.sh        | 1 +
+ t/t6407-merge-binary.sh      | 1 +
+ t/t7605-merge-resolve.sh     | 1 +
+ 6 files changed, 8 insertions(+)
+
+diff --git a/builtin/unpack-file.c b/builtin/unpack-file.c
+index 9e8119dd354..88de32b7d7e 100644
+--- a/builtin/unpack-file.c
++++ b/builtin/unpack-file.c
+@@ -19,6 +19,7 @@ static char *create_temp_file(struct object_id *oid)
+ 	if (write_in_full(fd, buf, size) < 0)
+ 		die_errno("unable to write temp-file");
+ 	close(fd);
++	free(buf);
+ 	return path;
+ }
+ 
+diff --git a/t/t6060-merge-index.sh b/t/t6060-merge-index.sh
+index ed449abe552..1a8b64cce18 100755
+--- a/t/t6060-merge-index.sh
++++ b/t/t6060-merge-index.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='basic git merge-index / git-merge-one-file tests'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup diverging branches' '
+diff --git a/t/t6401-merge-criss-cross.sh b/t/t6401-merge-criss-cross.sh
+index 9d5e992878f..1962310408b 100755
+--- a/t/t6401-merge-criss-cross.sh
++++ b/t/t6401-merge-criss-cross.sh
+@@ -8,6 +8,8 @@
+ 
+ 
+ test_description='Test criss-cross merge'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'prepare repository' '
+diff --git a/t/t6406-merge-attr.sh b/t/t6406-merge-attr.sh
+index 8650a88c40a..5e4e4dd6d9e 100755
+--- a/t/t6406-merge-attr.sh
++++ b/t/t6406-merge-attr.sh
+@@ -8,6 +8,7 @@ test_description='per path merge controlled by merge attribute'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t6407-merge-binary.sh b/t/t6407-merge-binary.sh
+index e8a28717cec..0753fc95f45 100755
+--- a/t/t6407-merge-binary.sh
++++ b/t/t6407-merge-binary.sh
+@@ -5,6 +5,7 @@ test_description='ask merge-recursive to merge binary files'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t7605-merge-resolve.sh b/t/t7605-merge-resolve.sh
+index 5d56c385464..62d935d31c2 100755
+--- a/t/t7605-merge-resolve.sh
++++ b/t/t7605-merge-resolve.sh
+@@ -4,6 +4,7 @@ test_description='git merge
+ 
+ Testing the resolve strategy.'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+-- 
+2.38.0.1467.g709fbdff1a9
+

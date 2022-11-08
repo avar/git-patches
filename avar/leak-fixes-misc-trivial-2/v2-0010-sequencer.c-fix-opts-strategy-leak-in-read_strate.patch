@@ -1,0 +1,105 @@
+From 243ab74120b5c7c76e80c132a2a12cfa9258fb14 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-10.15-243ab74120b-20221108T172650Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.15-00000000000-20221108T172650Z-avarab@gmail.com>
+References: <cover-00.17-00000000000-20221103T164632Z-avarab@gmail.com>
+	<cover-v2-00.15-00000000000-20221108T172650Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 19 Aug 2022 13:57:27 +0200
+Subject: [PATCH v2 10/15] sequencer.c: fix "opts->strategy" leak in
+ read_strategy_opts()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When "read_strategy_opts()" is called we may have populated the
+"opts->strategy" before, so we'll need to free() it to avoid leaking
+memory.
+
+We populate it before because we cal get_replay_opts() from within
+"rebase.c" with an already populated "opts", which we then copy. Then
+if we're doing a "rebase -i" the sequencer API itself will promptly
+clobber our alloc'd version of it with its own.
+
+If this code is changed to do, instead of the added free() here a:
+
+	if (opts->strategy)
+		opts->strategy = xstrdup("another leak");
+
+We get a couple of stacktraces from -fsanitize=leak showing how we
+ended up clobbering the already allocated value, i.e.:
+
+	Direct leak of 6 byte(s) in 1 object(s) allocated from:
+	    #0 0x7f2e8cd45545 in __interceptor_malloc ../../../../src/libsanitizer/lsan/lsan_interceptors.cpp:75
+	    #1 0x7f2e8cb0fcaa in __GI___strdup string/strdup.c:42
+	    #2 0x6c4778 in xstrdup wrapper.c:39
+	    #3 0x66bcb8 in read_strategy_opts sequencer.c:2902
+	    #4 0x66bf7b in read_populate_opts sequencer.c:2969
+	    #5 0x6723f9 in sequencer_continue sequencer.c:5063
+	    #6 0x4a4f74 in run_sequencer_rebase builtin/rebase.c:348
+	    #7 0x4a64c8 in run_specific_rebase builtin/rebase.c:753
+	    #8 0x4a9b8b in cmd_rebase builtin/rebase.c:1824
+	    #9 0x407a32 in run_builtin git.c:466
+	    #10 0x407e0a in handle_builtin git.c:721
+	    #11 0x40803d in run_argv git.c:788
+	    #12 0x40850f in cmd_main git.c:923
+	    #13 0x4eee79 in main common-main.c:57
+	    #14 0x7f2e8ca9f209 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+	    #15 0x7f2e8ca9f2bb in __libc_start_main_impl ../csu/libc-start.c:389
+	    #16 0x405fd0 in _start (git+0x405fd0)
+
+	Direct leak of 4 byte(s) in 1 object(s) allocated from:
+	    #0 0x7f2e8cd45545 in __interceptor_malloc ../../../../src/libsanitizer/lsan/lsan_interceptors.cpp:75
+	    #1 0x7f2e8cb0fcaa in __GI___strdup string/strdup.c:42
+	    #2 0x6c4778 in xstrdup wrapper.c:39
+	    #3 0x4a3c31 in xstrdup_or_null git-compat-util.h:1169
+	    #4 0x4a447a in get_replay_opts builtin/rebase.c:163
+	    #5 0x4a4f5b in run_sequencer_rebase builtin/rebase.c:346
+	    #6 0x4a64c8 in run_specific_rebase builtin/rebase.c:753
+	    #7 0x4a9b8b in cmd_rebase builtin/rebase.c:1824
+	    #8 0x407a32 in run_builtin git.c:466
+	    #9 0x407e0a in handle_builtin git.c:721
+	    #10 0x40803d in run_argv git.c:788
+	    #11 0x40850f in cmd_main git.c:923
+	    #12 0x4eee79 in main common-main.c:57
+	    #13 0x7f2e8ca9f209 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+	    #14 0x7f2e8ca9f2bb in __libc_start_main_impl ../csu/libc-start.c:389
+	    #15 0x405fd0 in _start (git+0x405fd0)
+
+This can be seen in e.g. the 4th test of
+"t3404-rebase-interactive.sh".
+
+In the larger picture the ownership of the "struct replay_opts" is
+quite a mess, e.g. in this case rebase.c's static "get_replay_opts()"
+function partially creates it, but nothing in rebase.c will free()
+it. The structure is "mostly owned" by the sequencer API, but it also
+expects to get these partially populated versions of it.
+
+It would be better to have rebase keep track of what it allocated, and
+free() that, and to pass that as a "const" to the sequencer API, which
+would copy what it needs to its own version, and to free() that.
+
+But doing so is a much larger change, and however messy the ownership
+boundary is here is consistent with what we're doing already, so let's
+just free() this to fix the leak.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sequencer.c b/sequencer.c
+index e23f6f0b718..433fec21562 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -2897,6 +2897,7 @@ static void read_strategy_opts(struct replay_opts *opts, struct strbuf *buf)
+ 	strbuf_reset(buf);
+ 	if (!read_oneliner(buf, rebase_path_strategy(), 0))
+ 		return;
++	free(opts->strategy);
+ 	opts->strategy = strbuf_detach(buf, NULL);
+ 	if (!read_oneliner(buf, rebase_path_strategy_opts(), 0))
+ 		return;
+-- 
+2.38.0.1467.g709fbdff1a9
+
