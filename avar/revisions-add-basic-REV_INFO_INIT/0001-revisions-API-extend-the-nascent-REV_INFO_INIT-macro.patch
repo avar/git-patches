@@ -1,5 +1,5 @@
-From a1e99ffe54b823f839a0a7be4fcb54169aa3241c Mon Sep 17 00:00:00 2001
-Message-Id: <patch-1.1-a1e99ffe54b-20221108T134102Z-avarab@gmail.com>
+From c3afcd69ddbe9c0dffed10770df74d9c17965617 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-c3afcd69ddb-20221108T140134Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Sat, 26 Mar 2022 14:01:06 +0100
@@ -8,25 +8,47 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Have the REV_INFO_INIT macro added in f196c1e908d (revisions API
-users: use release_revisions() needing REV_INFO_INIT, 2022-04-13)
-initialize more fields, rather than having repo_init_revisions() do
-so.
+Have the REV_INFO_INIT macro added in [1] declare more members of
+"struct rev_info" that we can initialize statically, and have
+repo_init_revisions() do so with the memcpy(..., &blank) idiom
+introduced in [2].
 
-This isn't sufficient to initialize a "struct rev_info" yet, but we
-are getting closer to that eventual goal. Even though we can't fully
-initialize a "struct rev_info" with REV_INFO_INIT it's useful to
-clearly separate those things that we can statically initialize, and
-those that we can't.
+As the comment for the "REV_INFO_INIT" macro notes this still isn't
+sufficient to initialize a "struct rev_info" for use yet. But we are
+getting closer to that eventual goal.
+
+Even though we can't fully initialize a "struct rev_info" with
+REV_INFO_INIT it's useful for readability to clearly separate those
+things that we can statically initialize, and those that we can't.
+
+This change could replace the:
+
+	list_objects_filter_init(&revs->filter);
+
+In the repo_init_revisions() with this line, at the end of the
+REV_INFO_INIT deceleration in revisions.h:
+
+	.filter = LIST_OBJECTS_FILTER_INIT, \
+
+But doing so would produce a minor conflict with an outstanding
+topic[3]. Let's skip that for now. I have follow-ups to initialize
+more of this statically, e.g. changes to get rid of grep_init(). We
+can initialize more members with the macro in a future series.
+
+1. f196c1e908d (revisions API users: use release_revisions() needing
+   REV_INFO_INIT, 2022-04-13)
+2. 5726a6b4012 (*.c *_init(): define in terms of corresponding *_INIT
+   macro, 2021-07-01)
+3. https://lore.kernel.org/git/265b292ed5c2de19b7118dfe046d3d9d932e2e89.1667901510.git.ps@pks.im/
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- revision.c | 20 ++------------------
- revision.h | 19 ++++++++++++++++++-
- 2 files changed, 20 insertions(+), 19 deletions(-)
+ revision.c | 19 ++-----------------
+ revision.h | 18 +++++++++++++++++-
+ 2 files changed, 19 insertions(+), 18 deletions(-)
 
 diff --git a/revision.c b/revision.c
-index 0760e78936e..84094b96332 100644
+index 0760e78936e..c6b39965834 100644
 --- a/revision.c
 +++ b/revision.c
 @@ -1865,30 +1865,15 @@ void repo_init_revisions(struct repository *r,
@@ -62,19 +84,11 @@ index 0760e78936e..84094b96332 100644
  
  	grep_init(&revs->grep_filter, revs->repo);
  	revs->grep_filter.status_only = 1;
-@@ -1900,7 +1885,6 @@ void repo_init_revisions(struct repository *r,
- 	}
- 
- 	init_display_notes(&revs->notes_opt);
--	list_objects_filter_init(&revs->filter);
- }
- 
- static void add_pending_commit_list(struct rev_info *revs,
 diff --git a/revision.h b/revision.h
-index afe1b77985f..93640aa30a0 100644
+index afe1b77985f..8493a3f3b93 100644
 --- a/revision.h
 +++ b/revision.h
-@@ -357,7 +357,24 @@ struct rev_info {
+@@ -357,7 +357,23 @@ struct rev_info {
   * called before release_revisions() the "struct rev_info" can be left
   * uninitialized.
   */
@@ -95,7 +109,6 @@ index afe1b77985f..93640aa30a0 100644
 +	.expand_tabs_in_log = -1, \
 +	.commit_format = CMIT_FMT_DEFAULT, \
 +	.expand_tabs_in_log_default = 8, \
-+	.filter = LIST_OBJECTS_FILTER_INIT, \
 +}
  
  /**
