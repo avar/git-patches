@@ -1,0 +1,160 @@
+From cccd92a829c7ae6c0cddf877f5fa997d23a0836a Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.9-00000000000-20221108T140501Z-avarab@gmail.com>
+In-Reply-To: <cover-0.8-00000000000-20221102T074148Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20221102T074148Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 8 Nov 2022 15:05:01 +0100
+Subject: [PATCH v2 0/9] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (9):
+  submodule--helper: move "config" to a test-tool
+  submodule tests: add tests for top-level flag output
+  submodule--helper: fix  a memory leak in "status"
+  submodule tests: test for a "foreach" blind-spot
+  submodule.c: refactor recursive block out of absorb function
+  submodule API & "absorbgitdirs": remove "----recursive" option
+  submodule--helper: remove --prefix from "absorbgitdirs"
+  submodule--helper: drop "update --prefix <pfx>" for "-C <pfx> update"
+  submodule--helper: use OPT_SUBCOMMAND() API
+
+ builtin/rm.c                           |   3 +-
+ builtin/submodule--helper.c            | 146 +++++++--------------
+ git-submodule.sh                       |   3 +-
+ git.c                                  |   2 +-
+ submodule.c                            |  41 +++---
+ submodule.h                            |   4 +-
+ t/helper/test-submodule.c              |  84 ++++++++++++
+ t/t7400-submodule-basic.sh             |  10 ++
+ t/t7407-submodule-foreach.sh           |   5 +
+ t/t7411-submodule-config.sh            |  36 +++---
+ t/t7418-submodule-sparse-gitmodules.sh |   4 +-
+ t/t7422-submodule-output.sh            | 170 +++++++++++++++++++++++++
+ 12 files changed, 358 insertions(+), 150 deletions(-)
+ create mode 100755 t/t7422-submodule-output.sh
+
+Range-diff against v1:
+ 1:  b2649f96715 !  1:  ca8f8b4bf63 submodule--helper: move "config" to a test-tool
+    @@ Commit message
+         'ab/submodule-helper-prep', 2022-09-13) the "config" sub-command was
+         only used by our own tests.
+     
+    +    It was last used by "git submodule" itself in code that went away with
+    +    a6226fd772b (submodule--helper: convert the bulk of cmd_add() to C,
+    +    2021-08-10).
+    +
+         Let's move it over, and while doing so make it easier to reason about
+         by splitting up the various uses for it into separate sub-commands, so
+         that we don't need to count arguments to see what it does.
+     
+    +    This also has the advantage that we stop wasting future translator
+    +    time on this command, currently the usage information for this
+    +    internal-only tool has been translated into several languages. The use
+    +    of the "_" function has also been removed from the "please make
+    +    sure..." message.
+    +
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/submodule--helper.c ##
+    @@ t/helper/test-submodule.c: static int cmd__submodule_resolve_relative_url(int ar
+     +	/* Equivalent to ACTION_SET in builtin/config.c */
+     +	if (argc == 3) {
+     +		if (!is_writing_gitmodules_ok())
+    -+			die(_("please make sure that the .gitmodules file is in the working tree"));
+    ++			die("please make sure that the .gitmodules file is in the working tree");
+     +
+     +		return config_set_in_gitmodules_file_gently(argv[1], argv[2]);
+     +	}
+    @@ t/helper/test-submodule.c: static int cmd__submodule_resolve_relative_url(int ar
+     +
+     +	if (argc == 2) {
+     +		if (!is_writing_gitmodules_ok())
+    -+			die(_("please make sure that the .gitmodules file is in the working tree"));
+    ++			die("please make sure that the .gitmodules file is in the working tree");
+     +		return config_set_in_gitmodules_file_gently(argv[1], NULL);
+     +	}
+     +	usage_with_options(usage, options);
+    @@ t/helper/test-submodule.c: static int cmd__submodule_resolve_relative_url(int ar
+     
+      ## t/t7411-submodule-config.sh ##
+     @@ t/t7411-submodule-config.sh: test_expect_success 'error in history in fetchrecursesubmodule lets continue' '
+    - test_expect_success 'reading submodules config from the working tree with "submodule--helper config"' '
+    + 	)
+    + '
+    + 
+    +-test_expect_success 'reading submodules config from the working tree with "submodule--helper config"' '
+    ++test_expect_success 'reading submodules config from the working tree' '
+      	(cd super &&
+      		echo "../submodule" >expect &&
+     -		git submodule--helper config submodule.submodule.url >actual &&
+    @@ t/t7411-submodule-config.sh: test_expect_success 'error in history in fetchrecur
+      	)
+      '
+      
+    - test_expect_success 'unsetting submodules config from the working tree with "submodule--helper config --unset"' '
+    +-test_expect_success 'unsetting submodules config from the working tree with "submodule--helper config --unset"' '
+    ++test_expect_success 'unsetting submodules config from the working tree' '
+      	(cd super &&
+     -		git submodule--helper config --unset submodule.submodule.url &&
+     -		git submodule--helper config submodule.submodule.url >actual &&
+    @@ t/t7411-submodule-config.sh: test_expect_success 'error in history in fetchrecur
+      		test_must_be_empty actual
+      	)
+      '
+    -@@ t/t7411-submodule-config.sh: test_expect_success 'unsetting submodules config from the working tree with "sub
+    - test_expect_success 'writing submodules config with "submodule--helper config"' '
+    + 
+    + 
+    +-test_expect_success 'writing submodules config with "submodule--helper config"' '
+    ++test_expect_success 'writing submodules config' '
+      	(cd super &&
+      		echo "new_url" >expect &&
+     -		git submodule--helper config submodule.submodule.url "new_url" &&
+    @@ t/t7411-submodule-config.sh: test_expect_success 'unsetting submodules config fr
+      		test_cmp expect actual
+      	)
+      '
+    -@@ t/t7411-submodule-config.sh: test_expect_success 'overwriting unstaged submodules config with "submodule--hel
+    + 
+    +-test_expect_success 'overwriting unstaged submodules config with "submodule--helper config"' '
+    ++test_expect_success 'overwriting unstaged submodules config' '
+      	test_when_finished "git -C super checkout .gitmodules" &&
+      	(cd super &&
+      		echo "newer_url" >expect &&
+ 2:  cda36b5b6e0 !  2:  5508c27f653 submodule tests: add tests for top-level flag output
+    @@ t/t7422-submodule-output.sh (new)
+     +	git -C X pull &&
+     +	GIT_ALLOW_PROTOCOL=file git -C X submodule update --init &&
+     +
+    -+	# dirty p
+    ++	# dirty
+     +	for d in S.D X/S.D
+     +	do
+    -+		echo dirty >S.D/A.t || return 1
+    ++		echo dirty >"$d"/A.t || return 1
+     +	done &&
+     +
+     +	# commit (for --cached)
+    @@ t/t7422-submodule-output.sh (new)
+     +
+     +	for ref in A B C
+     +	do
+    -+		# Not different with SHA-1 and SHA-256, just (ab)usign
+    ++		# Not different with SHA-1 and SHA-256, just (ab)using
+     +		# test_oid_cache as a variable bag to avoid using
+     +		# $(git rev-parse ...).
+     +		oid=$(git rev-parse $ref) &&
+ -:  ----------- >  3:  a3529d7f9e0 submodule--helper: fix  a memory leak in "status"
+ 3:  0ed1fc7fdf8 =  4:  c14cc0e14b8 submodule tests: test for a "foreach" blind-spot
+ 4:  f7adfbc13ae =  5:  459ea25125b submodule.c: refactor recursive block out of absorb function
+ 5:  2b8afd73b9b =  6:  322a02c30fc submodule API & "absorbgitdirs": remove "----recursive" option
+ 6:  91208241070 =  7:  d1f4ac20a4f submodule--helper: remove --prefix from "absorbgitdirs"
+ 7:  77d4d5a6c09 =  8:  ac9ff05ef68 submodule--helper: drop "update --prefix <pfx>" for "-C <pfx> update"
+ 8:  105853cd358 =  9:  cccd92a829c submodule--helper: use OPT_SUBCOMMAND() API
+-- 
+2.38.0.1464.gea6794aacbc
+

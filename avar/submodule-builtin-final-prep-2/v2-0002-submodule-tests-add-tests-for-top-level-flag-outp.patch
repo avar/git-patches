@@ -1,0 +1,224 @@
+From 5508c27f653979d0f187bdeff21060ea2aa656da Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.9-5508c27f653-20221108T140501Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20221108T140501Z-avarab@gmail.com>
+References: <cover-0.8-00000000000-20221102T074148Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20221108T140501Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 22 Oct 2022 13:24:02 +0200
+Subject: [PATCH v2 2/9] submodule tests: add tests for top-level flag output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Exhaustively test for how combining various "mixed-level" "git
+submodule" option works. "Mixed-level" here means options that are
+accepted by a mixture of the top-level "submodule" command, and
+e.g. the "status" sub-command.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t7400-submodule-basic.sh  |  10 +++
+ t/t7422-submodule-output.sh | 169 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 179 insertions(+)
+ create mode 100755 t/t7422-submodule-output.sh
+
+diff --git a/t/t7400-submodule-basic.sh b/t/t7400-submodule-basic.sh
+index a989aafaf57..eae6a46ef3d 100755
+--- a/t/t7400-submodule-basic.sh
++++ b/t/t7400-submodule-basic.sh
+@@ -579,6 +579,16 @@ test_expect_success 'status should be "modified" after submodule commit' '
+ 	grep "^+$rev2" list
+ '
+ 
++test_expect_success '"submodule --cached" command forms should be identical' '
++	git submodule status --cached >expect &&
++
++	git submodule --cached >actual &&
++	test_cmp expect actual &&
++
++	git submodule --cached status >actual &&
++	test_cmp expect actual
++'
++
+ test_expect_success 'the --cached sha1 should be rev1' '
+ 	git submodule --cached status >list &&
+ 	grep "^+$rev1" list
+diff --git a/t/t7422-submodule-output.sh b/t/t7422-submodule-output.sh
+new file mode 100755
+index 00000000000..1e9cdf1a68e
+--- /dev/null
++++ b/t/t7422-submodule-output.sh
+@@ -0,0 +1,169 @@
++#!/bin/sh
++
++test_description='submodule --cached, --quiet etc. output'
++
++. ./test-lib.sh
++. "$TEST_DIRECTORY"/lib-t3100.sh
++
++setup_sub () {
++	local d="$1" &&
++	shift &&
++	git $@ clone . "$d" &&
++	git $@ submodule add ./"$d"
++}
++
++normalize_status () {
++	sed -e 's/-g[0-9a-f]*/-gHASH/'
++}
++
++test_expect_success 'setup' '
++	test_commit A &&
++	test_commit B &&
++	setup_sub S  &&
++	setup_sub S.D &&
++	setup_sub S.C &&
++	setup_sub S.C.D &&
++	setup_sub X &&
++	git add S* &&
++	test_commit C &&
++
++	# recursive in X/
++	git -C X pull &&
++	GIT_ALLOW_PROTOCOL=file git -C X submodule update --init &&
++
++	# dirty
++	for d in S.D X/S.D
++	do
++		echo dirty >"$d"/A.t || return 1
++	done &&
++
++	# commit (for --cached)
++	for d in S.C* X/S.C*
++	do
++		git -C "$d" reset --hard A || return 1
++	done &&
++
++	# dirty
++	for d in S*.D X/S*.D
++	do
++		echo dirty >"$d/C2.t" || return 1
++	done &&
++
++	for ref in A B C
++	do
++		# Not different with SHA-1 and SHA-256, just (ab)using
++		# test_oid_cache as a variable bag to avoid using
++		# $(git rev-parse ...).
++		oid=$(git rev-parse $ref) &&
++		test_oid_cache <<-EOF || return 1
++		$ref sha1:$oid
++		$ref sha256:$oid
++		EOF
++	done
++'
++
++for opts in "" "status"
++do
++	test_expect_success "git submodule $opts" '
++		sed -e "s/^>//" >expect <<-EOF &&
++		> $(test_oid B) S (B)
++		>+$(test_oid A) S.C (A)
++		>+$(test_oid A) S.C.D (A)
++		> $(test_oid B) S.D (B)
++		>+$(test_oid C) X (C)
++		EOF
++		git submodule $opts >actual.raw &&
++		normalize_status <actual.raw >actual &&
++		test_cmp expect actual
++	'
++done
++
++for opts in \
++	"status --recursive"
++do
++	test_expect_success "git submodule $opts" '
++		sed -e "s/^>//" >expect <<-EOF &&
++		> $(test_oid B) S (B)
++		>+$(test_oid A) S.C (A)
++		>+$(test_oid A) S.C.D (A)
++		> $(test_oid B) S.D (B)
++		>+$(test_oid C) X (C)
++		> $(test_oid B) X/S (B)
++		>+$(test_oid A) X/S.C (A)
++		>+$(test_oid A) X/S.C.D (A)
++		> $(test_oid B) X/S.D (B)
++		> $(test_oid B) X/X (B)
++		EOF
++		git submodule $opts >actual.raw &&
++		normalize_status <actual.raw >actual &&
++		test_cmp expect actual
++	'
++done
++
++for opts in \
++	"--quiet" \
++	"--quiet status" \
++	"status --quiet"
++do
++	test_expect_success "git submodule $opts" '
++		git submodule $opts >out &&
++		test_must_be_empty out
++	'
++done
++
++for opts in \
++	"--cached" \
++	"--cached status" \
++	"status --cached"
++do
++	test_expect_success "git submodule $opts" '
++		sed -e "s/^>//" >expect <<-EOF &&
++		> $(test_oid B) S (B)
++		>+$(test_oid B) S.C (B)
++		>+$(test_oid B) S.C.D (B)
++		> $(test_oid B) S.D (B)
++		>+$(test_oid B) X (B)
++		EOF
++		git submodule $opts >actual.raw &&
++		normalize_status <actual.raw >actual &&
++		test_cmp expect actual
++	'
++done
++
++for opts in \
++	"--cached --quiet" \
++	"--cached --quiet status" \
++	"--cached status --quiet" \
++	"--quiet status --cached" \
++	"status --cached --quiet"
++do
++	test_expect_success "git submodule $opts" '
++		git submodule $opts >out &&
++		test_must_be_empty out
++	'
++done
++
++for opts in \
++	"status --cached --recursive" \
++	"--cached status --recursive"
++do
++	test_expect_success "git submodule $opts" '
++		sed -e "s/^>//" >expect <<-EOF &&
++		> $(test_oid B) S (B)
++		>+$(test_oid B) S.C (B)
++		>+$(test_oid B) S.C.D (B)
++		> $(test_oid B) S.D (B)
++		>+$(test_oid B) X (B)
++		> $(test_oid B) X/S (B)
++		>+$(test_oid B) X/S.C (B)
++		>+$(test_oid B) X/S.C.D (B)
++		> $(test_oid B) X/S.D (B)
++		> $(test_oid B) X/X (B)
++		EOF
++		git submodule $opts >actual.raw &&
++		normalize_status <actual.raw >actual &&
++		test_cmp expect actual
++	'
++done
++
++test_done
+-- 
+2.38.0.1464.gea6794aacbc
+
