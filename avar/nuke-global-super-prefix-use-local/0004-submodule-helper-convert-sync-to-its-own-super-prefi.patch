@@ -1,0 +1,116 @@
+From 5ffe4407e4657446df7a5c43c2c565868afaa0a2 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-4.8-5ffe4407e46-20221109T192231Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.8-00000000000-20221109T192231Z-avarab@gmail.com>
+References: <20221109004708.97668-1-chooglen@google.com>
+	<RFC-cover-0.8-00000000000-20221109T192231Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 9 Nov 2022 12:30:53 +0100
+Subject: [RFC PATCH 4/8] submodule--helper: convert "sync" to its own
+ "--super-prefix"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As with a preceding commit to convert "absorbgitdirs", we can convert
+"submodule--helper sync" to use its own "--super-prefix", instead of
+relying on the global "--super-prefix" argument to "git" itself. See
+that earlier commit for the rationale and background.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/submodule--helper.c | 21 +++++++++++++--------
+ 1 file changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/submodule--helper.c b/builtin/submodule--helper.c
+index 989c75280af..db58fd5b2c4 100644
+--- a/builtin/submodule--helper.c
++++ b/builtin/submodule--helper.c
+@@ -1214,12 +1214,13 @@ static int module_summary(int argc, const char **argv, const char *prefix)
+ 
+ struct sync_cb {
+ 	const char *prefix;
++	const char *super_prefix;
+ 	unsigned int flags;
+ };
+ #define SYNC_CB_INIT { 0 }
+ 
+ static void sync_submodule(const char *path, const char *prefix,
+-			   unsigned int flags)
++			   const char *super_prefix, unsigned int flags)
+ {
+ 	const struct submodule *sub;
+ 	char *remote_key = NULL;
+@@ -1250,7 +1251,7 @@ static void sync_submodule(const char *path, const char *prefix,
+ 		super_config_url = xstrdup("");
+ 	}
+ 
+-	displaypath = get_submodule_displaypath(path, prefix);
++	displaypath = get_submodule_displaypath_sp(path, prefix, super_prefix);
+ 
+ 	if (!(flags & OPT_QUIET))
+ 		printf(_("Synchronizing submodule url for '%s'\n"),
+@@ -1287,10 +1288,11 @@ static void sync_submodule(const char *path, const char *prefix,
+ 		cpr.dir = path;
+ 		prepare_submodule_repo_env(&cpr.env);
+ 
+-		strvec_push(&cpr.args, "--super-prefix");
+-		strvec_pushf(&cpr.args, "%s/", displaypath);
+ 		strvec_pushl(&cpr.args, "submodule--helper", "sync",
+ 			     "--recursive", NULL);
++		strvec_push(&cpr.args, "--super-prefix");
++		strvec_pushf(&cpr.args, "%s/", displaypath);
++
+ 
+ 		if (flags & OPT_QUIET)
+ 			strvec_push(&cpr.args, "--quiet");
+@@ -1313,7 +1315,8 @@ static void sync_submodule_cb(const struct cache_entry *list_item, void *cb_data
+ {
+ 	struct sync_cb *info = cb_data;
+ 
+-	sync_submodule(list_item->name, info->prefix, info->flags);
++	sync_submodule(list_item->name, info->prefix, info->super_prefix,
++		       info->flags);
+ }
+ 
+ static int module_sync(int argc, const char **argv, const char *prefix)
+@@ -1323,7 +1326,9 @@ static int module_sync(int argc, const char **argv, const char *prefix)
+ 	struct module_list list = MODULE_LIST_INIT;
+ 	int quiet = 0;
+ 	int recursive = 0;
++	const char *super_prefix = NULL;
+ 	struct option module_sync_options[] = {
++		OPT__SUPER_PREFIX(&super_prefix),
+ 		OPT__QUIET(&quiet, N_("suppress output of synchronizing submodule url")),
+ 		OPT_BOOL(0, "recursive", &recursive,
+ 			N_("recurse into nested submodules")),
+@@ -1342,6 +1347,7 @@ static int module_sync(int argc, const char **argv, const char *prefix)
+ 		goto cleanup;
+ 
+ 	info.prefix = prefix;
++	info.super_prefix = super_prefix;
+ 	if (quiet)
+ 		info.flags |= OPT_QUIET;
+ 	if (recursive)
+@@ -2890,7 +2896,7 @@ static int module_set_url(int argc, const char **argv, const char *prefix)
+ 	config_name = xstrfmt("submodule.%s.url", path);
+ 
+ 	config_set_in_gitmodules_file_gently(config_name, newurl);
+-	sync_submodule(path, prefix, quiet ? OPT_QUIET : 0);
++	sync_submodule(path, prefix, NULL, quiet ? OPT_QUIET : 0);
+ 
+ 	free(config_name);
+ 
+@@ -3395,8 +3401,7 @@ int cmd_submodule__helper(int argc, const char **argv, const char *prefix)
+ 	subcmd = argv[0];
+ 
+ 	if (strcmp(subcmd, "clone") && strcmp(subcmd, "update") &&
+-	    strcmp(subcmd, "status") && strcmp(subcmd, "sync") &&
+-	    get_super_prefix())
++	    strcmp(subcmd, "status") && get_super_prefix())
+ 		/*
+ 		 * xstrfmt() rather than "%s %s" to keep the translated
+ 		 * string identical to git.c's.
+-- 
+2.38.0.1467.g709fbdff1a9
+
