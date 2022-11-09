@@ -4,12 +4,49 @@ In-Reply-To: <20221109004708.97668-1-chooglen@google.com>
 References: <20221109004708.97668-1-chooglen@google.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Wed, 9 Nov 2022 20:23:15 +0100
-Subject: [RFC PATCH 0/8] *** SUBJECT HERE ***
+Subject: [RFC PATCH 0/8] Get rid of "git --super-prefix"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+An RFC alternative to Glen's [1], and what I *thought* he might be be
+going for in the earlier discussion[2].
+
+The difference is that in Glen's there's no "git --super-prefix", but
+rather each set of commands still using it ("submodule--helper",
+"read-tree" etc.) geit their own command-level option.
+
+But it still works substantially the same, in that we're juggling a
+global variable that we set, and read out later somewhere down the
+stack.
+
+Whereas here there's no renaming of the option, but:
+
+ * For "submodule--helper" only the sub-commands that need it take the
+   option, it's not an option to "submodule--helper" itself.
+
+ * There's no passing of the "super_prefix" as a global, instead we
+   pass it all the way along until we recurse to ourselves. For
+   "submodule--helper" this is quite straightforward.
+
+ * Then in 8/8 we're left with just "read-tree" needing the remaining
+   "--super-prefix", and we likewise don't pass it as a global, but
+   instead add it to the "struct unpack_trees_options", which will
+   pass it all the way down into unpack-trees.c and entry.c, until
+   we're going to recursively invoke another "read-tree".
+
+This is on top of my "ab/submodule-helper-prep-only" which is now in
+"next", and can make use of (but doesn't need) the better test
+coverage for "absorbgitdirs" that I submitted in [3].
+
+A non-RFC version of this should really steal Glen's tests, in
+particular the "partial clone" one from [4]. That test passes with
+this series.
+
+1. https://lore.kernel.org/git/20221109004708.97668-1-chooglen@google.com/
+2. https://lore.kernel.org/git/kl6l8rkqy7no.fsf@chooglen-macbookpro.roam.corp.google.com/
+3. https://lore.kernel.org/git/patch-1.1-34b54fdd9bb-20221109T020347Z-avarab@gmail.com/
+4. https://lore.kernel.org/git/20221109004708.97668-4-chooglen@google.com/.
 
 Ævar Arnfjörð Bjarmason (8):
   submodule--helper: don't use global --super-prefix in "absorbgitdirs"
