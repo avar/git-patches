@@ -1,0 +1,141 @@
+From 5bdb8deb0c74497b6ed033937819feb01c6bd969 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.1-5bdb8deb0c7-20221110T161232Z-avarab@gmail.com>
+In-Reply-To: <221109.86tu38p1x8.gmgdl@evledraar.gmail.com>
+References: <221109.86tu38p1x8.gmgdl@evledraar.gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 10 Nov 2022 15:05:18 +0100
+Subject: [PATCH] Makefile: don't create a ".build/.build/" for cocci, fix
+ output
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a couple of issues in the recently merged 0f3c55d4c2b (Merge
+branch 'ab/coccicheck-incremental' into next, 2022-11-08):
+
+In copying over the "contrib/coccinelle/" rules to
+".build/contrib/coccinelle/" we inadvertently ended up with a
+".build/.build/contrib/coccinelle/" as well. We'd generate the
+per-file patches in the former, and keep the rule and overall result
+in the latter. E.g. running:
+
+	make contrib/coccinelle/free.cocci.patch COCCI_SOURCES="attr.c grep.c"
+
+Would, per "tree -a .build" yield the following result:
+
+	.build
+	├── .build
+	│   └── contrib
+	│       └── coccinelle
+	│           └── free.cocci.patch
+	│               ├── attr.c
+	│               ├── attr.c.log
+	│               ├── grep.c
+	│               └── grep.c.log
+	└── contrib
+	    └── coccinelle
+	        ├── FOUND_H_SOURCES
+	        ├── free.cocci
+	        └── free.cocci.patch
+
+Now we'll instead generate all of our files in
+".build/contrib/coccinelle/". Fixing this required renaming the
+directory where we keep our per-file patches, as we'd otherwise
+conflict with the result.
+
+Now the per-file patch directory is named e.g. "free.cocci.d". And the
+end result will now be:
+
+	.build
+	└── contrib
+	    └── coccinelle
+	        ├── FOUND_H_SOURCES
+	        ├── free.cocci
+	        ├── free.cocci.d
+	        │   ├── attr.c.patch
+	        │   ├── attr.c.patch.log
+	        │   ├── grep.c.patch
+	        │   └── grep.c.patch.log
+	        └── free.cocci.patch
+
+The per-file patches now have a ".patch" file suffix, which fixes
+another issue reported against 0f3c55d4c2b: The summary output was
+confusing. Before for the "make" command above we'd emit:
+
+	[...]
+	MKDIR -p .build/contrib/coccinelle
+	CP contrib/coccinelle/free.cocci .build/contrib/coccinelle/free.cocci
+	GEN .build/contrib/coccinelle/FOUND_H_SOURCES
+	MKDIR -p .build/.build/contrib/coccinelle/free.cocci.patch
+	SPATCH .build/.build/contrib/coccinelle/free.cocci.patch/grep.c
+	SPATCH .build/.build/contrib/coccinelle/free.cocci.patch/attr.c
+	SPATCH CAT $^ >.build/contrib/coccinelle/free.cocci.patch
+	CP .build/contrib/coccinelle/free.cocci.patch contrib/coccinelle/free.cocci.patch
+
+But now we'll instead emit (identical output at the start omitted):
+
+	[...]
+	MKDIR -p .build/contrib/coccinelle/free.cocci.d
+	SPATCH grep.c >.build/contrib/coccinelle/free.cocci.d/grep.c.patch
+	SPATCH attr.c >.build/contrib/coccinelle/free.cocci.d/attr.c.patch
+	SPATCH CAT .build/contrib/coccinelle/free.cocci.d/**.patch >.build/contrib/coccinelle/free.cocci.patch
+	CP .build/contrib/coccinelle/free.cocci.patch contrib/coccinelle/free.cocci.patch
+
+I.e. we have an "SPATCH" line that makes it clear that we're running
+against the "{attr,grep}.c" file. The "SPATCH CAT" is then altered to
+correspond to it, showing that we're concatenating the
+"free.cocci.d/**.patch" files into one generated "free.cocci.patch" at
+the end.
+
+Reported-by: SZEDER Gábor <szeder.dev@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile   | 12 ++++++------
+ shared.mak |  4 ++--
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 36cefe3b1d6..15b29652221 100644
+--- a/Makefile
++++ b/Makefile
+@@ -3236,14 +3236,14 @@ endif
+ define cocci-rule
+ 
+ ## Rule for .build/$(1).patch/$(2); Params:
+-# $(1) = e.g. "free.cocci"
++# $(1) = e.g. ".build/contrib/coccinelle/free.cocci"
+ # $(2) = e.g. "grep.c"
+ # $(3) = e.g. "grep.o"
+-COCCI_$(1:.build/contrib/coccinelle/%.cocci=%) += .build/$(1).patch/$(2)
+-.build/$(1).patch/$(2): GIT-SPATCH-DEFINES
+-.build/$(1).patch/$(2): $(if $(and $(SPATCH_USE_O_DEPENDENCIES),$(wildcard $(3))),$(3),.build/contrib/coccinelle/FOUND_H_SOURCES)
+-.build/$(1).patch/$(2): $(1)
+-.build/$(1).patch/$(2): .build/$(1).patch/% : %
++COCCI_$(1:.build/contrib/coccinelle/%.cocci=%) += $(1).d/$(2).patch
++$(1).d/$(2).patch: GIT-SPATCH-DEFINES
++$(1).d/$(2).patch: $(if $(and $(SPATCH_USE_O_DEPENDENCIES),$(wildcard $(3))),$(3),.build/contrib/coccinelle/FOUND_H_SOURCES)
++$(1).d/$(2).patch: $(1)
++$(1).d/$(2).patch: $(1).d/%.patch : %
+ 	$$(call mkdir_p_parent_template)
+ 	$$(QUIET_SPATCH)if ! $$(SPATCH) $$(SPATCH_FLAGS) \
+ 		$$(SPATCH_INCLUDE_FLAGS) \
+diff --git a/shared.mak b/shared.mak
+index a34b66c926d..be1f30ff206 100644
+--- a/shared.mak
++++ b/shared.mak
+@@ -72,9 +72,9 @@ ifndef V
+ 	QUIET_RC       = @echo '   ' RC $@;
+ 
+ ## Used in "Makefile": SPATCH
+-	QUIET_SPATCH			= @echo '   ' SPATCH $@;
++	QUIET_SPATCH			= @echo '   ' SPATCH $< \>$@;
+ 	QUIET_SPATCH_TEST		= @echo '   ' SPATCH TEST $(@:.build/%=%);
+-	QUIET_SPATCH_CAT		= @echo '   ' SPATCH CAT $$^ \>$@;
++	QUIET_SPATCH_CAT		= @echo '   ' SPATCH CAT $(@:%.patch=%.d/)\*\*.patch \>$@;
+ 
+ ## Used in "Documentation/Makefile"
+ 	QUIET_ASCIIDOC	= @echo '   ' ASCIIDOC $@;
+-- 
+2.38.0.1465.g0d50a1dab40
+
