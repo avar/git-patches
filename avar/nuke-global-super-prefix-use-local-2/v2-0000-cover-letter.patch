@@ -4,12 +4,80 @@ In-Reply-To: <RFC-cover-0.8-00000000000-20221109T192315Z-avarab@gmail.com>
 References: <RFC-cover-0.8-00000000000-20221109T192315Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Mon, 14 Nov 2022 10:45:46 +0100
-Subject: [PATCH v2 00/10] *** SUBJECT HERE ***
+Subject: [PATCH v2 00/10] Get rid of "git --super-prefix"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+= Summary
+
+What's "--super-prefix"? The "git" command takes an "internal use
+only" "--super-prefix" option, which is used to inform processes
+invoked in submodules what the path prefix to the invoking
+superproject is.
+
+This is so so that e.g. "git submodule absorbgitdirs" can report
+"sub-1/sub-2", instead of "sub-2" when being invoked in the "sub-1"
+submodule.
+
+For this the "--super-prefix" facility has been doing a
+setenv("GIT_INTERNAL_SUPER_PREFIX", "sub-1/") as soon as it got the
+"--supre-prefix=sub-1/". We'd then pass that along via the environment
+when invoking the sub-process.
+
+As this series shows we don't need such a hands-off global facility to
+do this, we can instead just pass the relevant context directly in
+each command. E.g. "git submodule absorbgitdirs" can pass the path to
+the "git submodule absorbgitdirs" sub-process it's about to invoke.
+
+= Relation to other submissions
+
+This is a non-RFC version of my earlier RFC to get rid of
+"--super-prefix"[1], which itself was an alternate proposal to Glen's
+[2]. Per [3] he's agreed to go with this approach.
+
+This is on top of "ab/submodule-helper-prep-only" (currently in
+"next"[4]) and "ab/submodule-no-abspath" (currently in "seen"[5]).
+
+It's also proposing to replace Glen's one-patch[6], which is working
+around the problem shown in the test added in 1/10 here. Per
+downthread of [7] I think Glen was aiming for getting a more narrow
+fix in case we split off 9/10 here into some later fix.
+
+As we're fixing an edge case in something that's always been broken
+(and thus wouldn't backport) I think it's better to just fix the
+problem directly, rather than introducing new "--super-prefix" use,
+just to take it away later.
+
+= Changes since the RFC
+
+* Added Glen's "git fetch" test as a 1/10, with an updated commit message
+* Updated 2/10's commit message for the non-RFC, and adjusted and
+  incorporated a variant of Glen's fsmonitor test change.
+* 9/10: Correctly re-arrange bitfield define's when removing one, make
+  the test added in 1/10 pass.
+
+* 10/10: New commit to make "git fetch" use our own "--super-prefix"
+  instead of its "--submodule-prefix", which makes it consistent with
+  the other command-level "--super-prefix" introduced here.
+
+  Personally I'm rather "meh" on this. It's not actually needed by the
+  main body of the series, but Glen seems to prefer it in[9], and
+  doing it is easy enough.
+
+  That change is a pure refactoring clean-up for consistency. The only
+  reason it's 10/10 and not 1/10 is because it uses the
+  "OPT__SUPER_PREFIX()" introduced in 2/10.
+
+1. https://lore.kernel.org/git/RFC-cover-0.8-00000000000-20221109T192315Z-avarab@gmail.com/
+2. https://lore.kernel.org/git/20221109004708.97668-1-chooglen@google.com/
+3. https://lore.kernel.org/git/kl6l5yfm2taf.fsf@chooglen-macbookpro.roam.corp.google.com/
+4. c0c4f4d1c33 (Merge branch 'ab/submodule-helper-prep-only' into next, 2022-11-08)
+5. https://lore.kernel.org/git/patch-1.1-34b54fdd9bb-20221109T020347Z-avarab@gmail.com/
+6. https://lore.kernel.org/git/pull.1378.git.git.1668210935360.gitgitgadget@gmail.com/
+7. https://lore.kernel.org/git/221111.86fsepmbhe.gmgdl@evledraar.gmail.com/
+8. https://lore.kernel.org/git/20221109004708.97668-3-chooglen@google.com/
+9. https://lore.kernel.org/git/kl6lsfip0yfx.fsf@chooglen-macbookpro.roam.corp.google.com/
 
 Glen Choo (1):
   read-tree + fetch tests: test failing "--super-prefix" interaction
