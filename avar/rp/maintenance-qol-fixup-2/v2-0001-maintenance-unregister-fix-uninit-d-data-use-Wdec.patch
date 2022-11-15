@@ -1,0 +1,152 @@
+From f37e99c9d59e7e1da8245706dde51cf02eabada6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-f37e99c9d59-20221115T160240Z-avarab@gmail.com>
+In-Reply-To: <patch-1.1-54d405f15f1-20221115T080212Z-avarab@gmail.com>
+References: <patch-1.1-54d405f15f1-20221115T080212Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Nov 2022 08:58:49 +0100
+Subject: [PATCH v2] maintenance --unregister: fix uninit'd data use &
+ -Wdeclaration-after-statement
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since (maintenance: add option to register in a specific config,
+2022-11-09) we've been unable to build with "DEVELOPER=1" without
+"DEVOPTS=no-error", as the added code triggers a
+"-Wdeclaration-after-statement" warning.
+
+And worse than that, the data handed to git_configset_clear() is
+uninitialized, as can be spotted with e.g.:
+
+	./t7900-maintenance.sh -vixd --run=23 --valgrind
+	[...]
+	+ git maintenance unregister --force
+	Conditional jump or move depends on uninitialised value(s)
+	   at 0x6B5F1E: git_configset_clear (config.c:2367)
+	   by 0x4BA64E: maintenance_unregister (gc.c:1619)
+	   by 0x4BD278: cmd_maintenance (gc.c:2650)
+	   by 0x409905: run_builtin (git.c:466)
+	   by 0x40A21C: handle_builtin (git.c:721)
+	   by 0x40A58E: run_argv (git.c:788)
+	   by 0x40AF68: cmd_main (git.c:926)
+	   by 0x5D39FE: main (common-main.c:57)
+	 Uninitialised value was created by a stack allocation
+	   at 0x4BA22C: maintenance_unregister (gc.c:1557)
+
+Let's fix both of these issues, and also move the scope of the
+variable to the "if" statement it's used in, to make it obvious where
+it's used.
+
+Helped-by: Johannes Schindelin <Johannes.Schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+Range-diff against v1:
+1:  54d405f15f1 ! 1:  f37e99c9d59 builtin/gc.c: fix -Wdeclaration-after-statement
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    builtin/gc.c: fix -Wdeclaration-after-statement
+    +    maintenance --unregister: fix uninit'd data use & -Wdeclaration-after-statement
+     
+    -    In 1f80129d61b (maintenance: add option to register in a specific
+    -    config, 2022-11-09) code was added which triggers a
+    -    "-Wdeclaration-after-statement" warning, which is on by default with
+    -    DEVELOPER=1.
+    +    Since (maintenance: add option to register in a specific config,
+    +    2022-11-09) we've been unable to build with "DEVELOPER=1" without
+    +    "DEVOPTS=no-error", as the added code triggers a
+    +    "-Wdeclaration-after-statement" warning.
+     
+    +    And worse than that, the data handed to git_configset_clear() is
+    +    uninitialized, as can be spotted with e.g.:
+    +
+    +            ./t7900-maintenance.sh -vixd --run=23 --valgrind
+    +            [...]
+    +            + git maintenance unregister --force
+    +            Conditional jump or move depends on uninitialised value(s)
+    +               at 0x6B5F1E: git_configset_clear (config.c:2367)
+    +               by 0x4BA64E: maintenance_unregister (gc.c:1619)
+    +               by 0x4BD278: cmd_maintenance (gc.c:2650)
+    +               by 0x409905: run_builtin (git.c:466)
+    +               by 0x40A21C: handle_builtin (git.c:721)
+    +               by 0x40A58E: run_argv (git.c:788)
+    +               by 0x40AF68: cmd_main (git.c:926)
+    +               by 0x5D39FE: main (common-main.c:57)
+    +             Uninitialised value was created by a stack allocation
+    +               at 0x4BA22C: maintenance_unregister (gc.c:1557)
+    +
+    +    Let's fix both of these issues, and also move the scope of the
+    +    variable to the "if" statement it's used in, to make it obvious where
+    +    it's used.
+    +
+    +    Helped-by: Johannes Schindelin <Johannes.Schindelin@gmx.de>
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/gc.c ##
+    -@@ builtin/gc.c: static int maintenance_unregister(int argc, const char **argv, const char *prefi
+    - 	int found = 0;
+    - 	struct string_list_item *item;
+    - 	const struct string_list *list;
+    -+	struct config_set cs;
+    - 
+    - 	argc = parse_options(argc, argv, prefix, options,
+    - 			     builtin_maintenance_unregister_usage, 0);
+     @@ builtin/gc.c: static int maintenance_unregister(int argc, const char **argv, const char *prefi
+      		usage_with_options(builtin_maintenance_unregister_usage,
+      				   options);
+      
+     -	struct config_set cs;
+      	if (config_file) {
+    ++		struct config_set cs;
+    ++
+      		git_configset_init(&cs);
+      		git_configset_add_file(&cs, config_file);
+    + 		list = git_configset_get_value_multi(&cs, key);
+    ++		git_configset_clear(&cs);
+    + 	} else {
+    + 		list = git_config_get_value_multi(key);
+    + 	}
+    +@@ builtin/gc.c: static int maintenance_unregister(int argc, const char **argv, const char *prefi
+    + 		die(_("repository '%s' is not registered"), maintpath);
+    + 	}
+    + 
+    +-	git_configset_clear(&cs);
+    + 	free(maintpath);
+    + 	return 0;
+    + }
+
+ builtin/gc.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/gc.c b/builtin/gc.c
+index 56b107e7f0b..d87cf84041f 100644
+--- a/builtin/gc.c
++++ b/builtin/gc.c
+@@ -1550,11 +1550,13 @@ static int maintenance_unregister(int argc, const char **argv, const char *prefi
+ 		usage_with_options(builtin_maintenance_unregister_usage,
+ 				   options);
+ 
+-	struct config_set cs;
+ 	if (config_file) {
++		struct config_set cs;
++
+ 		git_configset_init(&cs);
+ 		git_configset_add_file(&cs, config_file);
+ 		list = git_configset_get_value_multi(&cs, key);
++		git_configset_clear(&cs);
+ 	} else {
+ 		list = git_config_get_value_multi(key);
+ 	}
+@@ -1590,7 +1592,6 @@ static int maintenance_unregister(int argc, const char **argv, const char *prefi
+ 		die(_("repository '%s' is not registered"), maintpath);
+ 	}
+ 
+-	git_configset_clear(&cs);
+ 	free(maintpath);
+ 	return 0;
+ }
+-- 
+2.38.0.1473.g172bcc0511c
+
