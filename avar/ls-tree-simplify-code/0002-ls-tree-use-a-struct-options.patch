@@ -1,12 +1,12 @@
-From c8321d2c3fbd15faad774eea19de65723e5e6439 Mon Sep 17 00:00:00 2001
-Message-Id: <RFC-patch-2.3-c8321d2c3fb-20221117T132934Z-avarab@gmail.com>
-In-Reply-To: <RFC-cover-0.3-00000000000-20221117T132934Z-avarab@gmail.com>
+From b8ec31725570a5a5217c7b0234fda861bd4d7741 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-2.4-b8ec3172557-20221117T134528Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.4-00000000000-20221117T134528Z-avarab@gmail.com>
 References: <20221117113023.65865-1-tenglong.tl@alibaba-inc.com>
-	<RFC-cover-0.3-00000000000-20221117T132934Z-avarab@gmail.com>
+	<RFC-cover-0.4-00000000000-20221117T134528Z-avarab@gmail.com>
 From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
  <avarab@gmail.com>
 Date: Thu, 7 Apr 2022 14:26:53 +0200
-Subject: [RFC PATCH 2/3] ls-tree: use a "struct options"
+Subject: [RFC PATCH 2/4] ls-tree: use a "struct options"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -23,14 +23,14 @@ before, now it's just being brought to the surface.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
- builtin/ls-tree.c | 213 ++++++++++++++++++++++++++--------------------
- 1 file changed, 121 insertions(+), 92 deletions(-)
+ builtin/ls-tree.c | 203 ++++++++++++++++++++++++++--------------------
+ 1 file changed, 116 insertions(+), 87 deletions(-)
 
 diff --git a/builtin/ls-tree.c b/builtin/ls-tree.c
-index cbb6782f9a5..406ee934da6 100644
+index cbb6782f9a5..54f7b604cb7 100644
 --- a/builtin/ls-tree.c
 +++ b/builtin/ls-tree.c
-@@ -14,37 +14,6 @@
+@@ -14,37 +14,11 @@
  #include "parse-options.h"
  #include "pathspec.h"
  
@@ -52,11 +52,11 @@ index cbb6782f9a5..406ee934da6 100644
 -	struct strbuf *base;
 -};
 -
--static const  char * const ls_tree_usage[] = {
--	N_("git ls-tree [<options>] <tree-ish> [<path>...]"),
--	NULL
--};
--
+ static const  char * const ls_tree_usage[] = {
+ 	N_("git ls-tree [<options>] <tree-ish> [<path>...]"),
+ 	NULL
+ };
+ 
 -static enum ls_tree_cmdmode {
 -	MODE_DEFAULT = 0,
 -	MODE_LONG,
@@ -68,7 +68,7 @@ index cbb6782f9a5..406ee934da6 100644
  static void expand_objectsize(struct strbuf *line, const struct object_id *oid,
  			      const enum object_type type, unsigned int padded)
  {
-@@ -64,10 +33,39 @@ static void expand_objectsize(struct strbuf *line, const struct object_id *oid,
+@@ -64,10 +38,39 @@ static void expand_objectsize(struct strbuf *line, const struct object_id *oid,
  	}
  }
  
@@ -109,7 +109,7 @@ index cbb6782f9a5..406ee934da6 100644
  	const char *end;
  	const char *p;
  	unsigned int errlen;
-@@ -92,10 +90,10 @@ static size_t expand_show_tree(struct strbuf *sb, const char *start,
+@@ -92,10 +95,10 @@ static size_t expand_show_tree(struct strbuf *sb, const char *start,
  	} else if (skip_prefix(start, "(objectsize)", &p)) {
  		expand_objectsize(sb, data->oid, data->type, 0);
  	} else if (skip_prefix(start, "(objectname)", &p)) {
@@ -122,7 +122,7 @@ index cbb6782f9a5..406ee934da6 100644
  		struct strbuf quoted = STRBUF_INIT;
  		struct strbuf sbuf = STRBUF_INIT;
  		strbuf_addstr(data->base, data->pathname);
-@@ -111,18 +109,19 @@ static size_t expand_show_tree(struct strbuf *sb, const char *start,
+@@ -111,18 +114,19 @@ static size_t expand_show_tree(struct strbuf *sb, const char *start,
  	return len;
  }
  
@@ -147,7 +147,7 @@ index cbb6782f9a5..406ee934da6 100644
  		size_t len, speclen;
  
  		if (strncmp(base, spec, baselen))
-@@ -142,13 +141,13 @@ static int show_recursive(const char *base, size_t baselen, const char *pathname
+@@ -142,13 +146,13 @@ static int show_recursive(const char *base, size_t baselen, const char *pathname
  }
  
  static int show_tree_fmt(const struct object_id *oid, struct strbuf *base,
@@ -163,7 +163,7 @@ index cbb6782f9a5..406ee934da6 100644
  	struct show_tree_data data = {
  		.mode = mode,
  		.type = type,
-@@ -156,81 +155,89 @@ static int show_tree_fmt(const struct object_id *oid, struct strbuf *base,
+@@ -156,81 +160,89 @@ static int show_tree_fmt(const struct object_id *oid, struct strbuf *base,
  		.pathname = pathname,
  		.base = base,
  	};
@@ -272,7 +272,7 @@ index cbb6782f9a5..406ee934da6 100644
  	if (early >= 0)
  		return early;
  
-@@ -246,48 +253,58 @@ static int show_tree_long(const struct object_id *oid, struct strbuf *base,
+@@ -246,48 +258,58 @@ static int show_tree_long(const struct object_id *oid, struct strbuf *base,
  	}
  
  	printf("%06o %s %s %7s\t", mode, type_name(type),
@@ -340,18 +340,7 @@ index cbb6782f9a5..406ee934da6 100644
  struct ls_tree_cmdmode_to_fmt {
  	enum ls_tree_cmdmode mode;
  	const char *const fmt;
-@@ -321,20 +338,29 @@ static struct ls_tree_cmdmode_to_fmt ls_tree_cmdmode_format[] = {
- 	},
- };
- 
-+static const  char * const ls_tree_usage[] = {
-+	N_("git ls-tree [<options>] <tree-ish> [<path>...]"),
-+	NULL
-+};
-+
- int cmd_ls_tree(int argc, const char **argv, const char *prefix)
- {
- 	struct object_id oid;
+@@ -327,14 +349,18 @@ int cmd_ls_tree(int argc, const char **argv, const char *prefix)
  	struct tree *tree;
  	int i, full_tree = 0;
  	read_tree_fn_t fn = NULL;

@@ -1,0 +1,78 @@
+From 28c07464b038f809890b7bd6c03435763abfb65e Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-3.4-28c07464b03-20221117T134528Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.4-00000000000-20221117T134528Z-avarab@gmail.com>
+References: <20221117113023.65865-1-tenglong.tl@alibaba-inc.com>
+	<RFC-cover-0.4-00000000000-20221117T134528Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 17 Nov 2022 14:39:54 +0100
+Subject: [RFC PATCH 3/4] ls-tree: fold "show_tree_data" into "cb" struct
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+After the the preceding two commits the only user of the
+"show_tree_data" struct needed it along with the "options" member,
+let's instead fold all of that into a "show_tree_data" struct that
+we'll use only for that callback.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-tree.c | 18 +++++-------------
+ 1 file changed, 5 insertions(+), 13 deletions(-)
+
+diff --git a/builtin/ls-tree.c b/builtin/ls-tree.c
+index 54f7b604cb7..da664eecfb9 100644
+--- a/builtin/ls-tree.c
++++ b/builtin/ls-tree.c
+@@ -53,6 +53,7 @@ struct ls_tree_options {
+ };
+ 
+ struct show_tree_data {
++	struct ls_tree_options *options;
+ 	unsigned mode;
+ 	enum object_type type;
+ 	const struct object_id *oid;
+@@ -60,17 +61,11 @@ struct show_tree_data {
+ 	struct strbuf *base;
+ };
+ 
+-struct show_tree_data_cb {
+-	struct ls_tree_options *options;
+-	struct show_tree_data *data;
+-};
+-
+ static size_t expand_show_tree(struct strbuf *sb, const char *start,
+ 			       void *context)
+ {
+-	struct show_tree_data_cb *wrapper = context;
+-	struct ls_tree_options *options = wrapper->options;
+-	struct show_tree_data *data = wrapper->data;
++	struct show_tree_data *data = context;
++	struct ls_tree_options *options = data->options;
+ 	const char *end;
+ 	const char *p;
+ 	unsigned int errlen;
+@@ -153,17 +148,14 @@ static int show_tree_fmt(const struct object_id *oid, struct strbuf *base,
+ 	int recurse = 0;
+ 	struct strbuf sb = STRBUF_INIT;
+ 	enum object_type type = object_type(mode);
+-	struct show_tree_data data = {
++	struct show_tree_data cb_data = {
++		.options = options,
+ 		.mode = mode,
+ 		.type = type,
+ 		.oid = oid,
+ 		.pathname = pathname,
+ 		.base = base,
+ 	};
+-	struct show_tree_data_cb cb_data = {
+-		.data = &data,
+-		.options = options,
+-	};
+ 
+ 	if (type == OBJ_TREE && show_recursive(options, base->buf, base->len, pathname))
+ 		recurse = READ_TREE_RECURSIVE;
+-- 
+2.38.0.1473.g172bcc0511c
+
