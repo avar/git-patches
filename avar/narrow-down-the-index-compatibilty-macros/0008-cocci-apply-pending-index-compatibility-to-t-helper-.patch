@@ -1,0 +1,204 @@
+From f3e265e6edb5be596817e42fe31210284f79dcc1 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-08.12-f3e265e6edb-20221118T112205Z-avarab@gmail.com>
+In-Reply-To: <cover-00.12-00000000000-20221118T112205Z-avarab@gmail.com>
+References: <cover-00.12-00000000000-20221118T112205Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Nov 2022 03:22:10 +0100
+Subject: [PATCH 08/12] cocci: apply "pending" index-compatibility to
+ "t/helper/*.c"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Apply the "index-compatibility.pending.cocci" rule to the "t/helper/*"
+directory, a subsequent commit will extend cache.h to further narrow
+down the use of "USE_THE_INDEX_COMPATIBILITY_MACROS" in this area.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/helper/test-dump-cache-tree.c      |  2 +-
+ t/helper/test-dump-untracked-cache.c |  2 +-
+ t/helper/test-fast-rebase.c          |  2 +-
+ t/helper/test-lazy-init-name-hash.c  | 20 ++++++++++----------
+ t/helper/test-read-cache.c           |  4 ++--
+ t/helper/test-scrap-cache-tree.c     |  4 ++--
+ t/helper/test-write-cache.c          |  5 +++--
+ 7 files changed, 20 insertions(+), 19 deletions(-)
+
+diff --git a/t/helper/test-dump-cache-tree.c b/t/helper/test-dump-cache-tree.c
+index 8d88111b357..4bf8bc3df6e 100644
+--- a/t/helper/test-dump-cache-tree.c
++++ b/t/helper/test-dump-cache-tree.c
+@@ -62,7 +62,7 @@ int cmd__dump_cache_tree(int ac, const char **av)
+ 	int ret;
+ 
+ 	setup_git_directory();
+-	if (read_cache() < 0)
++	if (repo_read_index(the_repository) < 0)
+ 		die("unable to read index file");
+ 	istate = the_index;
+ 	istate.cache_tree = another;
+diff --git a/t/helper/test-dump-untracked-cache.c b/t/helper/test-dump-untracked-cache.c
+index 99010614f6d..ffe34736e53 100644
+--- a/t/helper/test-dump-untracked-cache.c
++++ b/t/helper/test-dump-untracked-cache.c
+@@ -51,7 +51,7 @@ int cmd__dump_untracked_cache(int ac, const char **av)
+ 	xsetenv("GIT_CONFIG_VALUE_0", "keep", 1);
+ 
+ 	setup_git_directory();
+-	if (read_cache() < 0)
++	if (repo_read_index(the_repository) < 0)
+ 		die("unable to read index file");
+ 	uc = the_index.untracked;
+ 	if (!uc) {
+diff --git a/t/helper/test-fast-rebase.c b/t/helper/test-fast-rebase.c
+index 45665ec19a5..9def2ba6889 100644
+--- a/t/helper/test-fast-rebase.c
++++ b/t/helper/test-fast-rebase.c
+@@ -123,7 +123,7 @@ int cmd__fast_rebase(int argc, const char **argv)
+ 		die(_("Cannot read HEAD"));
+ 	assert(oideq(&onto->object.oid, &head));
+ 
+-	hold_locked_index(&lock, LOCK_DIE_ON_ERROR);
++	repo_hold_locked_index(the_repository, &lock, LOCK_DIE_ON_ERROR);
+ 	if (repo_read_index(the_repository) < 0)
+ 		BUG("Could not read index");
+ 
+diff --git a/t/helper/test-lazy-init-name-hash.c b/t/helper/test-lazy-init-name-hash.c
+index cd1b4c9736e..7e8723a1900 100644
+--- a/t/helper/test-lazy-init-name-hash.c
++++ b/t/helper/test-lazy-init-name-hash.c
+@@ -32,7 +32,7 @@ static void dump_run(void)
+ 	struct dir_entry *dir;
+ 	struct cache_entry *ce;
+ 
+-	read_cache();
++	repo_read_index(the_repository);
+ 	if (single) {
+ 		test_lazy_init_name_hash(&the_index, 0);
+ 	} else {
+@@ -49,7 +49,7 @@ static void dump_run(void)
+ 				ent /* member name */)
+ 		printf("name %08x %s\n", ce->ent.hash, ce->name);
+ 
+-	discard_cache();
++	discard_index(&the_index);
+ }
+ 
+ /*
+@@ -66,7 +66,7 @@ static uint64_t time_runs(int try_threaded)
+ 
+ 	for (i = 0; i < count; i++) {
+ 		t0 = getnanotime();
+-		read_cache();
++		repo_read_index(the_repository);
+ 		t1 = getnanotime();
+ 		nr_threads_used = test_lazy_init_name_hash(&the_index, try_threaded);
+ 		t2 = getnanotime();
+@@ -89,7 +89,7 @@ static uint64_t time_runs(int try_threaded)
+ 				   the_index.cache_nr);
+ 		fflush(stdout);
+ 
+-		discard_cache();
++		discard_index(&the_index);
+ 	}
+ 
+ 	avg = sum / count;
+@@ -113,9 +113,9 @@ static void analyze_run(void)
+ 	int i;
+ 	int nr;
+ 
+-	read_cache();
++	repo_read_index(the_repository);
+ 	cache_nr_limit = the_index.cache_nr;
+-	discard_cache();
++	discard_index(&the_index);
+ 
+ 	nr = analyze;
+ 	while (1) {
+@@ -128,23 +128,23 @@ static void analyze_run(void)
+ 			nr = cache_nr_limit;
+ 
+ 		for (i = 0; i < count; i++) {
+-			read_cache();
++			repo_read_index(the_repository);
+ 			the_index.cache_nr = nr; /* cheap truncate of index */
+ 			t1s = getnanotime();
+ 			test_lazy_init_name_hash(&the_index, 0);
+ 			t2s = getnanotime();
+ 			sum_single += (t2s - t1s);
+ 			the_index.cache_nr = cache_nr_limit;
+-			discard_cache();
++			discard_index(&the_index);
+ 
+-			read_cache();
++			repo_read_index(the_repository);
+ 			the_index.cache_nr = nr; /* cheap truncate of index */
+ 			t1m = getnanotime();
+ 			nr_threads_used = test_lazy_init_name_hash(&the_index, 1);
+ 			t2m = getnanotime();
+ 			sum_multi += (t2m - t1m);
+ 			the_index.cache_nr = cache_nr_limit;
+-			discard_cache();
++			discard_index(&the_index);
+ 
+ 			if (!nr_threads_used)
+ 				printf("    [size %8d] [single %f]   non-threaded code path used\n",
+diff --git a/t/helper/test-read-cache.c b/t/helper/test-read-cache.c
+index b736ef16421..a089be9104c 100644
+--- a/t/helper/test-read-cache.c
++++ b/t/helper/test-read-cache.c
+@@ -20,7 +20,7 @@ int cmd__read_cache(int argc, const char **argv)
+ 	git_config(git_default_config, NULL);
+ 
+ 	for (i = 0; i < cnt; i++) {
+-		read_cache();
++		repo_read_index(the_repository);
+ 		if (name) {
+ 			int pos;
+ 
+@@ -33,7 +33,7 @@ int cmd__read_cache(int argc, const char **argv)
+ 			       ce_uptodate(the_index.cache[pos]) ? "" : " not");
+ 			write_file(name, "%d\n", i);
+ 		}
+-		discard_cache();
++		discard_index(&the_index);
+ 	}
+ 	return 0;
+ }
+diff --git a/t/helper/test-scrap-cache-tree.c b/t/helper/test-scrap-cache-tree.c
+index 20e2e31f9e2..9206dee1fd2 100644
+--- a/t/helper/test-scrap-cache-tree.c
++++ b/t/helper/test-scrap-cache-tree.c
+@@ -9,8 +9,8 @@ int cmd__scrap_cache_tree(int ac, const char **av)
+ 	struct lock_file index_lock = LOCK_INIT;
+ 
+ 	setup_git_directory();
+-	hold_locked_index(&index_lock, LOCK_DIE_ON_ERROR);
+-	if (read_cache() < 0)
++	repo_hold_locked_index(the_repository, &index_lock, LOCK_DIE_ON_ERROR);
++	if (repo_read_index(the_repository) < 0)
+ 		die("unable to read index file");
+ 	cache_tree_free(&the_index.cache_tree);
+ 	the_index.cache_tree = NULL;
+diff --git a/t/helper/test-write-cache.c b/t/helper/test-write-cache.c
+index 8837717d36a..66287d6d47d 100644
+--- a/t/helper/test-write-cache.c
++++ b/t/helper/test-write-cache.c
+@@ -9,9 +9,10 @@ int cmd__write_cache(int argc, const char **argv)
+ 	if (argc == 2)
+ 		cnt = strtol(argv[1], NULL, 0);
+ 	setup_git_directory();
+-	read_cache();
++	repo_read_index(the_repository);
+ 	for (i = 0; i < cnt; i++) {
+-		hold_locked_index(&index_lock, LOCK_DIE_ON_ERROR);
++		repo_hold_locked_index(the_repository, &index_lock,
++				       LOCK_DIE_ON_ERROR);
+ 		if (write_locked_index(&the_index, &index_lock, COMMIT_LOCK))
+ 			die("unable to write index file");
+ 	}
+-- 
+2.38.0.1511.gcdcff1f1dc2
+
