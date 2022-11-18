@@ -4,12 +4,61 @@ In-Reply-To: <Y3a3qcqNG8W3ueeb@coredump.intra.peff.net>
 References: <Y3a3qcqNG8W3ueeb@coredump.intra.peff.net>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Fri, 18 Nov 2022 12:34:42 +0100
-Subject: [PATCH 0/4] *** SUBJECT HERE ***
+Subject: [PATCH 0/4] tag: don't misreport type of tagged objects in errors
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series fixes a very long-standing issue where we'll get confused
+when we parse a tag whose "type" lies about the type of the target
+object.
+
+It goes on top of Jeff King's just-submitted [1], and the two
+compliment one another. See [2] for my feedback about what was left
+over, which this fixes.
+
+Currently we'll parse tags and note what the "type" claims to be. Say
+a pointer to a "blob" object that claims to be a "commit" in the
+envelope.
+
+Then when we we'd try to parse that supposed "commit' for real we'd
+emit a message like:
+
+	error: object <oid> is a blob, not a commit
+
+Which is reversed, i.e. we'd remember the first "blob" we saw, and
+then get confused about seeing a "commit" when we did the actual
+parsing.
+
+This is now fixed in almost all cases by having the one caller of
+parse_tag() which actually knows the type tell it "yes, I'm sure this
+is a commit".
+
+We'll then be able to see that we have a non-parsed object as
+scaffolding, but that it's really a commit, and emit the correct:
+
+	error: object <oid> is a commit not a blob
+
+Which goes along with other errors where the tag object itself yells
+about being unhappy with the object reference.
+
+I submitted a version of these patches back in early 2021[3], this is
+significantly slimmed down since then.
+
+At the time Jeff King noted that this approach inherently can't cover
+all possible scenarios. I.e. sometimes our parsing of the envelope
+isn't followed up by the "real" parse.
+
+Even in those cases we can "get it right as 4/4 here demonstrates.
+
+But there are going to be cases left where we get it wrong, but
+they're all cases where we get it wrong now. It's probably not worth
+fixing the long tail of those issues, but now we'll emit a sensible
+error on the common case of "log" etc.
+
+1. https://lore.kernel.org/git/Y3a3qcqNG8W3ueeb@coredump.intra.peff.net/
+2. https://lore.kernel.org/git/221118.86cz9lgjxu.gmgdl@evledraar.gmail.com/
+3. https://lore.kernel.org/git/YGTGgFI19fS7Uv6I@coredump.intra.peff.net/
 
 Ævar Arnfjörð Bjarmason (4):
   object-file.c: free the "t.tag" in check_tag()
