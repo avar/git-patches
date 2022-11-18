@@ -1,0 +1,41 @@
+From 2a5794e6dbb3e40b3ec030873da3014d8e9b8fd7 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.2-2a5794e6dbb-20221118T113416Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20221118T113416Z-avarab@gmail.com>
+References: <Y3a3qcqNG8W3ueeb@coredump.intra.peff.net>
+	<cover-0.2-00000000000-20221118T113416Z-avarab@gmail.com>
+From: Jeff King <peff@peff.net>
+Date: Thu, 17 Nov 2022 17:37:58 -0500
+Subject: [PATCH 1/2] parse_object(): drop extra "has" check before checking
+ object type
+
+When parsing an object of unknown type, we check to see if it's a blob,
+so we can use our streaming code path. This uses oid_object_info() to
+check the type, but before doing so we call repo_has_object_file(). This
+latter is pointless, as oid_object_info() will already fail if the
+object is missing. Checking it ahead of time just complicates the code
+and is a waste of resources (albeit small).
+
+Let's drop the redundant check.
+
+Signed-off-by: Jeff King <peff@peff.net>
+---
+ object.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/object.c b/object.c
+index 8a74eb85e94..16eb944e98c 100644
+--- a/object.c
++++ b/object.c
+@@ -287,8 +287,7 @@ struct object *parse_object_with_flags(struct repository *r,
+ 	}
+ 
+ 	if ((obj && obj->type == OBJ_BLOB && repo_has_object_file(r, oid)) ||
+-	    (!obj && repo_has_object_file(r, oid) &&
+-	     oid_object_info(r, oid, NULL) == OBJ_BLOB)) {
++	    (!obj && oid_object_info(r, oid, NULL) == OBJ_BLOB)) {
+ 		if (!skip_hash && stream_object_signature(r, repl) < 0) {
+ 			error(_("hash mismatch %s"), oid_to_hex(oid));
+ 			return NULL;
+-- 
+2.38.0.1511.gcdcff1f1dc2
+
