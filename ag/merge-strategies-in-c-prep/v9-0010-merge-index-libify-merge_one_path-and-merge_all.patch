@@ -1,0 +1,320 @@
+From c7a131a9a860c67c38a6a1bf7abf72f35a130d8e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v9-10.12-c7a131a9a86-20221118T110012Z-avarab@gmail.com>
+In-Reply-To: <cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+References: <20220809185429.20098-1-alban.gruin@gmail.com>
+	<cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+From: Alban Gruin <alban.gruin@gmail.com>
+Date: Tue, 9 Aug 2022 20:54:18 +0200
+Subject: [PATCH v9 10/12] merge-index: libify merge_one_path() and merge_all()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move the workhorse functions in "builtin/merge-index.c" into a new
+"merge-strategies" library, and mostly "libify" the code while doing
+so.
+
+Eventually this will allow us to invoke merge strategies such as
+"resolve" and "octopus" in-process, once we've followed-up and
+replaced "git-merge-{resolve,octopus}.sh" etc.
+
+But for now let's move this code, while trying to optimize for as much
+of it as possible being highlighted by the diff rename detection.
+
+We still call die() in this library. An earlier version of this[1]
+converted these to "error()", but the problem with that that we'd then
+potentially run into the same error N times, e.g. once for every
+"<file>" we were asked to operate on, instead of dying on the first
+case. So let's leave those to "die()" for now.
+
+1. https://lore.kernel.org/git/20220809185429.20098-4-alban.gruin@gmail.com/
+
+Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile              |  1 +
+ builtin/merge-index.c | 95 ++++++++++++++++---------------------------
+ merge-strategies.c    | 87 +++++++++++++++++++++++++++++++++++++++
+ merge-strategies.h    | 19 +++++++++
+ 4 files changed, 142 insertions(+), 60 deletions(-)
+ create mode 100644 merge-strategies.c
+ create mode 100644 merge-strategies.h
+
+diff --git a/Makefile b/Makefile
+index 4927379184c..ccd467cec79 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1000,6 +1000,7 @@ LIB_OBJS += merge-blobs.o
+ LIB_OBJS += merge-ort.o
+ LIB_OBJS += merge-ort-wrappers.o
+ LIB_OBJS += merge-recursive.o
++LIB_OBJS += merge-strategies.o
+ LIB_OBJS += merge.o
+ LIB_OBJS += midx.o
+ LIB_OBJS += name-hash.o
+diff --git a/builtin/merge-index.c b/builtin/merge-index.c
+index c269d76cc8f..21598a52383 100644
+--- a/builtin/merge-index.c
++++ b/builtin/merge-index.c
+@@ -1,77 +1,50 @@
+ #include "builtin.h"
+ #include "parse-options.h"
++#include "merge-strategies.h"
+ #include "run-command.h"
+ 
+-static const char *pgm;
+-static int one_shot, quiet;
+-static int err;
++struct mofs_data {
++	const char *program;
++};
+ 
+-static int merge_entry(struct index_state *istate, int pos, const char *path)
++static int merge_one_file(struct index_state *istate,
++			  const struct object_id *orig_blob,
++			  const struct object_id *our_blob,
++			  const struct object_id *their_blob, const char *path,
++			  unsigned int orig_mode, unsigned int our_mode,
++			  unsigned int their_mode, void *data)
+ {
+-	int found;
++	struct mofs_data *d = data;
++	const char *pgm = d->program;
+ 	const char *arguments[] = { pgm, "", "", "", path, "", "", "", NULL };
+ 	char hexbuf[4][GIT_MAX_HEXSZ + 1];
+ 	char ownbuf[4][60];
++	int stage = 0;
+ 	struct child_process cmd = CHILD_PROCESS_INIT;
+ 
+-	if (pos >= istate->cache_nr)
+-		die(_("'%s' is not in the cache"), path);
+-	found = 0;
+-	do {
+-		const struct cache_entry *ce = istate->cache[pos];
+-		int stage = ce_stage(ce);
+-
+-		if (strcmp(ce->name, path))
+-			break;
+-		found++;
+-		oid_to_hex_r(hexbuf[stage], &ce->oid);
+-		xsnprintf(ownbuf[stage], sizeof(ownbuf[stage]), "%o", ce->ce_mode);
+-		arguments[stage] = hexbuf[stage];
+-		arguments[stage + 4] = ownbuf[stage];
+-	} while (++pos < istate->cache_nr);
+-	if (!found)
+-		die(_("'%s' is not in the cache"), path);
+-
+-	strvec_pushv(&cmd.args, arguments);
+-	if (run_command(&cmd)) {
+-		if (one_shot)
+-			err++;
+-		else {
+-			if (!quiet)
+-				die(_("merge program failed"));
+-			exit(1);
+-		}
++#define ADD_MOF_ARG(oid, mode) \
++	if ((oid)) { \
++		stage++; \
++		oid_to_hex_r(hexbuf[stage], (oid)); \
++		xsnprintf(ownbuf[stage], sizeof(ownbuf[stage]), "%06o", (mode)); \
++		arguments[stage] = hexbuf[stage]; \
++		arguments[stage + 4] = ownbuf[stage]; \
+ 	}
+-	return found;
+-}
+-
+-static void merge_one_path(struct index_state *istate, const char *path)
+-{
+-	int pos = index_name_pos(istate, path, strlen(path));
+ 
+-	/*
+-	 * If it already exists in the cache as stage0, it's
+-	 * already merged and there is nothing to do.
+-	 */
+-	if (pos < 0)
+-		merge_entry(istate, -pos-1, path);
+-}
+-
+-static void merge_all(struct index_state *istate)
+-{
+-	int i;
++	ADD_MOF_ARG(orig_blob, orig_mode);
++	ADD_MOF_ARG(our_blob, our_mode);
++	ADD_MOF_ARG(their_blob, their_mode);
+ 
+-	for (i = 0; i < istate->cache_nr; i++) {
+-		const struct cache_entry *ce = istate->cache[i];
+-		if (!ce_stage(ce))
+-			continue;
+-		i += merge_entry(istate, i, ce->name)-1;
+-	}
++	strvec_pushv(&cmd.args, arguments);
++	return run_command(&cmd);
+ }
+ 
+ int cmd_merge_index(int argc, const char **argv, const char *prefix)
+ {
++	int err = 0;
+ 	int all = 0;
++	int one_shot = 0;
++	int quiet = 0;
+ 	const char * const usage[] = {
+ 		N_("git merge-index [-o] [-q] <merge-program> (-a | ([--] <file>...))"),
+ 		NULL
+@@ -91,6 +64,7 @@ int cmd_merge_index(int argc, const char **argv, const char *prefix)
+ 		OPT_END(),
+ 	};
+ #undef OPT__MERGE_INDEX_ALL
++	struct mofs_data data = { 0 };
+ 
+ 	/* Without this we cannot rely on waitpid() to tell
+ 	 * what happened to our children.
+@@ -109,7 +83,7 @@ int cmd_merge_index(int argc, const char **argv, const char *prefix)
+ 	/* <merge-program> and its options */
+ 	if (!argc)
+ 		usage_msg_opt(_("need a <merge-program> argument"), usage, options);
+-	pgm = argv[0];
++	data.program = argv[0];
+ 	argc = parse_options(argc, argv, prefix, options_prog, usage, 0);
+ 	if (argc && all)
+ 		usage_msg_opt(_("'-a' and '<file>...' are mutually exclusive"),
+@@ -121,12 +95,13 @@ int cmd_merge_index(int argc, const char **argv, const char *prefix)
+ 	ensure_full_index(the_repository->index);
+ 
+ 	if (all)
+-		merge_all(the_repository->index);
++		err |= merge_all_index(the_repository->index, one_shot, quiet,
++				       merge_one_file, &data);
+ 	else
+ 		for (size_t i = 0; i < argc; i++)
+-			merge_one_path(the_repository->index, argv[i]);
++			err |= merge_index_path(the_repository->index,
++						one_shot, quiet, argv[i],
++						merge_one_file, &data);
+ 
+-	if (err && !quiet)
+-		die(_("merge program failed"));
+ 	return err;
+ }
+diff --git a/merge-strategies.c b/merge-strategies.c
+new file mode 100644
+index 00000000000..30691fccd77
+--- /dev/null
++++ b/merge-strategies.c
+@@ -0,0 +1,87 @@
++#include "cache.h"
++#include "merge-strategies.h"
++
++static int merge_entry(struct index_state *istate, unsigned int pos,
++		       const char *path, int *err, merge_index_fn fn,
++		       void *data)
++{
++	int found = 0;
++	const struct object_id *oids[3] = { 0 };
++	unsigned int modes[3] = { 0 };
++
++	*err = 0;
++
++	if (pos >= istate->cache_nr)
++		die(_("'%s' is not in the cache"), path);
++	do {
++		const struct cache_entry *ce = istate->cache[pos];
++		int stage = ce_stage(ce);
++
++		if (strcmp(ce->name, path))
++			break;
++		found++;
++		oids[stage - 1] = &ce->oid;
++		modes[stage - 1] = ce->ce_mode;
++	} while (++pos < istate->cache_nr);
++	if (!found)
++		die(_("'%s' is not in the cache"), path);
++
++	if (fn(istate, oids[0], oids[1], oids[2], path, modes[0], modes[1],
++	       modes[2], data))
++		(*err)++;
++
++	return found;
++}
++
++int merge_index_path(struct index_state *istate, int oneshot, int quiet,
++		     const char *path, merge_index_fn fn, void *data)
++{
++	int err, ret;
++	int pos = index_name_pos(istate, path, strlen(path));
++
++	/*
++	 * If it already exists in the cache as stage0, it's
++	 * already merged and there is nothing to do.
++	 */
++	if (pos >= 0)
++		return 0;
++
++	ret = merge_entry(istate, -pos - 1, path, &err, fn, data);
++	if (ret < 0)
++		return ret;
++	if (err) {
++		if (!quiet && !oneshot)
++			die(_("merge program failed"));
++		return 1;
++	}
++	return 0;
++}
++
++int merge_all_index(struct index_state *istate, int oneshot, int quiet,
++		    merge_index_fn fn, void *data)
++{
++	int err, ret;
++	unsigned int i;
++
++	for (i = 0; i < istate->cache_nr; i++) {
++		const struct cache_entry *ce = istate->cache[i];
++		if (!ce_stage(ce))
++			continue;
++
++		ret = merge_entry(istate, i, ce->name, &err, fn, data);
++		if (ret < 0)
++			return ret;
++		else if (ret > 0)
++			i += ret - 1;
++
++		if (err && !oneshot) {
++			if (!quiet)
++				die(_("merge program failed"));
++			return 1;
++		}
++	}
++
++	if (err && !quiet)
++		die(_("merge program failed"));
++	return err;
++}
+diff --git a/merge-strategies.h b/merge-strategies.h
+new file mode 100644
+index 00000000000..cee9168a046
+--- /dev/null
++++ b/merge-strategies.h
+@@ -0,0 +1,19 @@
++#ifndef MERGE_STRATEGIES_H
++#define MERGE_STRATEGIES_H
++
++struct object_id;
++struct index_state;
++typedef int (*merge_index_fn)(struct index_state *istate,
++			      const struct object_id *orig_blob,
++			      const struct object_id *our_blob,
++			      const struct object_id *their_blob,
++			      const char *path, unsigned int orig_mode,
++			      unsigned int our_mode, unsigned int their_mode,
++			      void *data);
++
++int merge_index_path(struct index_state *istate, int oneshot, int quiet,
++		     const char *path, merge_index_fn fn, void *data);
++int merge_all_index(struct index_state *istate, int oneshot, int quiet,
++		    merge_index_fn fn, void *data);
++
++#endif /* MERGE_STRATEGIES_H */
+-- 
+2.38.0.1511.gcdcff1f1dc2
+

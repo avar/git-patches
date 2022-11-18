@@ -1,0 +1,80 @@
+From 7d686637fa35044db454d6524ac2e459d5b45163 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v9-04.12-7d686637fa3-20221118T110012Z-avarab@gmail.com>
+In-Reply-To: <cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+References: <20220809185429.20098-1-alban.gruin@gmail.com>
+	<cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Nov 2022 13:40:54 +0100
+Subject: [PATCH v9 04/12] merge-index tests: add usage tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add tests that stress the current behavior of the options parsing in
+cmd_merge_index(), in preparation for moving it over to
+parse_options().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6060-merge-index.sh | 44 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/t/t6060-merge-index.sh b/t/t6060-merge-index.sh
+index 079151ee06d..edc03b41ab9 100755
+--- a/t/t6060-merge-index.sh
++++ b/t/t6060-merge-index.sh
+@@ -5,6 +5,50 @@ test_description='basic git merge-index / git-merge-one-file tests'
+ TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
++test_expect_success 'usage: 1 argument' '
++	test_expect_code 129 git merge-index a >out 2>err &&
++	test_must_be_empty out &&
++	grep ^usage err
++'
++
++test_expect_success 'usage: 2 arguments' '
++	cat >expect <<-\EOF &&
++	fatal: git merge-index: b not in the cache
++	EOF
++	test_expect_code 128 git merge-index a b >out 2>actual &&
++	test_must_be_empty out &&
++	test_cmp expect actual
++'
++
++test_expect_success 'usage: -a before <program>' '
++	cat >expect <<-\EOF &&
++	fatal: git merge-index: b not in the cache
++	EOF
++	test_expect_code 128 git merge-index -a b program >out 2>actual &&
++	test_must_be_empty out &&
++	test_cmp expect actual
++'
++
++for opt in -q -o
++do
++	test_expect_success "usage: $opt after -a" '
++		cat >expect <<-EOF &&
++		fatal: git merge-index: unknown option $opt
++		EOF
++		test_expect_code 128 git merge-index -a $opt >out 2>actual &&
++		test_must_be_empty out &&
++		test_cmp expect actual
++	'
++
++	test_expect_success "usage: $opt program" '
++		test_expect_code 0 git merge-index $opt program
++	'
++done
++
++test_expect_success 'usage: program' '
++	test_expect_code 129 git merge-index program
++'
++
+ test_expect_success 'setup diverging branches' '
+ 	test_write_lines 1 2 3 4 5 6 7 8 9 10 >file &&
+ 	cp file file2 &&
+-- 
+2.38.0.1511.gcdcff1f1dc2
+

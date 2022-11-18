@@ -1,0 +1,101 @@
+From adb712ca7a523ea3f09e87002364111a897e8883 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v9-11.12-adb712ca7a5-20221118T110012Z-avarab@gmail.com>
+In-Reply-To: <cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+References: <20220809185429.20098-1-alban.gruin@gmail.com>
+	<cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Nov 2022 11:18:21 +0100
+Subject: [PATCH v9 11/12] merge-index: use "struct strvec" and helper to
+ prepare args
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the code that was libified in the preceding commit to use
+strvec_pushf() with a helper function, instead of in-place xsnprintf()
+code that we generate with a macro.
+
+This is less efficient in term of the number of allocations we do, but
+it's now much clearer what's going on. The logic is simply that we
+have an argument list like:
+
+	<merge-program> <oids> <path> <modes>
+
+Where we always need either an OID/mode pair, or "". Now we'll add
+both to their own strvec, which we then combine at the end.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/merge-index.c | 44 ++++++++++++++++++++++++++-----------------
+ 1 file changed, 27 insertions(+), 17 deletions(-)
+
+diff --git a/builtin/merge-index.c b/builtin/merge-index.c
+index 21598a52383..d679272391b 100644
+--- a/builtin/merge-index.c
++++ b/builtin/merge-index.c
+@@ -7,6 +7,18 @@ struct mofs_data {
+ 	const char *program;
+ };
+ 
++static void push_arg(struct strvec *oids, struct strvec *modes,
++		     const struct object_id *oid, const unsigned int mode)
++{
++	if (oid) {
++		strvec_push(oids, oid_to_hex(oid));
++		strvec_pushf(modes, "%06o", mode);
++	} else {
++		strvec_push(oids, "");
++		strvec_push(modes, "");
++	}
++}
++
+ static int merge_one_file(struct index_state *istate,
+ 			  const struct object_id *orig_blob,
+ 			  const struct object_id *our_blob,
+@@ -15,27 +27,25 @@ static int merge_one_file(struct index_state *istate,
+ 			  unsigned int their_mode, void *data)
+ {
+ 	struct mofs_data *d = data;
+-	const char *pgm = d->program;
+-	const char *arguments[] = { pgm, "", "", "", path, "", "", "", NULL };
+-	char hexbuf[4][GIT_MAX_HEXSZ + 1];
+-	char ownbuf[4][60];
+-	int stage = 0;
++	const char *program = d->program;
++	struct strvec oids = STRVEC_INIT;
++	struct strvec modes = STRVEC_INIT;
+ 	struct child_process cmd = CHILD_PROCESS_INIT;
+ 
+-#define ADD_MOF_ARG(oid, mode) \
+-	if ((oid)) { \
+-		stage++; \
+-		oid_to_hex_r(hexbuf[stage], (oid)); \
+-		xsnprintf(ownbuf[stage], sizeof(ownbuf[stage]), "%06o", (mode)); \
+-		arguments[stage] = hexbuf[stage]; \
+-		arguments[stage + 4] = ownbuf[stage]; \
+-	}
++	strvec_push(&cmd.args, program);
++
++	push_arg(&oids, &modes, orig_blob, orig_mode);
++	push_arg(&oids, &modes, our_blob, our_mode);
++	push_arg(&oids, &modes, their_blob, their_mode);
++
++	strvec_pushv(&cmd.args, oids.v);
++	strvec_clear(&oids);
++
++	strvec_push(&cmd.args, path);
+ 
+-	ADD_MOF_ARG(orig_blob, orig_mode);
+-	ADD_MOF_ARG(our_blob, our_mode);
+-	ADD_MOF_ARG(their_blob, their_mode);
++	strvec_pushv(&cmd.args, modes.v);
++	strvec_clear(&modes);
+ 
+-	strvec_pushv(&cmd.args, arguments);
+ 	return run_command(&cmd);
+ }
+ 
+-- 
+2.38.0.1511.gcdcff1f1dc2
+

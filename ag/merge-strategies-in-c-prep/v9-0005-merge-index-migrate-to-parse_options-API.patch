@@ -1,0 +1,175 @@
+From 845f9b0cc19afa999e721c8ca3179501eab36626 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v9-05.12-845f9b0cc19-20221118T110012Z-avarab@gmail.com>
+In-Reply-To: <cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+References: <20220809185429.20098-1-alban.gruin@gmail.com>
+	<cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Nov 2022 12:14:36 +0100
+Subject: [PATCH v9 05/12] merge-index: migrate to parse_options() API
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Migrate the "merge-index" command to the parse_options() API, a
+preceding commit added tests for the existing behavior.
+
+In a subsequent commit we'll adjust the behavior to be more consistent
+with how most other commands work, but for now let's take pains to
+preserve it as-is. We need to e.g. call parse_options() twice now, as
+the "-a" option is currently only understood after "<merge-program>".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/merge-index.c  | 71 ++++++++++++++++++++++++++----------------
+ git.c                  |  2 +-
+ t/t6060-merge-index.sh | 10 +++---
+ 3 files changed, 51 insertions(+), 32 deletions(-)
+
+diff --git a/builtin/merge-index.c b/builtin/merge-index.c
+index 1a5a64afd2a..3bd0790465e 100644
+--- a/builtin/merge-index.c
++++ b/builtin/merge-index.c
+@@ -1,5 +1,6 @@
+ #define USE_THE_INDEX_COMPATIBILITY_MACROS
+ #include "builtin.h"
++#include "parse-options.h"
+ #include "run-command.h"
+ 
+ static const char *pgm;
+@@ -72,7 +73,26 @@ static void merge_all(void)
+ 
+ int cmd_merge_index(int argc, const char **argv, const char *prefix)
+ {
+-	int i, force_file = 0;
++	int all = 0;
++	const char * const usage[] = {
++		N_("git merge-index [-o] [-q] <merge-program> (-a | ([--] <file>...))"),
++		NULL
++	};
++#define OPT__MERGE_INDEX_ALL(v) \
++	OPT_BOOL('a', NULL, (v), \
++		 N_("merge all files in the index that need merging"))
++	struct option options[] = {
++		OPT_BOOL('o', NULL, &one_shot,
++			 N_("don't stop at the first failed merge")),
++		OPT__QUIET(&quiet, N_("be quiet")),
++		OPT__MERGE_INDEX_ALL(&all), /* include "-a" to show it in "-bh" */
++		OPT_END(),
++	};
++	struct option options_prog[] = {
++		OPT__MERGE_INDEX_ALL(&all),
++		OPT_END(),
++	};
++#undef OPT__MERGE_INDEX_ALL
+ 
+ 	/* Without this we cannot rely on waitpid() to tell
+ 	 * what happened to our children.
+@@ -80,38 +100,35 @@ int cmd_merge_index(int argc, const char **argv, const char *prefix)
+ 	signal(SIGCHLD, SIG_DFL);
+ 
+ 	if (argc < 3)
+-		usage("git merge-index [-o] [-q] <merge-program> (-a | ([--] <file>...))");
++		usage_with_options(usage, options);
++
++	/* Option parsing without <merge-program> options */
++	argc = parse_options(argc, argv, prefix, options, usage,
++			     PARSE_OPT_STOP_AT_NON_OPTION);
++	if (all)
++		usage_msg_optf(_("'%s' option can only be provided after '<merge-program>'"),
++			      usage, options, "-a");
++	/* <merge-program> and its options */
++	if (!argc)
++		usage_msg_opt(_("need a <merge-program> argument"), usage, options);
++	pgm = argv[0];
++	argc = parse_options(argc, argv, prefix, options_prog, usage, 0);
++	if (argc && all)
++		usage_msg_opt(_("'-a' and '<file>...' are mutually exclusive"),
++			      usage, options);
+ 
+ 	read_cache();
+ 
+ 	/* TODO: audit for interaction with sparse-index. */
+ 	ensure_full_index(&the_index);
+ 
+-	i = 1;
+-	if (!strcmp(argv[i], "-o")) {
+-		one_shot = 1;
+-		i++;
+-	}
+-	if (!strcmp(argv[i], "-q")) {
+-		quiet = 1;
+-		i++;
+-	}
+-	pgm = argv[i++];
+-	for (; i < argc; i++) {
+-		const char *arg = argv[i];
+-		if (!force_file && *arg == '-') {
+-			if (!strcmp(arg, "--")) {
+-				force_file = 1;
+-				continue;
+-			}
+-			if (!strcmp(arg, "-a")) {
+-				merge_all();
+-				continue;
+-			}
+-			die("git merge-index: unknown option %s", arg);
+-		}
+-		merge_one_path(arg);
+-	}
++
++	if (all)
++		merge_all();
++	else
++		for (size_t i = 0; i < argc; i++)
++			merge_one_path(argv[i]);
++
+ 	if (err && !quiet)
+ 		die("merge program failed");
+ 	return err;
+diff --git a/git.c b/git.c
+index 6662548986f..83696fd8b4a 100644
+--- a/git.c
++++ b/git.c
+@@ -560,7 +560,7 @@ static struct cmd_struct commands[] = {
+ 	{ "merge", cmd_merge, RUN_SETUP | NEED_WORK_TREE },
+ 	{ "merge-base", cmd_merge_base, RUN_SETUP },
+ 	{ "merge-file", cmd_merge_file, RUN_SETUP_GENTLY },
+-	{ "merge-index", cmd_merge_index, RUN_SETUP | NO_PARSEOPT },
++	{ "merge-index", cmd_merge_index, RUN_SETUP },
+ 	{ "merge-ours", cmd_merge_ours, RUN_SETUP | NO_PARSEOPT },
+ 	{ "merge-recursive", cmd_merge_recursive, RUN_SETUP | NEED_WORK_TREE | NO_PARSEOPT },
+ 	{ "merge-recursive-ours", cmd_merge_recursive, RUN_SETUP | NEED_WORK_TREE | NO_PARSEOPT },
+diff --git a/t/t6060-merge-index.sh b/t/t6060-merge-index.sh
+index edc03b41ab9..6c59e7bc4e5 100755
+--- a/t/t6060-merge-index.sh
++++ b/t/t6060-merge-index.sh
+@@ -22,9 +22,10 @@ test_expect_success 'usage: 2 arguments' '
+ 
+ test_expect_success 'usage: -a before <program>' '
+ 	cat >expect <<-\EOF &&
+-	fatal: git merge-index: b not in the cache
++	fatal: '\''-a'\'' option can only be provided after '\''<merge-program>'\''
+ 	EOF
+-	test_expect_code 128 git merge-index -a b program >out 2>actual &&
++	test_expect_code 129 git merge-index -a b program >out 2>actual.raw &&
++	grep "^fatal:" actual.raw >actual &&
+ 	test_must_be_empty out &&
+ 	test_cmp expect actual
+ '
+@@ -33,9 +34,10 @@ for opt in -q -o
+ do
+ 	test_expect_success "usage: $opt after -a" '
+ 		cat >expect <<-EOF &&
+-		fatal: git merge-index: unknown option $opt
++		fatal: '\''-a'\'' option can only be provided after '\''<merge-program>'\''
+ 		EOF
+-		test_expect_code 128 git merge-index -a $opt >out 2>actual &&
++		test_expect_code 129 git merge-index -a $opt >out 2>actual.raw &&
++		grep "^fatal:" actual.raw >actual &&
+ 		test_must_be_empty out &&
+ 		test_cmp expect actual
+ 	'
+-- 
+2.38.0.1511.gcdcff1f1dc2
+

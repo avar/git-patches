@@ -1,0 +1,1398 @@
+From f036856014072401d94c6e92b877ddcede2d6755 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v9-00.12-00000000000-20221118T110012Z-avarab@gmail.com>
+In-Reply-To: <20220809185429.20098-1-alban.gruin@gmail.com>
+References: <20220809185429.20098-1-alban.gruin@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 18 Nov 2022 12:00:12 +0100
+Subject: [PATCH v9 00/12] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Alban Gruin (4):
+  t6060: modify multiple files to expose a possible issue with
+    merge-index
+  t6060: add tests for removed files
+  merge-index: improve die() error messages
+  merge-index: libify merge_one_path() and merge_all()
+
+Ævar Arnfjörð Bjarmason (8):
+  merge-index doc & -h: fix padding, labels and "()" use
+  merge-index tests: add usage tests
+  merge-index: migrate to parse_options() API
+  merge-index i18n: mark die() messages for translation
+  merge-index: stop calling ensure_full_index() twice
+  builtin/merge-index.c: don't USE_THE_INDEX_COMPATIBILITY_MACROS
+  merge-index: use "struct strvec" and helper to prepare args
+  merge-index: make the argument parsing sensible & simpler
+
+ Documentation/git-merge-index.txt |   2 +-
+ Makefile                          |   1 +
+ builtin/merge-index.c             | 169 ++++++++++++++----------------
+ git.c                             |   2 +-
+ merge-strategies.c                |  87 +++++++++++++++
+ merge-strategies.h                |  19 ++++
+ t/t0450/txt-help-mismatches       |   1 -
+ t/t6060-merge-index.sh            |  65 +++++++++++-
+ 8 files changed, 250 insertions(+), 96 deletions(-)
+ create mode 100644 merge-strategies.c
+ create mode 100644 merge-strategies.h
+
+Range-diff against v8:
+ 5:  19a4fc52c57 !  1:  cafc7db374e merge-index: add a new way to invoke `git-merge-one-file'
+    @@
+      ## Metadata ##
+    -Author: Alban Gruin <alban.gruin@gmail.com>
+    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    merge-index: add a new way to invoke `git-merge-one-file'
+    +    merge-index doc & -h: fix padding, labels and "()" use
+     
+    -    Since `git-merge-one-file' will be rewritten and libified, there may be
+    -    cases where there is no executable named this way (ie. when git is
+    -    compiled with `SKIP_DASHED_BUILT_INS' enabled).  This adds a new way to
+    -    invoke this particular program even if it does not exist, by passing
+    -    `--use=merge-one-file' to merge-index.  For now, it still forks.
+    +    Make the "merge-index" doc SYNOPSIS and "-h" output consistent with
+    +    one another, and small issues with it:
+     
+    -    The test suite and shell scripts (git-merge-octopus.sh and
+    -    git-merge-resolve.sh) are updated to use this new convention.
+    +    - Whitespace padding, per e2f4e7e8c0f (doc txt & -h consistency:
+    +      correct padding around "[]()", 2022-10-13).
+     
+    -    Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    +    - Use "<file>" consistently, rather than using "<filename>" in the
+    +      "-h" output, and "<file>" in the SYNOPSIS.
+    +
+    +    - The "-h" version incorrectly claimed that the filename was optional,
+    +      but it's not.
+    +
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Documentation/git-merge-index.txt ##
+     @@ Documentation/git-merge-index.txt: git-merge-index - Run a merge for files needing merging
+    @@ Documentation/git-merge-index.txt: git-merge-index - Run a merge for files needi
+      --------
+      [verse]
+     -'git merge-index' [-o] [-q] <merge-program> (-a | ( [--] <file>...) )
+    -+'git merge-index' [-o] [-q] (<merge-program> | --use=merge-one-file) (-a | ( [--] <file>...) )
+    ++'git merge-index' [-o] [-q] <merge-program> (-a | ([--] <file>...))
+      
+      DESCRIPTION
+      -----------
+    -@@ Documentation/git-merge-index.txt: code.
+    - Typically this is run with a script calling Git's imitation of
+    - the 'merge' command from the RCS package.
+    - 
+    --A sample script called 'git merge-one-file' is included in the
+    --distribution.
+    -+A sample script called 'git merge-one-file' used to be included in the
+    -+distribution. This program must now be called with
+    -+'--use=merge-one-file'.
+    - 
+    - ALERT ALERT ALERT! The Git "merge object order" is different from the
+    - RCS 'merge' program merge object order. In the above ordering, the
+     
+      ## builtin/merge-index.c ##
+    -@@
+    - #include "builtin.h"
+    -+#include "lockfile.h"
+    - #include "merge-strategies.h"
+    - #include "run-command.h"
+    - 
+    -@@ builtin/merge-index.c: static int merge_one_file_spawn(struct index_state *istate,
+    - int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    - {
+    - 	int i, force_file = 0, err = 0, one_shot = 0, quiet = 0;
+    -+	merge_fn merge_action = merge_one_file_spawn;
+    -+	struct lock_file lock = LOCK_INIT;
+    - 	struct repository *r = the_repository;
+    -+	const char *use_internal = NULL;
+    - 
+    - 	/* Without this we cannot rely on waitpid() to tell
+    - 	 * what happened to our children.
+     @@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+      	signal(SIGCHLD, SIG_DFL);
+      
+      	if (argc < 3)
+     -		usage("git merge-index [-o] [-q] <merge-program> (-a | [--] [<filename>...])");
+    -+		usage("git merge-index [-o] [-q] (<merge-program> | --use=merge-one-file) (-a | [--] [<filename>...])");
+    ++		usage("git merge-index [-o] [-q] <merge-program> (-a | ([--] <file>...))");
+      
+    - 	if (repo_read_index(r) < 0)
+    - 		die("invalid index");
+    -@@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    - 	}
+    + 	read_cache();
+      
+    - 	pgm = argv[i++];
+    -+	setup_work_tree();
+    -+
+    -+	if (skip_prefix(pgm, "--use=", &use_internal)) {
+    -+		if (!strcmp(use_internal, "merge-one-file"))
+    -+			pgm = "git-merge-one-file";
+    -+		else
+    -+			die(_("git merge-index: unknown internal program %s"), use_internal);
+    -+	}
+    - 
+    - 	for (; i < argc; i++) {
+    - 		const char *arg = argv[i];
+    -@@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    - 			}
+    - 			if (!strcmp(arg, "-a")) {
+    - 				err |= merge_all_index(r->index, one_shot, quiet,
+    --						       merge_one_file_spawn, NULL);
+    -+						       merge_action, NULL);
+    - 				continue;
+    - 			}
+    - 			die("git merge-index: unknown option %s", arg);
+    - 		}
+    - 		err |= merge_index_path(r->index, one_shot, quiet, arg,
+    --					merge_one_file_spawn, NULL);
+    -+					merge_action, NULL);
+    -+	}
+    -+
+    -+	if (is_lock_file_locked(&lock)) {
+    -+		if (err)
+    -+			rollback_lock_file(&lock);
+    -+		else
+    -+			return write_locked_index(r->index, &lock, COMMIT_LOCK);
+    - 	}
+    - 
+    - 	return err;
+     
+    - ## git-merge-octopus.sh ##
+    -@@ git-merge-octopus.sh: do
+    - 	if test $? -ne 0
+    - 	then
+    - 		gettextln "Simple merge did not work, trying automatic merge."
+    --		git merge-index -o git-merge-one-file -a ||
+    -+		git merge-index -o --use=merge-one-file -a ||
+    - 		OCTOPUS_FAILURE=1
+    - 		next=$(git write-tree 2>/dev/null)
+    - 	fi
+    -
+    - ## git-merge-resolve.sh ##
+    -@@ git-merge-resolve.sh: then
+    - 	exit 0
+    - else
+    - 	echo "Simple merge failed, trying Automatic merge."
+    --	if git merge-index -o git-merge-one-file -a
+    -+	if git merge-index -o --use=merge-one-file -a
+    - 	then
+    - 		exit 0
+    - 	else
+    -
+    - ## t/t6060-merge-index.sh ##
+    -@@ t/t6060-merge-index.sh: test_expect_success 'read-tree does not resolve content merge' '
+    - 	test_cmp expect unmerged
+    - '
+    - 
+    --test_expect_success 'git merge-index git-merge-one-file resolves' '
+    --	git merge-index git-merge-one-file -a &&
+    -+test_expect_success 'git merge-index --use=merge-one-file resolves' '
+    -+	git merge-index --use=merge-one-file -a &&
+    - 	git diff-files --name-only --diff-filter=U >unmerged &&
+    - 	test_must_be_empty unmerged &&
+    - 	test_cmp expect-merged file &&
+    -@@ t/t6060-merge-index.sh: test_expect_success 'merge-one-file respects GIT_WORK_TREE' '
+    - 	 export GIT_WORK_TREE &&
+    - 	 GIT_INDEX_FILE=$PWD/merge.index &&
+    - 	 export GIT_INDEX_FILE &&
+    --	 git merge-index git-merge-one-file -a &&
+    -+	 git merge-index --use=merge-one-file -a &&
+    - 	 git cat-file blob :file >work/file-index
+    - 	) &&
+    - 	test_cmp expect-merged bare.git/work/file &&
+    -@@ t/t6060-merge-index.sh: test_expect_success 'merge-one-file respects core.worktree' '
+    - 	 export GIT_DIR &&
+    - 	 git config core.worktree "$PWD/child" &&
+    - 	 git read-tree -i -m base ten two &&
+    --	 git merge-index git-merge-one-file -a &&
+    -+	 git merge-index --use=merge-one-file -a &&
+    - 	 git cat-file blob :file >file-index
+    - 	) &&
+    - 	test_cmp expect-merged subdir/child/file &&
+    + ## t/t0450/txt-help-mismatches ##
+    +@@ t/t0450/txt-help-mismatches: mailsplit
+    + maintenance
+    + merge
+    + merge-file
+    +-merge-index
+    + merge-one-file
+    + multi-pack-index
+    + name-rev
+ 1:  0f791f500e6 !  2:  099d4812601 t6060: modify multiple files to expose a possible issue with merge-index
+    @@ Commit message
+         be trivially mergeable.
+     
+         Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## t/t6060-merge-index.sh ##
+    -@@ t/t6060-merge-index.sh: test_description='basic git merge-index / git-merge-one-file tests'
+    +@@ t/t6060-merge-index.sh: TEST_PASSES_SANITIZE_LEAK=true
+      
+      test_expect_success 'setup diverging branches' '
+      	test_write_lines 1 2 3 4 5 6 7 8 9 10 >file &&
+ 2:  ed9e7a45855 !  3:  af3a235a224 t6060: add tests for removed files
+    @@ Commit message
+         tagged as `base', and deletes it in the commit tagged as `two'.
+     
+         Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## t/t6060-merge-index.sh ##
+    -@@ t/t6060-merge-index.sh: test_description='basic git merge-index / git-merge-one-file tests'
+    +@@ t/t6060-merge-index.sh: TEST_PASSES_SANITIZE_LEAK=true
+      test_expect_success 'setup diverging branches' '
+      	test_write_lines 1 2 3 4 5 6 7 8 9 10 >file &&
+      	cp file file2 &&
+13:  cecfa666ecb !  4:  7d686637fa3 sequencer: use the "resolve" strategy without forking
+    @@
+      ## Metadata ##
+    -Author: Alban Gruin <alban.gruin@gmail.com>
+    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    sequencer: use the "resolve" strategy without forking
+    +    merge-index tests: add usage tests
+     
+    -    This teaches the sequencer to invoke the "resolve" strategy with a
+    -    function call instead of forking.
+    +    Add tests that stress the current behavior of the options parsing in
+    +    cmd_merge_index(), in preparation for moving it over to
+    +    parse_options().
+     
+    -    Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## sequencer.c ##
+    -@@
+    - #include "reset.h"
+    - #include "branch.h"
+    - #include "log-tree.h"
+    -+#include "merge-strategies.h"
+    + ## t/t6060-merge-index.sh ##
+    +@@ t/t6060-merge-index.sh: test_description='basic git merge-index / git-merge-one-file tests'
+    + TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+      
+    - #define GIT_REFLOG_ACTION "GIT_REFLOG_ACTION"
+    - 
+    -@@ sequencer.c: static int do_pick_commit(struct repository *r,
+    - 
+    - 		commit_list_insert(base, &common);
+    - 		commit_list_insert(next, &remotes);
+    --		res |= try_merge_command(r, opts->strategy,
+    --					 opts->xopts_nr, (const char **)opts->xopts,
+    --					common, oid_to_hex(&head), remotes);
+    ++test_expect_success 'usage: 1 argument' '
+    ++	test_expect_code 129 git merge-index a >out 2>err &&
+    ++	test_must_be_empty out &&
+    ++	grep ^usage err
+    ++'
+    ++
+    ++test_expect_success 'usage: 2 arguments' '
+    ++	cat >expect <<-\EOF &&
+    ++	fatal: git merge-index: b not in the cache
+    ++	EOF
+    ++	test_expect_code 128 git merge-index a b >out 2>actual &&
+    ++	test_must_be_empty out &&
+    ++	test_cmp expect actual
+    ++'
+    ++
+    ++test_expect_success 'usage: -a before <program>' '
+    ++	cat >expect <<-\EOF &&
+    ++	fatal: git merge-index: b not in the cache
+    ++	EOF
+    ++	test_expect_code 128 git merge-index -a b program >out 2>actual &&
+    ++	test_must_be_empty out &&
+    ++	test_cmp expect actual
+    ++'
+    ++
+    ++for opt in -q -o
+    ++do
+    ++	test_expect_success "usage: $opt after -a" '
+    ++		cat >expect <<-EOF &&
+    ++		fatal: git merge-index: unknown option $opt
+    ++		EOF
+    ++		test_expect_code 128 git merge-index -a $opt >out 2>actual &&
+    ++		test_must_be_empty out &&
+    ++		test_cmp expect actual
+    ++	'
+    ++
+    ++	test_expect_success "usage: $opt program" '
+    ++		test_expect_code 0 git merge-index $opt program
+    ++	'
+    ++done
+     +
+    -+		if (!strcmp(opts->strategy, "resolve")) {
+    -+			repo_read_index(r);
+    -+			res |= merge_strategies_resolve(r, common, oid_to_hex(&head), remotes);
+    -+		} else {
+    -+			res |= try_merge_command(r, opts->strategy,
+    -+						 opts->xopts_nr, (const char **)opts->xopts,
+    -+						 common, oid_to_hex(&head), remotes);
+    -+		}
+    ++test_expect_success 'usage: program' '
+    ++	test_expect_code 129 git merge-index program
+    ++'
+     +
+    - 		free_commit_list(common);
+    - 		free_commit_list(remotes);
+    - 	}
+    + test_expect_success 'setup diverging branches' '
+    + 	test_write_lines 1 2 3 4 5 6 7 8 9 10 >file &&
+    + 	cp file file2 &&
+ 6:  376130c1334 !  5:  845f9b0cc19 update-index: move add_cacheinfo() to read-cache.c
+    @@
+      ## Metadata ##
+    -Author: Alban Gruin <alban.gruin@gmail.com>
+    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    update-index: move add_cacheinfo() to read-cache.c
+    +    merge-index: migrate to parse_options() API
+     
+    -    This moves the function add_cacheinfo() that already exists in
+    -    update-index.c to update-index.c, renames it add_to_index_cacheinfo(),
+    -    and adds an `istate' parameter.  The new cache entry is returned through
+    -    a pointer passed in the parameters.  This function can return three
+    -    values:
+    +    Migrate the "merge-index" command to the parse_options() API, a
+    +    preceding commit added tests for the existing behavior.
+     
+    -     - 0, when the file has been successfully added to the index;
+    -     - ADD_TO_INDEX_CACHEINFO_INVALID_PATH, when the file does not exists;
+    -     - ADD_TO_INDEX_CACHEINFO_UNABLE_TO_ADD, when the file could not be
+    -       added to the index.
+    +    In a subsequent commit we'll adjust the behavior to be more consistent
+    +    with how most other commands work, but for now let's take pains to
+    +    preserve it as-is. We need to e.g. call parse_options() twice now, as
+    +    the "-a" option is currently only understood after "<merge-program>".
+     
+    -    This will become useful in the next commit, when the three-way merge
+    -    will need to call this function.
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    -    Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    -
+    - ## builtin/update-index.c ##
+    -@@ builtin/update-index.c: static int process_path(const char *path, struct stat *st, int stat_errno)
+    - static int add_cacheinfo(unsigned int mode, const struct object_id *oid,
+    - 			 const char *path, int stage)
+    + ## builtin/merge-index.c ##
+    +@@
+    + #define USE_THE_INDEX_COMPATIBILITY_MACROS
+    + #include "builtin.h"
+    ++#include "parse-options.h"
+    + #include "run-command.h"
+    + 
+    + static const char *pgm;
+    +@@ builtin/merge-index.c: static void merge_all(void)
+    + 
+    + int cmd_merge_index(int argc, const char **argv, const char *prefix)
+      {
+    --	int len, option;
+    --	struct cache_entry *ce;
+    --
+    --	if (!verify_path(path, mode))
+    --		return error("Invalid path '%s'", path);
+    --
+    --	len = strlen(path);
+    --	ce = make_empty_cache_entry(&the_index, len);
+    -+	int res;
+    +-	int i, force_file = 0;
+    ++	int all = 0;
+    ++	const char * const usage[] = {
+    ++		N_("git merge-index [-o] [-q] <merge-program> (-a | ([--] <file>...))"),
+    ++		NULL
+    ++	};
+    ++#define OPT__MERGE_INDEX_ALL(v) \
+    ++	OPT_BOOL('a', NULL, (v), \
+    ++		 N_("merge all files in the index that need merging"))
+    ++	struct option options[] = {
+    ++		OPT_BOOL('o', NULL, &one_shot,
+    ++			 N_("don't stop at the first failed merge")),
+    ++		OPT__QUIET(&quiet, N_("be quiet")),
+    ++		OPT__MERGE_INDEX_ALL(&all), /* include "-a" to show it in "-bh" */
+    ++		OPT_END(),
+    ++	};
+    ++	struct option options_prog[] = {
+    ++		OPT__MERGE_INDEX_ALL(&all),
+    ++		OPT_END(),
+    ++	};
+    ++#undef OPT__MERGE_INDEX_ALL
+    + 
+    + 	/* Without this we cannot rely on waitpid() to tell
+    + 	 * what happened to our children.
+    +@@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    + 	signal(SIGCHLD, SIG_DFL);
+      
+    --	oidcpy(&ce->oid, oid);
+    --	memcpy(ce->name, path, len);
+    --	ce->ce_flags = create_ce_flags(stage);
+    --	ce->ce_namelen = len;
+    --	ce->ce_mode = create_ce_mode(mode);
+    --	if (assume_unchanged)
+    --		ce->ce_flags |= CE_VALID;
+    --	option = allow_add ? ADD_CACHE_OK_TO_ADD : 0;
+    --	option |= allow_replace ? ADD_CACHE_OK_TO_REPLACE : 0;
+    --	if (add_cache_entry(ce, option))
+    -+	res = add_to_index_cacheinfo(&the_index, mode, oid, path, stage,
+    -+				     allow_add, allow_replace, NULL);
+    -+	if (res == ADD_TO_INDEX_CACHEINFO_INVALID_PATH)
+    -+		return error(_("Invalid path '%s'"), path);
+    -+	if (res == ADD_TO_INDEX_CACHEINFO_UNABLE_TO_ADD)
+    - 		return error("%s: cannot add to the index - missing --add option?",
+    - 			     path);
+    + 	if (argc < 3)
+    +-		usage("git merge-index [-o] [-q] <merge-program> (-a | ([--] <file>...))");
+    ++		usage_with_options(usage, options);
+     +
+    - 	report("add '%s'", path);
+    - 	return 0;
+    - }
+    -
+    - ## cache.h ##
+    -@@ cache.h: int remove_file_from_index(struct index_state *, const char *path);
+    - int add_to_index(struct index_state *, const char *path, struct stat *, int flags);
+    - int add_file_to_index(struct index_state *, const char *path, int flags);
+    ++	/* Option parsing without <merge-program> options */
+    ++	argc = parse_options(argc, argv, prefix, options, usage,
+    ++			     PARSE_OPT_STOP_AT_NON_OPTION);
+    ++	if (all)
+    ++		usage_msg_optf(_("'%s' option can only be provided after '<merge-program>'"),
+    ++			      usage, options, "-a");
+    ++	/* <merge-program> and its options */
+    ++	if (!argc)
+    ++		usage_msg_opt(_("need a <merge-program> argument"), usage, options);
+    ++	pgm = argv[0];
+    ++	argc = parse_options(argc, argv, prefix, options_prog, usage, 0);
+    ++	if (argc && all)
+    ++		usage_msg_opt(_("'-a' and '<file>...' are mutually exclusive"),
+    ++			      usage, options);
+    + 
+    + 	read_cache();
+      
+    -+#define ADD_TO_INDEX_CACHEINFO_INVALID_PATH (-1)
+    -+#define ADD_TO_INDEX_CACHEINFO_UNABLE_TO_ADD (-2)
+    + 	/* TODO: audit for interaction with sparse-index. */
+    + 	ensure_full_index(&the_index);
+    + 
+    +-	i = 1;
+    +-	if (!strcmp(argv[i], "-o")) {
+    +-		one_shot = 1;
+    +-		i++;
+    +-	}
+    +-	if (!strcmp(argv[i], "-q")) {
+    +-		quiet = 1;
+    +-		i++;
+    +-	}
+    +-	pgm = argv[i++];
+    +-	for (; i < argc; i++) {
+    +-		const char *arg = argv[i];
+    +-		if (!force_file && *arg == '-') {
+    +-			if (!strcmp(arg, "--")) {
+    +-				force_file = 1;
+    +-				continue;
+    +-			}
+    +-			if (!strcmp(arg, "-a")) {
+    +-				merge_all();
+    +-				continue;
+    +-			}
+    +-			die("git merge-index: unknown option %s", arg);
+    +-		}
+    +-		merge_one_path(arg);
+    +-	}
+     +
+    -+int add_to_index_cacheinfo(struct index_state *, unsigned int mode,
+    -+			   const struct object_id *oid, const char *path,
+    -+			   int stage, int allow_add, int allow_replace,
+    -+			   struct cache_entry **ce_ret);
+    ++	if (all)
+    ++		merge_all();
+    ++	else
+    ++		for (size_t i = 0; i < argc; i++)
+    ++			merge_one_path(argv[i]);
+     +
+    - int chmod_index_entry(struct index_state *, struct cache_entry *ce, char flip);
+    - int ce_same_name(const struct cache_entry *a, const struct cache_entry *b);
+    - void set_object_name_for_intent_to_add_entry(struct cache_entry *ce);
+    + 	if (err && !quiet)
+    + 		die("merge program failed");
+    + 	return err;
+    +
+    + ## git.c ##
+    +@@ git.c: static struct cmd_struct commands[] = {
+    + 	{ "merge", cmd_merge, RUN_SETUP | NEED_WORK_TREE },
+    + 	{ "merge-base", cmd_merge_base, RUN_SETUP },
+    + 	{ "merge-file", cmd_merge_file, RUN_SETUP_GENTLY },
+    +-	{ "merge-index", cmd_merge_index, RUN_SETUP | NO_PARSEOPT },
+    ++	{ "merge-index", cmd_merge_index, RUN_SETUP },
+    + 	{ "merge-ours", cmd_merge_ours, RUN_SETUP | NO_PARSEOPT },
+    + 	{ "merge-recursive", cmd_merge_recursive, RUN_SETUP | NEED_WORK_TREE | NO_PARSEOPT },
+    + 	{ "merge-recursive-ours", cmd_merge_recursive, RUN_SETUP | NEED_WORK_TREE | NO_PARSEOPT },
+     
+    - ## read-cache.c ##
+    -@@ read-cache.c: int add_index_entry(struct index_state *istate, struct cache_entry *ce, int opti
+    - 	return 0;
+    - }
+    + ## t/t6060-merge-index.sh ##
+    +@@ t/t6060-merge-index.sh: test_expect_success 'usage: 2 arguments' '
+      
+    -+int add_to_index_cacheinfo(struct index_state *istate, unsigned int mode,
+    -+			   const struct object_id *oid, const char *path,
+    -+			   int stage, int allow_add, int allow_replace,
+    -+			   struct cache_entry **ce_ret)
+    -+{
+    -+	int len, option;
+    -+	struct cache_entry *ce;
+    -+
+    -+	if (!verify_path(path, mode))
+    -+		return ADD_TO_INDEX_CACHEINFO_INVALID_PATH;
+    -+
+    -+	len = strlen(path);
+    -+	ce = make_empty_cache_entry(istate, len);
+    -+
+    -+	oidcpy(&ce->oid, oid);
+    -+	memcpy(ce->name, path, len);
+    -+	ce->ce_flags = create_ce_flags(stage);
+    -+	ce->ce_namelen = len;
+    -+	ce->ce_mode = create_ce_mode(mode);
+    -+	if (assume_unchanged)
+    -+		ce->ce_flags |= CE_VALID;
+    -+	option = allow_add ? ADD_CACHE_OK_TO_ADD : 0;
+    -+	option |= allow_replace ? ADD_CACHE_OK_TO_REPLACE : 0;
+    -+
+    -+	if (add_index_entry(istate, ce, option)) {
+    -+		discard_cache_entry(ce);
+    -+		return ADD_TO_INDEX_CACHEINFO_UNABLE_TO_ADD;
+    -+	}
+    -+
+    -+	if (ce_ret)
+    -+		*ce_ret = ce;
+    -+
+    -+	return 0;
+    -+}
+    -+
+    - /*
+    -  * "refresh" does not calculate a new sha1 file or bring the
+    -  * cache up-to-date for mode/content changes. But what it
+    + test_expect_success 'usage: -a before <program>' '
+    + 	cat >expect <<-\EOF &&
+    +-	fatal: git merge-index: b not in the cache
+    ++	fatal: '\''-a'\'' option can only be provided after '\''<merge-program>'\''
+    + 	EOF
+    +-	test_expect_code 128 git merge-index -a b program >out 2>actual &&
+    ++	test_expect_code 129 git merge-index -a b program >out 2>actual.raw &&
+    ++	grep "^fatal:" actual.raw >actual &&
+    + 	test_must_be_empty out &&
+    + 	test_cmp expect actual
+    + '
+    +@@ t/t6060-merge-index.sh: for opt in -q -o
+    + do
+    + 	test_expect_success "usage: $opt after -a" '
+    + 		cat >expect <<-EOF &&
+    +-		fatal: git merge-index: unknown option $opt
+    ++		fatal: '\''-a'\'' option can only be provided after '\''<merge-program>'\''
+    + 		EOF
+    +-		test_expect_code 128 git merge-index -a $opt >out 2>actual &&
+    ++		test_expect_code 129 git merge-index -a $opt >out 2>actual.raw &&
+    ++		grep "^fatal:" actual.raw >actual &&
+    + 		test_must_be_empty out &&
+    + 		test_cmp expect actual
+    + 	'
+ -:  ----------- >  6:  fc4e64f669e merge-index: improve die() error messages
+ -:  ----------- >  7:  04c2bae9e68 merge-index i18n: mark die() messages for translation
+11:  701c47371a7 !  8:  badfc60354a merge: use the "resolve" strategy without forking
+    @@
+      ## Metadata ##
+    -Author: Alban Gruin <alban.gruin@gmail.com>
+    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    merge: use the "resolve" strategy without forking
+    +    merge-index: stop calling ensure_full_index() twice
+     
+    -    This teaches `git merge' to invoke the "resolve" strategy with a
+    -    function call instead of forking.
+    +    When most of the ensure_full_index() calls were added in
+    +    8e97852919f (Merge branch 'ds/sparse-index-protections', 2021-04-30)
+    +    we could add them at the start of cmd_*() for built-ins, but in some
+    +    cases we couldn't do that, as we'd only want to initialize the index
+    +    conditionally on some branches in the code.
+     
+    -    Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    +    But this code added in 299e2c4561b (merge-index: ensure full index,
+    +    2021-04-01) (part of 8e97852919f) isn't such a case. The merge_all()
+    +    function is only called by cmd_merge_index(), which before calling it
+    +    will have called ensure_full_index() unconditionally.
+     
+    - ## builtin/merge.c ##
+    -@@
+    - #include "commit-reach.h"
+    - #include "wt-status.h"
+    - #include "commit-graph.h"
+    -+#include "merge-strategies.h"
+    +    We can therefore skip this. While we're at it, and mainly so that
+    +    we'll see the relevant code in the context, let's fix a minor
+    +    whitespace issue that the addition of the ensure_full_index() call in
+    +    299e2c4561b introduced.
+    +
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +
+    + ## builtin/merge-index.c ##
+    +@@ builtin/merge-index.c: static void merge_one_path(const char *path)
+    + static void merge_all(void)
+    + {
+    + 	int i;
+    +-	/* TODO: audit for interaction with sparse-index. */
+    +-	ensure_full_index(&the_index);
+    ++
+    + 	for (i = 0; i < active_nr; i++) {
+    + 		const struct cache_entry *ce = active_cache[i];
+    + 		if (!ce_stage(ce))
+    +@@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    + 	/* TODO: audit for interaction with sparse-index. */
+    + 	ensure_full_index(&the_index);
+      
+    - #define DEFAULT_TWOHEAD (1<<0)
+    - #define DEFAULT_OCTOPUS (1<<1)
+    -@@ builtin/merge.c: static int try_merge_strategy(const char *strategy, struct commit_list *common,
+    - 				       COMMIT_LOCK | SKIP_IF_UNCHANGED))
+    - 			die(_("unable to write %s"), get_index_file());
+    - 		return clean ? 0 : 1;
+    -+	} else if (!strcmp(strategy, "resolve")) {
+    -+		return merge_strategies_resolve(the_repository, common,
+    -+						head_arg, remoteheads);
+    - 	} else {
+    - 		return try_merge_command(the_repository,
+    - 					 strategy, xopts_nr, xopts,
+    +-
+    + 	if (all)
+    + 		merge_all();
+    + 	else
+ 4:  4b0420836c1 !  9:  f29343197eb merge-index: drop the index
+    @@
+      ## Metadata ##
+    -Author: Alban Gruin <alban.gruin@gmail.com>
+    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    merge-index: drop the index
+    +    builtin/merge-index.c: don't USE_THE_INDEX_COMPATIBILITY_MACROS
+     
+    -    In an effort to reduce the usage of the global index throughout the
+    -    codebase, this removes references to it in `git merge-index'.
+    +    Remove "USE_THE_INDEX_COMPATIBILITY_MACROS" and instead pass
+    +    "the_index" around between the functions in this file. In a subsequent
+    +    commit we'll libify this, and don't want to use
+    +    "USE_THE_INDEX_COMPATIBILITY_MACROS" in any more places in the
+    +    top-level *.c files. Doing this first makes that diff a lot smaller.
+     
+    -    Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/merge-index.c ##
+     @@
+     -#define USE_THE_INDEX_COMPATIBILITY_MACROS
+      #include "builtin.h"
+    - #include "merge-strategies.h"
+    + #include "parse-options.h"
+      #include "run-command.h"
+    -@@ builtin/merge-index.c: static int merge_one_file_spawn(struct index_state *istate,
+    - int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    +@@ builtin/merge-index.c: static const char *pgm;
+    + static int one_shot, quiet;
+    + static int err;
+    + 
+    +-static int merge_entry(int pos, const char *path)
+    ++static int merge_entry(struct index_state *istate, int pos, const char *path)
+      {
+    - 	int i, force_file = 0, err = 0, one_shot = 0, quiet = 0;
+    -+	struct repository *r = the_repository;
+    + 	int found;
+    + 	const char *arguments[] = { pgm, "", "", "", path, "", "", "", NULL };
+    +@@ builtin/merge-index.c: static int merge_entry(int pos, const char *path)
+    + 	char ownbuf[4][60];
+    + 	struct child_process cmd = CHILD_PROCESS_INIT;
+    + 
+    +-	if (pos >= active_nr)
+    ++	if (pos >= istate->cache_nr)
+    + 		die(_("'%s' is not in the cache"), path);
+    + 	found = 0;
+    + 	do {
+    +-		const struct cache_entry *ce = active_cache[pos];
+    ++		const struct cache_entry *ce = istate->cache[pos];
+    + 		int stage = ce_stage(ce);
+    + 
+    + 		if (strcmp(ce->name, path))
+    +@@ builtin/merge-index.c: static int merge_entry(int pos, const char *path)
+    + 		xsnprintf(ownbuf[stage], sizeof(ownbuf[stage]), "%o", ce->ce_mode);
+    + 		arguments[stage] = hexbuf[stage];
+    + 		arguments[stage + 4] = ownbuf[stage];
+    +-	} while (++pos < active_nr);
+    ++	} while (++pos < istate->cache_nr);
+    + 	if (!found)
+    + 		die(_("'%s' is not in the cache"), path);
+    + 
+    +@@ builtin/merge-index.c: static int merge_entry(int pos, const char *path)
+    + 	return found;
+    + }
+    + 
+    +-static void merge_one_path(const char *path)
+    ++static void merge_one_path(struct index_state *istate, const char *path)
+    + {
+    +-	int pos = cache_name_pos(path, strlen(path));
+    ++	int pos = index_name_pos(istate, path, strlen(path));
+    + 
+    + 	/*
+    + 	 * If it already exists in the cache as stage0, it's
+    + 	 * already merged and there is nothing to do.
+    + 	 */
+    + 	if (pos < 0)
+    +-		merge_entry(-pos-1, path);
+    ++		merge_entry(istate, -pos-1, path);
+    + }
+    + 
+    +-static void merge_all(void)
+    ++static void merge_all(struct index_state *istate)
+    + {
+    + 	int i;
+    + 
+    +-	for (i = 0; i < active_nr; i++) {
+    +-		const struct cache_entry *ce = active_cache[i];
+    ++	for (i = 0; i < istate->cache_nr; i++) {
+    ++		const struct cache_entry *ce = istate->cache[i];
+    + 		if (!ce_stage(ce))
+    + 			continue;
+    +-		i += merge_entry(i, ce->name)-1;
+    ++		i += merge_entry(istate, i, ce->name)-1;
+    + 	}
+    + }
+      
+    - 	/* Without this we cannot rely on waitpid() to tell
+    - 	 * what happened to our children.
+     @@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    - 	if (argc < 3)
+    - 		usage("git merge-index [-o] [-q] <merge-program> (-a | [--] [<filename>...])");
+    + 		usage_msg_opt(_("'-a' and '<file>...' are mutually exclusive"),
+    + 			      usage, options);
+      
+     -	read_cache();
+    -+	if (repo_read_index(r) < 0)
+    -+		die("invalid index");
+    ++	repo_read_index(the_repository);
+      
+      	/* TODO: audit for interaction with sparse-index. */
+     -	ensure_full_index(&the_index);
+    -+	ensure_full_index(r->index);
+    ++	ensure_full_index(the_repository->index);
+      
+    - 	i = 1;
+    - 	if (!strcmp(argv[i], "-o")) {
+    -@@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    - 				continue;
+    - 			}
+    - 			if (!strcmp(arg, "-a")) {
+    --				err |= merge_all_index(&the_index, one_shot, quiet,
+    -+				err |= merge_all_index(r->index, one_shot, quiet,
+    - 						       merge_one_file_spawn, NULL);
+    - 				continue;
+    - 			}
+    - 			die("git merge-index: unknown option %s", arg);
+    - 		}
+    --		err |= merge_index_path(&the_index, one_shot, quiet, arg,
+    -+		err |= merge_index_path(r->index, one_shot, quiet, arg,
+    - 					merge_one_file_spawn, NULL);
+    - 	}
+    + 	if (all)
+    +-		merge_all();
+    ++		merge_all(the_repository->index);
+    + 	else
+    + 		for (size_t i = 0; i < argc; i++)
+    +-			merge_one_path(argv[i]);
+    ++			merge_one_path(the_repository->index, argv[i]);
+      
+    + 	if (err && !quiet)
+    + 		die(_("merge program failed"));
+ 3:  d1d5740a8e5 ! 10:  c7a131a9a86 merge-index: libify merge_one_path() and merge_all()
+    @@ Metadata
+      ## Commit message ##
+         merge-index: libify merge_one_path() and merge_all()
+     
+    -    The "resolve" and "octopus" merge strategies do not call directly `git
+    -    merge-one-file', they delegate the work to another git command, `git
+    -    merge-index', that will loop over files in the index and call the
+    -    specified command.  Unfortunately, these functions are not part of
+    -    libgit.a, which means that once rewritten, the strategies would still
+    -    have to invoke `merge-one-file' by spawning a new process first.
+    +    Move the workhorse functions in "builtin/merge-index.c" into a new
+    +    "merge-strategies" library, and mostly "libify" the code while doing
+    +    so.
+     
+    -    To avoid this, this moves and renames merge_one_path(), merge_all(), and
+    -    their helpers to merge-strategies.c.  They also take a callback to
+    -    dictate what they should do for each file.  For now, to preserve the
+    -    behaviour of `merge-index', only one callback, launching a new process,
+    -    is defined.
+    +    Eventually this will allow us to invoke merge strategies such as
+    +    "resolve" and "octopus" in-process, once we've followed-up and
+    +    replaced "git-merge-{resolve,octopus}.sh" etc.
+    +
+    +    But for now let's move this code, while trying to optimize for as much
+    +    of it as possible being highlighted by the diff rename detection.
+    +
+    +    We still call die() in this library. An earlier version of this[1]
+    +    converted these to "error()", but the problem with that that we'd then
+    +    potentially run into the same error N times, e.g. once for every
+    +    "<file>" we were asked to operate on, instead of dying on the first
+    +    case. So let's leave those to "die()" for now.
+    +
+    +    1. https://lore.kernel.org/git/20220809185429.20098-4-alban.gruin@gmail.com/
+     
+         Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Makefile ##
+     @@ Makefile: LIB_OBJS += merge-blobs.o
+    @@ Makefile: LIB_OBJS += merge-blobs.o
+     
+      ## builtin/merge-index.c ##
+     @@
+    - #define USE_THE_INDEX_COMPATIBILITY_MACROS
+      #include "builtin.h"
+    + #include "parse-options.h"
+     +#include "merge-strategies.h"
+      #include "run-command.h"
+      
+    - static const char *pgm;
+    +-static const char *pgm;
+     -static int one_shot, quiet;
+     -static int err;
+    ++struct mofs_data {
+    ++	const char *program;
+    ++};
+      
+    --static int merge_entry(int pos, const char *path)
+    -+static int merge_one_file_spawn(struct index_state *istate,
+    -+				const struct object_id *orig_blob,
+    -+				const struct object_id *our_blob,
+    -+				const struct object_id *their_blob, const char *path,
+    -+				unsigned int orig_mode, unsigned int our_mode, unsigned int their_mode,
+    -+				void *data)
+    +-static int merge_entry(struct index_state *istate, int pos, const char *path)
+    ++static int merge_one_file(struct index_state *istate,
+    ++			  const struct object_id *orig_blob,
+    ++			  const struct object_id *our_blob,
+    ++			  const struct object_id *their_blob, const char *path,
+    ++			  unsigned int orig_mode, unsigned int our_mode,
+    ++			  unsigned int their_mode, void *data)
+      {
+     -	int found;
+    --	const char *arguments[] = { pgm, "", "", "", path, "", "", "", NULL };
+    --	char hexbuf[4][GIT_MAX_HEXSZ + 1];
+    --	char ownbuf[4][60];
+    -+	char oids[3][GIT_MAX_HEXSZ + 1] = {{0}};
+    -+	char modes[3][10] = {{0}};
+    -+	const char *arguments[] = { pgm, oids[0], oids[1], oids[2],
+    -+				    path, modes[0], modes[1], modes[2], NULL };
+    ++	struct mofs_data *d = data;
+    ++	const char *pgm = d->program;
+    + 	const char *arguments[] = { pgm, "", "", "", path, "", "", "", NULL };
+    + 	char hexbuf[4][GIT_MAX_HEXSZ + 1];
+    + 	char ownbuf[4][60];
+    ++	int stage = 0;
+    + 	struct child_process cmd = CHILD_PROCESS_INIT;
+      
+    --	if (pos >= active_nr)
+    --		die("git merge-index: %s not in the cache", path);
+    +-	if (pos >= istate->cache_nr)
+    +-		die(_("'%s' is not in the cache"), path);
+     -	found = 0;
+     -	do {
+    --		const struct cache_entry *ce = active_cache[pos];
+    +-		const struct cache_entry *ce = istate->cache[pos];
+     -		int stage = ce_stage(ce);
+     -
+     -		if (strcmp(ce->name, path))
+    @@ builtin/merge-index.c
+     -		xsnprintf(ownbuf[stage], sizeof(ownbuf[stage]), "%o", ce->ce_mode);
+     -		arguments[stage] = hexbuf[stage];
+     -		arguments[stage + 4] = ownbuf[stage];
+    --	} while (++pos < active_nr);
+    +-	} while (++pos < istate->cache_nr);
+     -	if (!found)
+    --		die("git merge-index: %s not in the cache", path);
+    +-		die(_("'%s' is not in the cache"), path);
+     -
+    --	if (run_command_v_opt(arguments, 0)) {
+    +-	strvec_pushv(&cmd.args, arguments);
+    +-	if (run_command(&cmd)) {
+     -		if (one_shot)
+     -			err++;
+     -		else {
+     -			if (!quiet)
+    --				die("merge program failed");
+    +-				die(_("merge program failed"));
+     -			exit(1);
+     -		}
+    -+	if (orig_blob) {
+    -+		oid_to_hex_r(oids[0], orig_blob);
+    -+		xsnprintf(modes[0], sizeof(modes[0]), "%06o", orig_mode);
+    ++#define ADD_MOF_ARG(oid, mode) \
+    ++	if ((oid)) { \
+    ++		stage++; \
+    ++		oid_to_hex_r(hexbuf[stage], (oid)); \
+    ++		xsnprintf(ownbuf[stage], sizeof(ownbuf[stage]), "%06o", (mode)); \
+    ++		arguments[stage] = hexbuf[stage]; \
+    ++		arguments[stage + 4] = ownbuf[stage]; \
+      	}
+     -	return found;
+     -}
+    - 
+    --static void merge_one_path(const char *path)
+    --{
+    --	int pos = cache_name_pos(path, strlen(path));
+     -
+    +-static void merge_one_path(struct index_state *istate, const char *path)
+    +-{
+    +-	int pos = index_name_pos(istate, path, strlen(path));
+    + 
+     -	/*
+     -	 * If it already exists in the cache as stage0, it's
+     -	 * already merged and there is nothing to do.
+     -	 */
+     -	if (pos < 0)
+    --		merge_entry(-pos-1, path);
+    +-		merge_entry(istate, -pos-1, path);
+     -}
+    -+	if (our_blob) {
+    -+		oid_to_hex_r(oids[1], our_blob);
+    -+		xsnprintf(modes[1], sizeof(modes[1]), "%06o", our_mode);
+    -+	}
+    - 
+    --static void merge_all(void)
+    +-
+    +-static void merge_all(struct index_state *istate)
+     -{
+     -	int i;
+    --	/* TODO: audit for interaction with sparse-index. */
+    --	ensure_full_index(&the_index);
+    --	for (i = 0; i < active_nr; i++) {
+    --		const struct cache_entry *ce = active_cache[i];
+    ++	ADD_MOF_ARG(orig_blob, orig_mode);
+    ++	ADD_MOF_ARG(our_blob, our_mode);
+    ++	ADD_MOF_ARG(their_blob, their_mode);
+    + 
+    +-	for (i = 0; i < istate->cache_nr; i++) {
+    +-		const struct cache_entry *ce = istate->cache[i];
+     -		if (!ce_stage(ce))
+     -			continue;
+    --		i += merge_entry(i, ce->name)-1;
+    -+	if (their_blob) {
+    -+		oid_to_hex_r(oids[2], their_blob);
+    -+		xsnprintf(modes[2], sizeof(modes[2]), "%06o", their_mode);
+    - 	}
+    -+
+    -+	return run_command_v_opt(arguments, 0);
+    +-		i += merge_entry(istate, i, ce->name)-1;
+    +-	}
+    ++	strvec_pushv(&cmd.args, arguments);
+    ++	return run_command(&cmd);
+      }
+      
+      int cmd_merge_index(int argc, const char **argv, const char *prefix)
+      {
+    --	int i, force_file = 0;
+    -+	int i, force_file = 0, err = 0, one_shot = 0, quiet = 0;
+    ++	int err = 0;
+    + 	int all = 0;
+    ++	int one_shot = 0;
+    ++	int quiet = 0;
+    + 	const char * const usage[] = {
+    + 		N_("git merge-index [-o] [-q] <merge-program> (-a | ([--] <file>...))"),
+    + 		NULL
+    +@@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    + 		OPT_END(),
+    + 	};
+    + #undef OPT__MERGE_INDEX_ALL
+    ++	struct mofs_data data = { 0 };
+      
+      	/* Without this we cannot rely on waitpid() to tell
+      	 * what happened to our children.
+     @@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    - 		quiet = 1;
+    - 		i++;
+    - 	}
+    -+
+    - 	pgm = argv[i++];
+    -+
+    - 	for (; i < argc; i++) {
+    - 		const char *arg = argv[i];
+    - 		if (!force_file && *arg == '-') {
+    + 	/* <merge-program> and its options */
+    + 	if (!argc)
+    + 		usage_msg_opt(_("need a <merge-program> argument"), usage, options);
+    +-	pgm = argv[0];
+    ++	data.program = argv[0];
+    + 	argc = parse_options(argc, argv, prefix, options_prog, usage, 0);
+    + 	if (argc && all)
+    + 		usage_msg_opt(_("'-a' and '<file>...' are mutually exclusive"),
+     @@ builtin/merge-index.c: int cmd_merge_index(int argc, const char **argv, const char *prefix)
+    - 				continue;
+    - 			}
+    - 			if (!strcmp(arg, "-a")) {
+    --				merge_all();
+    -+				err |= merge_all_index(&the_index, one_shot, quiet,
+    -+						       merge_one_file_spawn, NULL);
+    - 				continue;
+    - 			}
+    - 			die("git merge-index: unknown option %s", arg);
+    - 		}
+    --		merge_one_path(arg);
+    -+		err |= merge_index_path(&the_index, one_shot, quiet, arg,
+    -+					merge_one_file_spawn, NULL);
+    - 	}
+    + 	ensure_full_index(the_repository->index);
+    + 
+    + 	if (all)
+    +-		merge_all(the_repository->index);
+    ++		err |= merge_all_index(the_repository->index, one_shot, quiet,
+    ++				       merge_one_file, &data);
+    + 	else
+    + 		for (size_t i = 0; i < argc; i++)
+    +-			merge_one_path(the_repository->index, argv[i]);
+    ++			err |= merge_index_path(the_repository->index,
+    ++						one_shot, quiet, argv[i],
+    ++						merge_one_file, &data);
+    + 
+     -	if (err && !quiet)
+    --		die("merge program failed");
+    -+
+    +-		die(_("merge program failed"));
+      	return err;
+      }
+     
+    @@ merge-strategies.c (new)
+     +#include "merge-strategies.h"
+     +
+     +static int merge_entry(struct index_state *istate, unsigned int pos,
+    -+		       const char *path, int *err, merge_fn fn, void *data)
+    ++		       const char *path, int *err, merge_index_fn fn,
+    ++		       void *data)
+     +{
+     +	int found = 0;
+    -+	const struct object_id *oids[3] = {NULL};
+    -+	unsigned int modes[3] = {0};
+    ++	const struct object_id *oids[3] = { 0 };
+    ++	unsigned int modes[3] = { 0 };
+     +
+    ++	*err = 0;
+    ++
+    ++	if (pos >= istate->cache_nr)
+    ++		die(_("'%s' is not in the cache"), path);
+     +	do {
+     +		const struct cache_entry *ce = istate->cache[pos];
+     +		int stage = ce_stage(ce);
+    @@ merge-strategies.c (new)
+     +		modes[stage - 1] = ce->ce_mode;
+     +	} while (++pos < istate->cache_nr);
+     +	if (!found)
+    -+		return error(_("%s is not in the cache"), path);
+    ++		die(_("'%s' is not in the cache"), path);
+     +
+    -+	if (fn(istate, oids[0], oids[1], oids[2], path,
+    -+	       modes[0], modes[1], modes[2], data))
+    ++	if (fn(istate, oids[0], oids[1], oids[2], path, modes[0], modes[1],
+    ++	       modes[2], data))
+     +		(*err)++;
+     +
+     +	return found;
+     +}
+     +
+     +int merge_index_path(struct index_state *istate, int oneshot, int quiet,
+    -+		     const char *path, merge_fn fn, void *data)
+    ++		     const char *path, merge_index_fn fn, void *data)
+     +{
+    -+	int pos = index_name_pos(istate, path, strlen(path)), ret, err = 0;
+    ++	int err, ret;
+    ++	int pos = index_name_pos(istate, path, strlen(path));
+     +
+     +	/*
+     +	 * If it already exists in the cache as stage0, it's
+     +	 * already merged and there is nothing to do.
+     +	 */
+    -+	if (pos < 0) {
+    -+		ret = merge_entry(istate, -pos - 1, path, &err, fn, data);
+    -+		if (ret == -1)
+    -+			return -1;
+    -+		else if (err) {
+    -+			if (!quiet && !oneshot)
+    -+				error(_("merge program failed"));
+    -+			return 1;
+    -+		}
+    ++	if (pos >= 0)
+    ++		return 0;
+    ++
+    ++	ret = merge_entry(istate, -pos - 1, path, &err, fn, data);
+    ++	if (ret < 0)
+    ++		return ret;
+    ++	if (err) {
+    ++		if (!quiet && !oneshot)
+    ++			die(_("merge program failed"));
+    ++		return 1;
+     +	}
+     +	return 0;
+     +}
+     +
+     +int merge_all_index(struct index_state *istate, int oneshot, int quiet,
+    -+		    merge_fn fn, void *data)
+    ++		    merge_index_fn fn, void *data)
+     +{
+    -+	int err = 0, ret;
+    ++	int err, ret;
+     +	unsigned int i;
+     +
+    -+	/* TODO: audit for interaction with sparse-index. */
+    -+	ensure_full_index(istate);
+     +	for (i = 0; i < istate->cache_nr; i++) {
+     +		const struct cache_entry *ce = istate->cache[i];
+     +		if (!ce_stage(ce))
+     +			continue;
+     +
+     +		ret = merge_entry(istate, i, ce->name, &err, fn, data);
+    -+		if (ret > 0)
+    ++		if (ret < 0)
+    ++			return ret;
+    ++		else if (ret > 0)
+     +			i += ret - 1;
+    -+		else if (ret == -1)
+    -+			return -1;
+     +
+     +		if (err && !oneshot) {
+     +			if (!quiet)
+    -+				error(_("merge program failed"));
+    ++				die(_("merge program failed"));
+     +			return 1;
+     +		}
+     +	}
+     +
+     +	if (err && !quiet)
+    -+		error(_("merge program failed"));
+    ++		die(_("merge program failed"));
+     +	return err;
+     +}
+     
+    @@ merge-strategies.h (new)
+     +#ifndef MERGE_STRATEGIES_H
+     +#define MERGE_STRATEGIES_H
+     +
+    -+#include "object.h"
+    -+
+    -+typedef int (*merge_fn)(struct index_state *istate,
+    -+			const struct object_id *orig_blob,
+    -+			const struct object_id *our_blob,
+    -+			const struct object_id *their_blob, const char *path,
+    -+			unsigned int orig_mode, unsigned int our_mode, unsigned int their_mode,
+    -+			void *data);
+    ++struct object_id;
+    ++struct index_state;
+    ++typedef int (*merge_index_fn)(struct index_state *istate,
+    ++			      const struct object_id *orig_blob,
+    ++			      const struct object_id *our_blob,
+    ++			      const struct object_id *their_blob,
+    ++			      const char *path, unsigned int orig_mode,
+    ++			      unsigned int our_mode, unsigned int their_mode,
+    ++			      void *data);
+     +
+     +int merge_index_path(struct index_state *istate, int oneshot, int quiet,
+    -+		     const char *path, merge_fn fn, void *data);
+    ++		     const char *path, merge_index_fn fn, void *data);
+     +int merge_all_index(struct index_state *istate, int oneshot, int quiet,
+    -+		    merge_fn fn, void *data);
+    ++		    merge_index_fn fn, void *data);
+     +
+     +#endif /* MERGE_STRATEGIES_H */
+    -
+    - ## t/t7607-merge-state.sh ##
+    -@@ t/t7607-merge-state.sh: test_expect_success 'Ensure we restore original state if no merge strategy handl
+    - 	# just hit conflicts, it completely fails and says that it cannot
+    - 	# handle this type of merge.
+    - 	test_expect_code 2 git merge branch2 branch3 >output 2>&1 &&
+    --	grep "fatal: merge program failed" output &&
+    -+	grep "error: merge program failed" output &&
+    - 	grep "Should not be doing an octopus" output &&
+    - 
+    - 	# Make sure we did not leave stray changes around when no appropriate
+ 7:  e440127edf2 <  -:  ----------- merge-one-file: rewrite in C
+ 8:  661c358836e <  -:  ----------- merge-resolve: rewrite in C
+ 9:  388128cd351 ! 11:  adb712ca7a5 merge-recursive: move better_branch_name() to merge.c
+    @@
+      ## Metadata ##
+    -Author: Alban Gruin <alban.gruin@gmail.com>
+    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    merge-recursive: move better_branch_name() to merge.c
+    +    merge-index: use "struct strvec" and helper to prepare args
+     
+    -    better_branch_name() will be used by merge-octopus once it is rewritten
+    -    in C, so instead of duplicating it, this moves this function
+    -    preventively inside an appropriate file in libgit.a.  This function is
+    -    also renamed to reflect its usage by merge strategies.
+    +    Refactor the code that was libified in the preceding commit to use
+    +    strvec_pushf() with a helper function, instead of in-place xsnprintf()
+    +    code that we generate with a macro.
+     
+    -    Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+    -    Signed-off-by: Junio C Hamano <gitster@pobox.com>
+    +    This is less efficient in term of the number of allocations we do, but
+    +    it's now much clearer what's going on. The logic is simply that we
+    +    have an argument list like:
+     
+    - ## builtin/merge-recursive.c ##
+    -@@
+    - static const char builtin_merge_recursive_usage[] =
+    - 	"git %s <base>... -- <head> <remote> ...";
+    +            <merge-program> <oids> <path> <modes>
+    +
+    +    Where we always need either an OID/mode pair, or "". Now we'll add
+    +    both to their own strvec, which we then combine at the end.
+    +
+    +    Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+    +
+    + ## builtin/merge-index.c ##
+    +@@ builtin/merge-index.c: struct mofs_data {
+    + 	const char *program;
+    + };
+      
+    --static char *better_branch_name(const char *branch)
+    --{
+    --	static char githead_env[8 + GIT_MAX_HEXSZ + 1];
+    --	char *name;
+    --
+    --	if (strlen(branch) != the_hash_algo->hexsz)
+    --		return xstrdup(branch);
+    --	xsnprintf(githead_env, sizeof(githead_env), "GITHEAD_%s", branch);
+    --	name = getenv(githead_env);
+    --	return xstrdup(name ? name : branch);
+    --}
+    --
+    - int cmd_merge_recursive(int argc, const char **argv, const char *prefix)
+    ++static void push_arg(struct strvec *oids, struct strvec *modes,
+    ++		     const struct object_id *oid, const unsigned int mode)
+    ++{
+    ++	if (oid) {
+    ++		strvec_push(oids, oid_to_hex(oid));
+    ++		strvec_pushf(modes, "%06o", mode);
+    ++	} else {
+    ++		strvec_push(oids, "");
+    ++		strvec_push(modes, "");
+    ++	}
+    ++}
+    ++
+    + static int merge_one_file(struct index_state *istate,
+    + 			  const struct object_id *orig_blob,
+    + 			  const struct object_id *our_blob,
+    +@@ builtin/merge-index.c: static int merge_one_file(struct index_state *istate,
+    + 			  unsigned int their_mode, void *data)
+      {
+    - 	const struct object_id *bases[21];
+    -@@ builtin/merge-recursive.c: int cmd_merge_recursive(int argc, const char **argv, const char *prefix)
+    - 	if (get_oid(o.branch2, &h2))
+    - 		die(_("could not resolve ref '%s'"), o.branch2);
+    - 
+    --	o.branch1 = better1 = better_branch_name(o.branch1);
+    --	o.branch2 = better2 = better_branch_name(o.branch2);
+    -+	o.branch1 = better1 = merge_get_better_branch_name(o.branch1);
+    -+	o.branch2 = better2 = merge_get_better_branch_name(o.branch2);
+    + 	struct mofs_data *d = data;
+    +-	const char *pgm = d->program;
+    +-	const char *arguments[] = { pgm, "", "", "", path, "", "", "", NULL };
+    +-	char hexbuf[4][GIT_MAX_HEXSZ + 1];
+    +-	char ownbuf[4][60];
+    +-	int stage = 0;
+    ++	const char *program = d->program;
+    ++	struct strvec oids = STRVEC_INIT;
+    ++	struct strvec modes = STRVEC_INIT;
+    + 	struct child_process cmd = CHILD_PROCESS_INIT;
+      
+    - 	if (o.verbosity >= 3)
+    - 		printf(_("Merging %s with %s\n"), o.branch1, o.branch2);
+    -
+    - ## cache.h ##
+    -@@ cache.h: int checkout_fast_forward(struct repository *r,
+    - 			  const struct object_id *from,
+    - 			  const struct object_id *to,
+    - 			  int overwrite_ignore);
+    --
+    -+char *merge_get_better_branch_name(const char *branch);
+    +-#define ADD_MOF_ARG(oid, mode) \
+    +-	if ((oid)) { \
+    +-		stage++; \
+    +-		oid_to_hex_r(hexbuf[stage], (oid)); \
+    +-		xsnprintf(ownbuf[stage], sizeof(ownbuf[stage]), "%06o", (mode)); \
+    +-		arguments[stage] = hexbuf[stage]; \
+    +-		arguments[stage + 4] = ownbuf[stage]; \
+    +-	}
+    ++	strvec_push(&cmd.args, program);
+    ++
+    ++	push_arg(&oids, &modes, orig_blob, orig_mode);
+    ++	push_arg(&oids, &modes, our_blob, our_mode);
+    ++	push_arg(&oids, &modes, their_blob, their_mode);
+    ++
+    ++	strvec_pushv(&cmd.args, oids.v);
+    ++	strvec_clear(&oids);
+    ++
+    ++	strvec_push(&cmd.args, path);
+      
+    - int sane_execvp(const char *file, char *const argv[]);
+    +-	ADD_MOF_ARG(orig_blob, orig_mode);
+    +-	ADD_MOF_ARG(our_blob, our_mode);
+    +-	ADD_MOF_ARG(their_blob, their_mode);
+    ++	strvec_pushv(&cmd.args, modes.v);
+    ++	strvec_clear(&modes);
+      
+    -
+    - ## merge.c ##
+    -@@ merge.c: int checkout_fast_forward(struct repository *r,
+    - 		return error(_("unable to write new index file"));
+    - 	return 0;
+    +-	strvec_pushv(&cmd.args, arguments);
+    + 	return run_command(&cmd);
+      }
+    -+
+    -+char *merge_get_better_branch_name(const char *branch)
+    -+{
+    -+	static char githead_env[8 + GIT_MAX_HEXSZ + 1];
+    -+	char *name;
+    -+
+    -+	if (strlen(branch) != the_hash_algo->hexsz)
+    -+		return xstrdup(branch);
+    -+	xsnprintf(githead_env, sizeof(githead_env), "GITHEAD_%s", branch);
+    -+	name = getenv(githead_env);
+    -+	return xstrdup(name ? name : branch);
+    -+}
+    + 
+10:  1515e154bf5 <  -:  ----------- merge-octopus: rewrite in C
+12:  17597d0cc57 <  -:  ----------- merge: use the "octopus" strategy without forking
+14:  a23c0491a1f <  -:  ----------- sequencer: use the "octopus" strategy without forking
+ -:  ----------- > 12:  f0368560140 merge-index: make the argument parsing sensible & simpler
+-- 
+2.38.0.1511.gcdcff1f1dc2
+
