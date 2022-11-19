@@ -1,15 +1,71 @@
 From 1aa4019527afc6742f33c8f89ef3d38a26e1fa41 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v3-0.9-00000000000-20221119T122853Z-avarab@gmail.com>
+Message-Id: <cover-v3-0.9-00000000000-20221119T1220853Z-avarab@gmail.com>
 In-Reply-To: <cover-v2-00.10-00000000000-20221114T100803Z-avarab@gmail.com>
 References: <cover-v2-00.10-00000000000-20221114T100803Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Sat, 19 Nov 2022 13:28:53 +0100
-Subject: [PATCH v3 0/9] *** SUBJECT HERE ***
+Subject: [PATCH v3 0/9] Get rid of "git --super-prefix"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+= Summary
+
+What's "--super-prefix"? The "git" command takes an "internal use
+only" "--super-prefix" option, which is used to inform processes
+invoked in submodules what the path prefix to the invoking
+superproject is.
+
+This is so so that e.g. "git submodule absorbgitdirs" can report
+"sub-1/sub-2", instead of "sub-2" when being invoked in the "sub-1"
+submodule.
+
+For this the "--super-prefix" facility has been doing a
+setenv("GIT_INTERNAL_SUPER_PREFIX", "sub-1/") as soon as it got the
+"--supre-prefix=sub-1/". We'd then pass that along via the environment
+when invoking the sub-process.
+
+As this series shows we don't need such a hands-off global facility to
+do this, we can instead just pass the relevant context directly in
+each command. E.g. "git submodule absorbgitdirs" can pass the path to
+the "git submodule absorbgitdirs" sub-process it's about to invoke.
+
+= Changes since v2:
+
+* Fixes for test_when_finished() in test setup, and got rid of
+  redundant test_config_global.
+
+* There's a new 2/9, which passes along get_super_prefix() as a
+  parameter. This allows us to gradually replace it, and drop the
+  *_sp() variants of functions that the previous version introduced,
+  and it adds "super_prefix" to the absorb_git_dir_into_superproject()
+  call in submodule_move_head(), which as Glen noticed I'd missed
+
+* Squashed the "deinit" change into that 2/9.
+
+* Explain why we keep the "fsmonitor" test bits that we do.
+
+* Dropped the new "git branch" output tests, turns out I was just
+  wrong, and was conflating it with the subsequent read-tree
+  invocation...
+
+So, this should address all outstanding feedbakc, unless I've missed
+something.
+
+The one loose end here is that I still have no idea if you can invoke
+get "read-tree" to invoke that submodule_move_head() in such a way as
+to have the "super_prefix" used, I've failed to come up with a test
+case for that.
+
+But for the purposes of this topic it doesn't really matter. In 8/10
+we'll start passing the new "--super-prefix" that "read-tree" gets
+down to that function. At worst we're handing it to it redundantly,
+but that was the case before too.
+
+So we can leave potentially turning that into a "NULL" for some other
+time, for now providing the "super_prefix" is harmless, and guarantees
+that we avoid any regression in that area from not providing it, in
+case I've missed a way to have it matter in that case.
 
 Glen Choo (1):
   read-tree + fetch tests: test failing "--super-prefix" interaction
