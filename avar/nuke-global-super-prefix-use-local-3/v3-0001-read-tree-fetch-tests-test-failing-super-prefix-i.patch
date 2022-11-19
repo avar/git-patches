@@ -1,0 +1,87 @@
+From c930fc3835666854f8e721378bc1a3583f1b4fa6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-1.9-c930fc38356-20221119T122640Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.9-00000000000-20221119T122640Z-avarab@gmail.com>
+References: <cover-v2-00.10-00000000000-20221114T100803Z-avarab@gmail.com>
+	<cover-v3-0.9-00000000000-20221119T122640Z-avarab@gmail.com>
+From: Glen Choo <chooglen@google.com>
+Date: Tue, 8 Nov 2022 16:47:07 -0800
+Subject: [PATCH v3 1/9] read-tree + fetch tests: test failing "--super-prefix"
+ interaction
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Ever since "git fetch --refetch" was introduced in 0f5e8851737 (Merge
+branch 'rc/fetch-refetch', 2022-04-04) the test being added here would
+fail. This is because "restore" will "read-tree .. --reset <hash>",
+which will in turn invoke "fetch". The "fetch" will then die with:
+
+	fatal: fetch doesn't support --super-prefix
+
+This edge case and other "--super-prefix" bugs will be fixed in
+subsequent commits, but let's first add a "test_expect_failure" test
+for it. It passes until the very last command in the test.
+
+Signed-off-by: Glen Choo <chooglen@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t5616-partial-clone.sh | 43 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/t/t5616-partial-clone.sh b/t/t5616-partial-clone.sh
+index 037941b95d2..2846ec6629c 100755
+--- a/t/t5616-partial-clone.sh
++++ b/t/t5616-partial-clone.sh
+@@ -644,6 +644,49 @@ test_expect_success 'repack does not loosen promisor objects' '
+ 	grep "loosen_unused_packed_objects/loosened:0" trace
+ '
+ 
++test_expect_failure 'lazy-fetch in submodule succeeds' '
++	# setup
++	test_config_global protocol.file.allow always &&
++
++	test_when_finished "rm -rf src-sub" &&
++	git init src-sub &&
++	git -C src-sub config uploadpack.allowfilter 1 &&
++	git -C src-sub config uploadpack.allowanysha1inwant 1 &&
++
++	# This blob must be missing in the subsequent commit.
++	echo foo >src-sub/file &&
++	git -C src-sub add file &&
++	git -C src-sub commit -m "submodule one" &&
++	SUB_ONE=$(git -C src-sub rev-parse HEAD) &&
++
++	echo bar >src-sub/file &&
++	git -C src-sub add file &&
++	git -C src-sub commit -m "submodule two" &&
++	SUB_TWO=$(git -C src-sub rev-parse HEAD) &&
++
++	test_when_finished "rm -rf src-super" &&
++	git init src-super &&
++	git -C src-super config uploadpack.allowfilter 1 &&
++	git -C src-super config uploadpack.allowanysha1inwant 1 &&
++	git -C src-super submodule add ../src-sub src-sub &&
++
++	git -C src-super/src-sub checkout $SUB_ONE &&
++	git -C src-super add src-sub &&
++	git -C src-super commit -m "superproject one" &&
++
++	git -C src-super/src-sub checkout $SUB_TWO &&
++	git -C src-super add src-sub &&
++	git -C src-super commit -m "superproject two" &&
++
++	# the fetch
++	test_when_finished "rm -rf client" &&
++	git clone --filter=blob:none --also-filter-submodules \
++		--recurse-submodules "file://$(pwd)/src-super" client &&
++
++	# Trigger lazy-fetch from the superproject
++	git -C client restore --recurse-submodules --source=HEAD^ :/
++'
++
+ . "$TEST_DIRECTORY"/lib-httpd.sh
+ start_httpd
+ 
+-- 
+2.38.0.1509.g9445af83948
+
