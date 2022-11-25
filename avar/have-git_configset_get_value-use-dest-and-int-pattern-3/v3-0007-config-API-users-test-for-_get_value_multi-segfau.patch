@@ -1,0 +1,164 @@
+From f35aacef4ca3c238824232c0fe9c7080d3352ebb Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-7.9-f35aacef4ca-20221125T092009Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.9-00000000000-20221125T092009Z-avarab@gmail.com>
+References: <cover-v2-0.9-00000000000-20221101T225822Z-avarab@gmail.com>
+	<cover-v3-0.9-00000000000-20221125T092009Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Nov 2022 11:45:05 +0100
+Subject: [PATCH v3 7/9] config API users: test for *_get_value_multi()
+ segfaults
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As we'll discus in the subsequent commit these tests all
+show *_get_value_multi() API users unable to handle there being a
+value-less key in the config, which is represented with a "NULL" for
+that entry in the "string" member of the returned "struct
+string_list", causing a segfault.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t4202-log.sh                 | 11 +++++++++++
+ t/t5310-pack-bitmaps.sh        | 16 ++++++++++++++++
+ t/t7004-tag.sh                 | 12 ++++++++++++
+ t/t7413-submodule-is-active.sh | 12 ++++++++++++
+ t/t7900-maintenance.sh         | 26 ++++++++++++++++++++++++++
+ 5 files changed, 77 insertions(+)
+
+diff --git a/t/t4202-log.sh b/t/t4202-log.sh
+index 2ce2b41174d..e4f02d8208b 100755
+--- a/t/t4202-log.sh
++++ b/t/t4202-log.sh
+@@ -835,6 +835,17 @@ test_expect_success 'log.decorate configuration' '
+ 
+ '
+ 
++test_expect_failure 'parse log.excludeDecoration with no value' '
++	cp .git/config .git/config.orig &&
++	test_when_finished mv .git/config.orig .git/config &&
++
++	cat >>.git/config <<-\EOF &&
++	[log]
++		excludeDecoration
++	EOF
++	git log --decorate=short
++'
++
+ test_expect_success 'decorate-refs with glob' '
+ 	cat >expect.decorate <<-\EOF &&
+ 	Merge-tag-reach
+diff --git a/t/t5310-pack-bitmaps.sh b/t/t5310-pack-bitmaps.sh
+index 6d693eef82f..2e65c8139c4 100755
+--- a/t/t5310-pack-bitmaps.sh
++++ b/t/t5310-pack-bitmaps.sh
+@@ -404,6 +404,22 @@ test_bitmap_cases () {
+ 		)
+ 	'
+ 
++	test_expect_failure 'pack.preferBitmapTips' '
++		git init repo &&
++		test_when_finished "rm -rf repo" &&
++		(
++			cd repo &&
++			git config pack.writeBitmapLookupTable '"$writeLookupTable"' &&
++			test_commit_bulk --message="%s" 103 &&
++
++			cat >>.git/config <<-\EOF &&
++			[pack]
++				preferBitmapTips
++			EOF
++			git repack -adb
++		)
++	'
++
+ 	test_expect_success 'complains about multiple pack bitmaps' '
+ 		rm -fr repo &&
+ 		git init repo &&
+diff --git a/t/t7004-tag.sh b/t/t7004-tag.sh
+index 9aa1660651b..f343551a7d4 100755
+--- a/t/t7004-tag.sh
++++ b/t/t7004-tag.sh
+@@ -1843,6 +1843,18 @@ test_expect_success 'invalid sort parameter in configuratoin' '
+ 	test_must_fail git tag -l "foo*"
+ '
+ 
++test_expect_failure 'version sort handles empty value for versionsort.{prereleaseSuffix,suffix}' '
++	cp .git/config .git/config.orig &&
++	test_when_finished mv .git/config.orig .git/config &&
++
++	cat >>.git/config <<-\EOF &&
++	[versionsort]
++		prereleaseSuffix
++		suffix
++	EOF
++	git tag -l --sort=version:refname
++'
++
+ test_expect_success 'version sort with prerelease reordering' '
+ 	test_config versionsort.prereleaseSuffix -rc &&
+ 	git tag foo1.6-rc1 &&
+diff --git a/t/t7413-submodule-is-active.sh b/t/t7413-submodule-is-active.sh
+index 7cdc2637649..bfe27e50732 100755
+--- a/t/t7413-submodule-is-active.sh
++++ b/t/t7413-submodule-is-active.sh
+@@ -51,6 +51,18 @@ test_expect_success 'is-active works with submodule.<name>.active config' '
+ 	test-tool -C super submodule is-active sub1
+ '
+ 
++test_expect_failure 'is-active handles submodule.active config missing a value' '
++	cp super/.git/config super/.git/config.orig &&
++	test_when_finished mv super/.git/config.orig super/.git/config &&
++
++	cat >>super/.git/config <<-\EOF &&
++	[submodule]
++		active
++	EOF
++
++	test-tool -C super submodule is-active sub1
++'
++
+ test_expect_success 'is-active works with basic submodule.active config' '
+ 	test_when_finished "git -C super config submodule.sub1.URL ../sub" &&
+ 	test_when_finished "git -C super config --unset-all submodule.active" &&
+diff --git a/t/t7900-maintenance.sh b/t/t7900-maintenance.sh
+index 823331e44a0..2dbac07be83 100755
+--- a/t/t7900-maintenance.sh
++++ b/t/t7900-maintenance.sh
+@@ -524,6 +524,32 @@ test_expect_success 'register and unregister' '
+ 	git maintenance unregister --config-file ./other --force
+ '
+ 
++test_expect_failure 'register with no value for maintenance.repo' '
++	cp .git/config .git/config.orig &&
++	test_when_finished mv .git/config.orig .git/config &&
++
++	cat >>.git/config <<-\EOF &&
++	[maintenance]
++		repo
++	EOF
++	git maintenance register
++'
++
++test_expect_failure 'unregister with no value for maintenance.repo' '
++	cp .git/config .git/config.orig &&
++	test_when_finished mv .git/config.orig .git/config &&
++
++	cat >>.git/config <<-\EOF &&
++	[maintenance]
++		repo
++	EOF
++	cat >expect <<-\EOF &&
++	error: missing value for '\''maintenance.repo'\''
++	EOF
++	git maintenance unregister &&
++	git maintenance unregister --force
++'
++
+ test_expect_success !MINGW 'register and unregister with regex metacharacters' '
+ 	META="a+b*c" &&
+ 	git init "$META" &&
+-- 
+2.39.0.rc0.955.ge9b241be664
+
