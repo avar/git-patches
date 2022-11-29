@@ -1,0 +1,56 @@
+From 115d79fe1fcfabefad3fac0e8b50feae9865a32f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.1-115d79fe1fc-20221129T140142Z-avarab@gmail.com>
+In-Reply-To: <20221127224251.2508200-1-psmith@gnu.org>
+References: <20221127224251.2508200-1-psmith@gnu.org>
+From: Paul Smith <psmith@gnu.org>
+Date: Sun, 27 Nov 2022 17:42:51 -0500
+Subject: [PATCH v2] Avoid multiple patterns when recipes generate one file
+
+A GNU make pattern rule with multiple targets has always meant that
+a single invocation of the recipe will build all the targets.
+However in older versions of GNU make a recipe that did not really
+build all the targets would be tolerated.
+
+Starting with GNU make 4.4 this behavior is deprecated and pattern
+rules are expected to generate files to match all the patterns.
+If not all targets are created then GNU make will not consider any
+target up to date and will re-run the recipe when it is run again.
+
+Modify Documentation/Makefile to split the man page-creating pattern
+rule into a separate pattern rule for each pattern.
+
+Reported-by: Alexander Kanavin <alex.kanavin@gmail.com>
+Signed-off-by: Paul Smith <psmith@gnu.org>
+---
+Range-diff against v1:
+-:  ----------- > 1:  115d79fe1fc Avoid multiple patterns when recipes generate one file
+
+ Documentation/Makefile | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/Makefile b/Documentation/Makefile
+index 5e1a7f655c2..9c67c3a1c50 100644
+--- a/Documentation/Makefile
++++ b/Documentation/Makefile
+@@ -351,8 +351,16 @@ $(OBSOLETE_HTML): %.html : %.txto $(ASCIIDOC_DEPS)
+ manpage-base-url.xsl: manpage-base-url.xsl.in
+ 	$(QUIET_GEN)sed "s|@@MAN_BASE_URL@@|$(MAN_BASE_URL)|" $< > $@
+ 
+-%.1 %.5 %.7 : %.xml manpage-base-url.xsl $(wildcard manpage*.xsl)
+-	$(QUIET_XMLTO)$(XMLTO) -m $(MANPAGE_XSL) $(XMLTO_EXTRA) man $<
++
++manpage-prereqs := manpage-base-url.xsl $(wildcard manpage*.xsl)
++manpage-cmd = $(QUIET_XMLTO)$(XMLTO) -m $(MANPAGE_XSL) $(XMLTO_EXTRA) man $<
++
++%.1 : %.xml $(manpage-prereqs)
++	$(manpage-cmd)
++%.5 : %.xml $(manpage-prereqs)
++	$(manpage-cmd)
++%.7 : %.xml $(manpage-prereqs)
++	$(manpage-cmd)
+ 
+ %.xml : %.txt $(ASCIIDOC_DEPS)
+ 	$(QUIET_ASCIIDOC)$(TXT_TO_XML) -d manpage -o $@ $<
+-- 
+2.39.0.rc0.993.g0c499e58e3b
+
