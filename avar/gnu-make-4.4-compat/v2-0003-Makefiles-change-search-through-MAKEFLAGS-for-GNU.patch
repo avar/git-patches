@@ -1,0 +1,90 @@
+From 6db7dd74e52de1d5bf625195fed680161e8bd24a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.4-6db7dd74e52-20221129T140159Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-00000000000-20221129T140159Z-avarab@gmail.com>
+References: <20221127224251.2508200-1-psmith@gnu.org>
+	<cover-v2-0.4-00000000000-20221129T140159Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 29 Nov 2022 12:55:23 +0100
+Subject: [PATCH v2 3/4] Makefiles: change search through $(MAKEFLAGS) for GNU
+ make 4.4
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since GNU make 4.4 the semantics of the $(MAKEFLAGS) variable has
+changed in a backward-incompatible way, as its "NEWS" file notes:
+
+  Previously only simple (one-letter) options were added to the MAKEFLAGS
+  variable that was visible while parsing makefiles.  Now, all options are
+  available in MAKEFLAGS.  If you want to check MAKEFLAGS for a one-letter
+  option, expanding "$(firstword -$(MAKEFLAGS))" is a reliable way to return
+  the set of one-letter options which can be examined via findstring, etc.
+
+This upstream change meant that e.g.:
+
+	make man
+
+Would become very noisy, because in shared.mak we rely on extracting
+"s" from the $(MAKEFLAGS), which now contains long options like
+"--jobserver-auth=fifo:<path>", which we'll conflate with the "-s"
+option.
+
+So, let's change this idiom we've been carrying since [1], [2] and [3]
+as the "NEWS" suggests.
+
+Note that the "-" in "-$(MAKEFLAGS)" is critical here, as the variable
+will always contain leading whitespace if there are no short options,
+but long options are present. Without it e.g. "make --debug=all" would
+yield "--debug=all" as the first word, but with it we'll get "-" as
+intended. Then "-s" for "-s", "-Bs" for "-s -B" etc.
+
+1. 0c3b4aac8ec (git-gui: Support of "make -s" in: do not output
+   anything of the build itself, 2007-03-07)
+2. b777434383b (Support of "make -s": do not output anything of the
+   build itself, 2007-03-07)
+3. bb2300976ba (Documentation/Makefile: make most operations "quiet",
+   2009-03-27)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ git-gui/Makefile | 2 +-
+ shared.mak       | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/git-gui/Makefile b/git-gui/Makefile
+index 56c85a85c1e..a0d5a4b28e1 100644
+--- a/git-gui/Makefile
++++ b/git-gui/Makefile
+@@ -116,7 +116,7 @@ ifeq ($(uname_S),Darwin)
+ 	TKEXECUTABLE = $(shell basename "$(TKFRAMEWORK)" .app)
+ endif
+ 
+-ifeq ($(findstring $(MAKEFLAGS),s),s)
++ifeq ($(findstring $(firstword -$(MAKEFLAGS)),s),s)
+ QUIET_GEN =
+ endif
+ 
+diff --git a/shared.mak b/shared.mak
+index be1f30ff206..aeb80fc4d5a 100644
+--- a/shared.mak
++++ b/shared.mak
+@@ -37,13 +37,13 @@ space := $(empty) $(empty)
+ QUIET_SUBDIR0  = +$(MAKE) -C # space to separate -C and subdir
+ QUIET_SUBDIR1  =
+ 
+-ifneq ($(findstring w,$(MAKEFLAGS)),w)
++ifneq ($(findstring w,$(firstword -$(MAKEFLAGS))),w)
+ PRINT_DIR = --no-print-directory
+ else # "make -w"
+ NO_SUBDIR = :
+ endif
+ 
+-ifneq ($(findstring s,$(MAKEFLAGS)),s)
++ifneq ($(findstring s,$(firstword -$(MAKEFLAGS))),s)
+ ifndef V
+ ## common
+ 	QUIET_SUBDIR0  = +@subdir=
+-- 
+2.39.0.rc0.993.g0c499e58e3b
+

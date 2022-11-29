@@ -1,0 +1,69 @@
+From e232f308e40c0fba0cb9be827afaa046fc0fb64f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.4-e232f308e40-20221129T140159Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.4-00000000000-20221129T140159Z-avarab@gmail.com>
+References: <20221127224251.2508200-1-psmith@gnu.org>
+	<cover-v2-0.4-00000000000-20221129T140159Z-avarab@gmail.com>
+From: Paul Smith <psmith@gnu.org>
+Date: Sun, 27 Nov 2022 17:42:51 -0500
+Subject: [PATCH v2 2/4] Documentation/Makefile: avoid multiple patterns when
+ generating one file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A GNU make pattern rule with multiple targets has always meant that
+a single invocation of the recipe will build all the targets.
+However in older versions of GNU make a recipe that did not really
+build all the targets would be tolerated.
+
+Starting with GNU make 4.4 this behavior is deprecated and pattern
+rules are expected to generate files to match all the patterns.
+If not all targets are created then GNU make will not consider any
+target up to date and will re-run the recipe when it is run again.
+
+I.e. a command like:
+
+	make -C Documentation git-am.1
+
+Will never be satisfied that "git-am.1" has been made, because we
+didn't also make "git-am.5" and "git-am.7", as the warning it'll emit
+indicates:
+
+	$ make -C Documentation git-am.1
+	[...]
+	    XMLTO git-am.1
+	Makefile:355: warning: pattern recipe did not update peer target 'git-am.7'.
+	Makefile:355: warning: pattern recipe did not update peer target 'git-am.5'.
+
+Modify Documentation/Makefile to split the man page-creating pattern
+rule into a separate pattern rule for each pattern. This requires a
+small amount of copy/pasting, but due to splitting out the "DOC_MANN"
+in the preceding commit it's not too bad.
+
+Reported-by: Alexander Kanavin <alex.kanavin@gmail.com>
+Signed-off-by: Paul Smith <psmith@gnu.org>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/Makefile | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/Makefile b/Documentation/Makefile
+index d239f6751f0..89929e3d60b 100644
+--- a/Documentation/Makefile
++++ b/Documentation/Makefile
+@@ -356,7 +356,11 @@ manpage-base-url.xsl: manpage-base-url.xsl.in
+ 	$(QUIET_GEN)sed "s|@@MAN_BASE_URL@@|$(MAN_BASE_URL)|" $< > $@
+ 
+ $(DOC_MANN): manpage-base-url.xsl $(wildcard manpage*.xsl)
+-%.1 %.5 %.7 : %.xml
++%.1 : %.xml
++	$(QUIET_XMLTO)$(XMLTO) -m $(MANPAGE_XSL) $(XMLTO_EXTRA) man $<
++%.5 : %.xml
++	$(QUIET_XMLTO)$(XMLTO) -m $(MANPAGE_XSL) $(XMLTO_EXTRA) man $<
++%.7 : %.xml
+ 	$(QUIET_XMLTO)$(XMLTO) -m $(MANPAGE_XSL) $(XMLTO_EXTRA) man $<
+ 
+ %.xml : %.txt $(ASCIIDOC_DEPS)
+-- 
+2.39.0.rc0.993.g0c499e58e3b
+
