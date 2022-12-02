@@ -1,0 +1,61 @@
+From c080899dd5f15f1c1f0b1a70bbb8fc0ba248624e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-4.8-c080899dd5f-20221202T114733Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.8-00000000000-20221202T114733Z-avarab@gmail.com>
+References: <cover-v2-0.8-00000000000-20221202T000227Z-avarab@gmail.com>
+	<cover-v3-0.8-00000000000-20221202T114733Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Jun 2022 10:30:45 +0200
+Subject: [PATCH v3 4/8] t/lib-patch-mode.sh: fix ignored exit codes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix code added in b319ef70a94 (Add a small patch-mode testing library,
+2009-08-13) to use &&-chaining and the newly added "test_cmp_cmd".
+This avoids losing both the exit code of a "git" and the "cat"
+processes.
+
+This fixes cases where we'd have e.g. missed memory leaks under
+SANITIZE=leak, this code doesn't leak now as far as I can tell, but I
+discovered it while looking at leaks in related code.
+
+The "cat _head >expect" here is redundant, we could simply give
+"_head" to "test_cmp", but let's be consistent in using the "expect"
+and "actual" names for clarity.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/lib-patch-mode.sh | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/t/lib-patch-mode.sh b/t/lib-patch-mode.sh
+index cfd76bf987b..89ca1f78055 100644
+--- a/t/lib-patch-mode.sh
++++ b/t/lib-patch-mode.sh
+@@ -29,8 +29,12 @@ set_and_save_state () {
+ 
+ # verify_state <path> <expected-worktree-content> <expected-index-content>
+ verify_state () {
+-	test "$(cat "$1")" = "$2" &&
+-	test "$(git show :"$1")" = "$3"
++	echo "$2" >expect &&
++	test_cmp expect "$1" &&
++
++	echo "$3" >expect &&
++	git show :"$1" >actual &&
++	test_cmp expect actual
+ }
+ 
+ # verify_saved_state <path>
+@@ -46,5 +50,6 @@ save_head () {
+ }
+ 
+ verify_saved_head () {
+-	test "$(cat _head)" = "$(git rev-parse HEAD)"
++	git rev-parse HEAD >actual &&
++	test_cmp _head actual
+ }
+-- 
+2.39.0.rc1.981.gf846af54b4b
+
