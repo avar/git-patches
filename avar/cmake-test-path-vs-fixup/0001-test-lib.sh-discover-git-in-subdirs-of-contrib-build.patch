@@ -26,6 +26,171 @@ supported CMake and VS version.
 
 Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 ---
+
+On Thu, Dec 01 2022, Phillip Wood wrote:
+
+> On 30/11/2022 10:16, Ævar Arnfjörð Bjarmason wrote:
+>> On Wed, Nov 30 2022, Phillip Wood wrote:
+>> 
+>>> Hi Junio
+>> Hi, and thanks for your review of this series.
+>> 
+>>> On 29/11/2022 09:40, Junio C Hamano wrote:
+>>>> * ab/cmake-nix-and-ci (2022-11-04) 14 commits
+>>>>     (merged to 'next' on 2022-11-08 at 6ef4e93b36)
+>>>>    + CI: add a "linux-cmake-test" to run cmake & ctest on linux
+>>>>    + cmake: copy over git-p4.py for t983[56] perforce test
+>>>>    + cmake: only look for "sh" in "C:/Program Files" on Windows
+>>>>    + cmake: increase test timeout on Windows only
+>>>>    + cmake: support GIT_TEST_OPTS, abstract away WIN32 defaults
+>>>>    + Makefile + cmake: use environment, not GIT-BUILD-DIR
+>>>>    + test-lib.sh: support a "GIT_TEST_BUILD_DIR"
+>>>>    + cmake: set "USE_LIBPCRE2" in "GIT-BUILD-OPTIONS" for test-lib.sh
+>>>>    + cmake & test-lib.sh: add a $GIT_SOURCE_DIR variable
+>>>>    + cmake: chmod +x the bin-wrappers/* & SCRIPT_{SH,PERL} & git-p4
+>>>>    + cmake: don't copy chainlint.pl to build directory
+>>>>    + cmake: update instructions for portable CMakeLists.txt
+>>>>    + cmake: use "-S" and "-B" to specify source and build directories
+>>>>    + cmake: don't invoke msgfmt with --statistics
+>>>>    Fix assorted issues with CTest on *nix machines.
+>
+> Junio please drop this series when you rebuild next as it breaks
+> manually running individual test scripts when building with Visual
+> Studio.
+
+I think the issue you've spotted is easily fixed on top. See below.
+
+>>> If that's all this series did then I think it would be fine. However
+>>> it also makes changes to test-lib.sh to hard code the build directory
+>>> in an attempt to remove GIT-BUILD-DIR. I'm not convinced that is an
+>>> improvement on the status quo.
+>> I think the series as it stands addresses those concerns. In
+>> particular
+>> building outside of contrib/buildsystems/out works, just as before:
+>> 	cmake -S contrib/buildsystems -B /tmp/git-build
+>> -DCMAKE_BUILD_TYPE=Debug &&
+>>          make -C /tmp/git-build &&
+>>          ctest --test-dir /tmp/git-build -R t0001
+>> Per [1] and [2] which added the "ctest" support that's the use-case
+>> for
+>> this part of the build: running the tests with ctest, which works as
+>> before with the default or custom directories.
+>> Perhaps the reason this has been a sticking point for you is that in
+>> summarizing this, Johannes's [3] didn't make that distinction between
+>> running the tests with "ctest" and running them manually by entering the
+>> "t/" directory after the build. I.e.:
+>
+> In other words Johannes thinks both are equally important. The windows
+> build has always supported running the tests manually from /t and he 
+> quite reasonable wants that to continue working.
+
+Yes, that should work. Now, clearly I missed that VS doesn't use "out"
+by default, but a subdirectory, which the below patch fixes.
+
+But I think we can still draw a distinction between anything under
+"out" and arbitrary user-supplied directories, which can possibly be
+located outside of the source tree.
+
+>> 	(cd t && ./t0001-init.sh)
+>> It's only that part which acts differently in this series. I.e. if
+>> you
+>> were to build in /tmp/git-build this would no longer find your built
+>> assets:
+>> 	$ ./t0001-init.sh
+>> 	error: GIT-BUILD-OPTIONS missing (has Git been built?).
+>> If you just leave it at the default of "contrib/buildsystems/out"
+>> it'll
+>> work:
+>> 	(cd t && ./t0001-init.sh)
+>> 	ok 1 [...]
+>> I think my [4] convincingly makes the case that nobody will
+>> care. I.e. as the [5] it links to the use-case for running the test
+>> after the build without ctest was ("[...]" insert is mine):
+>> 	[To build and test with VS] open the worktree as a folder, and
+>> 	Visual Studio will find the `CMakeLists.txt` file and
+>> 	automatically generate the project files.
+>> I.e. we want to support the user who builds with that method, and
+>> runs
+>> the tests manually. I think you're worrying about an edge case that
+>> nobody's using in practice.
+>
+> You seem to be assuming that Visual Studio creates its build artifacts
+> in contrib/buildsystems/out based on a gitignore rule. Given the rule 
+> ignores _all_ subdirectories below contrib/buildsystems/out that is a
+> big assumption. Despite me repeatedly raising concerns about the hard 
+> coded build directory you do not seem to have checked exactly where
+> Visual Studio creates its build artifacts.
+
+I did check, but I got it wrong from reading the docs & commit message.
+
+I don't have a local Windows or VS setup. Thanks for testing it.
+
+> This morning I installed 
+> Visual Studio to check this and discovered the build is in a
+> subdirectory below contrib/buildsystems/out so this series will break 
+> manual test runs for anyone building git using the recommend method. I
+> find it rather frustrating that you argue below that Windows specific 
+> knowledge and testing are not required when you're altering the
+> Windows build.
+
+I was saying that you could round-trip test the auto-discovery of the
+build directory on *nix.
+
+Now, clearly I missed the "in a subdir of out" case. But that's
+separate from whether you can test that case cross-platform. With the
+below patch this works:
+
+	cmake -S contrib/buildsystems -B contrib/buildsystems/out/a/b/c -DCMAKE_BUILD_TYPE=Debug &&
+	make -C contrib/buildsystems/out/a/b/c &&
+	(cd t && ./t0071-sort.sh)
+
+But did this work for you before, and does it work on "master"? I
+think this never worked out of the box until my series. I.e. if you do
+that on v2.38.0 (before "js/cmake-updates") you'll get:
+
+	$ ./t0071-sort.sh 
+	error: GIT-BUILD-OPTIONS missing (has Git been built?).
+
+The reason is that before "js/cmake-updates" the part of the cmake
+recipe that established the ling between the test-lib.sh and the
+cmake-built tree was contingent on running ctest. E.g.:
+
+	ctest --test-dir contrib/buildsystems/out/a/b/c -R t0071
+
+Once you did that it would patch your t/test-lib.sh:
+	
+	diff --git a/t/test-lib.sh b/t/test-lib.sh
+	index a65df2fd220..70b0a633e4c 100644
+	--- a/t/test-lib.sh
+	+++ b/t/test-lib.sh
+	@@ -44,1 +44,1 @@ fi
+	-GIT_BUILD_DIR="${TEST_DIRECTORY%/t}"
+	+GIT_BUILD_DIR="$TEST_DIRECTORY/../contrib/buildsystems/out/a/b/c"
+
+Likewise, with "js/cmake-updates" it also doesn't work after you
+*build*. I. with it it would create a "GIT-BUILD-DIR" file, but only
+once ctest is run. I.e.:
+
+	(cd t && ./t0071-sort.sh);
+	file GIT-BUILD-DIR;
+	ctest --test-dir contrib/buildsystems/out/a/b/c -R t0071
+	file GIT-BUILD-DIR;
+	(cd t && ./t0071-sort.sh)
+
+Would emit:
+
+	error: GIT-BUILD-OPTIONS missing (has Git been built?).
+	GIT-BUILD-DIR: cannot open `GIT-BUILD-DIR' (No such file or directory)
+	<ctest output>
+	GIT-BUILD-DIR: ASCII text, with no line terminators
+	<test output>
+
+It's only with my series that it started working wihout having to run
+"ctest". With the below the test-lib.sh will optimistically find the
+"git" in "contrib/buildsystems/out".
+
+Does the VS integration run the equivalent of "ctest" by default?
+
  t/test-lib.sh | 8 +++++---
  1 file changed, 5 insertions(+), 3 deletions(-)
 
