@@ -1,0 +1,288 @@
+From c36060934a64f24468a6b0be5f5fc1efa5e58a91 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.8-c36060934a6-20221202T000227Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.8-00000000000-20221202T000227Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20220721T064349Z-avarab@gmail.com>
+	<cover-v2-0.8-00000000000-20221202T000227Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 18 Jul 2022 14:43:46 +0200
+Subject: [PATCH v2 4/8] test-lib-functions: add and use test_cmp_cmd
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a "test_cmp_cmd" helper for the common pattern discussed in the
+documentation being added here to "t/test-lib-functions.sh".
+
+This implementation leaves the door open for extending this helper
+past its obvious limitations, such as:
+
+	test_cmp_cmd "some" "lines" -- <some-cmd>
+	test_cmp_cmd --stdin <some-cmd> <expect
+	test_cmp_cmd --ignore-stderr "output" <some-cmd>
+
+By using this in we'll catch cases where "git" or "test-tool"
+errors (such as segfaults or abort()) were previously hidden, and we'd
+either pass the test, or fail in some subsequent assertion.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/lib-submodule-update.sh |  2 +-
+ t/t0001-init.sh           |  4 +--
+ t/t0002-gitfile.sh        |  2 +-
+ t/t0060-path-utils.sh     | 57 ++++++++++++++++++++-------------------
+ t/t0100-previous.sh       |  4 +--
+ t/t1504-ceiling-dirs.sh   |  6 +++--
+ t/test-lib-functions.sh   | 18 +++++++++++++
+ 7 files changed, 58 insertions(+), 35 deletions(-)
+
+diff --git a/t/lib-submodule-update.sh b/t/lib-submodule-update.sh
+index 2d31fcfda1f..d5d98714b4e 100644
+--- a/t/lib-submodule-update.sh
++++ b/t/lib-submodule-update.sh
+@@ -189,7 +189,7 @@ test_git_directory_exists () {
+ 	if test -f sub1/.git
+ 	then
+ 		# does core.worktree point at the right place?
+-		test "$(git -C .git/modules/$1 config core.worktree)" = "../../../$1"
++		test_cmp_cmd "../../../$1" git -C ".git/modules/$1" config core.worktree
+ 	fi
+ }
+ 
+diff --git a/t/t0001-init.sh b/t/t0001-init.sh
+index d479303efa0..a3b902bcd8f 100755
+--- a/t/t0001-init.sh
++++ b/t/t0001-init.sh
+@@ -598,9 +598,9 @@ test_expect_success 'invalid default branch name' '
+ test_expect_success 'branch -m with the initial branch' '
+ 	git init rename-initial &&
+ 	git -C rename-initial branch -m renamed &&
+-	test renamed = $(git -C rename-initial symbolic-ref --short HEAD) &&
++	test_cmp_cmd renamed git -C rename-initial symbolic-ref --short HEAD &&
+ 	git -C rename-initial branch -m renamed again &&
+-	test again = $(git -C rename-initial symbolic-ref --short HEAD)
++	test_cmp_cmd again git -C rename-initial symbolic-ref --short HEAD
+ '
+ 
+ test_done
+diff --git a/t/t0002-gitfile.sh b/t/t0002-gitfile.sh
+index 26eaca095a2..aca847512c4 100755
+--- a/t/t0002-gitfile.sh
++++ b/t/t0002-gitfile.sh
+@@ -33,7 +33,7 @@ test_expect_success 'bad setup: invalid .git file path' '
+ 
+ test_expect_success 'final setup + check rev-parse --git-dir' '
+ 	echo "gitdir: $REAL" >.git &&
+-	test "$REAL" = "$(git rev-parse --git-dir)"
++	test_cmp_cmd "$REAL" git rev-parse --git-dir
+ '
+ 
+ test_expect_success 'check hash-object' '
+diff --git a/t/t0060-path-utils.sh b/t/t0060-path-utils.sh
+index 68e29c904a6..c90d2e4d2b1 100755
+--- a/t/t0060-path-utils.sh
++++ b/t/t0060-path-utils.sh
+@@ -10,20 +10,21 @@ TEST_PASSES_SANITIZE_LEAK=true
+ 
+ norm_path() {
+ 	expected=$(test-tool path-utils print_path "$2")
+-	test_expect_success $3 "normalize path: $1 => $2" \
+-	"test \"\$(test-tool path-utils normalize_path_copy '$1')\" = '$expected'"
++	test_expect_success $3 "normalize path: $1 => $2" "
++		test_cmp_cmd '$expected' test-tool path-utils normalize_path_copy '$1'
++	"
+ }
+ 
+ relative_path() {
+ 	expected=$(test-tool path-utils print_path "$3")
+-	test_expect_success $4 "relative path: $1 $2 => $3" \
+-	"test \"\$(test-tool path-utils relative_path '$1' '$2')\" = '$expected'"
++	test_expect_success $4 "relative path: $1 $2 => $3" "
++		test_cmp_cmd '$expected' test-tool path-utils relative_path '$1' '$2'
++	"
+ }
+ 
+ test_submodule_relative_url() {
+ 	test_expect_success "test_submodule_relative_url: $1 $2 $3 => $4" "
+-		actual=\$(test-tool submodule resolve-relative-url '$1' '$2' '$3') &&
+-		test \"\$actual\" = '$4'
++		test_cmp_cmd '$4' test-tool submodule resolve-relative-url '$1' '$2' '$3'
+ 	"
+ }
+ 
+@@ -64,9 +65,9 @@ ancestor() {
+ 		expected=$(($expected-$rootslash+$rootoff))
+ 		;;
+ 	esac
+-	test_expect_success $4 "longest ancestor: $1 $2 => $expected" \
+-	"actual=\$(test-tool path-utils longest_ancestor_length '$1' '$2') &&
+-	 test \"\$actual\" = '$expected'"
++	test_expect_success $4 "longest ancestor: $1 $2 => $expected" "
++		test_cmp_cmd '$expected' test-tool path-utils longest_ancestor_length '$1' '$2'
++	"
+ }
+ 
+ # Some absolute path tests should be skipped on Windows due to path mangling
+@@ -166,8 +167,10 @@ ancestor D:/Users/me C:/ -1 MINGW
+ ancestor //server/share/my-directory //server/share/ 14 MINGW
+ 
+ test_expect_success 'strip_path_suffix' '
+-	test c:/msysgit = $(test-tool path-utils strip_path_suffix \
+-		c:/msysgit/libexec//git-core libexec/git-core)
++	echo c:/msysgit >expect &&
++	test-tool path-utils strip_path_suffix \
++		c:/msysgit/libexec//git-core libexec/git-core >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'absolute path rejects the empty string' '
+@@ -189,34 +192,34 @@ test_expect_success 'real path rejects the empty string' '
+ 
+ test_expect_success POSIX 'real path works on absolute paths 1' '
+ 	nopath="hopefully-absent-path" &&
+-	test "/" = "$(test-tool path-utils real_path "/")" &&
+-	test "/$nopath" = "$(test-tool path-utils real_path "/$nopath")"
++	test_cmp_cmd / test-tool path-utils real_path "/" &&
++	test_cmp_cmd "/$nopath" test-tool path-utils real_path "/$nopath"
+ '
+ 
+ test_expect_success 'real path works on absolute paths 2' '
+ 	nopath="hopefully-absent-path" &&
+ 	# Find an existing top-level directory for the remaining tests:
+ 	d=$(pwd -P | sed -e "s|^\([^/]*/[^/]*\)/.*|\1|") &&
+-	test "$d" = "$(test-tool path-utils real_path "$d")" &&
+-	test "$d/$nopath" = "$(test-tool path-utils real_path "$d/$nopath")"
++	test_cmp_cmd "$d" test-tool path-utils real_path "$d" &&
++	test_cmp_cmd "$d/$nopath" test-tool path-utils real_path "$d/$nopath"
+ '
+ 
+ test_expect_success POSIX 'real path removes extra leading slashes' '
+ 	nopath="hopefully-absent-path" &&
+-	test "/" = "$(test-tool path-utils real_path "///")" &&
+-	test "/$nopath" = "$(test-tool path-utils real_path "///$nopath")" &&
++	test_cmp_cmd "/" test-tool path-utils real_path "///" &&
++	test_cmp_cmd "/$nopath" test-tool path-utils real_path "///$nopath" &&
+ 	# Find an existing top-level directory for the remaining tests:
+ 	d=$(pwd -P | sed -e "s|^\([^/]*/[^/]*\)/.*|\1|") &&
+-	test "$d" = "$(test-tool path-utils real_path "//$d")" &&
+-	test "$d/$nopath" = "$(test-tool path-utils real_path "//$d/$nopath")"
++	test_cmp_cmd "$d" test-tool path-utils real_path "//$d" &&
++	test_cmp_cmd "$d/$nopath" test-tool path-utils real_path "//$d/$nopath"
+ '
+ 
+ test_expect_success 'real path removes other extra slashes' '
+ 	nopath="hopefully-absent-path" &&
+ 	# Find an existing top-level directory for the remaining tests:
+ 	d=$(pwd -P | sed -e "s|^\([^/]*/[^/]*\)/.*|\1|") &&
+-	test "$d" = "$(test-tool path-utils real_path "$d///")" &&
+-	test "$d/$nopath" = "$(test-tool path-utils real_path "$d///$nopath")"
++	test_cmp_cmd "$d" test-tool path-utils real_path "$d///" &&
++	test_cmp_cmd "$d/$nopath" test-tool path-utils real_path "$d///$nopath"
+ '
+ 
+ test_expect_success SYMLINKS 'real path works on symlinks' '
+@@ -227,19 +230,19 @@ test_expect_success SYMLINKS 'real path works on symlinks' '
+ 	mkdir third &&
+ 	dir="$(cd .git && pwd -P)" &&
+ 	dir2=third/../second/other/.git &&
+-	test "$dir" = "$(test-tool path-utils real_path $dir2)" &&
++	test_cmp_cmd "$dir" test-tool path-utils real_path $dir2 &&
+ 	file="$dir"/index &&
+-	test "$file" = "$(test-tool path-utils real_path $dir2/index)" &&
++	test_cmp_cmd "$file" test-tool path-utils real_path $dir2/index &&
+ 	basename=blub &&
+-	test "$dir/$basename" = "$(cd .git && test-tool path-utils real_path "$basename")" &&
++	test_cmp_cmd "$dir/$basename" test-tool -C .git path-utils real_path "$basename" &&
+ 	ln -s ../first/file .git/syml &&
+ 	sym="$(cd first && pwd -P)"/file &&
+-	test "$sym" = "$(test-tool path-utils real_path "$dir2/syml")"
++	test_cmp_cmd "$sym" test-tool path-utils real_path "$dir2/syml"
+ '
+ 
+ test_expect_success SYMLINKS 'prefix_path works with absolute paths to work tree symlinks' '
+ 	ln -s target symlink &&
+-	test "$(test-tool path-utils prefix_path prefix "$(pwd)/symlink")" = "symlink"
++	test_cmp_cmd "symlink" test-tool path-utils prefix_path prefix "$(pwd)/symlink"
+ '
+ 
+ test_expect_success 'prefix_path works with only absolute path to work tree' '
+@@ -255,7 +258,7 @@ test_expect_success 'prefix_path rejects absolute path to dir with same beginnin
+ test_expect_success SYMLINKS 'prefix_path works with absolute path to a symlink to work tree having  same beginning as work tree' '
+ 	git init repo &&
+ 	ln -s repo repolink &&
+-	test "a" = "$(cd repo && test-tool path-utils prefix_path prefix "$(pwd)/../repolink/a")"
++	test_cmp_cmd "a" test-tool -C repo path-utils prefix_path prefix "$(cd repo && pwd)/../repolink/a"
+ '
+ 
+ relative_path /foo/a/b/c/	/foo/a/b/	c/
+diff --git a/t/t0100-previous.sh b/t/t0100-previous.sh
+index a16cc3d2983..e315283cccd 100755
+--- a/t/t0100-previous.sh
++++ b/t/t0100-previous.sh
+@@ -12,7 +12,7 @@ test_expect_success 'branch -d @{-1}' '
+ 	test_commit A &&
+ 	git checkout -b junk &&
+ 	git checkout - &&
+-	test "$(git symbolic-ref HEAD)" = refs/heads/main &&
++	test_cmp_cmd refs/heads/main git symbolic-ref HEAD &&
+ 	git branch -d @{-1} &&
+ 	test_must_fail git rev-parse --verify refs/heads/junk
+ '
+@@ -21,7 +21,7 @@ test_expect_success 'branch -d @{-12} when there is not enough switches yet' '
+ 	git reflog expire --expire=now &&
+ 	git checkout -b junk2 &&
+ 	git checkout - &&
+-	test "$(git symbolic-ref HEAD)" = refs/heads/main &&
++	test_cmp_cmd refs/heads/main git symbolic-ref HEAD &&
+ 	test_must_fail git branch -d @{-12} &&
+ 	git rev-parse --verify refs/heads/main
+ '
+diff --git a/t/t1504-ceiling-dirs.sh b/t/t1504-ceiling-dirs.sh
+index 0fafcf9dde3..2c73869235d 100755
+--- a/t/t1504-ceiling-dirs.sh
++++ b/t/t1504-ceiling-dirs.sh
+@@ -6,8 +6,10 @@ TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_prefix() {
+-	test_expect_success "$1" \
+-	"test '$2' = \"\$(git rev-parse --show-prefix)\""
++	local expect="$2" &&
++	test_expect_success "$1: git rev-parse --show-prefix is '$2'" '
++		test_cmp_cmd "$expect" git rev-parse --show-prefix
++	'
+ }
+ 
+ test_fail() {
+diff --git a/t/test-lib-functions.sh b/t/test-lib-functions.sh
+index 796093a7b32..0e8e0f808e3 100644
+--- a/t/test-lib-functions.sh
++++ b/t/test-lib-functions.sh
+@@ -1274,6 +1274,24 @@ test_cmp_rev () {
+ 	fi
+ }
+ 
++# test_cmp_cmd is a convenience helper for doing the more verbose:
++#
++#	echo something >expect &&
++#	<some-command-and-args> >actual &&
++#	test_cmp expect actual
++#
++# As:
++#
++#	test_cmp_cmd something <some-command-and-args>
++test_cmp_cmd () {
++	local expect="$1" &&
++	shift &&
++	printf "%s\n" "$expect" >expect &&
++	"$@" >actual 2>err &&
++	test_must_be_empty err
++	test_cmp expect actual
++}
++
+ # Compare paths respecting core.ignoreCase
+ test_cmp_fspath () {
+ 	if test "x$1" = "x$2"
+-- 
+2.39.0.rc1.980.g92d3d4579ad
+

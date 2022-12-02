@@ -1,0 +1,230 @@
+From 979a7f003f8eff90ea2a48bc3bb3cbc21fc0c580 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v2-0.8-00000000000-20221202T000227Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20220721T064349Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20220721T064349Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Fri, 2 Dec 2022 01:02:27 +0100
+Subject: [PATCH v2 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (8):
+  log tests: don't use "exit 1" outside a sub-shell
+  auto-crlf tests: check "git checkout" exit code
+  diff tests: fix ignored exit codes in t4023
+  test-lib-functions: add and use test_cmp_cmd
+  t/lib-patch-mode.sh: fix ignored "git" exit codes
+  merge tests: don't ignore "rev-parse" exit code in helper
+  tests: use "test_cmp_cmd" instead of "test" in sub-shells
+  tests: use "test_cmp_cmd" in misc tests
+
+ t/lib-httpd.sh                     |  3 +-
+ t/lib-patch-mode.sh                |  9 +++--
+ t/lib-submodule-update.sh          | 22 +++++-------
+ t/t0001-init.sh                    |  4 +--
+ t/t0002-gitfile.sh                 |  2 +-
+ t/t0027-auto-crlf.sh               | 14 +++++---
+ t/t0060-path-utils.sh              | 57 ++++++++++++++++--------------
+ t/t0100-previous.sh                |  4 +--
+ t/t1401-symbolic-ref.sh            |  3 +-
+ t/t1504-ceiling-dirs.sh            |  6 ++--
+ t/t2005-checkout-index-symlinks.sh |  2 +-
+ t/t3200-branch.sh                  |  9 ++---
+ t/t3701-add-interactive.sh         |  9 +++--
+ t/t4023-diff-rename-typechange.sh  | 12 +++----
+ t/t4205-log-pretty-formats.sh      |  2 +-
+ t/t5522-pull-symlink.sh            |  2 +-
+ t/t5605-clone-local.sh             |  9 +++--
+ t/t7402-submodule-rebase.sh        | 10 +++---
+ t/t7504-commit-msg-hook.sh         |  2 +-
+ t/t7516-commit-races.sh            |  3 +-
+ t/t7600-merge.sh                   |  9 +++--
+ t/t7810-grep.sh                    |  2 +-
+ t/test-lib-functions.sh            | 18 ++++++++++
+ 23 files changed, 119 insertions(+), 94 deletions(-)
+
+Range-diff against v1:
+6:  259b4618fcb = 1:  7c9f8d2830f log tests: don't use "exit 1" outside a sub-shell
+3:  cfc1abbf7e3 = 2:  345a667d5bb auto-crlf tests: check "git checkout" exit code
+1:  f8a382841d5 = 3:  c5feef1c808 diff tests: fix ignored exit codes in t4023
+4:  df1b674b8a7 ! 4:  c36060934a6 test-lib-functions: add and use test_cmp_cmd
+    @@ Commit message
+                 test_cmp_cmd --stdin <some-cmd> <expect
+                 test_cmp_cmd --ignore-stderr "output" <some-cmd>
+     
+    -    By using this in t0060-path.sh we'll catch cases where "git" or
+    -    "test-tool" errors (such as segfaults or abort()) were previously
+    -    hidden, and we'd either pass the test, or fail in some subsequent
+    -    assertion.
+    +    By using this in we'll catch cases where "git" or "test-tool"
+    +    errors (such as segfaults or abort()) were previously hidden, and we'd
+    +    either pass the test, or fail in some subsequent assertion.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    + ## t/lib-submodule-update.sh ##
+    +@@ t/lib-submodule-update.sh: test_git_directory_exists () {
+    + 	if test -f sub1/.git
+    + 	then
+    + 		# does core.worktree point at the right place?
+    +-		test "$(git -C .git/modules/$1 config core.worktree)" = "../../../$1"
+    ++		test_cmp_cmd "../../../$1" git -C ".git/modules/$1" config core.worktree
+    + 	fi
+    + }
+    + 
+    +
+    + ## t/t0001-init.sh ##
+    +@@ t/t0001-init.sh: test_expect_success 'invalid default branch name' '
+    + test_expect_success 'branch -m with the initial branch' '
+    + 	git init rename-initial &&
+    + 	git -C rename-initial branch -m renamed &&
+    +-	test renamed = $(git -C rename-initial symbolic-ref --short HEAD) &&
+    ++	test_cmp_cmd renamed git -C rename-initial symbolic-ref --short HEAD &&
+    + 	git -C rename-initial branch -m renamed again &&
+    +-	test again = $(git -C rename-initial symbolic-ref --short HEAD)
+    ++	test_cmp_cmd again git -C rename-initial symbolic-ref --short HEAD
+    + '
+    + 
+    + test_done
+    +
+    + ## t/t0002-gitfile.sh ##
+    +@@ t/t0002-gitfile.sh: test_expect_success 'bad setup: invalid .git file path' '
+    + 
+    + test_expect_success 'final setup + check rev-parse --git-dir' '
+    + 	echo "gitdir: $REAL" >.git &&
+    +-	test "$REAL" = "$(git rev-parse --git-dir)"
+    ++	test_cmp_cmd "$REAL" git rev-parse --git-dir
+    + '
+    + 
+    + test_expect_success 'check hash-object' '
+    +
+      ## t/t0060-path-utils.sh ##
+     @@ t/t0060-path-utils.sh: TEST_PASSES_SANITIZE_LEAK=true
+      
+    @@ t/t0060-path-utils.sh: TEST_PASSES_SANITIZE_LEAK=true
+     -	test_expect_success $3 "normalize path: $1 => $2" \
+     -	"test \"\$(test-tool path-utils normalize_path_copy '$1')\" = '$expected'"
+     +	test_expect_success $3 "normalize path: $1 => $2" "
+    -+		echo '$expected' >expect &&
+    -+		test-tool path-utils normalize_path_copy '$1' >actual &&
+    -+		test_cmp expect actual
+    ++		test_cmp_cmd '$expected' test-tool path-utils normalize_path_copy '$1'
+     +	"
+      }
+      
+      relative_path() {
+    + 	expected=$(test-tool path-utils print_path "$3")
+    +-	test_expect_success $4 "relative path: $1 $2 => $3" \
+    +-	"test \"\$(test-tool path-utils relative_path '$1' '$2')\" = '$expected'"
+    ++	test_expect_success $4 "relative path: $1 $2 => $3" "
+    ++		test_cmp_cmd '$expected' test-tool path-utils relative_path '$1' '$2'
+    ++	"
+    + }
+    + 
+    + test_submodule_relative_url() {
+    + 	test_expect_success "test_submodule_relative_url: $1 $2 $3 => $4" "
+    +-		actual=\$(test-tool submodule resolve-relative-url '$1' '$2' '$3') &&
+    +-		test \"\$actual\" = '$4'
+    ++		test_cmp_cmd '$4' test-tool submodule resolve-relative-url '$1' '$2' '$3'
+    + 	"
+    + }
+    + 
+    +@@ t/t0060-path-utils.sh: ancestor() {
+    + 		expected=$(($expected-$rootslash+$rootoff))
+    + 		;;
+    + 	esac
+    +-	test_expect_success $4 "longest ancestor: $1 $2 => $expected" \
+    +-	"actual=\$(test-tool path-utils longest_ancestor_length '$1' '$2') &&
+    +-	 test \"\$actual\" = '$expected'"
+    ++	test_expect_success $4 "longest ancestor: $1 $2 => $expected" "
+    ++		test_cmp_cmd '$expected' test-tool path-utils longest_ancestor_length '$1' '$2'
+    ++	"
+    + }
+    + 
+    + # Some absolute path tests should be skipped on Windows due to path mangling
+     @@ t/t0060-path-utils.sh: ancestor D:/Users/me C:/ -1 MINGW
+      ancestor //server/share/my-directory //server/share/ 14 MINGW
+      
+    @@ t/t0060-path-utils.sh: test_expect_success 'prefix_path rejects absolute path to
+      
+      relative_path /foo/a/b/c/	/foo/a/b/	c/
+     
+    + ## t/t0100-previous.sh ##
+    +@@ t/t0100-previous.sh: test_expect_success 'branch -d @{-1}' '
+    + 	test_commit A &&
+    + 	git checkout -b junk &&
+    + 	git checkout - &&
+    +-	test "$(git symbolic-ref HEAD)" = refs/heads/main &&
+    ++	test_cmp_cmd refs/heads/main git symbolic-ref HEAD &&
+    + 	git branch -d @{-1} &&
+    + 	test_must_fail git rev-parse --verify refs/heads/junk
+    + '
+    +@@ t/t0100-previous.sh: test_expect_success 'branch -d @{-12} when there is not enough switches yet' '
+    + 	git reflog expire --expire=now &&
+    + 	git checkout -b junk2 &&
+    + 	git checkout - &&
+    +-	test "$(git symbolic-ref HEAD)" = refs/heads/main &&
+    ++	test_cmp_cmd refs/heads/main git symbolic-ref HEAD &&
+    + 	test_must_fail git branch -d @{-12} &&
+    + 	git rev-parse --verify refs/heads/main
+    + '
+    +
+    + ## t/t1504-ceiling-dirs.sh ##
+    +@@ t/t1504-ceiling-dirs.sh: TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+    + 
+    + test_prefix() {
+    +-	test_expect_success "$1" \
+    +-	"test '$2' = \"\$(git rev-parse --show-prefix)\""
+    ++	local expect="$2" &&
+    ++	test_expect_success "$1: git rev-parse --show-prefix is '$2'" '
+    ++		test_cmp_cmd "$expect" git rev-parse --show-prefix
+    ++	'
+    + }
+    + 
+    + test_fail() {
+    +
+      ## t/test-lib-functions.sh ##
+     @@ t/test-lib-functions.sh: test_cmp_rev () {
+      	fi
+2:  85c6ab40e91 ! 5:  f826a336c3d t/lib-patch-mode.sh: fix ignored "git" exit codes
+    @@ Commit message
+         t/lib-patch-mode.sh: fix ignored "git" exit codes
+     
+         Fix code added in b319ef70a94 (Add a small patch-mode testing library,
+    -    2009-08-13) to use &&-chaining and test_cmp instead of interpolating
+    -    "git" commands in a "test" statement.
+    +    2009-08-13) to use &&-chaining and the newly added "test_cmp_cmd"
+    +    instead of interpolating "git" commands in a "test" statement.
+     
+         This fixes cases where we'd have e.g. missed memory leaks under
+         SANITIZE=leak, this code doesn't leak now as far as I can tell, but I
+    @@ t/lib-patch-mode.sh: set_and_save_state () {
+     +	cat "$1" >actual &&
+     +	test_cmp expect actual &&
+     +
+    -+	echo "$3" >expect
+    -+	git show :"$1" >actual &&
+    -+	test_cmp expect actual
+    ++	test_cmp_cmd "$3" git show :"$1"
+      }
+      
+      # verify_saved_state <path>
+    @@ t/lib-patch-mode.sh: save_head () {
+      
+      verify_saved_head () {
+     -	test "$(cat _head)" = "$(git rev-parse HEAD)"
+    -+	cat _head >expect &&
+    -+	git rev-parse HEAD >actual &&
+    -+	test_cmp expect actual
+    ++	test_cmp_cmd "$(cat _head)" git rev-parse HEAD
+      }
+5:  563666f9426 = 6:  5715ff7f0f7 merge tests: don't ignore "rev-parse" exit code in helper
+-:  ----------- > 7:  d090478aa84 tests: use "test_cmp_cmd" instead of "test" in sub-shells
+-:  ----------- > 8:  979a7f003f8 tests: use "test_cmp_cmd" in misc tests
+-- 
+2.39.0.rc1.980.g92d3d4579ad
+

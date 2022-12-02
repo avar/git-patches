@@ -1,0 +1,145 @@
+From d090478aa84714fb85a1d055b30d623461823518 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-7.8-d090478aa84-20221202T000227Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.8-00000000000-20221202T000227Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20220721T064349Z-avarab@gmail.com>
+	<cover-v2-0.8-00000000000-20221202T000227Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 2 Dec 2022 00:26:22 +0100
+Subject: [PATCH v2 7/8] tests: use "test_cmp_cmd" instead of "test" in
+ sub-shells
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Convert a few cases where we were using "test" inside a sub-shell, and
+were losing the exit code of "git".
+
+In the case of "t3200-branch.sh" some adjacent code outside of a
+sub-shell that was losing the exit code is also being converted, as
+it's within the same hunk.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/lib-httpd.sh              |  3 +--
+ t/lib-submodule-update.sh   | 20 +++++++-------------
+ t/t3200-branch.sh           |  9 +++------
+ t/t5605-clone-local.sh      |  9 ++++-----
+ t/t7402-submodule-rebase.sh |  6 +++---
+ 5 files changed, 18 insertions(+), 29 deletions(-)
+
+diff --git a/t/lib-httpd.sh b/t/lib-httpd.sh
+index 608949ea80b..082496d6535 100644
+--- a/t/lib-httpd.sh
++++ b/t/lib-httpd.sh
+@@ -217,8 +217,7 @@ test_http_push_nonff () {
+ 		git commit -a -m path2 --amend &&
+ 
+ 		test_must_fail git push -v origin >output 2>&1 &&
+-		(cd "$REMOTE_REPO" &&
+-		 test $HEAD = $(git rev-parse --verify HEAD))
++		test_cmp_cmd "$HEAD" git -C "$REMOTE_REPO" rev-parse --verify HEAD
+ 	'
+ 
+ 	test_expect_success 'non-fast-forward push show ref status' '
+diff --git a/t/lib-submodule-update.sh b/t/lib-submodule-update.sh
+index d5d98714b4e..207fab77bd3 100644
+--- a/t/lib-submodule-update.sh
++++ b/t/lib-submodule-update.sh
+@@ -168,20 +168,14 @@ replace_gitfile_with_git_dir () {
+ # Note that this only supports submodules at the root level of the
+ # superproject, with the default name, i.e. same as its path.
+ test_git_directory_is_unchanged () {
+-	(
+-		cd ".git/modules/$1" &&
+-		# does core.worktree point at the right place?
+-		test "$(git config core.worktree)" = "../../../$1" &&
+-		# remove it temporarily before comparing, as
+-		# "$1/.git/config" lacks it...
+-		git config --unset core.worktree
+-	) &&
++	# does core.worktree point at the right place?
++	test_cmp_cmd "../../../$1" git -C ".git/modules/$1" config core.worktree
++	# remove it temporarily before comparing, as
++	# "$1/.git/config" lacks it...
++	git -C ".git/modules/$1" config --unset core.worktree &&
+ 	diff -r ".git/modules/$1" "$1/.git" &&
+-	(
+-		# ... and then restore.
+-		cd ".git/modules/$1" &&
+-		git config core.worktree "../../../$1"
+-	)
++	# ... and then restore.
++	git -C ".git/modules/$1" config core.worktree "../../../$1"
+ }
+ 
+ test_git_directory_exists () {
+diff --git a/t/t3200-branch.sh b/t/t3200-branch.sh
+index 5a169b68d6a..c31036b49be 100755
+--- a/t/t3200-branch.sh
++++ b/t/t3200-branch.sh
+@@ -242,12 +242,9 @@ test_expect_success 'git branch -M baz bam should succeed when baz is checked ou
+ test_expect_success 'git branch -M baz bam should succeed within a worktree in which baz is checked out' '
+ 	git checkout -b baz &&
+ 	git worktree add -f bazdir baz &&
+-	(
+-		cd bazdir &&
+-		git branch -M baz bam &&
+-		test $(git rev-parse --abbrev-ref HEAD) = bam
+-	) &&
+-	test $(git rev-parse --abbrev-ref HEAD) = bam &&
++	git -C "$bazdir" branch -M baz bam &&
++	test_cmp_cmd "bam" git -C "$bazdir" rev-parse --abbrev-ref HEAD &&
++	test_cmp_cmd "bam" git rev-parse --abbrev-ref HEAD &&
+ 	rm -r bazdir &&
+ 	git worktree prune
+ '
+diff --git a/t/t5605-clone-local.sh b/t/t5605-clone-local.sh
+index 38b850c10ef..55bda2c0aa9 100755
+--- a/t/t5605-clone-local.sh
++++ b/t/t5605-clone-local.sh
+@@ -15,8 +15,8 @@ test_expect_success 'preparing origin repository' '
+ 	: >file && git add . && git commit -m1 &&
+ 	git clone --bare . a.git &&
+ 	git clone --bare . x &&
+-	test "$(cd a.git && git config --bool core.bare)" = true &&
+-	test "$(cd x && git config --bool core.bare)" = true &&
++	test_cmp_cmd true git -C a.git config --bool core.bare &&
++	test_cmp_cmd true git -C x config --bool core.bare &&
+ 	git bundle create b1.bundle --all &&
+ 	git bundle create b2.bundle main &&
+ 	mkdir dir &&
+@@ -28,9 +28,8 @@ test_expect_success 'preparing origin repository' '
+ 
+ test_expect_success 'local clone without .git suffix' '
+ 	git clone -l -s a b &&
+-	(cd b &&
+-	test "$(git config --bool core.bare)" = false &&
+-	git fetch)
++	test_cmp_cmd false git -C b config --bool core.bare &&
++	git -C b fetch
+ '
+ 
+ test_expect_success 'local clone with .git suffix' '
+diff --git a/t/t7402-submodule-rebase.sh b/t/t7402-submodule-rebase.sh
+index ebeca12a711..277bb8ae520 100755
+--- a/t/t7402-submodule-rebase.sh
++++ b/t/t7402-submodule-rebase.sh
+@@ -82,11 +82,11 @@ test_expect_success 'stash with a dirty submodule' '
+ 	CURRENT=$(cd submodule && git rev-parse HEAD) &&
+ 	git stash &&
+ 	test new != $(cat file) &&
+-	test submodule = $(git diff --name-only) &&
+-	test $CURRENT = $(cd submodule && git rev-parse HEAD) &&
++	test_cmp_cmd submodule git diff --name-only &&
++	test_cmp_cmd "$CURRENT" git -C submodule rev-parse HEAD &&
+ 	git stash apply &&
+ 	test new = $(cat file) &&
+-	test $CURRENT = $(cd submodule && git rev-parse HEAD)
++	test_cmp_cmd "$CURRENT" git -C submodule rev-parse HEAD
+ 
+ '
+ 
+-- 
+2.39.0.rc1.980.g92d3d4579ad
+
