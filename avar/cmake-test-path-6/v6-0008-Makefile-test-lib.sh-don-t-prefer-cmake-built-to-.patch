@@ -1,0 +1,90 @@
+From e564e707fb882ed3aff276a06a32f8ffd459febf Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-08.15-e564e707fb8-20221205T235542Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.15-00000000000-20221205T235542Z-avarab@gmail.com>
+References: <cover-v5-00.15-00000000000-20221202T110947Z-avarab@gmail.com>
+	<cover-v6-00.15-00000000000-20221205T235542Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 14 Oct 2022 15:41:01 +0200
+Subject: [PATCH v6 08/15] Makefile + test-lib.sh: don't prefer cmake-built to
+ make-built git
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per ee9e66e4e76 (cmake: avoid editing t/test-lib.sh, 2022-10-18) and
+the surrounding discussion the goal of that change was to have
+building with cmake and:
+
+	(cd t && ./t0001-init.sh)
+
+Work, to do so we need some way to make the test-lib.sh aware that we
+have a build in contrib/buildsystems/out. The downside of doing it via
+the GIT-BUILD-DIR facility in ee9e66e4e76 is:
+
+- A "remove this file while at it" only fits into the Makefile
+  dependency graph if we "FORCE" a shell command to be run, so doing it
+  this way precludes speeding up the Makefile by e.g. making use of the
+  "$(file)" function (for which I've got follow-up patches).
+
+- If you build with make, then with cmake, and then e.g.:
+
+	make -C t prove
+
+  We'll run the tests against the cmake version of the tests, not the
+  "make" built ones. It's important to get any subtle interaction
+  between two conflicting build systems right.
+
+Now we'll instead check if the top-level "git" exists, and only if it
+doesn't look for the one built by cmake. This ensures that we'll pick
+it up as required when the user is using CMake, without being subject
+to the odd interaction of flip-flopping between the two
+environments.
+
+It also means that we can remove the rule to remove the
+"GIT-BUILD-DIR", if we get to creating "GIT-BUILD-OPTIONS" in the
+top-level git. That's because now when building with both "make" and
+"cmake" we will always prefer the former for running the tests, so
+there's no need to remove the "GIT-BUILD-DIR" file to resolve the
+conflicts between the two.
+
+In practice users are building with either "make" or "cmake", and not
+mixing the two, but in a subsequent change we'll provide an out for
+that "make"-preferring selection behavior, by having "ctest" runs
+always prefer the "cmake" built one.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Makefile      | 1 -
+ t/test-lib.sh | 3 ++-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index b258fdbed86..c602ce57e64 100644
+--- a/Makefile
++++ b/Makefile
+@@ -3150,7 +3150,6 @@ else
+ 	@echo RUNTIME_PREFIX=\'false\' >>$@+
+ endif
+ 	@if cmp $@+ $@ >/dev/null 2>&1; then $(RM) $@+; else mv $@+ $@; fi
+-	@if test -f GIT-BUILD-DIR; then rm GIT-BUILD-DIR; fi
+ 
+ ### Detect Python interpreter path changes
+ ifndef NO_PYTHON
+diff --git a/t/test-lib.sh b/t/test-lib.sh
+index 36358811a0f..c7d55ff0796 100644
+--- a/t/test-lib.sh
++++ b/t/test-lib.sh
+@@ -51,7 +51,8 @@ fi
+ # For CMake the top-level source directory is different from our build
+ # directory. With the top-level Makefile they're the same.
+ GIT_SOURCE_DIR="$GIT_BUILD_DIR"
+-if test -f "$GIT_BUILD_DIR/GIT-BUILD-DIR"
++if test ! -x "$GIT_BUILD_DIR/git" &&
++	test -f "$GIT_BUILD_DIR/GIT-BUILD-DIR"
+ then
+ 	GIT_BUILD_DIR="$(cat "$GIT_BUILD_DIR/GIT-BUILD-DIR")" || exit 1
+ 	# On Windows, we must convert Windows paths lest they contain a colon
+-- 
+2.39.0.rc1.1006.gb4c675778ba
+
