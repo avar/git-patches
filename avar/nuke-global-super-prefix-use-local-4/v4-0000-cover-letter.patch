@@ -1,0 +1,290 @@
+From c99fc5aa708c80bbb4cdb4719fb5c7512a65d0f6 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-0.9-00000000000-20221214T120935Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-0.9-00000000000-20221119T122853Z-avarab@gmail.com>
+References: <cover-v3-0.9-00000000000-20221119T122853Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 14 Dec 2022 13:09:35 +0100
+Subject: [PATCH v4 0/9] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Glen Choo (1):
+  read-tree + fetch tests: test failing "--super-prefix" interaction
+
+Ævar Arnfjörð Bjarmason (8):
+  submodule absorbgitdirs tests: add missing "Migrating git..." tests
+  submodule.c & submodule--helper: pass along "super_prefix" param
+  submodule--helper: don't use global --super-prefix in "absorbgitdirs"
+  submodule--helper: convert "foreach" to its own "--super-prefix"
+  submodule--helper: convert "sync" to its own "--super-prefix"
+  submodule--helper: convert "status" to its own "--super-prefix"
+  submodule--helper: convert "{update,clone}" to their own
+    "--super-prefix"
+  read-tree: add "--super-prefix" option, eliminate global
+
+ Documentation/git.txt              |  8 +--
+ builtin.h                          |  4 --
+ builtin/checkout.c                 |  2 +-
+ builtin/read-tree.c                |  1 +
+ builtin/rm.c                       |  2 +-
+ builtin/submodule--helper.c        | 87 ++++++++++++++++--------------
+ cache.h                            |  2 -
+ entry.c                            | 12 ++---
+ entry.h                            |  6 ++-
+ environment.c                      | 13 -----
+ git.c                              | 41 +++-----------
+ parse-options.h                    |  4 ++
+ submodule.c                        | 50 ++++++++---------
+ submodule.h                        |  8 +--
+ t/t1001-read-tree-m-2way.sh        |  2 +-
+ t/t5616-partial-clone.sh           | 43 +++++++++++++++
+ t/t7412-submodule-absorbgitdirs.sh | 64 +++++++++++++++++++---
+ t/t7527-builtin-fsmonitor.sh       | 38 +++++--------
+ unpack-trees.c                     | 24 +++++----
+ unpack-trees.h                     |  1 +
+ 20 files changed, 229 insertions(+), 183 deletions(-)
+
+Range-diff against v3:
+ 1:  4cc4680cf70 <  -:  ----------- submodule--helper: move "config" to a test-tool
+ 2:  c2087abc58d <  -:  ----------- submodule tests: add tests for top-level flag output
+ 3:  437da3b7b44 <  -:  ----------- submodule--helper: fix  a memory leak in "status"
+ 4:  646009f251b <  -:  ----------- submodule tests: test for a "foreach" blind-spot
+ 5:  349eceeadb6 <  -:  ----------- submodule.c: refactor recursive block out of absorb function
+ 6:  d2c8250dd7d <  -:  ----------- submodule API & "absorbgitdirs": remove "----recursive" option
+ 7:  3cd789b0a78 <  -:  ----------- submodule--helper: remove --prefix from "absorbgitdirs"
+ 8:  ff6ed825127 <  -:  ----------- submodule--helper: drop "update --prefix <pfx>" for "-C <pfx> update"
+ 9:  972aaf0ad2a <  -:  ----------- submodule--helper: use OPT_SUBCOMMAND() API
+10:  5f463bbefb5 !  1:  f479003941b submodule--helper absorbgitdirs: no abspaths in "Migrating git..."
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    submodule--helper absorbgitdirs: no abspaths in "Migrating git..."
+    +    submodule absorbgitdirs tests: add missing "Migrating git..." tests
+     
+    -    Change the "Migrating git directory" messages to avoid emitting
+    -    absolute paths. We could use "old_git_dir" and "new_gitdir.buf" here
+    -    sometimes, but not in all the cases covered by these tests,
+    -    i.e. sometimes the latter will be an absolute path with a different
+    -    prefix.
+    +    Fix a blind spots in the tests surrounding "submodule absorbgitdirs"
+    +    and test what output we emit, and how emitted the message and behavior
+    +    interacts with a "git worktree" where the repository isn't at the base
+    +    of the working directory.
+     
+    -    So let's just strip off the common prefix of the two strings, which
+    -    handles the cases where we have nested submodules nicely. Note that
+    -    this case is different than the one in get_submodule_displaypath() in
+    -    "builtin/submodule--helper.c" handles, as we're dealing with the paths
+    -    to the two ".git" here, not worktree paths.
+    -
+    -    Before this change we had no tests at all for this "Migrating git
+    -    directory" output.
+    +    The "$(pwd)" instead of "$PWD" here is needed due to Windows, where
+    +    the latter will be a path like "/d/a/git/[...]", whereas we need
+    +    "D:/a/git/[...]".
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## submodule.c ##
+    -@@ submodule.c: static void relocate_single_git_dir_into_superproject(const char *path)
+    - 	char *old_git_dir = NULL, *real_old_git_dir = NULL, *real_new_git_dir = NULL;
+    - 	struct strbuf new_gitdir = STRBUF_INIT;
+    - 	const struct submodule *sub;
+    -+	size_t off = 0;
+    - 
+    - 	if (submodule_uses_worktrees(path))
+    - 		die(_("relocate_gitdir for submodule '%s' with "
+    -@@ submodule.c: static void relocate_single_git_dir_into_superproject(const char *path)
+    - 		die(_("could not create directory '%s'"), new_gitdir.buf);
+    - 	real_new_git_dir = real_pathdup(new_gitdir.buf, 1);
+    - 
+    --	fprintf(stderr, _("Migrating git directory of '%s%s' from\n'%s' to\n'%s'\n"),
+    -+	while (real_old_git_dir[off] && real_new_git_dir[off] &&
+    -+	       real_old_git_dir[off] == real_new_git_dir[off])
+    -+		off++;
+    -+	fprintf(stderr, _("Migrating git directory of '%s%s' from '%s' to '%s'\n"),
+    - 		get_super_prefix_or_empty(), path,
+    --		real_old_git_dir, real_new_git_dir);
+    -+		real_old_git_dir + off, real_new_git_dir + off);
+    - 
+    - 	relocate_gitdir(path, real_old_git_dir, real_new_git_dir);
+    - 
+    -
+      ## t/t7412-submodule-absorbgitdirs.sh ##
+    +@@ t/t7412-submodule-absorbgitdirs.sh: TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+    + 
+    + test_expect_success 'setup a real submodule' '
+    ++	cwd="$(pwd)" &&
+    + 	git init sub1 &&
+    + 	test_commit -C sub1 first &&
+    + 	git submodule add ./sub1 &&
+     @@ t/t7412-submodule-absorbgitdirs.sh: test_expect_success 'setup a real submodule' '
+      '
+      
+    @@ t/t7412-submodule-absorbgitdirs.sh: test_expect_success 'setup a real submodule'
+      	git status >expect.1 &&
+      	git -C sub1 rev-parse HEAD >expect.2 &&
+     -	git submodule absorbgitdirs &&
+    -+	cat >expect <<-\EOF &&
+    -+	Migrating git directory of '\''sub1'\'' from '\''sub1/.git'\'' to '\''.git/modules/sub1'\''
+    ++	cat >expect <<-EOF &&
+    ++	Migrating git directory of '\''sub1'\'' from
+    ++	'\''$cwd/sub1/.git'\'' to
+    ++	'\''$cwd/.git/modules/sub1'\''
+     +	EOF
+     +	git submodule absorbgitdirs 2>actual &&
+     +	test_cmp expect actual &&
+    @@ t/t7412-submodule-absorbgitdirs.sh: test_expect_success 'setup nested submodule'
+      	git status >expect.1 &&
+      	git -C sub1/nested rev-parse HEAD >expect.2 &&
+     -	git submodule absorbgitdirs &&
+    -+	cat >expect <<-\EOF &&
+    -+	Migrating git directory of '\''sub1/nested'\'' from '\''sub1/nested/.git'\'' to '\''.git/modules/sub1/modules/nested'\''
+    ++	cat >expect <<-EOF &&
+    ++	Migrating git directory of '\''sub1/nested'\'' from
+    ++	'\''$cwd/sub1/nested/.git'\'' to
+    ++	'\''$cwd/.git/modules/sub1/modules/nested'\''
+     +	EOF
+     +	git submodule absorbgitdirs 2>actual &&
+     +	test_cmp expect actual &&
+    @@ t/t7412-submodule-absorbgitdirs.sh: test_expect_success 're-setup nested submodu
+      	git status >expect.1 &&
+      	git -C sub1/nested rev-parse HEAD >expect.2 &&
+     -	git submodule absorbgitdirs &&
+    -+	cat >expect <<-\EOF &&
+    -+	Migrating git directory of '\''sub1'\'' from '\''sub1/.git'\'' to '\''.git/modules/sub1'\''
+    ++	cat >expect <<-EOF &&
+    ++	Migrating git directory of '\''sub1'\'' from
+    ++	'\''$cwd/sub1/.git'\'' to
+    ++	'\''$cwd/.git/modules/sub1'\''
+     +	EOF
+     +	git submodule absorbgitdirs 2>actual &&
+     +	test_cmp expect actual &&
+      	test -f sub1/.git &&
+      	test -f sub1/nested/.git &&
+      	test -d .git/modules/sub1/modules/nested &&
+    +@@ t/t7412-submodule-absorbgitdirs.sh: test_expect_success 'absorb the git dir in a nested submodule' '
+    + 	test_cmp expect.2 actual.2
+    + '
+    + 
+    ++test_expect_success 'absorb the git dir outside of primary worktree' '
+    ++	test_when_finished "rm -rf repo-bare.git" &&
+    ++	git clone --bare . repo-bare.git &&
+    ++	test_when_finished "rm -rf repo-wt" &&
+    ++	git -C repo-bare.git worktree add ../repo-wt &&
+    ++
+    ++	test_when_finished "rm -f .gitconfig" &&
+    ++	test_config_global protocol.file.allow always &&
+    ++	git -C repo-wt submodule update --init &&
+    ++	git init repo-wt/sub2 &&
+    ++	test_commit -C repo-wt/sub2 A &&
+    ++	git -C repo-wt submodule add ./sub2 sub2 &&
+    ++	cat >expect <<-EOF &&
+    ++	Migrating git directory of '\''sub2'\'' from
+    ++	'\''$cwd/repo-wt/sub2/.git'\'' to
+    ++	'\''$cwd/repo-bare.git/worktrees/repo-wt/modules/sub2'\''
+    ++	EOF
+    ++	DO_IT=1 git -C repo-wt submodule absorbgitdirs 2>actual &&
+    ++	test_cmp expect actual
+    ++'
+    ++
+    + test_expect_success 'setup a gitlink with missing .gitmodules entry' '
+    + 	git init sub2 &&
+    + 	test_commit -C sub2 first &&
+     @@ t/t7412-submodule-absorbgitdirs.sh: test_expect_success 'setup a gitlink with missing .gitmodules entry' '
+      test_expect_success 'absorbing the git dir fails for incomplete submodules' '
+      	git status >expect.1 &&
+11:  c930fc38356 =  2:  6424307a432 read-tree + fetch tests: test failing "--super-prefix" interaction
+12:  2e4a2236898 =  3:  b2e543bde03 submodule.c & submodule--helper: pass along "super_prefix" param
+13:  6e10a47c60a !  4:  16ed7d7f9b6 submodule--helper: don't use global --super-prefix in "absorbgitdirs"
+    @@ submodule.c: int validate_submodule_git_dir(char *git_dir, const char *submodule
+      	char *old_git_dir = NULL, *real_old_git_dir = NULL, *real_new_git_dir = NULL;
+      	struct strbuf new_gitdir = STRBUF_INIT;
+     @@ submodule.c: static void relocate_single_git_dir_into_superproject(const char *path)
+    - 	       real_old_git_dir[off] == real_new_git_dir[off])
+    - 		off++;
+    - 	fprintf(stderr, _("Migrating git directory of '%s%s' from '%s' to '%s'\n"),
+    + 	real_new_git_dir = real_pathdup(new_gitdir.buf, 1);
+    + 
+    + 	fprintf(stderr, _("Migrating git directory of '%s%s' from\n'%s' to\n'%s'\n"),
+     -		get_super_prefix_or_empty(), path,
+     +		super_prefix ? super_prefix : "", path,
+    - 		real_old_git_dir + off, real_new_git_dir + off);
+    + 		real_old_git_dir, real_new_git_dir);
+      
+      	relocate_gitdir(path, real_old_git_dir, real_new_git_dir);
+     @@ submodule.c: static void absorb_git_dir_into_superproject_recurse(const char *path,
+    @@ t/t7527-builtin-fsmonitor.sh: test_expect_success 'submodule always visited' '
+     -}
+     +# try to start the daemon in the submodule.
+      
+    - test_expect_success "stray submodule super-prefix warning" '
+    +-test_expect_success "stray submodule super-prefix warning" '
+    ++test_expect_success "submodule absorbgitdirs implicitly starts daemon" '
+      	test_when_finished "rm -rf super; \
+     -			    rm -rf sub;   \
+     -			    rm super-sub.trace" &&
+    @@ t/t7527-builtin-fsmonitor.sh: test_expect_success "stray submodule super-prefix
+      
+     -	GIT_TRACE2_EVENT="$PWD/super-sub.trace" \
+     -		git -C super submodule absorbgitdirs &&
+    --
+    --	! have_t2_error_event super-sub.trace
+     +	cat >expect <<-\EOF &&
+     +	Migrating git directory of '\''dir_1/dir_2/sub'\'' from '\''dir_1/dir_2/sub/.git'\'' to '\''.git/modules/dir_1/dir_2/sub'\''
+     +	EOF
+    ++	GIT_TRACE2_EVENT="$PWD/.git/trace_absorbgitdirs" \
+     +	git -C super submodule absorbgitdirs >out 2>actual &&
+     +	test_cmp expect actual &&
+    -+	test_must_be_empty out
+    ++	test_must_be_empty out &&
+    + 
+    +-	! have_t2_error_event super-sub.trace
+    ++	# Confirm that the trace2 log contains a record of the
+    ++	# daemon starting.
+    ++	test_subcommand git fsmonitor--daemon start <.git/trace_absorbgitdirs
+      '
+      
+      # On a case-insensitive file system, confirm that the daemon
+14:  da86eb3b867 =  5:  e8fe36fc3d6 submodule--helper: convert "foreach" to its own "--super-prefix"
+15:  2eb583148a6 =  6:  0b729487ec1 submodule--helper: convert "sync" to its own "--super-prefix"
+16:  8d8925c7e1f =  7:  6b7ac11dd92 submodule--helper: convert "status" to its own "--super-prefix"
+17:  754a7489aa5 =  8:  9e87dc988fc submodule--helper: convert "{update,clone}" to their own "--super-prefix"
+18:  f952fa3d01f !  9:  c99fc5aa708 read-tree: add "--super-prefix" option, eliminate global
+    @@ submodule.c: int submodule_move_head(const char *path,
+      
+      			/* make sure the index is clean as well */
+     -			submodule_reset_index(path);
+    -+			submodule_reset_index(path, NULL);
+    ++			submodule_reset_index(path, super_prefix);
+      		}
+      
+      		if (old_head && (flags & SUBMODULE_MOVE_HEAD_FORCE)) {
+    @@ unpack-trees.c: static int check_submodule_move_head(const struct cache_entry *c
+      		flags |= SUBMODULE_MOVE_HEAD_FORCE;
+      
+     -	if (submodule_move_head(ce->name, old_id, new_id, flags))
+    -+	if (submodule_move_head(ce->name, NULL, old_id, new_id, flags))
+    ++	if (submodule_move_head(ce->name, o->super_prefix, old_id, new_id,
+    ++				flags))
+      		return add_rejected_path(o, ERROR_WOULD_LOSE_SUBMODULE, ce->name);
+      	return 0;
+      }
+    @@ unpack-trees.c: int stash_worktree_untracked_merge(const struct cache_entry * co
+     
+      ## unpack-trees.h ##
+     @@ unpack-trees.h: struct unpack_trees_options {
+    - 		     dry_run;
+    + 		     skip_cache_tree_update;
+      	enum unpack_trees_reset_type reset;
+      	const char *prefix;
+     +	const char *super_prefix;
+19:  1aa4019527a <  -:  ----------- fetch: rename "--submodule-prefix" to "--super-prefix"
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+
