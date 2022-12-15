@@ -1,0 +1,160 @@
+From 4807a3fe8ffa529314dd371fd6666d409e4f8674 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-6.6-4807a3fe8ff-20221215T095335Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20221215T095335Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20221215T095335Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Nov 2022 11:26:38 +0100
+Subject: [PATCH 6/6] cocci & cache.h: remove
+ "USE_THE_INDEX_COMPATIBILITY_MACROS"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Have the last users of "USE_THE_INDEX_COMPATIBILITY_MACROS" use the
+underlying *_index() variants instead. Now all previous users of
+"USE_THE_INDEX_COMPATIBILITY_MACROS" have been migrated away from the
+wrapper macros, and if applicable to use the "USE_THE_INDEX_VARIABLE"
+added in [1].
+
+Let's leave the "index-compatibility.cocci" in place, even though it
+won't be doing anything on "master". It will benefit any out-of-tree
+code that need to use these compatibility macros. We can eventually
+remove it.
+
+1. bdafeae0b9c (cache.h & test-tool.h: add & use
+   "USE_THE_INDEX_VARIABLE", 2022-11-19)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/commit.c                              |  6 +++---
+ builtin/merge.c                               |  6 +++---
+ cache.h                                       |  9 +-------
+ contrib/coccinelle/index-compatibility.cocci  |  6 ++++++
+ .../index-compatibility.pending.cocci         | 21 -------------------
+ 5 files changed, 13 insertions(+), 35 deletions(-)
+ delete mode 100644 contrib/coccinelle/index-compatibility.pending.cocci
+
+diff --git a/builtin/commit.c b/builtin/commit.c
+index 31fbbd73d16..985a0445b78 100644
+--- a/builtin/commit.c
++++ b/builtin/commit.c
+@@ -5,7 +5,7 @@
+  * Based on git-commit.sh by Junio C Hamano and Linus Torvalds
+  */
+ 
+-#define USE_THE_INDEX_COMPATIBILITY_MACROS
++#define USE_THE_INDEX_VARIABLE
+ #include "cache.h"
+ #include "config.h"
+ #include "lockfile.h"
+@@ -992,8 +992,8 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
+ 		const char *parent = "HEAD";
+ 
+ 		if (!the_index.cache_nr) {
+-			discard_cache();
+-			if (read_cache() < 0)
++			discard_index(&the_index);
++			if (repo_read_index(the_repository) < 0)
+ 				die(_("Cannot read index"));
+ 		}
+ 
+diff --git a/builtin/merge.c b/builtin/merge.c
+index ad2e4114617..659fa10481e 100644
+--- a/builtin/merge.c
++++ b/builtin/merge.c
+@@ -6,7 +6,7 @@
+  * Based on git-merge.sh by Junio C Hamano.
+  */
+ 
+-#define USE_THE_INDEX_COMPATIBILITY_MACROS
++#define USE_THE_INDEX_VARIABLE
+ #include "cache.h"
+ #include "config.h"
+ #include "parse-options.h"
+@@ -390,8 +390,8 @@ static void restore_state(const struct object_id *head,
+ 	run_command(&cmd);
+ 
+ refresh_cache:
+-	discard_cache();
+-	if (read_cache() < 0)
++	discard_index(&the_index);
++	if (repo_read_index(the_repository) < 0)
+ 		die(_("could not read index"));
+ }
+ 
+diff --git a/cache.h b/cache.h
+index 4c79e732e45..36bd5667334 100644
+--- a/cache.h
++++ b/cache.h
+@@ -433,15 +433,8 @@ typedef int (*must_prefetch_predicate)(const struct cache_entry *);
+ void prefetch_cache_entries(const struct index_state *istate,
+ 			    must_prefetch_predicate must_prefetch);
+ 
+-#if defined(USE_THE_INDEX_COMPATIBILITY_MACROS) || defined(USE_THE_INDEX_VARIABLE)
++#ifdef USE_THE_INDEX_VARIABLE
+ extern struct index_state the_index;
+-
+-#ifndef USE_THE_INDEX_VARIABLE
+-#ifdef USE_THE_INDEX_COMPATIBILITY_MACROS
+-#define read_cache() repo_read_index(the_repository)
+-#define discard_cache() discard_index(&the_index)
+-#endif
+-#endif
+ #endif
+ 
+ #define TYPE_BITS 3
+diff --git a/contrib/coccinelle/index-compatibility.cocci b/contrib/coccinelle/index-compatibility.cocci
+index 9fca870162d..31e36cf3c41 100644
+--- a/contrib/coccinelle/index-compatibility.cocci
++++ b/contrib/coccinelle/index-compatibility.cocci
+@@ -23,6 +23,9 @@ identifier ACT = active_cache_tree;
+ @@
+ @@
+ (
++- read_cache
+++ repo_read_index
++|
+ - read_cache_unmerged
+ + repo_read_index_unmerged
+ |
+@@ -97,6 +100,9 @@ identifier ACT = active_cache_tree;
+ |
+ - update_main_cache_tree
+ + cache_tree_update
++|
++- discard_cache
+++ discard_index
+ )
+   (
+ + &the_index,
+diff --git a/contrib/coccinelle/index-compatibility.pending.cocci b/contrib/coccinelle/index-compatibility.pending.cocci
+deleted file mode 100644
+index ecf3b45deca..00000000000
+--- a/contrib/coccinelle/index-compatibility.pending.cocci
++++ /dev/null
+@@ -1,21 +0,0 @@
+-// "the_repository" simple cases
+-@@
+-@@
+-(
+-- read_cache
+-+ repo_read_index
+-)
+-  (
+-+ the_repository,
+-  ...)
+-
+-// "the_index" simple cases
+-@@
+-@@
+-(
+-- discard_cache
+-+ discard_index
+-)
+-  (
+-+ &the_index,
+-  ...)
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+
