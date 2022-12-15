@@ -1,0 +1,61 @@
+From cde038825d0e456ef997ad3f3ae6358e1d59485e Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-1.5-cde038825d0-20221215T090226Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+References: <221214.86ilie48cv.gmgdl@evledraar.gmail.com>
+	<RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Dec 2022 14:18:52 +0100
+Subject: [RFC PATCH 1/5] builtin/annotate.c: simplify for strvec API
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When this code was migrated to "struct strvec" (or rather, its
+predecessor API) in 8c2cfa55446 (annotate: use argv_array, 2014-07-16)
+it didn't take full advantage of what we were given:
+
+* We are always passed the name "annotate" as argv[0] here, so we
+  don't need to re-hardcode it. We've already declared it in "struct
+  cmd_struct commands" in git.c.
+
+* We are guaranteed to get at least one argument, so rather than
+  looping here ourselves let's have strvec_pushv() handle that. If we
+  only have one argument we'll pass the terminating NULL to it, making
+  it a NOOP.
+
+This change helps to make the subsequent commit smaller, and as a
+bonus removes the type discrepancy between "int" and "size_t".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/annotate.c | 10 +++-------
+ 1 file changed, 3 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/annotate.c b/builtin/annotate.c
+index 58ff977a231..e37b269196f 100644
+--- a/builtin/annotate.c
++++ b/builtin/annotate.c
+@@ -7,16 +7,12 @@
+ #include "builtin.h"
+ #include "strvec.h"
+ 
+-int cmd_annotate(int argc, const char **argv, const char *prefix)
++int cmd_annotate(int argc UNUSED, const char **argv, const char *prefix)
+ {
+ 	struct strvec args = STRVEC_INIT;
+-	int i;
+ 
+-	strvec_pushl(&args, "annotate", "-c", NULL);
+-
+-	for (i = 1; i < argc; i++) {
+-		strvec_push(&args, argv[i]);
+-	}
++	strvec_pushl(&args, argv[0], "-c", NULL);
++	strvec_pushv(&args, &argv[1]);
+ 
+ 	return cmd_blame(args.nr, args.v, prefix);
+ }
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+

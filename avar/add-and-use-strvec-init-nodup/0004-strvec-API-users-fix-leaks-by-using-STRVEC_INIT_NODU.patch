@@ -1,0 +1,155 @@
+From 6051c309d0d2c0a2548d979e05077e89dcc1ab5f Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-4.5-6051c309d0d-20221215T090226Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+References: <221214.86ilie48cv.gmgdl@evledraar.gmail.com>
+	<RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Dec 2022 15:01:03 +0100
+Subject: [RFC PATCH 4/5] strvec API users: fix leaks by using
+ "STRVEC_INIT_NODUP"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+For these cases where all of the strings we're pushing to the "struct
+strvec" are fixed strings we can fix widespread memory leaks by
+skipping the xstrdup() on strvec_push().
+
+More in-tree users could benefit from this to save needless
+xstrdup()-ing, but for all of these we were munging the "v" member, so
+the subsequent strvec_clear() wouldn't free the memory.
+
+Now there's no need to free the individual elements, but we'll still
+need to free the container with the strvec_clear().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c                  | 2 +-
+ builtin/annotate.c            | 2 +-
+ builtin/stash.c               | 2 +-
+ t/t0023-crlf-am.sh            | 1 +
+ t/t4152-am-subjects.sh        | 2 ++
+ t/t4254-am-corrupt.sh         | 2 ++
+ t/t4256-am-format-flowed.sh   | 1 +
+ t/t4257-am-interactive.sh     | 2 ++
+ t/t5403-post-checkout-hook.sh | 1 +
+ 9 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 30c9b3a9cd7..691ec1d152d 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -1471,7 +1471,7 @@ static int parse_mail_rebase(struct am_state *state, const char *mail)
+ static int run_apply(const struct am_state *state, const char *index_file)
+ {
+ 	struct strvec apply_paths = STRVEC_INIT;
+-	struct strvec apply_opts = STRVEC_INIT;
++	struct strvec apply_opts = STRVEC_INIT_NODUP;
+ 	struct apply_state apply_state;
+ 	int res, opts_left;
+ 	int force_apply = 0;
+diff --git a/builtin/annotate.c b/builtin/annotate.c
+index de58deadfc7..99d97c1a8c0 100644
+--- a/builtin/annotate.c
++++ b/builtin/annotate.c
+@@ -9,7 +9,7 @@
+ 
+ int cmd_annotate(int argc UNUSED, const char **argv, const char *prefix)
+ {
+-	struct strvec args = STRVEC_INIT;
++	struct strvec args = STRVEC_INIT_NODUP;
+ 	int ret;
+ 
+ 	strvec_pushl(&args, argv[0], "-c", NULL);
+diff --git a/builtin/stash.c b/builtin/stash.c
+index e504e22e0b9..b15dd2ebb3c 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -1823,7 +1823,7 @@ int cmd_stash(int argc, const char **argv, const char *prefix)
+ {
+ 	pid_t pid = getpid();
+ 	const char *index_file;
+-	struct strvec args = STRVEC_INIT;
++	struct strvec args = STRVEC_INIT_NODUP;
+ 	parse_opt_subcommand_fn *fn = NULL;
+ 	struct option options[] = {
+ 		OPT_SUBCOMMAND("apply", &fn, apply_stash),
+diff --git a/t/t0023-crlf-am.sh b/t/t0023-crlf-am.sh
+index f9bbb91f64e..575805513a3 100755
+--- a/t/t0023-crlf-am.sh
++++ b/t/t0023-crlf-am.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='Test am with auto.crlf'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ cat >patchfile <<\EOF
+diff --git a/t/t4152-am-subjects.sh b/t/t4152-am-subjects.sh
+index 4c68245acad..9f2edba1f83 100755
+--- a/t/t4152-am-subjects.sh
++++ b/t/t4152-am-subjects.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='test subject preservation with format-patch | am'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ make_patches() {
+diff --git a/t/t4254-am-corrupt.sh b/t/t4254-am-corrupt.sh
+index 54be7da1611..45f1d4f95e5 100755
+--- a/t/t4254-am-corrupt.sh
++++ b/t/t4254-am-corrupt.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='git am with corrupt input'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ make_mbox_with_nul () {
+diff --git a/t/t4256-am-format-flowed.sh b/t/t4256-am-format-flowed.sh
+index 2369c4e17ad..1015273bc82 100755
+--- a/t/t4256-am-format-flowed.sh
++++ b/t/t4256-am-format-flowed.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='test format=flowed support of git am'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t4257-am-interactive.sh b/t/t4257-am-interactive.sh
+index aed8f4de3d6..f26d7fd2dbd 100755
+--- a/t/t4257-am-interactive.sh
++++ b/t/t4257-am-interactive.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='am --interactive tests'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'set up patches to apply' '
+diff --git a/t/t5403-post-checkout-hook.sh b/t/t5403-post-checkout-hook.sh
+index 978f240cdac..cfaae547398 100755
+--- a/t/t5403-post-checkout-hook.sh
++++ b/t/t5403-post-checkout-hook.sh
+@@ -7,6 +7,7 @@ test_description='Test the post-checkout hook.'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+

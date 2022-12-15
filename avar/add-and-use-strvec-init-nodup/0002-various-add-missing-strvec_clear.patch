@@ -1,0 +1,131 @@
+From 9785934c6d772bc09ba46b0299526cff73e0dcf8 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-2.5-9785934c6d7-20221215T090226Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+References: <221214.86ilie48cv.gmgdl@evledraar.gmail.com>
+	<RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Dec 2022 13:50:05 +0100
+Subject: [RFC PATCH 2/5] various: add missing strvec_clear()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix or partially fix memory leaks that happened because a
+strvec_clear() was missing. The "partially" will be addressed in a
+subsequent commit, we'll still leak in cases where the function we're
+calling munges our "v" member.
+
+In the case of "builtin/describe.c" let's change it to use the macro
+initializer rather than the strvec_init() while we're at it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/annotate.c       | 5 ++++-
+ builtin/describe.c       | 8 +++++---
+ builtin/stash.c          | 6 +++++-
+ builtin/upload-archive.c | 7 +++++--
+ 4 files changed, 19 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/annotate.c b/builtin/annotate.c
+index e37b269196f..de58deadfc7 100644
+--- a/builtin/annotate.c
++++ b/builtin/annotate.c
+@@ -10,9 +10,12 @@
+ int cmd_annotate(int argc UNUSED, const char **argv, const char *prefix)
+ {
+ 	struct strvec args = STRVEC_INIT;
++	int ret;
+ 
+ 	strvec_pushl(&args, argv[0], "-c", NULL);
+ 	strvec_pushv(&args, &argv[1]);
+ 
+-	return cmd_blame(args.nr, args.v, prefix);
++	ret = cmd_blame(args.nr, args.v, prefix);
++	strvec_clear(&args);
++	return ret;
+ }
+diff --git a/builtin/describe.c b/builtin/describe.c
+index eea1e330c00..cb205f6b561 100644
+--- a/builtin/describe.c
++++ b/builtin/describe.c
+@@ -597,9 +597,9 @@ int cmd_describe(int argc, const char **argv, const char *prefix)
+ 
+ 	if (contains) {
+ 		struct string_list_item *item;
+-		struct strvec args;
++		struct strvec args = STRVEC_INIT;
++		int ret;
+ 
+-		strvec_init(&args);
+ 		strvec_pushl(&args, "name-rev",
+ 			     "--peel-tag", "--name-only", "--no-undefined",
+ 			     NULL);
+@@ -616,7 +616,9 @@ int cmd_describe(int argc, const char **argv, const char *prefix)
+ 			strvec_pushv(&args, argv);
+ 		else
+ 			strvec_push(&args, "HEAD");
+-		return cmd_name_rev(args.nr, args.v, prefix);
++		ret = cmd_name_rev(args.nr, args.v, prefix);
++		strvec_clear(&args);
++		return ret;
+ 	}
+ 
+ 	hashmap_init(&names, commit_name_neq, NULL, 0);
+diff --git a/builtin/stash.c b/builtin/stash.c
+index bb0fd861434..e504e22e0b9 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -961,6 +961,7 @@ static int show_stash(int argc, const char **argv, const char *prefix)
+ 	ret = diff_result_code(&rev.diffopt, 0);
+ cleanup:
+ 	strvec_clear(&stash_args);
++	strvec_clear(&revision_args);
+ 	free_stash_info(&info);
+ 	release_revisions(&rev);
+ 	if (do_usage)
+@@ -1838,6 +1839,7 @@ int cmd_stash(int argc, const char **argv, const char *prefix)
+ 		OPT_SUBCOMMAND_F("save", &fn, save_stash, PARSE_OPT_NOCOMPLETE),
+ 		OPT_END()
+ 	};
++	int ret;
+ 
+ 	git_config(git_stash_config, NULL);
+ 
+@@ -1861,5 +1863,7 @@ int cmd_stash(int argc, const char **argv, const char *prefix)
+ 	/* Assume 'stash push' */
+ 	strvec_push(&args, "push");
+ 	strvec_pushv(&args, argv);
+-	return !!push_stash(args.nr, args.v, prefix, 1);
++	ret = !!push_stash(args.nr, args.v, prefix, 1);
++	strvec_clear(&args);
++	return ret;
+ }
+diff --git a/builtin/upload-archive.c b/builtin/upload-archive.c
+index 945ee2b4126..6ef0d06ee8b 100644
+--- a/builtin/upload-archive.c
++++ b/builtin/upload-archive.c
+@@ -21,6 +21,7 @@ int cmd_upload_archive_writer(int argc, const char **argv, const char *prefix)
+ {
+ 	struct strvec sent_argv = STRVEC_INIT;
+ 	const char *arg_cmd = "argument ";
++	int ret;
+ 
+ 	if (argc != 2 || !strcmp(argv[1], "-h"))
+ 		usage(upload_archive_usage);
+@@ -45,8 +46,10 @@ int cmd_upload_archive_writer(int argc, const char **argv, const char *prefix)
+ 	}
+ 
+ 	/* parse all options sent by the client */
+-	return write_archive(sent_argv.nr, sent_argv.v, prefix,
+-			     the_repository, NULL, 1);
++	ret = write_archive(sent_argv.nr, sent_argv.v, prefix,
++			    the_repository, NULL, 1);
++	strvec_clear(&sent_argv);
++	return ret;
+ }
+ 
+ __attribute__((format (printf, 1, 2)))
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+

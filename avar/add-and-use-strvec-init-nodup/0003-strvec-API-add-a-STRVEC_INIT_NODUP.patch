@@ -1,0 +1,178 @@
+From 16c20baf5ec9740cc2106fd3eb3139f855330b60 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-3.5-16c20baf5ec-20221215T090226Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+References: <221214.86ilie48cv.gmgdl@evledraar.gmail.com>
+	<RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Dec 2022 14:12:01 +0100
+Subject: [RFC PATCH 3/5] strvec API: add a "STRVEC_INIT_NODUP"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We have various tricky cases where we'll leak a "struct strvec" even
+when we call strvec_clear(), these happen because we'll call
+setup_revisions(), parse_options() etc., which will munge our "v"
+member.
+
+There's various potential ways to deal with that, see the extensive
+on-list discussion at [1]. One way would be to pass a flag to ask the
+underlying API to free() these, as was done for setup_revisions() in
+[2].
+
+But we don't need that complexity for many common cases, which are
+pushing fixed strings to the "struct strvec". Let's instead add a flag
+analogous to the "strdup_strings" flag in the "struct string_list". A
+subsequent commit will make use of this API.
+
+Implementation notes: The BUG_unless_dup() is implemented as a macro
+so we'll report the correct line number on BUG(). The "nodup_strings"
+flag could have been named a "strdup_strings" for consistency with the
+"struct string_list" API, but to do so we'd have to be confident that
+we've spotted all callers that assume that they can memset() a "struct
+strvec" to zero.
+
+1. https://lore.kernel.org/git/221214.86ilie48cv.gmgdl@evledraar.gmail.com/
+2. f92dbdbc6a8 (revisions API: don't leak memory on argv elements that
+   need free()-ing, 2022-08-02)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ strvec.c | 20 ++++++++++++++++++--
+ strvec.h | 30 +++++++++++++++++++++++++++++-
+ 2 files changed, 47 insertions(+), 3 deletions(-)
+
+diff --git a/strvec.c b/strvec.c
+index 61a76ce6cb9..721f8e94a50 100644
+--- a/strvec.c
++++ b/strvec.c
+@@ -10,6 +10,16 @@ void strvec_init(struct strvec *array)
+ 	memcpy(array, &blank, sizeof(*array));
+ }
+ 
++void strvec_init_nodup(struct strvec *array)
++{
++	struct strvec blank = STRVEC_INIT_NODUP;
++	memcpy(array, &blank, sizeof(*array));
++}
++
++#define BUG_unless_dup(array, fn) \
++	if ((array)->nodup_strings) \
++		BUG("cannot %s() on a 'STRVEC_INIT_NODUP' strvec", (fn))
++
+ static void strvec_push_nodup(struct strvec *array, const char *value)
+ {
+ 	if (array->v == empty_strvec)
+@@ -22,7 +32,9 @@ static void strvec_push_nodup(struct strvec *array, const char *value)
+ 
+ const char *strvec_push(struct strvec *array, const char *value)
+ {
+-	strvec_push_nodup(array, xstrdup(value));
++	const char *to_push = array->nodup_strings ? value : xstrdup(value);
++
++	strvec_push_nodup(array, to_push);
+ 	return array->v[array->nr - 1];
+ }
+ 
+@@ -31,6 +43,8 @@ const char *strvec_pushf(struct strvec *array, const char *fmt, ...)
+ 	va_list ap;
+ 	struct strbuf v = STRBUF_INIT;
+ 
++	BUG_unless_dup(array, "strvec_pushf");
++
+ 	va_start(ap, fmt);
+ 	strbuf_vaddf(&v, fmt, ap);
+ 	va_end(ap);
+@@ -67,6 +81,8 @@ void strvec_pop(struct strvec *array)
+ 
+ void strvec_split(struct strvec *array, const char *to_split)
+ {
++	BUG_unless_dup(array, "strvec_pushf");
++
+ 	while (isspace(*to_split))
+ 		to_split++;
+ 	for (;;) {
+@@ -89,7 +105,7 @@ void strvec_clear(struct strvec *array)
+ {
+ 	if (array->v != empty_strvec) {
+ 		int i;
+-		for (i = 0; i < array->nr; i++)
++		for (i = 0; !array->nodup_strings && i < array->nr; i++)
+ 			free((char *)array->v[i]);
+ 		free(array->v);
+ 	}
+diff --git a/strvec.h b/strvec.h
+index 9f55c8766ba..b122b87b369 100644
+--- a/strvec.h
++++ b/strvec.h
+@@ -26,29 +26,51 @@ extern const char *empty_strvec[];
+  * member contains the actual array; the `nr` member contains the
+  * number of elements in the array, not including the terminating
+  * NULL.
++ *
++ * When using `STRVEC_INIT_NODUP` to initialize it the `nodup_strings'
++ * member is set, and individual members of the "struct strvec" will
++ * not be free()'d by strvec_clear(). This is for fixed string
++ * arguments to parse_options() and others that might munge the "v"
++ * itself.
+  */
+ struct strvec {
+ 	const char **v;
+ 	size_t nr;
+ 	size_t alloc;
++	unsigned int nodup_strings:1;
+ };
+ 
+ #define STRVEC_INIT { \
+ 	.v = empty_strvec, \
+ }
+ 
++#define STRVEC_INIT_NODUP { \
++	.v = empty_strvec, \
++	.nodup_strings = 1, \
++}
++
+ /**
+  * Initialize an array. This is no different than assigning from
+  * `STRVEC_INIT`.
+  */
+ void strvec_init(struct strvec *);
+ 
++/**
++ * Initialize a "nodup" array. This is no different than assigning from
++ * `STRVEC_INIT_NODUP`.
++ */
++void strvec_init_nodup(struct strvec *);
++
+ /* Push a copy of a string onto the end of the array. */
+ const char *strvec_push(struct strvec *, const char *);
+ 
+ /**
+  * Format a string and push it onto the end of the array. This is a
+  * convenience wrapper combining `strbuf_addf` and `strvec_push`.
++ *
++ * This is incompatible with arrays initialized with
++ * `STRVEC_INIT_NODUP`, as pushing the formatted string requires the
++ * equivalent of an xstrfmt().
+  */
+ __attribute__((format (printf,2,3)))
+ const char *strvec_pushf(struct strvec *, const char *fmt, ...);
+@@ -70,7 +92,13 @@ void strvec_pushv(struct strvec *, const char **);
+  */
+ void strvec_pop(struct strvec *);
+ 
+-/* Splits by whitespace; does not handle quoted arguments! */
++/**
++ * Splits by whitespace; does not handle quoted arguments!
++ *
++ * This is incompatible with arrays initialized with
++ * `STRVEC_INIT_NODUP`, as pushing the elements requires an xstrndup()
++ * call.
++ */
+ void strvec_split(struct strvec *, const char *);
+ 
+ /**
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+

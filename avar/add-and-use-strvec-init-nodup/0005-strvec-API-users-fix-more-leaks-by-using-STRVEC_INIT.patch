@@ -1,0 +1,128 @@
+From 81742a8a6edc6d6d05c48cb85a3047139bd39aa3 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-5.5-81742a8a6ed-20221215T090226Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+References: <221214.86ilie48cv.gmgdl@evledraar.gmail.com>
+	<RFC-cover-0.5-00000000000-20221215T090226Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Dec 2022 15:01:32 +0100
+Subject: [RFC PATCH 5/5] strvec API users: fix more leaks by using
+ "STRVEC_INIT_NODUP"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+For these cases where most of the the strings we were pushing to the
+"struct strvec" were fixed strings, but others are dynamically
+allocated. For the latter we keep around a "to_free" list of them.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/describe.c       | 22 +++++++++++++++++-----
+ builtin/upload-archive.c |  9 +++++++--
+ t/t5003-archive-zip.sh   |  1 +
+ 3 files changed, 25 insertions(+), 7 deletions(-)
+
+diff --git a/builtin/describe.c b/builtin/describe.c
+index cb205f6b561..eda59ebb19a 100644
+--- a/builtin/describe.c
++++ b/builtin/describe.c
+@@ -596,8 +596,10 @@ int cmd_describe(int argc, const char **argv, const char *prefix)
+ 		die(_("options '%s' and '%s' cannot be used together"), "--long", "--abbrev=0");
+ 
+ 	if (contains) {
++		struct string_list to_free = STRING_LIST_INIT_DUP;
+ 		struct string_list_item *item;
+-		struct strvec args = STRVEC_INIT;
++		struct strvec args = STRVEC_INIT_NODUP;
++
+ 		int ret;
+ 
+ 		strvec_pushl(&args, "name-rev",
+@@ -607,10 +609,19 @@ int cmd_describe(int argc, const char **argv, const char *prefix)
+ 			strvec_push(&args, "--always");
+ 		if (!all) {
+ 			strvec_push(&args, "--tags");
+-			for_each_string_list_item(item, &patterns)
+-				strvec_pushf(&args, "--refs=refs/tags/%s", item->string);
+-			for_each_string_list_item(item, &exclude_patterns)
+-				strvec_pushf(&args, "--exclude=refs/tags/%s", item->string);
++			for_each_string_list_item(item, &patterns) {
++				char *str = xstrfmt("--refs=refs/tags/%s", item->string);
++				const char *item = string_list_append_nodup(&to_free, str)->string;
++
++				strvec_push(&args, item);
++			}
++			for_each_string_list_item(item, &exclude_patterns) {
++				char *str = xstrfmt("--exclude=refs/tags/%s", item->string);
++
++				const char *item = string_list_append_nodup(&to_free, str)->string;
++
++				strvec_push(&args, item);
++			}
+ 		}
+ 		if (argc)
+ 			strvec_pushv(&args, argv);
+@@ -618,6 +629,7 @@ int cmd_describe(int argc, const char **argv, const char *prefix)
+ 			strvec_push(&args, "HEAD");
+ 		ret = cmd_name_rev(args.nr, args.v, prefix);
+ 		strvec_clear(&args);
++		string_list_clear(&to_free, 0);
+ 		return ret;
+ 	}
+ 
+diff --git a/builtin/upload-archive.c b/builtin/upload-archive.c
+index 6ef0d06ee8b..95c6cdc4be0 100644
+--- a/builtin/upload-archive.c
++++ b/builtin/upload-archive.c
+@@ -19,7 +19,8 @@ static const char deadchild[] =
+ 
+ int cmd_upload_archive_writer(int argc, const char **argv, const char *prefix)
+ {
+-	struct strvec sent_argv = STRVEC_INIT;
++	struct string_list to_free = STRING_LIST_INIT_DUP;
++	struct strvec sent_argv = STRVEC_INIT_NODUP;
+ 	const char *arg_cmd = "argument ";
+ 	int ret;
+ 
+@@ -34,6 +35,7 @@ int cmd_upload_archive_writer(int argc, const char **argv, const char *prefix)
+ 	/* put received options in sent_argv[] */
+ 	strvec_push(&sent_argv, "git-upload-archive");
+ 	for (;;) {
++		struct string_list_item *item;
+ 		char *buf = packet_read_line(0, NULL);
+ 		if (!buf)
+ 			break;	/* got a flush */
+@@ -42,13 +44,16 @@ int cmd_upload_archive_writer(int argc, const char **argv, const char *prefix)
+ 
+ 		if (!starts_with(buf, arg_cmd))
+ 			die("'argument' token or flush expected");
+-		strvec_push(&sent_argv, buf + strlen(arg_cmd));
++
++		item = string_list_append(&to_free, buf + strlen(arg_cmd));
++		strvec_push(&sent_argv, item->string);
+ 	}
+ 
+ 	/* parse all options sent by the client */
+ 	ret = write_archive(sent_argv.nr, sent_argv.v, prefix,
+ 			    the_repository, NULL, 1);
+ 	strvec_clear(&sent_argv);
++	string_list_clear(&to_free, 0);
+ 	return ret;
+ }
+ 
+diff --git a/t/t5003-archive-zip.sh b/t/t5003-archive-zip.sh
+index fc499cdff01..cc1ce060558 100755
+--- a/t/t5003-archive-zip.sh
++++ b/t/t5003-archive-zip.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git archive --format=zip test'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ TEST_CREATE_REPO_NO_TEMPLATE=1
+ . ./test-lib.sh
+ 
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+
