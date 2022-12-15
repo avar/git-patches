@@ -1,0 +1,69 @@
+From 59a8a3085b149e1034628de607cbd88b217cd371 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-4.6-59a8a3085b1-20221215T093732Z-avarab@gmail.com>
+In-Reply-To: <cover-0.6-00000000000-20221215T093732Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20221215T093732Z-avarab@gmail.com>
+From: Johannes Schindelin <johannes.schindelin@gmx.de>
+Date: Tue, 30 Aug 2022 18:50:12 +0000
+Subject: [PATCH 4/6] bisect run: fix the error message
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In d1bbbe45df8 (bisect--helper: reimplement `bisect_run` shell function
+in C, 2021-09-13), we ported the `bisect run` subcommand to C, including
+the part that prints out an error message when the implicit `git bisect
+bad` or `git bisect good` failed.
+
+However, the error message was supposed to print out whether the state
+was "good" or "bad", but used a bogus (because non-populated) `args`
+variable for it. This was fixed in 80c2e9657f2 (bisect--helper: report
+actual bisect_state() argument on error, 2022-01-18), but the error
+message still talks about `bisect--helper`, which is an implementation
+detail that should not concern end users.
+
+Fix that, and add a regression test to ensure that the intended form of
+the error message.
+
+Helped-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Johannes Schindelin <johannes.schindelin@gmx.de>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/bisect.c            |  2 +-
+ t/t6030-bisect-porcelain.sh | 10 ++++++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/bisect.c b/builtin/bisect.c
+index 9fc8db06944..0786ebf4012 100644
+--- a/builtin/bisect.c
++++ b/builtin/bisect.c
+@@ -1292,7 +1292,7 @@ static int bisect_run(struct bisect_terms *terms, int argc, const char **argv)
+ 			puts(_("bisect found first bad commit"));
+ 			res = BISECT_OK;
+ 		} else if (res) {
+-			error(_("bisect run failed: 'bisect-state %s'"
++			error(_("bisect run failed: 'git bisect %s'"
+ 				" exited with error code %d"), new_state, res);
+ 		} else {
+ 			continue;
+diff --git a/t/t6030-bisect-porcelain.sh b/t/t6030-bisect-porcelain.sh
+index 9e56b42b5da..0a62ea2b3ce 100755
+--- a/t/t6030-bisect-porcelain.sh
++++ b/t/t6030-bisect-porcelain.sh
+@@ -1221,4 +1221,14 @@ test_expect_success 'bisect state output with bad commit' '
+ 	grep -F "waiting for good commit(s), bad commit known" output
+ '
+ 
++test_expect_success 'verify correct error message' '
++	git bisect reset &&
++	git bisect start $HASH4 $HASH1 &&
++	write_script test_script.sh <<-\EOF &&
++	rm .git/BISECT*
++	EOF
++	test_must_fail git bisect run ./test_script.sh 2>error &&
++	grep "git bisect good.*exited with error code" error
++'
++
+ test_done
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+
