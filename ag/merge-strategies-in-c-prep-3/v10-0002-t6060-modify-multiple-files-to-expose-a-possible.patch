@@ -1,0 +1,122 @@
+From de36b52286be16423b84605252230d4122994c10 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v10-02.12-de36b52286b-20221215T084803Z-avarab@gmail.com>
+In-Reply-To: <cover-v10-00.12-00000000000-20221215T084803Z-avarab@gmail.com>
+References: <cover-v9-00.12-00000000000-20221118T110058Z-avarab@gmail.com>
+	<cover-v10-00.12-00000000000-20221215T084803Z-avarab@gmail.com>
+From: Alban Gruin <alban.gruin@gmail.com>
+Date: Tue, 9 Aug 2022 20:54:16 +0200
+Subject: [PATCH v10 02/12] t6060: modify multiple files to expose a possible
+ issue with merge-index
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Currently, merge-index iterates over every index entry, skipping stage0
+entries.  It will then count how many entries following the current one
+have the same name, then fork to do the merge.  It will then increase
+the iterator by the number of entries to skip them.  This behaviour is
+correct, as even if the subprocess modifies the index, merge-index does
+not reload it at all.
+
+But when it will be rewritten to use a function, the index it will use
+will be modified and may shrink when a conflict happens or if a file is
+removed, so we have to be careful to handle such cases.
+
+Here is an example:
+
+ *    Merge branches, file1 and file2 are trivially mergeable.
+ |\
+ | *  Modifies file1 and file2.
+ * |  Modifies file1 and file2.
+ |/
+ *    Adds file1 and file2.
+
+When the merge happens, the index will look like that:
+
+ i -> 0. file1 (stage1)
+      1. file1 (stage2)
+      2. file1 (stage3)
+      3. file2 (stage1)
+      4. file2 (stage2)
+      5. file2 (stage3)
+
+merge-index handles `file1' first.  As it appears 3 times after the
+iterator, it is merged.  The index is now stale, `i' is increased by 3,
+and the index now looks like this:
+
+      0. file1 (stage1)
+      1. file1 (stage2)
+      2. file1 (stage3)
+ i -> 3. file2 (stage1)
+      4. file2 (stage2)
+      5. file2 (stage3)
+
+`file2' appears three times too, so it is merged.
+
+With a naive rewrite, the index would look like this:
+
+      0. file1 (stage0)
+      1. file2 (stage1)
+      2. file2 (stage2)
+ i -> 3. file2 (stage3)
+
+`file2' appears once at the iterator or after, so it will be added,
+_not_ merged.  Which is wrong.
+
+A naive rewrite would lead to unproperly merged files, or even files not
+handled at all.
+
+This changes t6060 to reproduce this case, by creating 2 files instead
+of 1, to check the correctness of the soon-to-be-rewritten merge-index.
+The files are identical, which is not really important -- the factors
+that could trigger this issue are that they should be separated by at
+most one entry in the index, and that the first one in the index should
+be trivially mergeable.
+
+Signed-off-by: Alban Gruin <alban.gruin@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6060-merge-index.sh | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/t/t6060-merge-index.sh b/t/t6060-merge-index.sh
+index 1a8b64cce18..30513351c23 100755
+--- a/t/t6060-merge-index.sh
++++ b/t/t6060-merge-index.sh
+@@ -7,16 +7,19 @@ TEST_PASSES_SANITIZE_LEAK=true
+ 
+ test_expect_success 'setup diverging branches' '
+ 	test_write_lines 1 2 3 4 5 6 7 8 9 10 >file &&
+-	git add file &&
++	cp file file2 &&
++	git add file file2 &&
+ 	git commit -m base &&
+ 	git tag base &&
+ 	sed s/2/two/ <file >tmp &&
+ 	mv tmp file &&
++	cp file file2 &&
+ 	git commit -a -m two &&
+ 	git tag two &&
+ 	git checkout -b other HEAD^ &&
+ 	sed s/10/ten/ <file >tmp &&
+ 	mv tmp file &&
++	cp file file2 &&
+ 	git commit -a -m ten &&
+ 	git tag ten
+ '
+@@ -35,8 +38,11 @@ ten
+ EOF
+ 
+ test_expect_success 'read-tree does not resolve content merge' '
++	cat >expect <<-\EOF &&
++	file
++	file2
++	EOF
+ 	git read-tree -i -m base ten two &&
+-	echo file >expect &&
+ 	git diff-files --name-only --diff-filter=U >unmerged &&
+ 	test_cmp expect unmerged
+ '
+-- 
+2.39.0.rc2.1048.g0e5493b8d5b
+
