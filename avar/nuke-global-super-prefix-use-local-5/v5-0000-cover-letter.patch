@@ -1,0 +1,123 @@
+From 48ba8d4938cc1734e0b615111d3ce5676e26bcac Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v5-0.9-00000000000-20221220T104519Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.9-00000000000-20221215T083502Z-avarab@gmail.com>
+References: <cover-v4-0.9-00000000000-20221215T083502Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 20 Dec 2022 11:45:19 +0100
+Subject: [PATCH v5 0/9] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Glen Choo (1):
+  read-tree + fetch tests: test failing "--super-prefix" interaction
+
+Ævar Arnfjörð Bjarmason (8):
+  submodule absorbgitdirs tests: add missing "Migrating git..." tests
+  submodule.c & submodule--helper: pass along "super_prefix" param
+  submodule--helper: don't use global --super-prefix in "absorbgitdirs"
+  submodule--helper: convert "foreach" to its own "--super-prefix"
+  submodule--helper: convert "sync" to its own "--super-prefix"
+  submodule--helper: convert "status" to its own "--super-prefix"
+  submodule--helper: convert "{update,clone}" to their own
+    "--super-prefix"
+  read-tree: add "--super-prefix" option, eliminate global
+
+ Documentation/git.txt              |  8 +--
+ builtin.h                          |  4 --
+ builtin/checkout.c                 |  2 +-
+ builtin/read-tree.c                |  1 +
+ builtin/rm.c                       |  2 +-
+ builtin/submodule--helper.c        | 87 ++++++++++++++++--------------
+ cache.h                            |  2 -
+ entry.c                            | 12 ++---
+ entry.h                            |  6 ++-
+ environment.c                      | 13 -----
+ git.c                              | 41 +++-----------
+ parse-options.h                    |  4 ++
+ submodule.c                        | 50 ++++++++---------
+ submodule.h                        |  8 +--
+ t/t1001-read-tree-m-2way.sh        |  2 +-
+ t/t5616-partial-clone.sh           | 43 +++++++++++++++
+ t/t7412-submodule-absorbgitdirs.sh | 64 +++++++++++++++++++---
+ t/t7527-builtin-fsmonitor.sh       | 36 +++++--------
+ unpack-trees.c                     | 24 +++++----
+ unpack-trees.h                     |  1 +
+ 20 files changed, 230 insertions(+), 180 deletions(-)
+
+Range-diff against v4:
+ 1:  f479003941b !  1:  f062cb2f265 submodule absorbgitdirs tests: add missing "Migrating git..." tests
+    @@ t/t7412-submodule-absorbgitdirs.sh: test_expect_success 'absorb the git dir in a
+     +	'\''$cwd/repo-wt/sub2/.git'\'' to
+     +	'\''$cwd/repo-bare.git/worktrees/repo-wt/modules/sub2'\''
+     +	EOF
+    -+	DO_IT=1 git -C repo-wt submodule absorbgitdirs 2>actual &&
+    ++	git -C repo-wt submodule absorbgitdirs 2>actual &&
+     +	test_cmp expect actual
+     +'
+     +
+ 2:  6424307a432 =  2:  5fa05492b62 read-tree + fetch tests: test failing "--super-prefix" interaction
+ 3:  b2e543bde03 !  3:  3fb2a1b16cd submodule.c & submodule--helper: pass along "super_prefix" param
+    @@ Commit message
+         directly or by indirection. The exceptions are:
+     
+         - builtin/rm.c: Doesn't declare SUPPORT_SUPER_PREFIX, so we'd have
+    -      died if this was provided, so it's safe to passs "NULL".
+    +      died if this was provided, so it's safe to pass "NULL".
+     
+         - deinit_submodule(): The "deinit_submodule()" function has never been
+           able to use the "git -super-prefix". It will call
+           "absorb_git_dir_into_superproject()", but it will only do so from the
+           top-level project.
+     
+    -      If "absorbgitdirs" recurses it will use the "path" passed to
+    +      If "absorbgitdirs" recurses will use the "path" passed to
+           "absorb_git_dir_into_superproject()" in "deinit_submodule()" as its
+           starting "--super-prefix". So we can safely remove the
+           get_super_prefix() call here, and pass NULL instead.
+ 4:  bde9038c4e3 !  4:  0b30497f187 submodule--helper: don't use global --super-prefix in "absorbgitdirs"
+    @@ Commit message
+         The "fsmonitor--daemon" test adjusted here was added in [3]. To assert
+         that it didn't run into the "--super-prefix" message it was asserting
+         the output it didn't have. Let's instead assert the full output that
+    -    we *do* have, which we can do here as this is based on a change[4] to
+    -    make it predictable (until [4] it contained absolute paths).
+    +    we *do* have, using the same pattern as a preceding change to
+    +    "t/t7412-submodule-absorbgitdirs.sh" used.
+     
+    -    We could also remove the test entirely (as [5] did), but even though
+    +    We could also remove the test entirely (as [4] did), but even though
+         the initial reason for having it is gone we're still getting some
+         marginal benefit from testing the "fsmonitor" and "submodule
+         absorbgitdirs" interaction, so let's keep it.
+    @@ Commit message
+     
+         As we'll be changing the rest of the "git --super-prefix" users to the
+         same pattern, leaving them all consistent makes sense. Why not pick ""
+    -    over NULL? Because that's how the "prefix" works[6], and having
+    +    over NULL? Because that's how the "prefix" works[5], and having
+         "prefix" and "super_prefix" work the same way will be less
+         confusing. That "prefix" picked NULL instead of "" is itself
+         arbitrary, but as it's easy to make this small bit of our overall API
+    @@ Commit message
+            2022-05-26)
+         3. 53fcfbc84f6 (fsmonitor--daemon: allow --super-prefix argument,
+            2022-05-26)
+    -    4. https://lore.kernel.org/git/patch-1.1-34b54fdd9bb-20221109T020347Z-avarab@gmail.com/
+    -    5. https://lore.kernel.org/git/20221109004708.97668-5-chooglen@google.com/
+    -    6. 9725c8dda20 (built-ins: trust the "prefix" from run_builtin(),
+    +    4. https://lore.kernel.org/git/20221109004708.97668-5-chooglen@google.com/
+    +    5. 9725c8dda20 (built-ins: trust the "prefix" from run_builtin(),
+            2022-02-16)
+     
+         Signed-off-by: Glen Choo <chooglen@google.com>
+ 5:  4da58e7ea50 =  5:  13f1f0db07a submodule--helper: convert "foreach" to its own "--super-prefix"
+ 6:  8dff576df7d =  6:  ace2920ccff submodule--helper: convert "sync" to its own "--super-prefix"
+ 7:  8800a433e29 =  7:  1ccd1a57b64 submodule--helper: convert "status" to its own "--super-prefix"
+ 8:  54c1e29de1e =  8:  72e774ebb06 submodule--helper: convert "{update,clone}" to their own "--super-prefix"
+ 9:  4824f33224f =  9:  48ba8d4938c read-tree: add "--super-prefix" option, eliminate global
+-- 
+2.39.0.1071.g97ce8966538
+
