@@ -1,0 +1,65 @@
+From e5a0134d1bbd51e81d8fa8b8f1765c88abb7afdb Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-07.20-e5a0134d1bb-20221228T175458Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+References: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 2 Apr 2022 12:37:21 +0200
+Subject: [RFC PATCH 07/20] stash: fix a "struct pathspec" leak
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Call clear_pathspec() on the pathspec initialized in
+push_stash(). Initializing that structure in this way is already done
+by a few other callers, and now we have:
+
+	$ git grep -e 'struct pathspec.* = { 0 }' -e memset.pathspec
+	add-interactive.c:              struct pathspec ps_selected = { 0 };
+	builtin/sparse-checkout.c:              struct pathspec p = { 0 };
+	builtin/stash.c:        struct pathspec ps = { 0 };
+	pathspec.c:     memset(pathspec, 0, sizeof(*pathspec));
+	wt-status.c:                    struct pathspec ps = { 0 };
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/stash.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/stash.c b/builtin/stash.c
+index bb0fd861434..e82fb69c2b3 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -1708,7 +1708,7 @@ static int push_stash(int argc, const char **argv, const char *prefix,
+ 	int pathspec_file_nul = 0;
+ 	const char *stash_msg = NULL;
+ 	const char *pathspec_from_file = NULL;
+-	struct pathspec ps;
++	struct pathspec ps = { 0 };
+ 	struct option options[] = {
+ 		OPT_BOOL('k', "keep-index", &keep_index,
+ 			 N_("keep index")),
+@@ -1727,6 +1727,7 @@ static int push_stash(int argc, const char **argv, const char *prefix,
+ 		OPT_PATHSPEC_FILE_NUL(&pathspec_file_nul),
+ 		OPT_END()
+ 	};
++	int ret;
+ 
+ 	if (argc) {
+ 		force_assume = !strcmp(argv[0], "-p");
+@@ -1766,8 +1767,10 @@ static int push_stash(int argc, const char **argv, const char *prefix,
+ 		die(_("the option '%s' requires '%s'"), "--pathspec-file-nul", "--pathspec-from-file");
+ 	}
+ 
+-	return do_push_stash(&ps, stash_msg, quiet, keep_index, patch_mode,
+-			     include_untracked, only_staged);
++	ret = do_push_stash(&ps, stash_msg, quiet, keep_index, patch_mode,
++			    include_untracked, only_staged);
++	clear_pathspec(&ps);
++	return ret;
+ }
+ 
+ static int push_stash_unassumed(int argc, const char **argv, const char *prefix)
+-- 
+2.39.0.1153.gb0033028ca9
+

@@ -1,0 +1,67 @@
+From 8ecc68c3e9367929185b992f6a23e6b9307cdac1 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-20.20-8ecc68c3e93-20221228T175458Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+References: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 28 Dec 2022 16:35:22 +0100
+Subject: [RFC PATCH 20/20] grep API: plug memory leaks by freeing
+ "header_list"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the "header_list" struct member was added in [1] it wasn't made
+to free the list using loop added for the adjacent "pattern_list"
+member, see [2] for when we started freeing it.
+
+Let's start doing o by splitting up the loop in free_grep_patterns()
+into a utility function. This makes e.g. this command leak-free when
+run on git.git:
+
+	./git -P log -1 --color=always --author=A origin/master
+
+1. 80235ba79ef ("log --author=me --grep=it" should find intersection,
+   not union, 2010-01-17)
+2. b48fb5b6a95 (grep: free expressions and patterns when done.,
+   2006-09-27)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index ca75514f8f6..c908535e0d8 100644
+--- a/grep.c
++++ b/grep.c
+@@ -769,11 +769,11 @@ static void free_pattern_expr(struct grep_expr *x)
+ 	free(x);
+ }
+ 
+-void free_grep_patterns(struct grep_opt *opt)
++static void free_grep_pat(struct grep_pat *pattern)
+ {
+ 	struct grep_pat *p, *n;
+ 
+-	for (p = opt->pattern_list; p; p = n) {
++	for (p = pattern; p; p = n) {
+ 		n = p->next;
+ 		switch (p->token) {
+ 		case GREP_PATTERN: /* atom */
+@@ -790,6 +790,12 @@ void free_grep_patterns(struct grep_opt *opt)
+ 		}
+ 		free(p);
+ 	}
++}
++
++void free_grep_patterns(struct grep_opt *opt)
++{
++	free_grep_pat(opt->pattern_list);
++	free_grep_pat(opt->header_list);
+ 
+ 	if (opt->pattern_expression)
+ 		free_pattern_expr(opt->pattern_expression);
+-- 
+2.39.0.1153.gb0033028ca9
+

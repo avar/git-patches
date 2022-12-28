@@ -1,0 +1,61 @@
+From 7928470addbc3b8bc5d3bc51bd0794f696acd79e Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-19.20-7928470addb-20221228T175458Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+References: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 15 Nov 2022 09:17:55 +0100
+Subject: [RFC PATCH 19/20] grep.c: make it easier to extend
+ free_grep_patterns()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Before db84376f981 (grep.c: remove "extended" in favor of
+"pattern_expression", fix segfault, 2022-10-11) the pattern here was:
+
+	if (!x)
+		return;
+	free(y);
+
+But after the cleanup in db84376f981 (which was a narrow segfault fix,
+and thus avoided refactoring this) we ended up with:
+
+	if (!x)
+		return;
+	free(x);
+
+Let's instead do:
+
+	if (x)
+		free(x);
+
+This doesn't matter for now, but makes the free_grep_patterns() easier
+to reason about, as we don't have to wonder why we're doing an early
+"return" if and when we add free()-ing of any members that come after
+"pattern_expression" in the "struct grep_opt".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/grep.c b/grep.c
+index 06eed694936..ca75514f8f6 100644
+--- a/grep.c
++++ b/grep.c
+@@ -791,9 +791,8 @@ void free_grep_patterns(struct grep_opt *opt)
+ 		free(p);
+ 	}
+ 
+-	if (!opt->pattern_expression)
+-		return;
+-	free_pattern_expr(opt->pattern_expression);
++	if (opt->pattern_expression)
++		free_pattern_expr(opt->pattern_expression);
+ }
+ 
+ static const char *end_of_line(const char *cp, unsigned long *left)
+-- 
+2.39.0.1153.gb0033028ca9
+

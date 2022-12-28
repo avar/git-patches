@@ -1,0 +1,59 @@
+From 49e6714939d49088a24050226e2e118e56c8e28d Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-05.20-49e6714939d-20221228T175458Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+References: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 19 Aug 2022 03:45:52 +0200
+Subject: [RFC PATCH 05/20] clone: use free() instead of UNLEAK()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change an UNLEAK() added in 0c4542738e6 (clone: free or UNLEAK further
+pointers when finished, 2021-03-14) to use a "to_free" pattern
+instead. In this case the "repo" can be either this absolute_pathdup()
+value, or in the "else if" branch seen in the context the the
+"argv[0]" argument to "main()".
+
+We can only free() the value in the former case, hence the "to_free"
+pattern.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/clone.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/builtin/clone.c b/builtin/clone.c
+index f518bb2dc1f..48156a4f2c2 100644
+--- a/builtin/clone.c
++++ b/builtin/clone.c
+@@ -892,6 +892,7 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 	int is_bundle = 0, is_local;
+ 	int reject_shallow = 0;
+ 	const char *repo_name, *repo, *work_tree, *git_dir;
++	char *repo_to_free = NULL;
+ 	char *path = NULL, *dir, *display_repo = NULL;
+ 	int dest_exists, real_dest_exists = 0;
+ 	const struct ref *refs, *remote_head;
+@@ -949,7 +950,7 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 	path = get_repo_path(repo_name, &is_bundle);
+ 	if (path) {
+ 		FREE_AND_NULL(path);
+-		repo = absolute_pathdup(repo_name);
++		repo = repo_to_free = absolute_pathdup(repo_name);
+ 	} else if (strchr(repo_name, ':')) {
+ 		repo = repo_name;
+ 		display_repo = transport_anonymize_url(repo);
+@@ -1392,7 +1393,7 @@ int cmd_clone(int argc, const char **argv, const char *prefix)
+ 	free(unborn_head);
+ 	free(dir);
+ 	free(path);
+-	UNLEAK(repo);
++	free(repo_to_free);
+ 	junk_mode = JUNK_LEAVE_ALL;
+ 
+ 	transport_ls_refs_options_release(&transport_ls_refs_options);
+-- 
+2.39.0.1153.gb0033028ca9
+

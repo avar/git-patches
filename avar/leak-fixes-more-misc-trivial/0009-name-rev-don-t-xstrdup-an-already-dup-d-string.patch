@@ -1,0 +1,44 @@
+From 77fcdeb9284024ab0a516e86b6c7d3602e7d2ae7 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-09.20-77fcdeb9284-20221228T175458Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+References: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 25 Nov 2022 15:57:06 +0100
+Subject: [RFC PATCH 09/20] name-rev: don't xstrdup() an already dup'd string
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When "add_to_tip_table()" is called with a non-zero
+"shorten_unambiguous" we always return an xstrdup()'d string, which
+we'd then xstrdup() again, leaking memory. See [1] and [2] for how
+this leak came about.
+
+1. 98c5c4ad015 (name-rev: allow to specify a subpath for --refs
+   option, 2013-06-18)
+2. b23e0b9353e (name-rev: allow converting the exact object name at
+   the tip of a ref, 2013-07-07)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/name-rev.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/name-rev.c b/builtin/name-rev.c
+index 15535e914a6..24f4438eb01 100644
+--- a/builtin/name-rev.c
++++ b/builtin/name-rev.c
+@@ -313,7 +313,8 @@ static void add_to_tip_table(const struct object_id *oid, const char *refname,
+ 
+ 	ALLOC_GROW(tip_table.table, tip_table.nr + 1, tip_table.alloc);
+ 	oidcpy(&tip_table.table[tip_table.nr].oid, oid);
+-	tip_table.table[tip_table.nr].refname = xstrdup(refname);
++	tip_table.table[tip_table.nr].refname = shorten_unambiguous ? refname :
++		xstrdup(refname);
+ 	tip_table.table[tip_table.nr].commit = commit;
+ 	tip_table.table[tip_table.nr].taggerdate = taggerdate;
+ 	tip_table.table[tip_table.nr].from_tag = from_tag;
+-- 
+2.39.0.1153.gb0033028ca9
+

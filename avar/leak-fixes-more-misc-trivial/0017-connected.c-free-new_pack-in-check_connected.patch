@@ -1,0 +1,70 @@
+From ae2f4931315847edaa3af9d7e296672683a8e5f1 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-17.20-ae2f4931315-20221228T175458Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+References: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 18 Aug 2022 15:59:14 +0200
+Subject: [RFC PATCH 17/20] connected.c: free(new_pack) in check_connected()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak that's been with us since this code was introduced
+in c6807a40dcd (clone: open a shortcut for connectivity check,
+2013-05-26). We'd never free() the "new_pack" that we'd potentially
+allocate. Since it's initialized to "NULL" it's safe to call free()
+here unconditionally.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ connected.c | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/connected.c b/connected.c
+index b90fd61790c..e4d404e10b2 100644
+--- a/connected.c
++++ b/connected.c
+@@ -38,7 +38,7 @@ int check_connected(oid_iterate_fn fn, void *cb_data,
+ 	if (!oid) {
+ 		if (opt->err_fd)
+ 			close(opt->err_fd);
+-		return err;
++		goto cleanup;
+ 	}
+ 
+ 	if (transport && transport->smart_options &&
+@@ -85,8 +85,7 @@ int check_connected(oid_iterate_fn fn, void *cb_data,
+ promisor_pack_found:
+ 			;
+ 		} while ((oid = fn(cb_data)) != NULL);
+-		free(new_pack);
+-		return 0;
++		goto cleanup;
+ 	}
+ 
+ no_promisor_pack_found:
+@@ -123,8 +122,8 @@ int check_connected(oid_iterate_fn fn, void *cb_data,
+ 		rev_list.no_stderr = opt->quiet;
+ 
+ 	if (start_command(&rev_list)) {
+-		free(new_pack);
+-		return error(_("Could not run 'git rev-list'"));
++		err = error(_("Could not run 'git rev-list'"));
++		goto cleanup;
+ 	}
+ 
+ 	sigchain_push(SIGPIPE, SIG_IGN);
+@@ -157,6 +156,8 @@ int check_connected(oid_iterate_fn fn, void *cb_data,
+ 		err = error_errno(_("failed to close rev-list's stdin"));
+ 
+ 	sigchain_pop(SIGPIPE);
++	err = finish_command(&rev_list) || err;
++cleanup:
+ 	free(new_pack);
+-	return finish_command(&rev_list) || err;
++	return err;
+ }
+-- 
+2.39.0.1153.gb0033028ca9
+

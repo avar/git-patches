@@ -1,0 +1,100 @@
+From 21670099c845a206cb7d91ddd00edf7f1c005f75 Mon Sep 17 00:00:00 2001
+Message-Id: <RFC-patch-08.20-21670099c84-20221228T175458Z-avarab@gmail.com>
+In-Reply-To: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+References: <RFC-cover-00.20-00000000000-20221228T175458Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 2 Apr 2022 12:35:51 +0200
+Subject: [RFC PATCH 08/20] reset: fix cmd_reset() leaks with a
+ clear_pathspec() call
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add clear_pathspec() calls to cmd_reset(), including to the codepaths
+where we'd return early.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/reset.c                | 11 ++++++++---
+ t/t7105-reset-patch.sh         |  2 ++
+ t/t7106-reset-unborn-branch.sh |  2 ++
+ t/t7107-reset-pathspec-file.sh |  1 +
+ 4 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/reset.c b/builtin/reset.c
+index fea20a9ba0b..e9c10618cd3 100644
+--- a/builtin/reset.c
++++ b/builtin/reset.c
+@@ -390,7 +390,8 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
+ 		if (reset_type != NONE)
+ 			die(_("options '%s' and '%s' cannot be used together"), "--patch", "--{hard,mixed,soft}");
+ 		trace2_cmd_mode("patch-interactive");
+-		return run_add_interactive(rev, "--patch=reset", &pathspec);
++		update_ref_status = run_add_interactive(rev, "--patch=reset", &pathspec);
++		goto cleanup;
+ 	}
+ 
+ 	/* git reset tree [--] paths... can be used to
+@@ -439,8 +440,10 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
+ 				       LOCK_DIE_ON_ERROR);
+ 		if (reset_type == MIXED) {
+ 			int flags = quiet ? REFRESH_QUIET : REFRESH_IN_PORCELAIN;
+-			if (read_from_tree(&pathspec, &oid, intent_to_add))
+-				return 1;
++			if (read_from_tree(&pathspec, &oid, intent_to_add)) {
++				update_ref_status = 1;
++				goto cleanup;
++			}
+ 			the_index.updated_skipworktree = 1;
+ 			if (!no_refresh && get_git_work_tree()) {
+ 				uint64_t t_begin, t_delta_in_ms;
+@@ -488,5 +491,7 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
+ 
+ 	discard_index(&the_index);
+ 
++cleanup:
++	clear_pathspec(&pathspec);
+ 	return update_ref_status;
+ }
+diff --git a/t/t7105-reset-patch.sh b/t/t7105-reset-patch.sh
+index fc2a6cf5c7a..9b46da7aaa7 100755
+--- a/t/t7105-reset-patch.sh
++++ b/t/t7105-reset-patch.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='git reset --patch'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-patch-mode.sh
+ 
+ test_expect_success PERL 'setup' '
+diff --git a/t/t7106-reset-unborn-branch.sh b/t/t7106-reset-unborn-branch.sh
+index ecb85c3b823..a0b67a0b843 100755
+--- a/t/t7106-reset-unborn-branch.sh
++++ b/t/t7106-reset-unborn-branch.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='git reset should work on unborn branch'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t7107-reset-pathspec-file.sh b/t/t7107-reset-pathspec-file.sh
+index 523efbecde1..af5ea406db3 100755
+--- a/t/t7107-reset-pathspec-file.sh
++++ b/t/t7107-reset-pathspec-file.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='reset --pathspec-from-file'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_tick
+-- 
+2.39.0.1153.gb0033028ca9
+
