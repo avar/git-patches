@@ -1,0 +1,68 @@
+From 2493988c41cc31ca2e1c540c1044d6bef609ae19 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.3-2493988c41c-20221230T011649Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.3-00000000000-20221230T011649Z-avarab@gmail.com>
+References: <cover-0.4-00000000000-20221118T113442Z-avarab@gmail.com>
+	<cover-v2-0.3-00000000000-20221230T011649Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 18 Nov 2022 11:06:05 +0100
+Subject: [PATCH v2 3/3] tag: don't emit potentially incorrect "object is a X,
+ not a Y"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As noted in the preceding commit we weren't handling cases where we
+see a reference to a bad "type" in a "tag", but then end up not fully
+parsing the object.
+
+In those cases let's only claim that we have a bad tag pointer, but
+emit "is a %s, not a %s".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t6102-rev-list-unexpected-objects.sh | 4 ++--
+ tag.c                                  | 5 +++--
+ 2 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/t/t6102-rev-list-unexpected-objects.sh b/t/t6102-rev-list-unexpected-objects.sh
+index 590e2523d0c..98e36e73698 100755
+--- a/t/t6102-rev-list-unexpected-objects.sh
++++ b/t/t6102-rev-list-unexpected-objects.sh
+@@ -231,7 +231,7 @@ test_expect_success !SANITIZE_LEAK 'traverse unexpected non-tag tag (tree seen t
+ '
+ 
+ 
+-test_expect_failure !SANITIZE_LEAK 'traverse unexpected objects with for-each-ref' '
++test_expect_success !SANITIZE_LEAK 'traverse unexpected objects with for-each-ref' '
+ 	cat >expect <<-EOF &&
+ 	error: bad tag pointer to $tree in $tag_tag_tree
+ 	fatal: parse_object_buffer failed on $tag_tag_tree for refs/tags/tag_tag_tree
+@@ -251,7 +251,7 @@ test_expect_success 'setup: unexpected objects with fsck' '
+ 
+ while read oid type
+ do
+-	test_expect_failure "fsck knows unexpected object $oid is $type" '
++	test_expect_success "fsck knows unexpected object $oid is $type" '
+ 		git cat-file -t $oid >expect &&
+ 		echo $type >actual &&
+ 		test_cmp expect actual
+diff --git a/tag.c b/tag.c
+index 19453c2edbf..ad92cf89209 100644
+--- a/tag.c
++++ b/tag.c
+@@ -193,8 +193,9 @@ int parse_tag_buffer(struct repository *r, struct tag *item, const void *data, u
+ 	}
+ 
+ 	if (!item->tagged || strcmp(type_name(item->tagged->type), type)) {
+-		error(_("object %s is a %s, not a %s"), oid_to_hex(&oid),
+-		      type_name(item->tagged->type), type);
++		if (item->tagged && item->tagged->parsed)
++			error(_("object %s is a %s, not a %s"), oid_to_hex(&oid),
++			      type_name(item->tagged->type), type);
+ 		return error("bad tag pointer to %s in %s",
+ 			     oid_to_hex(&oid),
+ 			     oid_to_hex(&item->object.oid));
+-- 
+2.39.0.1153.g589e4efe9dc
+
