@@ -4,12 +4,76 @@ In-Reply-To: <cover-0.4-00000000000-20221118T113442Z-avarab@gmail.com>
 References: <cover-0.4-00000000000-20221118T113442Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Fri, 30 Dec 2022 02:17:25 +0100
-Subject: [PATCH v2 0/3] *** SUBJECT HERE ***
+Subject: [PATCH v2 0/3] tag: don't misreport type of tagged objects in errors
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+This series fixes a very long-standing issue where we'll get confused
+when we parse a tag whose "type" lies about the type of the target
+object.
+
+The v1 was on top of jk/parse-object-type-mismatch, which has since
+landed on "master". As I noted in [1] this covers remaining
+misreporting cases which weren't addressed in that series.
+
+Currently we'll parse tags and note what the "type" claims to be. Say
+a pointer to a "blob" object that claims to be a "commit" in the
+envelope.
+
+Then when we we'd try to parse that supposed "commit' for real we'd
+emit a message like:
+
+	error: object <oid> is a blob, not a commit
+
+Which is reversed, i.e. we'd remember the first "blob" we saw, and
+then get confused about seeing a "commit" when we did the actual
+parsing.
+
+This is now fixed in almost all cases by having the one caller of
+parse_tag() which actually knows the type tell it "yes, I'm sure this
+is a commit".
+
+We'll then be able to see that we have a non-parsed object as
+scaffolding, but that it's really a commit, and emit the correct:
+
+	error: object <oid> is a commit not a blob
+
+Which goes along with other errors where the tag object itself yells
+about being unhappy with the object reference.
+
+I submitted a version of these patches back in early 2021[2], this is
+significantly slimmed down since then.
+
+At the time Jeff King noted[3] that this approach inherently can't cover
+all possible scenarios. I.e. sometimes our parsing of the envelope
+isn't followed up by the "real" parse.
+
+Even in those cases we can "get it right as 3/3 here demonstrates.
+
+But there are going to be cases left where we get it wrong, but
+they're all cases where we get it wrong now. It's probably not worth
+fixing the long tail of those issues, but now we'll emit a sensible
+error on the common case of "log" etc.
+
+Changes since v1:
+
+* The v1 of this included a fix for the t.tag memory leak, which has
+  now been ejected. I'm fixing that in another series[4]
+
+  As a result we need to mark the new tests with !SANITIZE_LEAK, once
+  some version of [4] lands we can un-mark these, so we'll test them
+  under SANITIZE=leak.
+
+* In the previous 1st patch I marked a "setup" test as
+  "test_expect_failure", which will pass at that point, let's make it
+  "test_expect_success" from the outset.
+
+1. https://lore.kernel.org/git/221118.86cz9lgjxu.gmgdl@evledraar.gmail.com/
+2. https://lore.kernel.org/git/cover-00.11-00000000000-20210328T021238Z-avarab@gmail.com/
+3. https://lore.kernel.org/git/YGTGgFI19fS7Uv6I@coredump.intra.peff.net/
+4. https://lore.kernel.org/git/cover-00.20-00000000000-20221228T175512Z-avarab@gmail.com/
+
 
 Ævar Arnfjörð Bjarmason (3):
   object tests: add test for unexpected objects in tags
