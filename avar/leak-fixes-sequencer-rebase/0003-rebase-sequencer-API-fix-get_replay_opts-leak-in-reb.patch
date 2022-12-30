@@ -1,0 +1,228 @@
+From 3e9c4df61fe966591038ff78cf161d9aab0b6a3c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-03.10-3e9c4df61fe-20221230T071741Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 19 Aug 2022 01:40:01 +0200
+Subject: [PATCH 03/10] rebase & sequencer API: fix get_replay_opts() leak in
+ "rebase"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the recently added replay_opts_release() function non-static and
+use it for freeing the "struct replay_opts" constructed by the
+get_replay_opts() function in "builtin/rebase.c". See [1] for the
+initial addition of get_replay_opts().
+
+To safely call our new replay_opts_release() we'll need to change all
+the free() to a FREE_AND_NULL(), and set "xopts_nr" to "0" after we
+loop over it and free() it (the free() in the loop doesn't need to be
+a FREE_AND_NULL()).
+
+This is because in e.g. do_interactive_rebase() we construct a "struct
+replay_opts" with "get_replay_opts()", and then call
+"complete_action()". If we get far enough in that function without
+encountering errors we'll call "pick_commits()" which (indirectly)
+calls sequencer_remove_state() at the end.
+
+But if we encounter errors anywhere along the way we'd punt out early,
+and not free() the memory we allocated. Remembering whether we
+previously called sequencer_remove_state() would be a hassle, so let's
+make it safe to re-invoke replay_opts_release() instead.
+
+I experimented with a change to be more paranoid instead, i.e. to
+exhaustively check our state via an enum. We could make sure that we:
+
+- Only allow calling "replay_opts_release()" after
+  "sequencer_remove_state()", but not the other way around.
+
+- Forbid invoking either function twice in a row.
+
+But such paranoia isn't warranted here, let's instead take the easy
+way out and FREE_AND_NULL() this.
+
+See [2] for the initial implementation of "sequencer_remove_state()",
+which assumed that it should be removing the full (including on-disk)
+rebase state as a one-off.
+
+1. 73fdc535d26 (rebase -i: use struct rebase_options to parse args,
+   2019-04-17)
+2. 26ae337be11 (revert: Introduce --reset to remove sequencer state,
+   2011-08-04)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c                       |  2 ++
+ sequencer.c                            | 13 +++++++------
+ sequencer.h                            |  1 +
+ t/t3405-rebase-malformed.sh            |  1 +
+ t/t3412-rebase-root.sh                 |  1 +
+ t/t3423-rebase-reword.sh               |  1 +
+ t/t3437-rebase-fixup-options.sh        |  1 +
+ t/t3438-rebase-broken-files.sh         |  2 ++
+ t/t7402-submodule-rebase.sh            |  1 +
+ t/t9106-git-svn-commit-diff-clobber.sh |  1 -
+ t/t9164-git-svn-dcommit-concurrent.sh  |  1 -
+ 11 files changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index 7141fd5e0c1..91bf55be6e6 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -301,6 +301,7 @@ static int do_interactive_rebase(struct rebase_options *opts, unsigned flags)
+ 	}
+ 
+ cleanup:
++	replay_opts_release(&replay);
+ 	string_list_clear(&commands, 0);
+ 	free(revisions);
+ 	free(shortrevisions);
+@@ -343,6 +344,7 @@ static int run_sequencer_rebase(struct rebase_options *opts)
+ 		struct replay_opts replay_opts = get_replay_opts(opts);
+ 
+ 		ret = sequencer_continue(the_repository, &replay_opts);
++		replay_opts_release(&replay_opts);
+ 		break;
+ 	}
+ 	case ACTION_EDIT_TODO:
+diff --git a/sequencer.c b/sequencer.c
+index 655ae9f1a72..e29a97b6caa 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -351,15 +351,16 @@ static const char *gpg_sign_opt_quoted(struct replay_opts *opts)
+ 	return buf.buf;
+ }
+ 
+-static void replay_opts_release(struct replay_opts *opts)
++void replay_opts_release(struct replay_opts *opts)
+ {
+-	free(opts->gpg_sign);
+-	free(opts->reflog_action);
+-	free(opts->default_strategy);
+-	free(opts->strategy);
++	FREE_AND_NULL(opts->gpg_sign);
++	FREE_AND_NULL(opts->reflog_action);
++	FREE_AND_NULL(opts->default_strategy);
++	FREE_AND_NULL(opts->strategy);
+ 	for (size_t i = 0; i < opts->xopts_nr; i++)
+ 		free(opts->xopts[i]);
+-	free(opts->xopts);
++	opts->xopts_nr = 0;
++	FREE_AND_NULL(opts->xopts);
+ 	strbuf_release(&opts->current_fixups);
+ }
+ 
+diff --git a/sequencer.h b/sequencer.h
+index 888c18aad71..3bcdfa1b586 100644
+--- a/sequencer.h
++++ b/sequencer.h
+@@ -158,6 +158,7 @@ int sequencer_pick_revisions(struct repository *repo,
+ int sequencer_continue(struct repository *repo, struct replay_opts *opts);
+ int sequencer_rollback(struct repository *repo, struct replay_opts *opts);
+ int sequencer_skip(struct repository *repo, struct replay_opts *opts);
++void replay_opts_release(struct replay_opts *opts);
+ int sequencer_remove_state(struct replay_opts *opts);
+ 
+ #define TODO_LIST_KEEP_EMPTY (1U << 0)
+diff --git a/t/t3405-rebase-malformed.sh b/t/t3405-rebase-malformed.sh
+index 25243318618..8979bc34073 100755
+--- a/t/t3405-rebase-malformed.sh
++++ b/t/t3405-rebase-malformed.sh
+@@ -5,6 +5,7 @@ test_description='rebase should handle arbitrary git message'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ . "$TEST_DIRECTORY"/lib-rebase.sh
+ 
+diff --git a/t/t3412-rebase-root.sh b/t/t3412-rebase-root.sh
+index 58371d8a547..e75b3d0e07c 100755
+--- a/t/t3412-rebase-root.sh
++++ b/t/t3412-rebase-root.sh
+@@ -7,6 +7,7 @@ Tests if git rebase --root --onto <newparent> can rebase the root commit.
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ log_with_names () {
+diff --git a/t/t3423-rebase-reword.sh b/t/t3423-rebase-reword.sh
+index 4859bb8f722..2fab703d615 100755
+--- a/t/t3423-rebase-reword.sh
++++ b/t/t3423-rebase-reword.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git rebase interactive with rewording'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ . "$TEST_DIRECTORY"/lib-rebase.sh
+diff --git a/t/t3437-rebase-fixup-options.sh b/t/t3437-rebase-fixup-options.sh
+index c023fefd681..274699dadb8 100755
+--- a/t/t3437-rebase-fixup-options.sh
++++ b/t/t3437-rebase-fixup-options.sh
+@@ -14,6 +14,7 @@ to the "fixup" command that works with "fixup!", "fixup -C" works with
+ "amend!" upon --autosquash.
+ '
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ . "$TEST_DIRECTORY"/lib-rebase.sh
+diff --git a/t/t3438-rebase-broken-files.sh b/t/t3438-rebase-broken-files.sh
+index b92a3ce46b8..c614c4f2e4b 100755
+--- a/t/t3438-rebase-broken-files.sh
++++ b/t/t3438-rebase-broken-files.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='rebase behavior when on-disk files are broken'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'set up conflicting branches' '
+diff --git a/t/t7402-submodule-rebase.sh b/t/t7402-submodule-rebase.sh
+index ebeca12a711..b19792b3269 100755
+--- a/t/t7402-submodule-rebase.sh
++++ b/t/t7402-submodule-rebase.sh
+@@ -5,6 +5,7 @@
+ 
+ test_description='Test rebasing, stashing, etc. with submodules'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+diff --git a/t/t9106-git-svn-commit-diff-clobber.sh b/t/t9106-git-svn-commit-diff-clobber.sh
+index 3cab0b9720a..bca496c40e0 100755
+--- a/t/t9106-git-svn-commit-diff-clobber.sh
++++ b/t/t9106-git-svn-commit-diff-clobber.sh
+@@ -3,7 +3,6 @@
+ # Copyright (c) 2006 Eric Wong
+ test_description='git svn commit-diff clobber'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ test_expect_success 'initialize repo' '
+diff --git a/t/t9164-git-svn-dcommit-concurrent.sh b/t/t9164-git-svn-dcommit-concurrent.sh
+index 1465156072e..c8e6c0733f4 100755
+--- a/t/t9164-git-svn-dcommit-concurrent.sh
++++ b/t/t9164-git-svn-dcommit-concurrent.sh
+@@ -5,7 +5,6 @@
+ 
+ test_description='concurrent git svn dcommit'
+ 
+-TEST_FAILS_SANITIZE_LEAK=true
+ . ./lib-git-svn.sh
+ 
+ 
+-- 
+2.39.0.1153.g589e4efe9dc
+

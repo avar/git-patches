@@ -1,0 +1,78 @@
+From 4994940a0a9d32d637645bbc472bfb7959985d87 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-02.10-4994940a0a9-20221230T071741Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 19 Aug 2022 13:37:57 +0200
+Subject: [PATCH 02/10] sequencer.c: split up sequencer_remove_state()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Split off the free()-ing in sequencer_remove_state() into a utility
+function, which will be adjusted and called independent of the other
+code in sequencer_remove_state() in a subsequent commit.
+
+The only functional changes here are:
+
+ * Changing the "int" to a "size_t", which is the correct type, as
+   "xopts_nr" is a "size_t".
+
+ * Calling the free() before the "if (is_rebase_i(opts) && ...)",
+   which is OK, and makes a subsequent change smaller.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 25 +++++++++++++++----------
+ 1 file changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index bcb662e23be..655ae9f1a72 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -351,10 +351,24 @@ static const char *gpg_sign_opt_quoted(struct replay_opts *opts)
+ 	return buf.buf;
+ }
+ 
++static void replay_opts_release(struct replay_opts *opts)
++{
++	free(opts->gpg_sign);
++	free(opts->reflog_action);
++	free(opts->default_strategy);
++	free(opts->strategy);
++	for (size_t i = 0; i < opts->xopts_nr; i++)
++		free(opts->xopts[i]);
++	free(opts->xopts);
++	strbuf_release(&opts->current_fixups);
++}
++
+ int sequencer_remove_state(struct replay_opts *opts)
+ {
+ 	struct strbuf buf = STRBUF_INIT;
+-	int i, ret = 0;
++	int ret = 0;
++
++	replay_opts_release(opts);
+ 
+ 	if (is_rebase_i(opts) &&
+ 	    strbuf_read_file(&buf, rebase_path_refs_to_delete(), 0) > 0) {
+@@ -373,15 +387,6 @@ int sequencer_remove_state(struct replay_opts *opts)
+ 		}
+ 	}
+ 
+-	free(opts->gpg_sign);
+-	free(opts->reflog_action);
+-	free(opts->default_strategy);
+-	free(opts->strategy);
+-	for (i = 0; i < opts->xopts_nr; i++)
+-		free(opts->xopts[i]);
+-	free(opts->xopts);
+-	strbuf_release(&opts->current_fixups);
+-
+ 	strbuf_reset(&buf);
+ 	strbuf_addstr(&buf, get_dir(opts));
+ 	if (remove_dir_recursively(&buf, 0))
+-- 
+2.39.0.1153.g589e4efe9dc
+

@@ -1,0 +1,75 @@
+From 21eea8eb80288d2a61b02e74cd01344b5d78970a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-06.10-21eea8eb802-20221230T071741Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 30 Dec 2022 03:28:42 +0100
+Subject: [PATCH 06/10] builtin/revert.c: move free-ing of "revs" to
+ replay_opts_release()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In [1] and [2] I added the code being moved here to cmd_revert() and
+cmd_cherry_pick(), now that we've got a "replay_opts_release()" for
+the "struct replay_opts" it should know how to free these "revs",
+rather than having these users reach into the struct to free its
+individual members.
+
+As explained in earlier change we should be using FREE_AND_NULL() in
+replay_opts_release() rather than free().
+
+1. d1ec656d68f (cherry-pick: free "struct replay_opts" members,
+   2022-11-08)
+2. fd74ac95ac3 (revert: free "struct replay_opts" members, 2022-07-01)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/revert.c | 8 ++------
+ sequencer.c      | 3 +++
+ 2 files changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/revert.c b/builtin/revert.c
+index 2f656b25619..b9fb13c515a 100644
+--- a/builtin/revert.c
++++ b/builtin/revert.c
+@@ -254,9 +254,7 @@ int cmd_revert(int argc, const char **argv, const char *prefix)
+ 	res = run_sequencer(argc, argv, &opts);
+ 	if (res < 0)
+ 		die(_("revert failed"));
+-	if (opts.revs)
+-		release_revisions(opts.revs);
+-	free(opts.revs);
++	replay_opts_release(&opts);
+ 	return res;
+ }
+ 
+@@ -268,9 +266,7 @@ int cmd_cherry_pick(int argc, const char **argv, const char *prefix)
+ 	opts.action = REPLAY_PICK;
+ 	sequencer_init_config(&opts);
+ 	res = run_sequencer(argc, argv, &opts);
+-	if (opts.revs)
+-		release_revisions(opts.revs);
+-	free(opts.revs);
++	replay_opts_release(&opts);
+ 	if (res < 0)
+ 		die(_("cherry-pick failed"));
+ 	return res;
+diff --git a/sequencer.c b/sequencer.c
+index e29a97b6caa..47367e66842 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -362,6 +362,9 @@ void replay_opts_release(struct replay_opts *opts)
+ 	opts->xopts_nr = 0;
+ 	FREE_AND_NULL(opts->xopts);
+ 	strbuf_release(&opts->current_fixups);
++	if (opts->revs)
++		release_revisions(opts->revs);
++	FREE_AND_NULL(opts->revs);
+ }
+ 
+ int sequencer_remove_state(struct replay_opts *opts)
+-- 
+2.39.0.1153.g589e4efe9dc
+

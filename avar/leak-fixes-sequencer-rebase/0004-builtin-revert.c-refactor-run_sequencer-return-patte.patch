@@ -1,0 +1,84 @@
+From 1e4e504c5337c699609026997237fd4d24e06340 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-04.10-1e4e504c533-20221230T071741Z-avarab@gmail.com>
+In-Reply-To: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 29 Dec 2022 15:13:43 +0100
+Subject: [PATCH 04/10] builtin/revert.c: refactor run_sequencer() return
+ pattern
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the return pattern in run_sequencer() to make it easier to
+insert a "replay_opts_release()" call between the "fn(...)" invocation
+and the eventual return.
+
+Usually we'd name the "cbfun" here "fn", but by using this name we'll
+nicely align all the "cmd == ?" comparisons.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/revert.c | 31 ++++++++++++++++++-------------
+ 1 file changed, 18 insertions(+), 13 deletions(-)
+
+diff --git a/builtin/revert.c b/builtin/revert.c
+index f2d86d2a8f9..e956d125a2b 100644
+--- a/builtin/revert.c
++++ b/builtin/revert.c
+@@ -93,6 +93,15 @@ static void verify_opt_compatible(const char *me, const char *base_opt, ...)
+ 		die(_("%s: %s cannot be used with %s"), me, this_opt, base_opt);
+ }
+ 
++static int sequencer_remove_branch_state(struct repository *r,
++					 struct replay_opts *opts)
++{
++	int ret = sequencer_remove_state(opts);
++	if (!ret)
++		remove_branch_state(the_repository, 0);
++	return ret;
++}
++
+ static int run_sequencer(int argc, const char **argv, struct replay_opts *opts)
+ {
+ 	const char * const * usage_str = revert_or_cherry_pick_usage(opts);
+@@ -120,6 +129,8 @@ static int run_sequencer(int argc, const char **argv, struct replay_opts *opts)
+ 		OPT_END()
+ 	};
+ 	struct option *options = base_options;
++	int (*cbfun)(struct repository *repo, struct replay_opts *opts);
++	int ret;
+ 
+ 	if (opts->action == REPLAY_PICK) {
+ 		struct option cp_extra[] = {
+@@ -223,19 +234,13 @@ static int run_sequencer(int argc, const char **argv, struct replay_opts *opts)
+ 		opts->strategy = xstrdup(getenv("GIT_TEST_MERGE_ALGORITHM"));
+ 	free(options);
+ 
+-	if (cmd == 'q') {
+-		int ret = sequencer_remove_state(opts);
+-		if (!ret)
+-			remove_branch_state(the_repository, 0);
+-		return ret;
+-	}
+-	if (cmd == 'c')
+-		return sequencer_continue(the_repository, opts);
+-	if (cmd == 'a')
+-		return sequencer_rollback(the_repository, opts);
+-	if (cmd == 's')
+-		return sequencer_skip(the_repository, opts);
+-	return sequencer_pick_revisions(the_repository, opts);
++	cbfun = cmd == 'q' ? sequencer_remove_branch_state :
++		cmd == 'c' ? sequencer_continue :
++		cmd == 'a' ? sequencer_rollback :
++		cmd == 's' ? sequencer_skip :
++		sequencer_pick_revisions;
++	ret = cbfun(the_repository, opts);
++	return ret;
+ }
+ 
+ int cmd_revert(int argc, const char **argv, const char *prefix)
+-- 
+2.39.0.1153.g589e4efe9dc
+
