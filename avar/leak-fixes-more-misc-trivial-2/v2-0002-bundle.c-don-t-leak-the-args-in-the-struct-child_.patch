@@ -1,0 +1,54 @@
+From 5036712391df7e176f0c72d01000694e0fb01442 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-02.20-5036712391d-20221230T020341Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.20-00000000000-20221230T020341Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20221228T175512Z-avarab@gmail.com>
+	<cover-v2-00.20-00000000000-20221230T020341Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Dec 2022 15:15:27 +0100
+Subject: [PATCH v2 02/20] bundle.c: don't leak the "args" in the "struct
+ child_process"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak that's been here since 7366096de9d (bundle API: change
+"flags" to be "extra_index_pack_args", 2021-09-05), if can't verify
+the bundle we didn't call child_process_clear() to clear the "args".
+
+But rather than doing that let's verify the bundle before we start
+preparing the process we're going to spawn, if we get an error we
+don't need to push anything to the "args".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ bundle.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/bundle.c b/bundle.c
+index 4ef7256aa11..9ebb10a8f72 100644
+--- a/bundle.c
++++ b/bundle.c
+@@ -627,6 +627,10 @@ int unbundle(struct repository *r, struct bundle_header *header,
+ 	     enum verify_bundle_flags flags)
+ {
+ 	struct child_process ip = CHILD_PROCESS_INIT;
++
++	if (verify_bundle(r, header, flags))
++		return -1;
++
+ 	strvec_pushl(&ip.args, "index-pack", "--fix-thin", "--stdin", NULL);
+ 
+ 	/* If there is a filter, then we need to create the promisor pack. */
+@@ -638,8 +642,6 @@ int unbundle(struct repository *r, struct bundle_header *header,
+ 		strvec_clear(extra_index_pack_args);
+ 	}
+ 
+-	if (verify_bundle(r, header, flags))
+-		return -1;
+ 	ip.in = bundle_fd;
+ 	ip.no_stdout = 1;
+ 	ip.git_cmd = 1;
+-- 
+2.39.0.1153.g589e4efe9dc
+

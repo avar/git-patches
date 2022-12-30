@@ -1,0 +1,59 @@
+From fd34c4817f403394cc85bf2c283742d3ee10fc1e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-10.20-fd34c4817f4-20221230T020341Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.20-00000000000-20221230T020341Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20221228T175512Z-avarab@gmail.com>
+	<cover-v2-00.20-00000000000-20221230T020341Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 10 Jun 2022 15:09:34 +0200
+Subject: [PATCH v2 10/20] http-backend.c: fix cmd_main() memory leak, refactor
+ reg{exec,free}()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak that's been with us ever since
+2f4038ab337 (Git-aware CGI to provide dumb HTTP transport,
+2009-10-30). In this case we're not calling regerror() after a failed
+regexec(), and don't otherwise use "re" afterwards.
+
+We can therefore simplify this code by calling regfree() right after
+the regexec(). An alternative fix would be to add a regfree() to both
+the "return" and "break" path in this for-loop.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ http-backend.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/http-backend.c b/http-backend.c
+index 67819d931ce..8ab58e55f85 100644
+--- a/http-backend.c
++++ b/http-backend.c
+@@ -759,10 +759,14 @@ int cmd_main(int argc, const char **argv)
+ 		struct service_cmd *c = &services[i];
+ 		regex_t re;
+ 		regmatch_t out[1];
++		int ret;
+ 
+ 		if (regcomp(&re, c->pattern, REG_EXTENDED))
+ 			die("Bogus regex in service table: %s", c->pattern);
+-		if (!regexec(&re, dir, 1, out, 0)) {
++		ret = regexec(&re, dir, 1, out, 0);
++		regfree(&re);
++
++		if (!ret) {
+ 			size_t n;
+ 
+ 			if (strcmp(method, c->method))
+@@ -774,7 +778,6 @@ int cmd_main(int argc, const char **argv)
+ 			dir[out[0].rm_so] = 0;
+ 			break;
+ 		}
+-		regfree(&re);
+ 	}
+ 
+ 	if (!cmd)
+-- 
+2.39.0.1153.g589e4efe9dc
+

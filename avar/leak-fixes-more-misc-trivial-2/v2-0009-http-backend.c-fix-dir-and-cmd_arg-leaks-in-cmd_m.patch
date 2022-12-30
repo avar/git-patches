@@ -1,0 +1,51 @@
+From 8c5c964d872c9e9e5472a918fc9198b5a6bcde8f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-09.20-8c5c964d872-20221230T020341Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-00.20-00000000000-20221230T020341Z-avarab@gmail.com>
+References: <cover-00.20-00000000000-20221228T175512Z-avarab@gmail.com>
+	<cover-v2-00.20-00000000000-20221230T020341Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 29 Dec 2022 12:38:22 +0100
+Subject: [PATCH v2 09/20] http-backend.c: fix "dir" and "cmd_arg" leaks in
+ cmd_main()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Free the "dir" variable after we're done with it. Before
+917adc03608 (http-backend: add GIT_PROJECT_ROOT environment var,
+2009-10-30) there was no leak here, as we'd get it via getenv(), but
+since 917adc03608 we've xstrdup()'d it (or the equivalent), so we need
+to free() it.
+
+We also need to free the "cmd_arg" variable, which has been leaked
+ever since it was added in 2f4038ab337 (Git-aware CGI to provide dumb
+HTTP transport, 2009-10-30).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ http-backend.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/http-backend.c b/http-backend.c
+index 6eb3b2fe51c..67819d931ce 100644
+--- a/http-backend.c
++++ b/http-backend.c
+@@ -786,6 +786,7 @@ int cmd_main(int argc, const char **argv)
+ 	if (!getenv("GIT_HTTP_EXPORT_ALL") &&
+ 	    access("git-daemon-export-ok", F_OK) )
+ 		not_found(&hdr, "Repository not exported: '%s'", dir);
++	free(dir);
+ 
+ 	http_config();
+ 	max_request_buffer = git_env_ulong("GIT_HTTP_MAX_REQUEST_BUFFER",
+@@ -795,5 +796,6 @@ int cmd_main(int argc, const char **argv)
+ 		setenv(GIT_PROTOCOL_ENVIRONMENT, proto_header, 0);
+ 
+ 	cmd->imp(&hdr, cmd_arg);
++	free(cmd_arg);
+ 	return 0;
+ }
+-- 
+2.39.0.1153.g589e4efe9dc
+
