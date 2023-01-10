@@ -1,0 +1,74 @@
+From 7c70bbdebc86454453f238c848e0e348fc84f15b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v3-15.19-7c70bbdebc8-20230110T054105Z-avarab@gmail.com>
+In-Reply-To: <cover-v3-00.19-00000000000-20230110T054105Z-avarab@gmail.com>
+References: <cover-v2-00.20-00000000000-20221230T020341Z-avarab@gmail.com>
+	<cover-v3-00.19-00000000000-20230110T054105Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 18 Nov 2022 02:46:25 +0100
+Subject: [PATCH v3 15/19] object-file.c: release the "tag" in check_tag()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a memory leak that's been with us ever since c879daa2372 (Make
+hash-object more robust against malformed objects, 2011-02-05). With
+"HASH_FORMAT_CHECK" (used by "hash-object" and "replace") we'll parse
+tags into a throwaway variable on the stack, but weren't freeing the
+"item->tag" we might malloc() when doing so.
+
+The clearing that release_tag_memory() does for us is redundant here,
+but let's use it as-is anyway. It only has one other existing caller,
+which does need the tag to be cleared.
+
+Mark the tests that now pass in their entirety as passing under
+"SANITIZE=leak", which means we'll test them as part of the
+"linux-leaks" CI job.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ object-file.c         | 1 +
+ t/t3800-mktag.sh      | 1 +
+ t/t5302-pack-index.sh | 2 ++
+ 3 files changed, 4 insertions(+)
+
+diff --git a/object-file.c b/object-file.c
+index 80a0cd3b351..b554266aff4 100644
+--- a/object-file.c
++++ b/object-file.c
+@@ -2324,6 +2324,7 @@ static void check_tag(const void *buf, size_t size)
+ 	memset(&t, 0, sizeof(t));
+ 	if (parse_tag_buffer(the_repository, &t, buf, size))
+ 		die(_("corrupt tag"));
++	release_tag_memory(&t);
+ }
+ 
+ static int index_mem(struct index_state *istate,
+diff --git a/t/t3800-mktag.sh b/t/t3800-mktag.sh
+index e3cf0ffbe59..d3e428ff46e 100755
+--- a/t/t3800-mktag.sh
++++ b/t/t3800-mktag.sh
+@@ -4,6 +4,7 @@
+ 
+ test_description='git mktag: tag object verify test'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ ###########################################################
+diff --git a/t/t5302-pack-index.sh b/t/t5302-pack-index.sh
+index b0095ab41d3..54b11f81c63 100755
+--- a/t/t5302-pack-index.sh
++++ b/t/t5302-pack-index.sh
+@@ -4,6 +4,8 @@
+ #
+ 
+ test_description='pack index with 64-bit offsets and object CRC'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+-- 
+2.39.0.1195.gabc92c078c4
+
