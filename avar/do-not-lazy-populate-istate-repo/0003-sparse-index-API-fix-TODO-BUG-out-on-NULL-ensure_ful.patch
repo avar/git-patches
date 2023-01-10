@@ -1,0 +1,104 @@
+From d96388acef62cc249e62c5c2443c77dec45e96ac Mon Sep 17 00:00:00 2001
+Message-Id: <patch-3.5-d96388acef6-20230110T060340Z-avarab@gmail.com>
+In-Reply-To: <cover-0.5-00000000000-20230110T060340Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20230110T060340Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 5 Aug 2022 13:36:12 +0200
+Subject: [PATCH 3/5] sparse-index API: fix TODO, BUG() out on NULL
+ ensure_full_index()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make the ensure_full_index() function stricter, and have it only
+accept a non-NULL "struct index_state". This function (and this
+behavior) was added in [1].
+
+The only reason it needed to be this lax was due to interaction with
+repo_index_has_changes(). See the addition of that code in . This
+fixes one of the TODO comments added in 0c18c059a15, the other one was
+already removed in [3].
+
+The other reason for why this was needed dates back to interaction
+with code added in [4]. In [5] we started calling ensure_full_index()
+in unpack_trees(), but the caller added in 34110cd4e39 wants to pass
+us a NULL "dst_index". Let's instead do the NULL check in
+unpack_trees() itself.
+
+1. 4300f8442a2 (sparse-index: implement ensure_full_index(), 2021-03-30)
+2. 0c18c059a15 (read-cache: ensure full index, 2021-04-01)
+3. d76723ee531 (status: use sparse-index throughout, 2021-07-14).
+4. 34110cd4e39 (Make 'unpack_trees()' have a separate source and
+   destination index, 2008-03-06)
+5. 6863df35503 (unpack-trees: ensure full index, 2021-03-30)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ read-cache.c   | 5 +++--
+ sparse-index.c | 4 +++-
+ unpack-trees.c | 3 ++-
+ 3 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/read-cache.c b/read-cache.c
+index cf87ad70970..9fbff4bc6aa 100644
+--- a/read-cache.c
++++ b/read-cache.c
+@@ -2646,8 +2646,7 @@ int repo_index_has_changes(struct repository *repo,
+ 		}
+ 		diff_flush(&opt);
+ 		return opt.flags.has_changes != 0;
+-	} else {
+-		/* TODO: audit for interaction with sparse-index. */
++	} else if (istate) {
+ 		ensure_full_index(istate);
+ 		for (i = 0; sb && i < istate->cache_nr; i++) {
+ 			if (i)
+@@ -2655,6 +2654,8 @@ int repo_index_has_changes(struct repository *repo,
+ 			strbuf_addstr(sb, istate->cache[i]->name);
+ 		}
+ 		return !!istate->cache_nr;
++	} else {
++		return 0;
+ 	}
+ }
+ 
+diff --git a/sparse-index.c b/sparse-index.c
+index 65a08d33c73..86e3b99870b 100644
+--- a/sparse-index.c
++++ b/sparse-index.c
+@@ -299,7 +299,7 @@ void expand_index(struct index_state *istate, struct pattern_list *pl)
+ 	 * If the index is already full, then keep it full. We will convert
+ 	 * it to a sparse index on write, if possible.
+ 	 */
+-	if (!istate || istate->sparse_index == INDEX_EXPANDED)
++	if (istate->sparse_index == INDEX_EXPANDED)
+ 		return;
+ 
+ 	/*
+@@ -424,6 +424,8 @@ void expand_index(struct index_state *istate, struct pattern_list *pl)
+ 
+ void ensure_full_index(struct index_state *istate)
+ {
++	if (!istate)
++		BUG("ensure_full_index() must get an index!");
+ 	expand_index(istate, NULL);
+ }
+ 
+diff --git a/unpack-trees.c b/unpack-trees.c
+index ea09023b015..2381cd7cac4 100644
+--- a/unpack-trees.c
++++ b/unpack-trees.c
+@@ -1880,7 +1880,8 @@ int unpack_trees(unsigned len, struct tree_desc *t, struct unpack_trees_options
+ 	prepare_repo_settings(repo);
+ 	if (repo->settings.command_requires_full_index) {
+ 		ensure_full_index(o->src_index);
+-		ensure_full_index(o->dst_index);
++		if (o->dst_index)
++			ensure_full_index(o->dst_index);
+ 	}
+ 
+ 	if (o->reset == UNPACK_RESET_OVERWRITE_UNTRACKED &&
+-- 
+2.39.0.1195.gabc92c078c4
+
