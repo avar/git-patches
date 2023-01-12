@@ -4,12 +4,67 @@ In-Reply-To: <cover-0.5-00000000000-20230110T060340Z-avarab@gmail.com>
 References: <cover-0.5-00000000000-20230110T060340Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
 Date: Thu, 12 Jan 2023 13:48:42 +0100
-Subject: [PATCH v2 0/6] *** SUBJECT HERE ***
+Subject: [PATCH v2 0/6] cache API: always have a "istate->repo"
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-*** BLURB HERE ***
+The "struct index_state" contains a "repo" member, which should be a
+pointer to the repository for that index, but which due to us
+constructing such structs on an ad-hoc basis in various places wasn't
+always available.
+
+We'd thus end up with code like this, in the recent
+ds/omit-trailing-hash-in-index topic:
+
+			       struct repository *r = istate->repo ? istate->repo : the_repository;
+
+Really we should be able to trust the "istate->repo", but were
+carrying those sorts of conditionals because our index might come from
+a manually constructed source, so we'd have to fall back to
+"the_repository".
+
+This series changes the relvant code so the "repo" field is always
+non-NULL, as 6/6 here shows we had various workarounds in place for
+that, which can now go away.
+
+For v1 and more general summary, see:
+https://lore.kernel.org/git/cover-0.5-00000000000-20230110T060340Z-avarab@gmail.com/
+
+See
+https://github.com/avar/git/tree/avar/do-not-lazy-populate-istate-repo-2
+for passing CI and a fetchable branch for this topic.
+
+Change since v1:
+
+ * Typo/rewording/correcting of commit messages
+ * Kept a "TODO" comment which Derrick notes I shouldn't have removed
+
+ * Derrick suggested in
+   https://lore.kernel.org/git/6b92fad2-6b74-fddb-679c-8c8735e7103d@github.com/
+   that things might be nicer if we had an explicit initializer, which
+   was also the subject of the previous discussion at
+   https://lore.kernel.org/git/xmqqmt6vqo2w.fsf@gitster.g/; but
+   concluded that it was probably best to leave it for now.
+
+   I tried it out, and I think it's worth just doing that now, which
+   is why there's a new 5/6 here: We start by adding an
+   INDEX_STATE_INIT macro, and corresponding function.
+
+   There's a bit of churn in 6/6 as all of those now will take a
+   "repo" argument, but I think the end result is worth it, because
+   even if "repo" remains the only thing that we need to initialize
+   we're now able to use ALLOC_ARRAY() instead of CALLOC_ARRAY().
+
+   We'll thus be helped by analysis tools (which would show access to
+   un-init'd memory) if we miss properly init-ing not just the "repo"
+   field, but anything in the structure, so our test coverage will be
+   better.
+
+   It also makes the code easier to follow and change, as it's now
+   more obvious where we initialize this, and it'll be easier to
+   change it in the future if e.g. we add a new member that has
+   mandatory initialization (e.g. a "struct strbuf").
 
 Ævar Arnfjörð Bjarmason (6):
   builtin/difftool.c: { 0 }-initialize rather than using memset()
