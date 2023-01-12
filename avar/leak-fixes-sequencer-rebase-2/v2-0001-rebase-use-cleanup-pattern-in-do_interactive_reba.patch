@@ -1,0 +1,69 @@
+From d0a0524f3d486683fc961cffad3253cf5e88dc10 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-1.9-d0a0524f3d4-20230112T124201Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20230112T124201Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20230112T124201Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 19 Aug 2022 01:49:43 +0200
+Subject: [PATCH v2 1/9] rebase: use "cleanup" pattern in
+ do_interactive_rebase()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Use a "goto cleanup" pattern in do_interactive_rebase(). This
+eliminates some duplicated free() code added in 53bbcfbde7c (rebase
+-i: implement the main part of interactive rebase as a builtin,
+2018-09-27), and sets us up for a subsequent commit which'll make
+further use of the "cleanup" label.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c | 13 +++++--------
+ 1 file changed, 5 insertions(+), 8 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index 1481c5b6a5b..7141fd5e0c1 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -256,7 +256,7 @@ static void split_exec_commands(const char *cmd, struct string_list *commands)
+ 
+ static int do_interactive_rebase(struct rebase_options *opts, unsigned flags)
+ {
+-	int ret;
++	int ret = -1;
+ 	char *revisions = NULL, *shortrevisions = NULL;
+ 	struct strvec make_script_args = STRVEC_INIT;
+ 	struct todo_list todo_list = TODO_LIST_INIT;
+@@ -265,16 +265,12 @@ static int do_interactive_rebase(struct rebase_options *opts, unsigned flags)
+ 
+ 	if (get_revision_ranges(opts->upstream, opts->onto, &opts->orig_head->object.oid,
+ 				&revisions, &shortrevisions))
+-		return -1;
++		goto cleanup;
+ 
+ 	if (init_basic_state(&replay,
+ 			     opts->head_name ? opts->head_name : "detached HEAD",
+-			     opts->onto, &opts->orig_head->object.oid)) {
+-		free(revisions);
+-		free(shortrevisions);
+-
+-		return -1;
+-	}
++			     opts->onto, &opts->orig_head->object.oid))
++		goto cleanup;
+ 
+ 	if (!opts->upstream && opts->squash_onto)
+ 		write_file(path_squash_onto(), "%s\n",
+@@ -304,6 +300,7 @@ static int do_interactive_rebase(struct rebase_options *opts, unsigned flags)
+ 			opts->autosquash, opts->update_refs, &todo_list);
+ 	}
+ 
++cleanup:
+ 	string_list_clear(&commands, 0);
+ 	free(revisions);
+ 	free(shortrevisions);
+-- 
+2.39.0.1205.g2ca064edc27
+

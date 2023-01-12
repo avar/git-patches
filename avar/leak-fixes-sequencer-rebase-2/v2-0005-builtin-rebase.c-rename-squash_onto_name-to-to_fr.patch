@@ -1,0 +1,63 @@
+From 4fea2b77c6d8b750db56eb4ba824bbecb741a619 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.9-4fea2b77c6d-20230112T124201Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20230112T124201Z-avarab@gmail.com>
+References: <cover-00.10-00000000000-20221230T071741Z-avarab@gmail.com>
+	<cover-v2-0.9-00000000000-20230112T124201Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 10 Jan 2023 06:47:36 +0100
+Subject: [PATCH v2 5/9] builtin/rebase.c: rename "squash_onto_name" to
+ "to_free"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The real use of the "squash_onto_name" added in [1] is to keep track
+of a value for later free()-ing, we don't subsequently use it for
+anything else.
+
+Let's rename it in preparation for re-using it for free()-ing before
+another assignment to "options.onto_name", which is an outstanding
+leak that'll be fixed in a subsequent commit.
+
+1. 9dba809a69a (builtin rebase: support --root, 2018-09-04)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/rebase.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/rebase.c b/builtin/rebase.c
+index 5859a5387d8..0d8c050f6b3 100644
+--- a/builtin/rebase.c
++++ b/builtin/rebase.c
+@@ -1036,7 +1036,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 	const char *rebase_merges = NULL;
+ 	struct string_list strategy_options = STRING_LIST_INIT_NODUP;
+ 	struct object_id squash_onto;
+-	char *squash_onto_name = NULL;
++	char *to_free = NULL;
+ 	int reschedule_failed_exec = -1;
+ 	int allow_preemptive_ff = 1;
+ 	int preserve_merges_selected = 0;
+@@ -1589,7 +1589,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 					&squash_onto, NULL, NULL) < 0)
+ 				die(_("Could not create new root commit"));
+ 			options.squash_onto = &squash_onto;
+-			options.onto_name = squash_onto_name =
++			options.onto_name = to_free =
+ 				xstrdup(oid_to_hex(&squash_onto));
+ 		} else
+ 			options.root_with_onto = 1;
+@@ -1835,7 +1835,7 @@ int cmd_rebase(int argc, const char **argv, const char *prefix)
+ 	free(options.cmd);
+ 	free(options.strategy);
+ 	strbuf_release(&options.git_format_patch_opt);
+-	free(squash_onto_name);
++	free(to_free);
+ 	string_list_clear(&exec, 0);
+ 	string_list_clear(&strategy_options, 0);
+ 	return !!ret;
+-- 
+2.39.0.1205.g2ca064edc27
+
