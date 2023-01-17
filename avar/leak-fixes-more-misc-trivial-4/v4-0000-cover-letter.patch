@@ -1,21 +1,15 @@
-From 6c4106975ea81ec051fd3e2699074f045d2929c1 Mon Sep 17 00:00:00 2001
-Message-Id: <cover-v4-00.19-00000000000-20230117T140353Z-avarab@gmail.com>
+From b3aee41d0b4e01e2e04ef7f5e0aeea7895525813 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-00.19-00000000000-20230117T151150Z-avarab@gmail.com>
 In-Reply-To: <cover-v3-00.19-00000000000-20230110T054138Z-avarab@gmail.com>
 References: <cover-v3-00.19-00000000000-20230110T054138Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Tue, 17 Jan 2023 15:03:53 +0100
-Subject: [PATCH v4 00/19] leak fixes: various simple leak fixes
+Date: Tue, 17 Jan 2023 16:11:50 +0100
+Subject: [PATCH v4 00/19] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-See
-https://lore.kernel.org/git/cover-v3-00.19-00000000000-20230110T054138Z-avarab@gmail.com/
-for the v3. Change since then:
-
- * Reword a commit message that could be misread as claiming that we
-   needed to free() the now-fixed string we're using instead of the
-   previous dynamic "struct strbuf" allocation.
+*** BLURB HERE ***
 
 Ævar Arnfjörð Bjarmason (19):
   tests: mark tests as passing with SANITIZE=leak
@@ -30,7 +24,7 @@ for the v3. Change since then:
   http-backend.c: fix cmd_main() memory leak, refactor reg{exec,free}()
   commit-graph: fix a parse_options_concat() leak
   show-branch: free() allocated "head" before return
-  builtin/merge.c: always free "struct strbuf msg"
+  builtin/merge.c: use fixed strings, not "strbuf", fix leak
   builtin/merge.c: free "&buf" on "Your local changes..." error
   object-file.c: release the "tag" in check_tag()
   grep.c: refactor free_grep_patterns()
@@ -63,7 +57,9 @@ for the v3. Change since then:
  t/t1410-reflog.sh                          |  1 +
  t/t1416-ref-transaction-hooks.sh           |  1 +
  t/t2401-worktree-prune.sh                  |  1 +
+ t/t2402-worktree-list.sh                   |  1 +
  t/t2406-worktree-repair.sh                 |  1 +
+ t/t3203-branch-output.sh                   |  2 ++
  t/t3210-pack-refs.sh                       |  1 +
  t/t3800-mktag.sh                           |  1 +
  t/t4152-am-subjects.sh                     |  2 ++
@@ -87,6 +83,9 @@ for the v3. Change since then:
  t/t5529-push-errors.sh                     |  2 ++
  t/t5546-receive-limits.sh                  |  2 ++
  t/t5547-push-quarantine.sh                 |  2 ++
+ t/t5560-http-backend-noserver.sh           |  1 +
+ t/t5561-http-backend.sh                    |  1 +
+ t/t5562-http-backend-content-length.sh     |  2 ++
  t/t5604-clone-reference.sh                 |  1 +
  t/t5606-clone-options.sh                   |  1 +
  t/t5613-info-alternate.sh                  |  2 ++
@@ -106,7 +105,7 @@ for the v3. Change since then:
  t/t7416-submodule-dash-url.sh              |  2 ++
  t/t7450-bad-git-dotfiles.sh                |  2 ++
  t/t7701-repack-unpack-unreachable.sh       |  1 +
- 68 files changed, 151 insertions(+), 50 deletions(-)
+ 73 files changed, 158 insertions(+), 50 deletions(-)
 
 Range-diff against v3:
  1:  f5b67f44e2d =  1:  2ed69e3cda3 tests: mark tests as passing with SANITIZE=leak
@@ -116,34 +115,97 @@ Range-diff against v3:
  5:  5087fb73286 =  5:  93a8f8fa1b9 various: add missing clear_pathspec(), fix leaks
  6:  39cb8aefb58 =  6:  bd15d991ac7 name-rev: don't xstrdup() an already dup'd string
  7:  a3f1e800127 =  7:  fd890121ebe repack: fix leaks on error with "goto cleanup"
- 8:  f918a6f2adc =  8:  eb49032cc68 worktree: fix a trivial leak in prune_worktrees()
- 9:  56204806dfd =  9:  781fcc0aa83 http-backend.c: fix "dir" and "cmd_arg" leaks in cmd_main()
-10:  5355e0fc60b = 10:  e1667648752 http-backend.c: fix cmd_main() memory leak, refactor reg{exec,free}()
-11:  dfb52dbd1c4 = 11:  3b6ae6b20f5 commit-graph: fix a parse_options_concat() leak
-12:  e44e74dcc58 = 12:  7562e166aa1 show-branch: free() allocated "head" before return
-13:  6d99fdcc44e ! 13:  d1451aeb391 builtin/merge.c: always free "struct strbuf msg"
-    @@ Commit message
+ 8:  f918a6f2adc !  8:  1fe25bc6981 worktree: fix a trivial leak in prune_worktrees()
+    @@ t/t2406-worktree-repair.sh
+      . ./test-lib.sh
+      
+      test_expect_success setup '
+    +
+    + ## t/t3203-branch-output.sh ##
+    +@@
+    + #!/bin/sh
+    + 
+    + test_description='git branch display tests'
+    ++
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+    + . "$TEST_DIRECTORY"/lib-terminal.sh
+    + 
+ 9:  56204806dfd =  9:  6b3dd9b15f0 http-backend.c: fix "dir" and "cmd_arg" leaks in cmd_main()
+10:  5355e0fc60b = 10:  246f71bb447 http-backend.c: fix cmd_main() memory leak, refactor reg{exec,free}()
+11:  dfb52dbd1c4 = 11:  ab31d8d10da commit-graph: fix a parse_options_concat() leak
+12:  e44e74dcc58 = 12:  9054b353220 show-branch: free() allocated "head" before return
+13:  6d99fdcc44e ! 13:  05836b08e0f builtin/merge.c: always free "struct strbuf msg"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    builtin/merge.c: always free "struct strbuf msg"
+    +    builtin/merge.c: use fixed strings, not "strbuf", fix leak
      
          Follow-up 465028e0e25 (merge: add missing strbuf_release(),
          2021-10-07) and address the "msg" memory leak in this block. We could
-    -    free "&msg" before the "goto done" here, but even better is to avoid
-    -    allocating it in the first place.
-    -
-    -    By repeating the "Fast-forward" string here we can avoid using a
-    -    "struct strbuf" altogether.
-    +    keep the "struct strbuf" and strbuf_release(&msg) before the "goto
-    +    done" here, but even better is to avoid allocating it in the first
-    +    place. At the low cost of repeating the "Fast-forward" string here we
-    +    can avoid the allocation.
+14:  a3bf3045597 = 14:  e8ea18b08c2 builtin/merge.c: free "&buf" on "Your local changes..." error
+15:  7c70bbdebc8 = 15:  66c24afb893 object-file.c: release the "tag" in check_tag()
+16:  17537e1393e = 16:  52744d9690f grep.c: refactor free_grep_patterns()
+17:  e4bd46a343e = 17:  8ff63d9095c grep API: plug memory leaks by freeing "header_list"
+18:  3e4b12cb623 ! 18:  0ad7d59b881 receive-pack: free() the "ref_name" in "struct command"
+    @@ t/t5527-fetch-odd-refs.sh: test_description='test fetching of oddly-named refs'
+      
+      # afterwards we will have:
      
-         Suggested-by: René Scharfe <l.s.r@web.de>
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-14:  a3bf3045597 = 14:  f119d9af471 builtin/merge.c: free "&buf" on "Your local changes..." error
-15:  7c70bbdebc8 = 15:  9a30db4e76f object-file.c: release the "tag" in check_tag()
-16:  17537e1393e = 16:  51bd0d0a7d4 grep.c: refactor free_grep_patterns()
-17:  e4bd46a343e = 17:  95c6184c41a grep API: plug memory leaks by freeing "header_list"
-18:  3e4b12cb623 = 18:  1f90c80cfd2 receive-pack: free() the "ref_name" in "struct command"
-19:  d51ed239a8a = 19:  6c4106975ea push: free_refs() the "local_refs" in set_refspecs()
+    + ## t/t5560-http-backend-noserver.sh ##
+    +@@ t/t5560-http-backend-noserver.sh: test_description='test git-http-backend-noserver'
+    + GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+    + export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+    + 
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+    + 
+    + HTTPD_DOCUMENT_ROOT_PATH="$TRASH_DIRECTORY"
+    +
+    + ## t/t5561-http-backend.sh ##
+    +@@ t/t5561-http-backend.sh: test_description='test git-http-backend'
+    + GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+    + export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+    + 
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+    + . "$TEST_DIRECTORY"/lib-httpd.sh
+    + 
+    +
+    + ## t/t5562-http-backend-content-length.sh ##
+    +@@
+    + #!/bin/sh
+    + 
+    + test_description='test git-http-backend respects CONTENT_LENGTH'
+    ++
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+    + 
+    + test_lazy_prereq GZIP 'gzip --version'
+    +
+      ## t/t5705-session-id-in-capabilities.sh ##
+     @@
+      
+19:  d51ed239a8a ! 19:  b3aee41d0b4 push: free_refs() the "local_refs" in set_refspecs()
+    @@ t/t1416-ref-transaction-hooks.sh: test_description='reference transaction hooks'
+      
+      test_expect_success setup '
+     
+    + ## t/t2402-worktree-list.sh ##
+    +@@ t/t2402-worktree-list.sh: test_description='test git worktree list'
+    + GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+    + export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+    + 
+    ++TEST_PASSES_SANITIZE_LEAK=true
+    + . ./test-lib.sh
+    + 
+    + test_expect_success 'setup' '
+    +
+      ## t/t5504-fetch-receive-strict.sh ##
+     @@ t/t5504-fetch-receive-strict.sh: test_description='fetch/receive strict mode'
+      GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 -- 
 2.39.0.1225.g30a3d88132d
 
