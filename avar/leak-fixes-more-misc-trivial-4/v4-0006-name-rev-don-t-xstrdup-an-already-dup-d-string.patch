@@ -1,0 +1,79 @@
+From bd15d991ac754e32af76984f7f14bfcce61215fc Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-06.19-bd15d991ac7-20230117T140353Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-00.19-00000000000-20230117T140353Z-avarab@gmail.com>
+References: <cover-v3-00.19-00000000000-20230110T054138Z-avarab@gmail.com>
+	<cover-v4-00.19-00000000000-20230117T140353Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 29 Dec 2022 12:14:52 +0100
+Subject: [PATCH v4 06/19] name-rev: don't xstrdup() an already dup'd string
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When "add_to_tip_table()" is called with a non-zero
+"shorten_unambiguous" we always return an xstrdup()'d string, which
+we'd then xstrdup() again, leaking memory. See [1] and [2] for how
+this leak came about.
+
+We could xstrdup() only if "shorten_unambiguous" wasn't true, but
+let's instead inline this code, so that information on whether we need
+to xstrdup() is contained within add_to_tip_table().
+
+1. 98c5c4ad015 (name-rev: allow to specify a subpath for --refs
+   option, 2013-06-18)
+2. b23e0b9353e (name-rev: allow converting the exact object name at
+   the tip of a ref, 2013-07-07)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/name-rev.c | 23 ++++++++++-------------
+ 1 file changed, 10 insertions(+), 13 deletions(-)
+
+diff --git a/builtin/name-rev.c b/builtin/name-rev.c
+index 15535e914a6..49fae523694 100644
+--- a/builtin/name-rev.c
++++ b/builtin/name-rev.c
+@@ -273,17 +273,6 @@ static int subpath_matches(const char *path, const char *filter)
+ 	return -1;
+ }
+ 
+-static const char *name_ref_abbrev(const char *refname, int shorten_unambiguous)
+-{
+-	if (shorten_unambiguous)
+-		refname = shorten_unambiguous_ref(refname, 0);
+-	else if (skip_prefix(refname, "refs/heads/", &refname))
+-		; /* refname already advanced */
+-	else
+-		skip_prefix(refname, "refs/", &refname);
+-	return refname;
+-}
+-
+ struct name_ref_data {
+ 	int tags_only;
+ 	int name_only;
+@@ -309,11 +298,19 @@ static void add_to_tip_table(const struct object_id *oid, const char *refname,
+ 			     int shorten_unambiguous, struct commit *commit,
+ 			     timestamp_t taggerdate, int from_tag, int deref)
+ {
+-	refname = name_ref_abbrev(refname, shorten_unambiguous);
++	char *short_refname = NULL;
++
++	if (shorten_unambiguous)
++		short_refname = shorten_unambiguous_ref(refname, 0);
++	else if (skip_prefix(refname, "refs/heads/", &refname))
++		; /* refname already advanced */
++	else
++		skip_prefix(refname, "refs/", &refname);
+ 
+ 	ALLOC_GROW(tip_table.table, tip_table.nr + 1, tip_table.alloc);
+ 	oidcpy(&tip_table.table[tip_table.nr].oid, oid);
+-	tip_table.table[tip_table.nr].refname = xstrdup(refname);
++	tip_table.table[tip_table.nr].refname = short_refname ?
++		short_refname : xstrdup(refname);
+ 	tip_table.table[tip_table.nr].commit = commit;
+ 	tip_table.table[tip_table.nr].taggerdate = taggerdate;
+ 	tip_table.table[tip_table.nr].from_tag = from_tag;
+-- 
+2.39.0.1225.g30a3d88132d
+
