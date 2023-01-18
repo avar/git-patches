@@ -1,0 +1,190 @@
+From 84343ea6bf67fa33b5a46c482a723d8c5a1aa5aa Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v3-0.8-00000000000-20230118T160600Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.9-00000000000-20230112T124201Z-avarab@gmail.com>
+References: <cover-v2-0.9-00000000000-20230112T124201Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Wed, 18 Jan 2023 17:06:00 +0100
+Subject: [PATCH v3 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (8):
+  rebase: use "cleanup" pattern in do_interactive_rebase()
+  sequencer.c: split up sequencer_remove_state()
+  rebase & sequencer API: fix get_replay_opts() leak in "rebase"
+  builtin/revert.c: move free-ing of "revs" to replay_opts_release()
+  builtin/rebase.c: fix "options.onto_name" leak
+  sequencer.c: always free() the "msgbuf" in do_pick_commit()
+  builtin/rebase.c: free() "options.strategy_opts"
+  commit.c: free() revs.commit in get_fork_point()
+
+ builtin/rebase.c                       | 22 ++++++++------
+ builtin/revert.c                       |  8 ++---
+ commit.c                               |  1 +
+ sequencer.c                            | 42 ++++++++++++++++----------
+ sequencer.h                            |  1 +
+ t/t3405-rebase-malformed.sh            |  1 +
+ t/t3412-rebase-root.sh                 |  1 +
+ t/t3416-rebase-onto-threedots.sh       |  1 +
+ t/t3419-rebase-patch-id.sh             |  1 +
+ t/t3423-rebase-reword.sh               |  1 +
+ t/t3425-rebase-topology-merges.sh      |  2 ++
+ t/t3431-rebase-fork-point.sh           |  1 +
+ t/t3432-rebase-fast-forward.sh         |  1 +
+ t/t3437-rebase-fixup-options.sh        |  1 +
+ t/t3438-rebase-broken-files.sh         |  2 ++
+ t/t3501-revert-cherry-pick.sh          |  1 +
+ t/t3502-cherry-pick-merge.sh           |  1 +
+ t/t3503-cherry-pick-root.sh            |  1 +
+ t/t3506-cherry-pick-ff.sh              |  1 +
+ t/t3511-cherry-pick-x.sh               |  1 +
+ t/t7402-submodule-rebase.sh            |  1 +
+ t/t9106-git-svn-commit-diff-clobber.sh |  1 -
+ t/t9164-git-svn-dcommit-concurrent.sh  |  1 -
+ 23 files changed, 61 insertions(+), 33 deletions(-)
+
+Range-diff against v2:
+ 1:  d0a0524f3d4 =  1:  b223429df33 rebase: use "cleanup" pattern in do_interactive_rebase()
+ 2:  c4eaa8dfef4 =  2:  00c7f04363f sequencer.c: split up sequencer_remove_state()
+ 3:  f06f565ceaf !  3:  e4a96898a68 rebase & sequencer API: fix get_replay_opts() leak in "rebase"
+    @@ Commit message
+         get_replay_opts() function in "builtin/rebase.c". See [1] for the
+         initial addition of get_replay_opts().
+     
+    -    To safely call our new replay_opts_release() we'll need to change all
+    -    the free() to a FREE_AND_NULL(), and set "xopts_nr" to "0" after we
+    -    loop over it and free() it (the free() in the loop doesn't need to be
+    -    a FREE_AND_NULL()).
+    +    To safely call our new replay_opts_release() we'll need to stop
+    +    calling it in sequencer_remove_state(), and instead call it where we
+    +    allocate the "struct replay_opts" itself.
+     
+         This is because in e.g. do_interactive_rebase() we construct a "struct
+         replay_opts" with "get_replay_opts()", and then call
+    @@ Commit message
+     
+         But if we encounter errors anywhere along the way we'd punt out early,
+         and not free() the memory we allocated. Remembering whether we
+    -    previously called sequencer_remove_state() would be a hassle, so let's
+    -    make it safe to re-invoke replay_opts_release() instead.
+    +    previously called sequencer_remove_state() would be a hassle.
+     
+    -    I experimented with a change to be more paranoid instead, i.e. to
+    -    exhaustively check our state via an enum. We could make sure that we:
+    -
+    -    - Only allow calling "replay_opts_release()" after
+    -      "sequencer_remove_state()", but not the other way around.
+    -
+    -    - Forbid invoking either function twice in a row.
+    -
+    -    But such paranoia isn't warranted here, let's instead take the easy
+    -    way out and FREE_AND_NULL() this.
+    +    Using a FREE_AND_NULL() pattern would also work, as it would be safe
+    +    replay_opts_release() repeatedly, but let's fix this properly instead,
+    +    by having the owner of the data free() it.
+     
+         See [2] for the initial implementation of "sequencer_remove_state()",
+         which assumed that it should be removing the full (including on-disk)
+    @@ sequencer.c: static const char *gpg_sign_opt_quoted(struct replay_opts *opts)
+      {
+      	free(opts->gpg_sign);
+      	free(opts->reflog_action);
+    -@@ sequencer.c: static void replay_opts_release(struct replay_opts *opts)
+    - 	free(opts->strategy);
+    - 	for (size_t i = 0; i < opts->xopts_nr; i++)
+    - 		free(opts->xopts[i]);
+    -+	opts->xopts_nr = 0;
+    - 	free(opts->xopts);
+    - 	strbuf_release(&opts->current_fixups);
+    - }
+     @@ sequencer.c: int sequencer_remove_state(struct replay_opts *opts)
+      		}
+      	}
+ 4:  e83bdfab046 !  4:  9f72cc6e46b builtin/revert.c: move free-ing of "revs" to replay_opts_release()
+    @@ Commit message
+         rather than having these users reach into the struct to free its
+         individual members.
+     
+    -    As explained in earlier change we should be using FREE_AND_NULL() in
+    -    replay_opts_release() rather than free().
+    -
+         1. d1ec656d68f (cherry-pick: free "struct replay_opts" members,
+            2022-11-08)
+         2. fd74ac95ac3 (revert: free "struct replay_opts" members, 2022-07-01)
+    @@ builtin/revert.c: int cmd_cherry_pick(int argc, const char **argv, const char *p
+     
+      ## sequencer.c ##
+     @@ sequencer.c: void replay_opts_release(struct replay_opts *opts)
+    - 	opts->xopts_nr = 0;
+    + 		free(opts->xopts[i]);
+      	free(opts->xopts);
+      	strbuf_release(&opts->current_fixups);
+     +	if (opts->revs)
+ 5:  4fea2b77c6d <  -:  ----------- builtin/rebase.c: rename "squash_onto_name" to "to_free"
+ 6:  898bb7698fc !  5:  3d5c3152f69 builtin/rebase.c: fix "options.onto_name" leak
+    @@ Metadata
+      ## Commit message ##
+         builtin/rebase.c: fix "options.onto_name" leak
+     
+    -    In [1] we started saving away the earlier xstrdup()'d
+    -    "options.onto_name" assignment to free() it, but when [2] added this
+    -    "keep_base" branch it didn't free() the already assigned value before
+    -    re-assigning to "options.onto_name". Let's do that, and fix the memory
+    -    leak.
+    +    Similar to the existing "squash_onto_name" added in [1] we need to
+    +    free() the xstrdup()'d "options.onto.name" added for "--keep-base" in
+    +    [2]..
+     
+         1. 9dba809a69a (builtin rebase: support --root, 2018-09-04)
+         2. 414d924beb4 (rebase: teach rebase --keep-base, 2019-08-27)
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/rebase.c ##
+    +@@ builtin/rebase.c: int cmd_rebase(int argc, const char **argv, const char *prefix)
+    + 	struct string_list strategy_options = STRING_LIST_INIT_NODUP;
+    + 	struct object_id squash_onto;
+    + 	char *squash_onto_name = NULL;
+    ++	char *keep_base_onto_name = NULL;
+    + 	int reschedule_failed_exec = -1;
+    + 	int allow_preemptive_ff = 1;
+    + 	int preserve_merges_selected = 0;
+     @@ builtin/rebase.c: int cmd_rebase(int argc, const char **argv, const char *prefix)
+      		strbuf_addstr(&buf, options.upstream_name);
+      		strbuf_addstr(&buf, "...");
+      		strbuf_addstr(&buf, branch_name);
+     -		options.onto_name = xstrdup(buf.buf);
+    -+		free(to_free);
+    -+		options.onto_name = to_free = xstrdup(buf.buf);
+    ++		options.onto_name = keep_base_onto_name = xstrdup(buf.buf);
+      	} else if (!options.onto_name)
+      		options.onto_name = options.upstream_name;
+      	if (strstr(options.onto_name, "...")) {
+    +@@ builtin/rebase.c: int cmd_rebase(int argc, const char **argv, const char *prefix)
+    + 	free(options.strategy);
+    + 	strbuf_release(&options.git_format_patch_opt);
+    + 	free(squash_onto_name);
+    ++	free(keep_base_onto_name);
+    + 	string_list_clear(&exec, 0);
+    + 	string_list_clear(&strategy_options, 0);
+    + 	return !!ret;
+     
+      ## t/t3416-rebase-onto-threedots.sh ##
+     @@ t/t3416-rebase-onto-threedots.sh: test_description='git rebase --onto A...B'
+ 7:  fb38dc873f9 =  6:  c07dc006c6d sequencer.c: always free() the "msgbuf" in do_pick_commit()
+ 8:  d4b0e2a5c83 !  7:  ee8262ab22a builtin/rebase.c: free() "options.strategy_opts"
+    @@ builtin/rebase.c: int cmd_rebase(int argc, const char **argv, const char *prefix
+      	free(options.strategy);
+     +	free(options.strategy_opts);
+      	strbuf_release(&options.git_format_patch_opt);
+    - 	free(to_free);
+    - 	string_list_clear(&exec, 0);
+    + 	free(squash_onto_name);
+    + 	free(keep_base_onto_name);
+ 9:  fd9c7a5547c =  8:  84343ea6bf6 commit.c: free() revs.commit in get_fork_point()
+-- 
+2.39.0.1225.g30a3d88132d
+
