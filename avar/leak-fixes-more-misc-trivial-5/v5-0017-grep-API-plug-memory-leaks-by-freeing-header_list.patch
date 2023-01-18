@@ -1,0 +1,46 @@
+From 6a8f4a567aa5cbd1bd6375b0f50cb637325be308 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-17.19-6a8f4a567aa-20230118T120334Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.19-00000000000-20230118T120334Z-avarab@gmail.com>
+References: <cover-v4-00.19-00000000000-20230117T151201Z-avarab@gmail.com>
+	<cover-v5-00.19-00000000000-20230118T120334Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 28 Dec 2022 16:35:22 +0100
+Subject: [PATCH v5 17/19] grep API: plug memory leaks by freeing "header_list"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the "header_list" struct member was added in [1] it wasn't made
+to free the list using loop added for the adjacent "pattern_list"
+member, see [2] for when we started freeing it.
+
+This makes e.g. this command leak-free when run on git.git:
+
+	./git -P log -1 --color=always --author=A origin/master
+
+1. 80235ba79ef ("log --author=me --grep=it" should find intersection,
+   not union, 2010-01-17)
+2. b48fb5b6a95 (grep: free expressions and patterns when done.,
+   2006-09-27)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ grep.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/grep.c b/grep.c
+index a4450df4559..c908535e0d8 100644
+--- a/grep.c
++++ b/grep.c
+@@ -795,6 +795,7 @@ static void free_grep_pat(struct grep_pat *pattern)
+ void free_grep_patterns(struct grep_opt *opt)
+ {
+ 	free_grep_pat(opt->pattern_list);
++	free_grep_pat(opt->header_list);
+ 
+ 	if (opt->pattern_expression)
+ 		free_pattern_expr(opt->pattern_expression);
+-- 
+2.39.0.1225.g30a3d88132d
+

@@ -1,0 +1,100 @@
+From 1fac90c306ad39144accb31018c3f18ebf1a0bb6 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-07.19-1fac90c306a-20230118T120334Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.19-00000000000-20230118T120334Z-avarab@gmail.com>
+References: <cover-v4-00.19-00000000000-20230117T151201Z-avarab@gmail.com>
+	<cover-v5-00.19-00000000000-20230118T120334Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 13 Oct 2022 12:54:03 +0200
+Subject: [PATCH v5 07/19] repack: fix leaks on error with "goto cleanup"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change cmd_repack() to "goto cleanup" rather than "return ret" on
+error, when we returned we'd potentially skip cleaning up the
+string_lists and other data we'd allocated in this function.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/repack.c                    | 13 +++++++------
+ t/t6011-rev-list-with-bad-commit.sh |  1 +
+ 2 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/builtin/repack.c b/builtin/repack.c
+index c1402ad038f..f6493795318 100644
+--- a/builtin/repack.c
++++ b/builtin/repack.c
+@@ -948,7 +948,7 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 
+ 	ret = start_command(&cmd);
+ 	if (ret)
+-		return ret;
++		goto cleanup;
+ 
+ 	if (geometry) {
+ 		FILE *in = xfdopen(cmd.in, "w");
+@@ -977,7 +977,7 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 	fclose(out);
+ 	ret = finish_command(&cmd);
+ 	if (ret)
+-		return ret;
++		goto cleanup;
+ 
+ 	if (!names.nr && !po_args.quiet)
+ 		printf_ln(_("Nothing new to pack."));
+@@ -1007,7 +1007,7 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 				       &existing_nonkept_packs,
+ 				       &existing_kept_packs);
+ 		if (ret)
+-			return ret;
++			goto cleanup;
+ 
+ 		if (delete_redundant && expire_to) {
+ 			/*
+@@ -1039,7 +1039,7 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 					       &existing_nonkept_packs,
+ 					       &existing_kept_packs);
+ 			if (ret)
+-				return ret;
++				goto cleanup;
+ 		}
+ 	}
+ 
+@@ -1115,7 +1115,7 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 		string_list_clear(&include, 0);
+ 
+ 		if (ret)
+-			return ret;
++			goto cleanup;
+ 	}
+ 
+ 	reprepare_packed_git(the_repository);
+@@ -1172,10 +1172,11 @@ int cmd_repack(int argc, const char **argv, const char *prefix)
+ 		write_midx_file(get_object_directory(), NULL, NULL, flags);
+ 	}
+ 
++cleanup:
+ 	string_list_clear(&names, 1);
+ 	string_list_clear(&existing_nonkept_packs, 0);
+ 	string_list_clear(&existing_kept_packs, 0);
+ 	clear_pack_geometry(geometry);
+ 
+-	return 0;
++	return ret;
+ }
+diff --git a/t/t6011-rev-list-with-bad-commit.sh b/t/t6011-rev-list-with-bad-commit.sh
+index bad02cf5b83..b2e422cf0f7 100755
+--- a/t/t6011-rev-list-with-bad-commit.sh
++++ b/t/t6011-rev-list-with-bad-commit.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git rev-list should notice bad commits'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ # Note:
+-- 
+2.39.0.1225.g30a3d88132d
+
