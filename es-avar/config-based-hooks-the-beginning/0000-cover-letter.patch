@@ -1,7 +1,7 @@
 From cb9ef7a89c42b9c925a7e926754c02d690f6191e Mon Sep 17 00:00:00 2001
-Message-Id: <cover-0.5-00000000000-20230123T170349Z-avarab@gmail.com>
+Message-Id: <cover-0.5-00000000000-20230123T170414Z-avarab@gmail.com>
 From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-Date: Mon, 23 Jan 2023 18:03:49 +0100
+Date: Mon, 23 Jan 2023 18:04:14 +0100
 Subject: [PATCH 0/5] *** SUBJECT HERE ***
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -49,82 +49,7 @@ Range-diff:
 18:  e2c94d95427 <  -:  ----------- read-cache: convert post-index-change to use hook.h
 19:  fa7d0d24ea2 <  -:  ----------- receive-pack: convert push-to-checkout hook to hook.h
 20:  428bb5a6792 <  -:  ----------- run-command: remove old run_hook_{le,ve}() hook API
-34:  a20ad847c14 !  1:  351c6a55a41 post-update: use hook.h library
-    @@
-      ## Metadata ##
-    -Author: Emily Shaffer <emilyshaffer@google.com>
-    +Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## Commit message ##
-    -    post-update: use hook.h library
-    +    run-command.c: remove dead assignment in while-loop
-    +
-    +    Remove code that's been unused since it was added in
-    +    c553c72eed6 (run-command: add an asynchronous parallel child
-    +    processor, 2015-12-15), the next use of "i" in this function is:
-    +
-    +            for (i = 0; ...
-    +
-    +    So we'll always clobber the "i" that's set here. Presumably the "i"
-    +    assignment is an artifact of WIP code that made it into our tree.
-    +
-    +    A subsequent commit will need to adjust the type of the "i" variable
-    +    in the otherwise unrelated for-loop, which is why this is being
-    +    removed now.
-     
-    -    Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-    - ## builtin/receive-pack.c ##
-    -@@ builtin/receive-pack.c: static const char *update(struct command *cmd, struct shallow_info *si)
-    - static void run_update_post_hook(struct command *commands)
-    + ## run-command.c ##
-    +@@ run-command.c: static void pp_buffer_stderr(struct parallel_processes *pp,
-    + 			     const struct run_process_parallel_opts *opts,
-    + 			     int output_timeout)
-      {
-    - 	struct command *cmd;
-    --	struct child_process proc = CHILD_PROCESS_INIT;
-    --	const char *hook;
-    +-	int i;
-     -
-    --	hook = find_hook("post-update");
-    --	if (!hook)
-    --		return;
-    -+	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
-    - 
-    - 	for (cmd = commands; cmd; cmd = cmd->next) {
-    - 		if (cmd->error_string || cmd->did_not_exist)
-    +-	while ((i = poll(pp->pfd, opts->processes, output_timeout) < 0)) {
-    ++	while (poll(pp->pfd, opts->processes, output_timeout) < 0) {
-    + 		if (errno == EINTR)
-      			continue;
-    --		if (!proc.args.nr)
-    --			strvec_push(&proc.args, hook);
-    --		strvec_push(&proc.args, cmd->ref_name);
-    -+		strvec_push(&opt.args, cmd->ref_name);
-    - 	}
-    --	if (!proc.args.nr)
-    -+	if (!opt.args.nr)
-    - 		return;
-    - 
-    --	proc.no_stdin = 1;
-    --	proc.stdout_to_stderr = 1;
-    --	proc.err = use_sideband ? -1 : 0;
-    --	proc.trace2_hook_name = "post-update";
-    -+	if (use_sideband)
-    -+		opt.consume_sideband = hook_output_to_sideband;
-    - 
-    --	if (!start_command(&proc)) {
-    --		if (use_sideband)
-    --			copy_to_sideband(proc.err, -1, NULL);
-    --		finish_command(&proc);
-    --	}
-    -+	run_hooks_oneshot("post-update", &opt);
-    - }
-    - 
-    - static void check_aliased_update_internal(struct command *cmd,
-    + 		pp_cleanup(pp, opts);
+ -:  ----------- >  1:  351c6a55a41 run-command.c: remove dead assignment in while-loop
 21:  994f6ad8602 !  2:  81eef2f60a0 run-command: allow stdin for run_processes_parallel
     @@ Commit message
          Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
@@ -242,139 +167,7 @@ Range-diff:
     + };
     + 
     + #define RUN_HOOKS_OPT_INIT { \
-26:  48a380b3a91 !  4:  7a55c95f60f hook: convert 'post-rewrite' hook in sequencer.c to hook.h
-    @@ Metadata
-     Author: Emily Shaffer <emilyshaffer@google.com>
-     
-      ## Commit message ##
-    -    hook: convert 'post-rewrite' hook in sequencer.c to hook.h
-    +    sequencer: use the new hook API for the simpler "post-rewrite" call
-     
-    -    By using 'hook.h' for 'post-rewrite', we simplify hook invocations by
-    -    not needing to put together our own 'struct child_process'.
-    +    Change the invocation of the "post-rewrite" hook added in
-    +    795160457db (sequencer (rebase -i): run the post-rewrite hook, if
-    +    needed, 2017-01-02) to use the new hook API.
-     
-    -    The signal handling that's being removed by this commit now takes
-    -    place in run-command.h:run_processes_parallel(), so it is OK to remove
-    -    them here.
-    +    This leaves the more complex "post-rewrite" invocation added in
-    +    a87a6f3c98e (commit: move post-rewrite code to libgit, 2017-11-17)
-    +    here in sequencer.c unconverted. That'll be done in a subsequent
-    +    commit.
-     
-         Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
-         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
-     
-      ## sequencer.c ##
-    -@@
-    - #include "commit-reach.h"
-    - #include "rebase-interactive.h"
-    - #include "reset.h"
-    -+#include "string-list.h"
-    - 
-    - #define GIT_REFLOG_ACTION "GIT_REFLOG_ACTION"
-    - 
-    -@@ sequencer.c: int update_head_with_reflog(const struct commit *old_head,
-    - static int run_rewrite_hook(const struct object_id *oldoid,
-    - 			    const struct object_id *newoid)
-    - {
-    --	struct child_process proc = CHILD_PROCESS_INIT;
-    --	const char *argv[3];
-    -+	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
-    -+	struct strbuf tmp = STRBUF_INIT;
-    -+	struct string_list to_stdin = STRING_LIST_INIT_DUP;
-    - 	int code;
-    --	struct strbuf sb = STRBUF_INIT;
-    - 
-    --	argv[0] = find_hook("post-rewrite");
-    --	if (!argv[0])
-    --		return 0;
-    -+	strvec_push(&opt.args, "amend");
-    - 
-    --	argv[1] = "amend";
-    --	argv[2] = NULL;
-    --
-    --	proc.argv = argv;
-    --	proc.in = -1;
-    --	proc.stdout_to_stderr = 1;
-    --	proc.trace2_hook_name = "post-rewrite";
-    --
-    --	code = start_command(&proc);
-    --	if (code)
-    --		return code;
-    --	strbuf_addf(&sb, "%s %s\n", oid_to_hex(oldoid), oid_to_hex(newoid));
-    --	sigchain_push(SIGPIPE, SIG_IGN);
-    --	write_in_full(proc.in, sb.buf, sb.len);
-    --	close(proc.in);
-    --	strbuf_release(&sb);
-    --	sigchain_pop(SIGPIPE);
-    --	return finish_command(&proc);
-    -+	strbuf_addf(&tmp,
-    -+		    "%s %s",
-    -+		    oid_to_hex(oldoid),
-    -+		    oid_to_hex(newoid));
-    -+	string_list_append(&to_stdin, tmp.buf);
-    -+
-    -+	opt.feed_pipe = pipe_from_string_list;
-    -+	opt.feed_pipe_ctx = &to_stdin;
-    -+
-    -+	code = run_hooks_oneshot("post-rewrite", &opt);
-    -+
-    -+	strbuf_release(&tmp);
-    -+	string_list_clear(&to_stdin, 0);
-    -+	return code;
-    - }
-    - 
-    - void commit_post_rewrite(struct repository *r,
-     @@ sequencer.c: static int pick_commits(struct repository *r,
-    - 		flush_rewritten_pending();
-      		if (!stat(rebase_path_rewritten_list(), &st) &&
-      				st.st_size > 0) {
-    --			struct child_process child = CHILD_PROCESS_INIT;
-    + 			struct child_process child = CHILD_PROCESS_INIT;
-     -			const char *post_rewrite_hook =
-     -				find_hook("post-rewrite");
-    --
-    --			child.in = open(rebase_path_rewritten_list(), O_RDONLY);
-    --			child.git_cmd = 1;
-    --			strvec_push(&child.args, "notes");
-    --			strvec_push(&child.args, "copy");
-    --			strvec_push(&child.args, "--for-rewrite=rebase");
-    -+			struct child_process notes_cp = CHILD_PROCESS_INIT;
-     +			struct run_hooks_opt hook_opt = RUN_HOOKS_OPT_INIT;
-    -+
-    -+			notes_cp.in = open(rebase_path_rewritten_list(), O_RDONLY);
-    -+			notes_cp.git_cmd = 1;
-    -+			strvec_push(&notes_cp.args, "notes");
-    -+			strvec_push(&notes_cp.args, "copy");
-    -+			strvec_push(&notes_cp.args, "--for-rewrite=rebase");
-    + 
-    + 			child.in = open(rebase_path_rewritten_list(), O_RDONLY);
-    + 			child.git_cmd = 1;
-    +@@ sequencer.c: static int pick_commits(struct repository *r,
-      			/* we don't care if this copying failed */
-    --			run_command(&child);
-    --
-    + 			run_command(&child);
-    + 
-     -			if (post_rewrite_hook) {
-     -				struct child_process hook = CHILD_PROCESS_INIT;
-     -
-    @@ sequencer.c: static int pick_commits(struct repository *r,
-     -				/* we don't care if this hook failed */
-     -				run_command(&hook);
-     -			}
-    -+			run_command(&notes_cp);
-    -+
-     +			hook_opt.path_to_stdin = rebase_path_rewritten_list();
-     +			strvec_push(&hook_opt.args, "rebase");
-    -+			run_hooks_oneshot("post-rewrite", &hook_opt);
-    ++			run_hooks_opt("post-rewrite", &hook_opt);
-      		}
-      		apply_autostash(rebase_path_autostash());
-      
+ -:  ----------- >  4:  7a55c95f60f sequencer: use the new hook API for the simpler "post-rewrite" call
 22:  3ccc654a664 !  5:  cb9ef7a89c4 hook: support passing stdin to hooks
     @@ Metadata
      Author: Emily Shaffer <emilyshaffer@google.com>
@@ -473,6 +266,7 @@ Range-diff:
       
 24:  bb119fa7cc0 <  -:  ----------- run-command: add stdin callback for parallelization
 25:  2439f7752b8 <  -:  ----------- hook: provide stdin by string_list or callback
+26:  48a380b3a91 <  -:  ----------- hook: convert 'post-rewrite' hook in sequencer.c to hook.h
 27:  af6b9292aaa <  -:  ----------- transport: convert pre-push hook to hook.h
 28:  957691f0b6d <  -:  ----------- hook tests: test for exact "pre-push" hook input
 29:  88fe2621549 <  -:  ----------- hook tests: use a modern style for "pre-push" tests
@@ -480,6 +274,7 @@ Range-diff:
 31:  fac56a9d8af <  -:  ----------- run-command: allow capturing of collated output
 32:  7d185cdf9d1 <  -:  ----------- hooks: allow callers to capture output
 33:  c8150e1239f <  -:  ----------- receive-pack: convert 'update' hook to hook.h
+34:  a20ad847c14 <  -:  ----------- post-update: use hook.h library
 35:  79c380be6ed <  -:  ----------- receive-pack: convert receive hooks to hook.h
 36:  fe056098534 <  -:  ----------- hooks: fix a TOCTOU in "did we run a hook?" heuristic
 -- 
