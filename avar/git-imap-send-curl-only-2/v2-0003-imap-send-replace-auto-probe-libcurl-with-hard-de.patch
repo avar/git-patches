@@ -1,0 +1,216 @@
+From 354b6a65a784be6ec075f2ced6268fd84bfe3dca Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.6-354b6a65a78-20230202T093638Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20230202T093638Z-avarab@gmail.com>
+References: <patch-1.1-3bea1312322-20230201T225915Z-avarab@gmail.com> --range-diff=avar/git-imap-send-curl-only>
+	<cover-v2-0.6-00000000000-20230202T093638Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 14 Mar 2022 11:09:27 +0100
+Subject: [PATCH v2 3/6] imap-send: replace auto-probe libcurl with hard
+ dependency
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the "imap-send" command to have a hard dependency on libcurl,
+before this it had an optional dependency on both libcurl and OpenSSL,
+now only the OpenSSL dependency is optional.
+
+This simplifies our dependency matrix by getting rid of yet another
+special-case. Given the prevalence of libcurl and portability of
+libcurl it seems reasonable to say that "git imap-send" cannot be used
+without libcurl, almost everyone building git needs to be able to push
+or pull over http(s), so they'll be building with libcurl already.
+
+So let's remove the previous "USE_CURL_FOR_IMAP_SEND" knob. Whether we
+build git-imap-send or not is now controlled by the "NO_CURL"
+knob.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/imap.txt   |  3 +--
+ Documentation/git-imap-send.txt |  3 +--
+ INSTALL                         |  8 ++++----
+ Makefile                        | 18 +++++-------------
+ imap-send.c                     | 23 ++---------------------
+ 5 files changed, 13 insertions(+), 42 deletions(-)
+
+diff --git a/Documentation/config/imap.txt b/Documentation/config/imap.txt
+index 96b1c0927d8..7f30080c409 100644
+--- a/Documentation/config/imap.txt
++++ b/Documentation/config/imap.txt
+@@ -37,7 +37,6 @@ imap.preformattedHTML::
+ 
+ imap.authMethod::
+ 	Specify authenticate method for authentication with IMAP server.
+-	If Git was built with the NO_CURL option, or if your curl version is older
+-	than 7.34.0, or if you're running git-imap-send with the `--no-curl`
++	If you're running git-imap-send with the `--no-curl`
+ 	option, the only supported method is 'CRAM-MD5'. If this is not set
+ 	then 'git imap-send' uses the basic IMAP plaintext LOGIN command.
+diff --git a/Documentation/git-imap-send.txt b/Documentation/git-imap-send.txt
+index f7b18515141..202e3e59094 100644
+--- a/Documentation/git-imap-send.txt
++++ b/Documentation/git-imap-send.txt
+@@ -44,8 +44,7 @@ OPTIONS
+ 
+ --no-curl::
+ 	Talk to the IMAP server using git's own IMAP routines instead of
+-	using libcurl.  Ignored if Git was built with the NO_OPENSSL option
+-	set.
++	using libcurl.
+ 
+ 
+ CONFIGURATION
+diff --git a/INSTALL b/INSTALL
+index d5694f8c470..d9538bbcb45 100644
+--- a/INSTALL
++++ b/INSTALL
+@@ -129,13 +129,13 @@ Issues of note:
+ 	  itself, e.g. Digest::MD5, File::Spec, File::Temp, Net::Domain,
+ 	  Net::SMTP, and Time::HiRes.
+ 
+-	- git-imap-send needs the OpenSSL library to talk IMAP over SSL if
+-	  you are using libcurl older than 7.34.0.  Otherwise you can use
+-	  NO_OPENSSL without losing git-imap-send.
++	- git-imap-send needs libcurl 7.34.0 or newer, in addition
++	  OpenSSL is needed if using the "imap.tunnel" open to tunnel
++	  over SSL. Define NO_OPENSSL to omit the OpenSSL prerequisite.
+ 
+ 	- "libcurl" library is used for fetching and pushing
+ 	  repositories over http:// or https://, as well as by
+-	  git-imap-send if the curl version is >= 7.34.0. If you do
++	  git-imap-send. If you do
+ 	  not need that functionality, use NO_CURL to build without
+ 	  it.
+ 
+diff --git a/Makefile b/Makefile
+index 45bd6ac9c3e..b08a855198c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -773,7 +773,9 @@ PROGRAMS += $(EXTRA_PROGRAMS)
+ 
+ PROGRAM_OBJS += daemon.o
+ PROGRAM_OBJS += http-backend.o
++ifndef NO_CURL
+ PROGRAM_OBJS += imap-send.o
++endif
+ PROGRAM_OBJS += sh-i18n--envsubst.o
+ PROGRAM_OBJS += shell.o
+ .PHONY: program-objs
+@@ -1583,7 +1585,6 @@ ifdef HAVE_ALLOCA_H
+ 	BASIC_CFLAGS += -DHAVE_ALLOCA_H
+ endif
+ 
+-IMAP_SEND_BUILDDEPS =
+ IMAP_SEND_LDFLAGS =
+ 
+ ifdef NO_CURL
+@@ -1592,6 +1593,7 @@ ifdef NO_CURL
+ 	REMOTE_CURL_ALIASES =
+ 	REMOTE_CURL_NAMES =
+ 	EXCLUDED_PROGRAMS += git-http-fetch git-http-push
++	EXCLUDED_PROGRAMS += git-imap-send
+ else
+ 	ifdef CURLDIR
+ 		# Try "-Wl,-rpath=$(CURLDIR)/$(lib)" in such a case.
+@@ -1617,19 +1619,9 @@ else
+ 	REMOTE_CURL_NAMES = $(REMOTE_CURL_PRIMARY) $(REMOTE_CURL_ALIASES)
+ 	PROGRAM_OBJS += http-fetch.o
+ 	PROGRAMS += $(REMOTE_CURL_NAMES)
++	IMAP_SEND_LDFLAGS += $(CURL_LIBCURL)
+ 	ifndef NO_EXPAT
+ 		PROGRAM_OBJS += http-push.o
+-	endif
+-	curl_check := $(shell (echo 072200; $(CURL_CONFIG) --vernum | sed -e '/^70[BC]/s/^/0/') 2>/dev/null | sort -r | sed -ne 2p)
+-	ifeq "$(curl_check)" "072200"
+-		USE_CURL_FOR_IMAP_SEND = YesPlease
+-	endif
+-	ifdef USE_CURL_FOR_IMAP_SEND
+-		BASIC_CFLAGS += -DUSE_CURL_FOR_IMAP_SEND
+-		IMAP_SEND_BUILDDEPS = http.o
+-		IMAP_SEND_LDFLAGS += $(CURL_LIBCURL)
+-	endif
+-	ifndef NO_EXPAT
+ 		ifdef EXPATDIR
+ 			BASIC_CFLAGS += -I$(EXPATDIR)/include
+ 			EXPAT_LIBEXPAT = -L$(EXPATDIR)/$(lib) $(CC_LD_DYNPATH)$(EXPATDIR)/$(lib) -lexpat
+@@ -2786,7 +2778,7 @@ endif
+ git-%$X: %.o GIT-LDFLAGS $(GITLIBS)
+ 	$(QUIET_LINK)$(CC) $(ALL_CFLAGS) -o $@ $(ALL_LDFLAGS) $(filter %.o,$^) $(LIBS)
+ 
+-git-imap-send$X: imap-send.o $(IMAP_SEND_BUILDDEPS) GIT-LDFLAGS $(GITLIBS)
++git-imap-send$X: imap-send.o http.o GIT-LDFLAGS $(GITLIBS)
+ 	$(QUIET_LINK)$(CC) $(ALL_CFLAGS) -o $@ $(ALL_LDFLAGS) $(filter %.o,$^) \
+ 		$(IMAP_SEND_LDFLAGS) $(LIBS)
+ 
+diff --git a/imap-send.c b/imap-send.c
+index b7902babd4c..26f8f01e97a 100644
+--- a/imap-send.c
++++ b/imap-send.c
+@@ -30,20 +30,10 @@
+ #if defined(NO_OPENSSL) && !defined(HAVE_OPENSSL_CSPRNG)
+ typedef void *SSL;
+ #endif
+-#ifdef USE_CURL_FOR_IMAP_SEND
+ #include "http.h"
+-#endif
+-
+-#if defined(USE_CURL_FOR_IMAP_SEND)
+-/* Always default to curl if it's available. */
+-#define USE_CURL_DEFAULT 1
+-#else
+-/* We don't have curl, so continue to use the historical implementation */
+-#define USE_CURL_DEFAULT 0
+-#endif
+ 
+ static int verbosity;
+-static int use_curl = USE_CURL_DEFAULT;
++static int use_curl = 1;
+ 
+ static const char * const imap_send_usage[] = { "git imap-send [-v] [-q] [--[no-]curl] < <mbox>", NULL };
+ 
+@@ -1396,7 +1386,6 @@ static int append_msgs_to_imap(struct imap_server_conf *server,
+ 	return 0;
+ }
+ 
+-#ifdef USE_CURL_FOR_IMAP_SEND
+ static CURL *setup_curl(struct imap_server_conf *srvc, struct credential *cred)
+ {
+ 	CURL *curl;
+@@ -1515,7 +1504,6 @@ static int curl_append_msgs_to_imap(struct imap_server_conf *server,
+ 
+ 	return res != CURLE_OK;
+ }
+-#endif
+ 
+ int cmd_main(int argc, const char **argv)
+ {
+@@ -1531,12 +1519,7 @@ int cmd_main(int argc, const char **argv)
+ 	if (argc)
+ 		usage_with_options(imap_send_usage, imap_send_options);
+ 
+-#ifndef USE_CURL_FOR_IMAP_SEND
+-	if (use_curl) {
+-		warning("--curl not supported in this build");
+-		use_curl = 0;
+-	}
+-#elif defined(NO_OPENSSL)
++#if defined(NO_OPENSSL)
+ 	if (!use_curl) {
+ 		warning("--no-curl not supported in this build");
+ 		use_curl = 1;
+@@ -1580,10 +1563,8 @@ int cmd_main(int argc, const char **argv)
+ 	if (server.tunnel)
+ 		return append_msgs_to_imap(&server, &all_msgs, total);
+ 
+-#ifdef USE_CURL_FOR_IMAP_SEND
+ 	if (use_curl)
+ 		return curl_append_msgs_to_imap(&server, &all_msgs, total);
+-#endif
+ 
+ 	return append_msgs_to_imap(&server, &all_msgs, total);
+ }
+-- 
+2.39.1.1392.g63e6d408230
+

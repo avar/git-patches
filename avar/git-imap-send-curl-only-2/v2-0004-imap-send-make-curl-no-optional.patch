@@ -1,0 +1,117 @@
+From e9cc9bbed1e9e56d30410c26398003324e739e3a Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.6-e9cc9bbed1e-20230202T093638Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20230202T093638Z-avarab@gmail.com>
+References: <patch-1.1-3bea1312322-20230201T225915Z-avarab@gmail.com> --range-diff=avar/git-imap-send-curl-only>
+	<cover-v2-0.6-00000000000-20230202T093638Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 14 Mar 2022 11:09:27 +0100
+Subject: [PATCH v2 4/6] imap-send: make --curl no-optional
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In the preceding commit the old "USE_CURL_FOR_IMAP_SEND" define became
+always true, as we now require libcurl for git-imap-send.
+
+But as we require OpenSSL for the "tunnel" mode we still need to keep
+the OpenSSL codepath around (ee [1] for an attempt to remove it). But
+we don't need to keep supporting "--no-curl" to bypass the curl
+codepath for the non-tunnel mode.
+
+As almost all users of "git" use a version of it built with libcurl
+we're making what's already the preferred & default codepath
+mandatory.
+
+The "imap.authMethod" documentation being changed here has always been
+incomplete. It only mentioned "--no-curl", but omitted mentioning that
+the same applied for "imap.tunnel". Let's fix it as we're amending it
+to be correct, now (as before) with "imap.tunnel" only
+"imap.authMethod=CRAM-MD5" is supported.
+
+1. https://lore.kernel.org/git/ab866314-608b-eaca-b335-12cffe165526@morey-chaisemartin.com/
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/config/imap.txt   |  4 ++--
+ Documentation/git-imap-send.txt | 10 ----------
+ imap-send.c                     | 15 ++++-----------
+ 3 files changed, 6 insertions(+), 23 deletions(-)
+
+diff --git a/Documentation/config/imap.txt b/Documentation/config/imap.txt
+index 7f30080c409..5cc46d87216 100644
+--- a/Documentation/config/imap.txt
++++ b/Documentation/config/imap.txt
+@@ -37,6 +37,6 @@ imap.preformattedHTML::
+ 
+ imap.authMethod::
+ 	Specify authenticate method for authentication with IMAP server.
+-	If you're running git-imap-send with the `--no-curl`
+-	option, the only supported method is 'CRAM-MD5'. If this is not set
++	If you're using imap.tunnel, the only supported method is 'CRAM-MD5'.
++	If this is not set
+ 	then 'git imap-send' uses the basic IMAP plaintext LOGIN command.
+diff --git a/Documentation/git-imap-send.txt b/Documentation/git-imap-send.txt
+index 202e3e59094..ddbbe819315 100644
+--- a/Documentation/git-imap-send.txt
++++ b/Documentation/git-imap-send.txt
+@@ -37,16 +37,6 @@ OPTIONS
+ --quiet::
+ 	Be quiet.
+ 
+---curl::
+-	Use libcurl to communicate with the IMAP server, unless tunneling
+-	into it.  Ignored if Git was built without the USE_CURL_FOR_IMAP_SEND
+-	option set.
+-
+---no-curl::
+-	Talk to the IMAP server using git's own IMAP routines instead of
+-	using libcurl.
+-
+-
+ CONFIGURATION
+ -------------
+ 
+diff --git a/imap-send.c b/imap-send.c
+index 26f8f01e97a..9d7cb22285d 100644
+--- a/imap-send.c
++++ b/imap-send.c
+@@ -39,7 +39,7 @@ static const char * const imap_send_usage[] = { "git imap-send [-v] [-q] [--[no-
+ 
+ static struct option imap_send_options[] = {
+ 	OPT__VERBOSITY(&verbosity),
+-	OPT_BOOL(0, "curl", &use_curl, "use libcurl to communicate with the IMAP server"),
++	OPT_HIDDEN_BOOL(0, "curl", &use_curl, "use libcurl to communicate with the IMAP server"),
+ 	OPT_END()
+ };
+ 
+@@ -1519,12 +1519,8 @@ int cmd_main(int argc, const char **argv)
+ 	if (argc)
+ 		usage_with_options(imap_send_usage, imap_send_options);
+ 
+-#if defined(NO_OPENSSL)
+-	if (!use_curl) {
+-		warning("--no-curl not supported in this build");
+-		use_curl = 1;
+-	}
+-#endif
++	if (!use_curl)
++		die(_("the --no-curl option to imap-send has been deprecated"));
+ 
+ 	if (!server.port)
+ 		server.port = server.use_ssl ? 993 : 143;
+@@ -1560,10 +1556,7 @@ int cmd_main(int argc, const char **argv)
+ 
+ 	/* write it to the imap server */
+ 
+-	if (server.tunnel)
+-		return append_msgs_to_imap(&server, &all_msgs, total);
+-
+-	if (use_curl)
++	if (!server.tunnel)
+ 		return curl_append_msgs_to_imap(&server, &all_msgs, total);
+ 
+ 	return append_msgs_to_imap(&server, &all_msgs, total);
+-- 
+2.39.1.1392.g63e6d408230
+

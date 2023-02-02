@@ -1,0 +1,90 @@
+From 686febb8cdc9438498f50e593c23f6e8be8a9b93 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-6.6-686febb8cdc-20230202T093638Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20230202T093638Z-avarab@gmail.com>
+References: <patch-1.1-3bea1312322-20230201T225915Z-avarab@gmail.com> --range-diff=avar/git-imap-send-curl-only>
+	<cover-v2-0.6-00000000000-20230202T093638Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 2 Feb 2023 09:48:22 +0100
+Subject: [PATCH v2 6/6] imap-send: correctly report "host" when using "tunnel"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Before [1] we'd force the "imap.host" to be set, even if the
+"imap.tunnel" was set, and then proceed to not use the "host" for
+establishing a connection, as we'd use the tunneling command.
+
+However, we'd still use the "imap.host" if it was set as the "host"
+field given to the credential helper, and in messages that were shared
+with the non-tunnel mode, until a preceding commit made these OpenSSL
+codepaths tunnel-only.
+
+Let's always give "host=tunnel" to the credential helper when in the
+"imap.tunnel" mode, and rephrase the relevant messages to indicate
+that we're tunneling. This changes the existing behavior, but that
+behavior was emergent and didn't make much sense. If we were using
+"imap.tunnel" the value in "imap.host" might be entirely unrelated to
+the host we're tunneling to. Let's not pretend to know more than we do
+in that case.
+
+1. 34b5cd1fe9f (Don't force imap.host to be set when imap.tunnel is
+   set, 2008-04-22)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ imap-send.c | 17 +++++++----------
+ 1 file changed, 7 insertions(+), 10 deletions(-)
+
+diff --git a/imap-send.c b/imap-send.c
+index 9712a8d4f93..24b30c143a7 100644
+--- a/imap-send.c
++++ b/imap-send.c
+@@ -917,7 +917,7 @@ static void server_fill_credential(struct imap_server_conf *srvc, struct credent
+ 		return;
+ 
+ 	cred->protocol = xstrdup(srvc->use_ssl ? "imaps" : "imap");
+-	cred->host = xstrdup(srvc->host);
++	cred->host = xstrdup(srvc->tunnel ? "tunnel" : srvc->host);
+ 
+ 	cred->username = xstrdup_or_null(srvc->user);
+ 	cred->password = xstrdup_or_null(srvc->pass);
+@@ -1004,7 +1004,7 @@ static struct imap_store *imap_open_store(struct imap_server_conf *srvc, const c
+ 				if (!CAP(AUTH_CRAM_MD5)) {
+ 					fprintf(stderr, "You specified "
+ 						"CRAM-MD5 as authentication method, "
+-						"but %s doesn't support it.\n", srvc->host);
++						"but tunnel doesn't support it.\n");
+ 					goto bail;
+ 				}
+ 				/* CRAM-MD5 */
+@@ -1021,8 +1021,8 @@ static struct imap_store *imap_open_store(struct imap_server_conf *srvc, const c
+ 			}
+ 		} else {
+ 			if (CAP(NOLOGIN)) {
+-				fprintf(stderr, "Skipping account %s@%s, server forbids LOGIN\n",
+-					srvc->user, srvc->host);
++				fprintf(stderr, "Skipping account %s, server forbids LOGIN\n",
++					srvc->user);
+ 				goto bail;
+ 			}
+ 			if (!imap->buf.sock.ssl)
+@@ -1434,12 +1434,9 @@ int cmd_main(int argc, const char **argv)
+ 		fprintf(stderr, "no imap store specified\n");
+ 		return 1;
+ 	}
+-	if (!server.host) {
+-		if (!server.tunnel) {
+-			fprintf(stderr, "no imap host specified\n");
+-			return 1;
+-		}
+-		server.host = "tunnel";
++	if (!server.host && !server.tunnel) {
++		fprintf(stderr, "no imap host specified\n");
++		return 1;
+ 	}
+ 
+ 	/* read the messages */
+-- 
+2.39.1.1392.g63e6d408230
+
