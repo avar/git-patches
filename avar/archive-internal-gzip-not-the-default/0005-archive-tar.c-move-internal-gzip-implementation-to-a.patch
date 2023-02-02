@@ -1,0 +1,94 @@
+From 498037b2e657eae4baa3be7018ad1ceea5dbad5d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-5.9-498037b2e65-20230202T091409Z-avarab@gmail.com>
+In-Reply-To: <cover-0.9-00000000000-20230202T091409Z-avarab@gmail.com>
+References: <230131.86357rrtsg.gmgdl@evledraar.gmail.com>
+	<cover-0.9-00000000000-20230202T091409Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Feb 2023 10:23:55 +0100
+Subject: [PATCH 5/9] archive-tar.c: move internal gzip implementation to a
+ function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the code added in 76d7602631a (archive-tar: add internal gzip
+implementation, 2022-06-15) to call the magic "git archive gzip"
+command as a function.
+
+A subsequent commit will start using this as a fallback, but for now
+there's no functional changes here.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ archive-tar.c | 43 +++++++++++++++++++++++++------------------
+ 1 file changed, 25 insertions(+), 18 deletions(-)
+
+diff --git a/archive-tar.c b/archive-tar.c
+index 8c5de949c64..dfc133deac7 100644
+--- a/archive-tar.c
++++ b/archive-tar.c
+@@ -465,12 +465,33 @@ static void tgz_write_block(const void *data)
+ 
+ static const char internal_gzip_command[] = "git archive gzip";
+ 
+-static int write_tar_filter_archive(const struct archiver *ar,
+-				    struct archiver_args *args)
++static int gzip_internally(const struct archiver *ar,
++			   struct archiver_args *args)
+ {
+ #if ZLIB_VERNUM >= 0x1221
+ 	struct gz_header_s gzhead = { .os = 3 }; /* Unix, for reproducibility */
+ #endif
++	int r;
++
++	write_block = tgz_write_block;
++	git_deflate_init_gzip(&gzstream, args->compression_level);
++#if ZLIB_VERNUM >= 0x1221
++	if (deflateSetHeader(&gzstream.z, &gzhead) != Z_OK)
++		BUG("deflateSetHeader() called too late");
++#endif
++	gzstream.next_out = outbuf;
++	gzstream.avail_out = sizeof(outbuf);
++
++	r = write_tar_archive(ar, args);
++
++	tgz_deflate(Z_FINISH);
++	git_deflate_end(&gzstream);
++	return r;
++}
++
++static int write_tar_filter_archive(const struct archiver *ar,
++				    struct archiver_args *args)
++{
+ 	struct strbuf cmd = STRBUF_INIT;
+ 	struct child_process filter = CHILD_PROCESS_INIT;
+ 	int r;
+@@ -478,22 +499,8 @@ static int write_tar_filter_archive(const struct archiver *ar,
+ 	if (!ar->filter_command)
+ 		BUG("tar-filter archiver called with no filter defined");
+ 
+-	if (!strcmp(ar->filter_command, internal_gzip_command)) {
+-		write_block = tgz_write_block;
+-		git_deflate_init_gzip(&gzstream, args->compression_level);
+-#if ZLIB_VERNUM >= 0x1221
+-		if (deflateSetHeader(&gzstream.z, &gzhead) != Z_OK)
+-			BUG("deflateSetHeader() called too late");
+-#endif
+-		gzstream.next_out = outbuf;
+-		gzstream.avail_out = sizeof(outbuf);
+-
+-		r = write_tar_archive(ar, args);
+-
+-		tgz_deflate(Z_FINISH);
+-		git_deflate_end(&gzstream);
+-		return r;
+-	}
++	if (!strcmp(ar->filter_command, internal_gzip_command))
++		return gzip_internally(ar, args);
+ 
+ 	strbuf_addstr(&cmd, ar->filter_command);
+ 	if (args->compression_level >= 0)
+-- 
+2.39.1.1392.g63e6d408230
+

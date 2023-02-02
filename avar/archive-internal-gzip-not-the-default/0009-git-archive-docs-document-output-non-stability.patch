@@ -1,0 +1,148 @@
+From b40833b216872ce99366d02a86543d036362854f Mon Sep 17 00:00:00 2001
+Message-Id: <patch-9.9-b40833b2168-20230202T091409Z-avarab@gmail.com>
+In-Reply-To: <cover-0.9-00000000000-20230202T091409Z-avarab@gmail.com>
+References: <230131.86357rrtsg.gmgdl@evledraar.gmail.com>
+	<cover-0.9-00000000000-20230202T091409Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 1 Feb 2023 13:25:03 +0100
+Subject: [PATCH 9/9] git archive docs: document output non-stability
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There's an ongoing discussion about the output stability of "git
+archive"[1] as a follow-up to the incident GitHub experienced when
+upgrading to v2.38.0[2].
+
+In a preceding commit we reverted the immediate cause of that
+incident, which was that we'd moved away from "gzip -cn" as the
+default compression method in favor of the internal "git archive gzip"
+in [3].
+
+Let's follow that up by documenting the non-promises we've always
+maintained with regards to "git archive"'s output stability. We may
+want to make stronger promises in this area, but this change avoids
+addressing that question.
+
+Instead we're discussing that we've changed this in the past, aren't
+changing it willy-nilly, but it may change again in the future. The
+only new promise here that we haven't explicitly maintained
+historically is that we're promising to forever shell out to the
+system's "gzip" by default. Whether it produces stable output once
+that happens we leave up to the "gzip" tool.
+
+We're also discussing the caveats & differences in output with with
+SHA-1 and SHA-256 repositories, and trying to steer users towards more
+stable alternatives. First by using "git verify-tag" and the like to
+verify releases, and if they really must checksum generated output, to
+encourage them to at least checksum the "tar" output contained within
+the compressed output, not the compressed output itself.
+
+1. https://lore.kernel.org/git/a812a664-67ea-c0ba-599f-cb79e2d96694@gmail.com/
+2. https://github.com/orgs/community/discussions/45830
+3. 4f4be00d302 (archive-tar: use internal gzip by default, 2022-06-15)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-archive.txt | 70 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 69 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/git-archive.txt b/Documentation/git-archive.txt
+index 268e797f03a..78f1b033cb7 100644
+--- a/Documentation/git-archive.txt
++++ b/Documentation/git-archive.txt
+@@ -14,6 +14,7 @@ SYNOPSIS
+ 	      [--remote=<repo> [--exec=<git-upload-archive>]] <tree-ish>
+ 	      [<path>...]
+ 
++[[DESCRIPTION]]
+ DESCRIPTION
+ -----------
+ Creates an archive of the specified format containing the tree
+@@ -28,7 +29,7 @@ case the commit time as recorded in the referenced commit object is
+ used instead.  Additionally the commit ID is stored in a global
+ extended pax header if the tar format is used; it can be extracted
+ using 'git get-tar-commit-id'. In ZIP files it is stored as a file
+-comment.
++comment. See the <<STABILITY,OUTPUT STABILITY>> section below.
+ 
+ OPTIONS
+ -------
+@@ -202,6 +203,73 @@ EXAMPLES
+ 	You can use it specifying `--format=tar.xz`, or by creating an
+ 	output file like `-o foo.tar.xz`.
+ 
++[[STABILITY]]
++OUTPUT STABILITY
++----------------
++
++The output of 'git archive' is not guaranteed to be stable, and may
++change between versions.
++
++There are many valid ways to encode the same data in the tar format
++itself. For non-`tar` arguments to the `--format` option we rely on
++external tools (or libraries) for compressing the output we generate.
++
++The `tar` format contains the commit ID in the pax header (see the
++<<DESCRIPTION>> section above). A repository that's been migrated from
++SHA-1 to SHA-256 will therefore have different `tar` output for the
++"same" commit. See `extension.objectFormat` in linkgit:git-config[1].
++
++Instead of relying on the output of `git archive`, you should prefer
++to stick to git's own transport protocols, and e.g. validate releases
++with linkgit:git-tag[1]'s `--verify` option.
++
++Despite the output of `git archive` having never been promised to be
++stable, various users in the wild have come to rely on that being the
++case.
++
++Most notably, large hosting providers provide a way to download a
++given tagged release as a `git archive`. Some downstream tools then
++expect the content of that archive to be stable. When that's changed
++widespread breakage has been observed, see
++https://github.com/orgs/community/discussions/45830 for one such case.
++
++While we won't promise that the output won't change in the future, we
++are aware of these users, and will try to avoid changing it
++willy-nilly. Furthermore, we make the following promises:
++
++* The default gzip compression tool will continue to be gzip(1). If
++  you rely on this being e.g. GNU gzip for the purposes of stability,
++  it's up to you to ensure that its output is stable across
++  versions.
+++
++
++We in turn promise to not e.g. make the internal "git archive gzip"
++implementation the default, as it produces different ouput than
++gzip(1) in some case.
++
++* We will do our best not to change the "tar" output itself, but won't
++  promise that we're never going to change it.
+++
++If you must avoid using "git" itself for the tree validation, you
++should be checksumming the uncompressed "tar" output, not e.g. the
++compressed "tgz" output.
+++
++
++This ensures that you're only relying on the output emitted by git
++itself, and avoiding the additional dependency on external
++compression.
+++
++See
++https://git.kernel.org/pub/scm/linux/kernel/git/mricon/korg-helpers.git/tree/get-verified-tarball
++for an implementation of that workflow.
++
++* We promise that a given version of git will emit stable "tar" output
++  for the same tree ID (but not commit ID, see the discussion in the
++  <<DESCRIPTION>> section above).
+++
++While you shouldn't assume that different versions of git will emit
++the same output, you can assume (e.g. for the purposes of caching)
++that a given version's output is stable.
+ 
+ SEE ALSO
+ --------
+-- 
+2.39.1.1392.g63e6d408230
+
