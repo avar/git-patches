@@ -1,0 +1,87 @@
+From cd3eb9e68ff3c9a11f40ae2f534e4c3bf6dc5a4c Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-08.19-cd3eb9e68ff-20230202T094704Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.19-00000000000-20230202T094704Z-avarab@gmail.com>
+References: <cover-v5-00.19-00000000000-20230118T120334Z-avarab@gmail.com>
+	<cover-v6-00.19-00000000000-20230202T094704Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 22 Apr 2022 12:34:59 +0200
+Subject: [PATCH v6 08/19] worktree: fix a trivial leak in prune_worktrees()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+We were leaking both the "struct strbuf" in prune_worktrees(), as well
+as the "path" we got from should_prune_worktree(). Since these were
+the only two uses of the "struct string_list" let's change it to a
+"DUP" and push these to it with "string_list_append_nodup()".
+
+For the string_list_append_nodup() we could also string_list_append()
+the main_path.buf, and then strbuf_release(&main_path) right away. But
+doing it this way avoids an allocation, as we already have the "struct
+strbuf" prepared for appending to "kept".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/worktree.c         | 6 +++---
+ t/t2401-worktree-prune.sh  | 1 +
+ t/t2406-worktree-repair.sh | 1 +
+ 3 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/builtin/worktree.c b/builtin/worktree.c
+index f51c40f1e1e..254283aa6f5 100644
+--- a/builtin/worktree.c
++++ b/builtin/worktree.c
+@@ -173,7 +173,7 @@ static void prune_worktrees(void)
+ {
+ 	struct strbuf reason = STRBUF_INIT;
+ 	struct strbuf main_path = STRBUF_INIT;
+-	struct string_list kept = STRING_LIST_INIT_NODUP;
++	struct string_list kept = STRING_LIST_INIT_DUP;
+ 	DIR *dir = opendir(git_path("worktrees"));
+ 	struct dirent *d;
+ 	if (!dir)
+@@ -184,14 +184,14 @@ static void prune_worktrees(void)
+ 		if (should_prune_worktree(d->d_name, &reason, &path, expire))
+ 			prune_worktree(d->d_name, reason.buf);
+ 		else if (path)
+-			string_list_append(&kept, path)->util = xstrdup(d->d_name);
++			string_list_append_nodup(&kept, path)->util = xstrdup(d->d_name);
+ 	}
+ 	closedir(dir);
+ 
+ 	strbuf_add_absolute_path(&main_path, get_git_common_dir());
+ 	/* massage main worktree absolute path to match 'gitdir' content */
+ 	strbuf_strip_suffix(&main_path, "/.");
+-	string_list_append(&kept, strbuf_detach(&main_path, NULL));
++	string_list_append_nodup(&kept, strbuf_detach(&main_path, NULL));
+ 	prune_dups(&kept);
+ 	string_list_clear(&kept, 1);
+ 
+diff --git a/t/t2401-worktree-prune.sh b/t/t2401-worktree-prune.sh
+index 3d28c7f06b2..568a47ec426 100755
+--- a/t/t2401-worktree-prune.sh
++++ b/t/t2401-worktree-prune.sh
+@@ -5,6 +5,7 @@ test_description='prune $GIT_DIR/worktrees'
+ GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success initialize '
+diff --git a/t/t2406-worktree-repair.sh b/t/t2406-worktree-repair.sh
+index 5c44453e1c1..8970780efcc 100755
+--- a/t/t2406-worktree-repair.sh
++++ b/t/t2406-worktree-repair.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='test git worktree repair'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success setup '
+-- 
+2.39.1.1392.g63e6d408230
+

@@ -1,0 +1,203 @@
+From fb2d9875c73b27ff459910e0eabe56503cc07568 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-05.19-fb2d9875c73-20230202T094704Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.19-00000000000-20230202T094704Z-avarab@gmail.com>
+References: <cover-v5-00.19-00000000000-20230118T120334Z-avarab@gmail.com>
+	<cover-v6-00.19-00000000000-20230202T094704Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Sat, 26 Nov 2022 00:04:44 +0100
+Subject: [PATCH v6 05/19] various: add missing clear_pathspec(), fix leaks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix memory leaks resulting from a missing clear_pathspec().
+
+- archive.c: Plug a leak in the "struct archiver_args", and
+  clear_pathspec() the "pathspec" member that the "parse_pathspec_arg()"
+  call in this function populates.
+
+- builtin/clean.c: Fix a memory leak that's been with us since
+  893d839970c (clean: convert to use parse_pathspec, 2013-07-14).
+
+- builtin/reset.c: Add clear_pathspec() calls to cmd_reset(),
+  including to the codepaths where we'd return early.
+
+- builtin/stash.c: Call clear_pathspec() on the pathspec initialized
+  in push_stash().
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ archive.c                       |  1 +
+ builtin/clean.c                 |  1 +
+ builtin/reset.c                 | 11 ++++++++---
+ builtin/stash.c                 |  7 +++++--
+ t/t5001-archive-attr.sh         |  1 +
+ t/t5004-archive-corner-cases.sh |  2 ++
+ t/t7105-reset-patch.sh          |  2 ++
+ t/t7106-reset-unborn-branch.sh  |  2 ++
+ t/t7107-reset-pathspec-file.sh  |  1 +
+ t/t7301-clean-interactive.sh    |  1 +
+ 10 files changed, 24 insertions(+), 5 deletions(-)
+
+diff --git a/archive.c b/archive.c
+index 81ff76fce99..f2a8756d84f 100644
+--- a/archive.c
++++ b/archive.c
+@@ -710,6 +710,7 @@ int write_archive(int argc, const char **argv, const char *prefix,
+ 
+ 	string_list_clear_func(&args.extra_files, extra_file_info_clear);
+ 	free(args.refname);
++	clear_pathspec(&args.pathspec);
+ 
+ 	return rc;
+ }
+diff --git a/builtin/clean.c b/builtin/clean.c
+index b2701a28158..b15eab328b7 100644
+--- a/builtin/clean.c
++++ b/builtin/clean.c
+@@ -1092,5 +1092,6 @@ int cmd_clean(int argc, const char **argv, const char *prefix)
+ 	strbuf_release(&buf);
+ 	string_list_clear(&del_list, 0);
+ 	string_list_clear(&exclude_list, 0);
++	clear_pathspec(&pathspec);
+ 	return (errors != 0);
+ }
+diff --git a/builtin/reset.c b/builtin/reset.c
+index fea20a9ba0b..e9c10618cd3 100644
+--- a/builtin/reset.c
++++ b/builtin/reset.c
+@@ -390,7 +390,8 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
+ 		if (reset_type != NONE)
+ 			die(_("options '%s' and '%s' cannot be used together"), "--patch", "--{hard,mixed,soft}");
+ 		trace2_cmd_mode("patch-interactive");
+-		return run_add_interactive(rev, "--patch=reset", &pathspec);
++		update_ref_status = run_add_interactive(rev, "--patch=reset", &pathspec);
++		goto cleanup;
+ 	}
+ 
+ 	/* git reset tree [--] paths... can be used to
+@@ -439,8 +440,10 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
+ 				       LOCK_DIE_ON_ERROR);
+ 		if (reset_type == MIXED) {
+ 			int flags = quiet ? REFRESH_QUIET : REFRESH_IN_PORCELAIN;
+-			if (read_from_tree(&pathspec, &oid, intent_to_add))
+-				return 1;
++			if (read_from_tree(&pathspec, &oid, intent_to_add)) {
++				update_ref_status = 1;
++				goto cleanup;
++			}
+ 			the_index.updated_skipworktree = 1;
+ 			if (!no_refresh && get_git_work_tree()) {
+ 				uint64_t t_begin, t_delta_in_ms;
+@@ -488,5 +491,7 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
+ 
+ 	discard_index(&the_index);
+ 
++cleanup:
++	clear_pathspec(&pathspec);
+ 	return update_ref_status;
+ }
+diff --git a/builtin/stash.c b/builtin/stash.c
+index 839569a9803..71a4ee6b1a5 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -1727,6 +1727,7 @@ static int push_stash(int argc, const char **argv, const char *prefix,
+ 		OPT_PATHSPEC_FILE_NUL(&pathspec_file_nul),
+ 		OPT_END()
+ 	};
++	int ret;
+ 
+ 	if (argc) {
+ 		force_assume = !strcmp(argv[0], "-p");
+@@ -1766,8 +1767,10 @@ static int push_stash(int argc, const char **argv, const char *prefix,
+ 		die(_("the option '%s' requires '%s'"), "--pathspec-file-nul", "--pathspec-from-file");
+ 	}
+ 
+-	return do_push_stash(&ps, stash_msg, quiet, keep_index, patch_mode,
+-			     include_untracked, only_staged);
++	ret = do_push_stash(&ps, stash_msg, quiet, keep_index, patch_mode,
++			    include_untracked, only_staged);
++	clear_pathspec(&ps);
++	return ret;
+ }
+ 
+ static int push_stash_unassumed(int argc, const char **argv, const char *prefix)
+diff --git a/t/t5001-archive-attr.sh b/t/t5001-archive-attr.sh
+index 2f6eef5e372..04d300eeda7 100755
+--- a/t/t5001-archive-attr.sh
++++ b/t/t5001-archive-attr.sh
+@@ -3,6 +3,7 @@
+ test_description='git archive attribute tests'
+ 
+ TEST_CREATE_REPO_NO_TEMPLATE=1
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ SUBSTFORMAT='%H (%h)%n'
+diff --git a/t/t5004-archive-corner-cases.sh b/t/t5004-archive-corner-cases.sh
+index ae508e21623..9f2c6da80e8 100755
+--- a/t/t5004-archive-corner-cases.sh
++++ b/t/t5004-archive-corner-cases.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='test corner cases of git-archive'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ # the 10knuls.tar file is used to test for an empty git generated tar
+diff --git a/t/t7105-reset-patch.sh b/t/t7105-reset-patch.sh
+index fc2a6cf5c7a..9b46da7aaa7 100755
+--- a/t/t7105-reset-patch.sh
++++ b/t/t7105-reset-patch.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='git reset --patch'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./lib-patch-mode.sh
+ 
+ test_expect_success PERL 'setup' '
+diff --git a/t/t7106-reset-unborn-branch.sh b/t/t7106-reset-unborn-branch.sh
+index ecb85c3b823..a0b67a0b843 100755
+--- a/t/t7106-reset-unborn-branch.sh
++++ b/t/t7106-reset-unborn-branch.sh
+@@ -1,6 +1,8 @@
+ #!/bin/sh
+ 
+ test_description='git reset should work on unborn branch'
++
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_expect_success 'setup' '
+diff --git a/t/t7107-reset-pathspec-file.sh b/t/t7107-reset-pathspec-file.sh
+index 523efbecde1..af5ea406db3 100755
+--- a/t/t7107-reset-pathspec-file.sh
++++ b/t/t7107-reset-pathspec-file.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='reset --pathspec-from-file'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ 
+ test_tick
+diff --git a/t/t7301-clean-interactive.sh b/t/t7301-clean-interactive.sh
+index a07e8b86de2..d82a3210a1d 100755
+--- a/t/t7301-clean-interactive.sh
++++ b/t/t7301-clean-interactive.sh
+@@ -2,6 +2,7 @@
+ 
+ test_description='git clean -i basic tests'
+ 
++TEST_PASSES_SANITIZE_LEAK=true
+ . ./test-lib.sh
+ . "$TEST_DIRECTORY"/lib-terminal.sh
+ 
+-- 
+2.39.1.1392.g63e6d408230
+
