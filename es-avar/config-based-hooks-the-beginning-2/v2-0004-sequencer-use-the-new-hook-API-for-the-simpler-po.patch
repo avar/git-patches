@@ -1,0 +1,70 @@
+From b96522d593f651a733e1e09589fe4ea7748ffa91 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-4.5-b96522d593f-20230203T104319Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20230203T104319Z-avarab@gmail.com>
+References: <cover-v2-0.5-00000000000-20230203T104319Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Tue, 15 Feb 2022 16:01:56 +0100
+Subject: [PATCH v2 4/5] sequencer: use the new hook API for the simpler
+ "post-rewrite" call
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change the invocation of the "post-rewrite" hook added in
+795160457db (sequencer (rebase -i): run the post-rewrite hook, if
+needed, 2017-01-02) to use the new hook API.
+
+This leaves the more complex "post-rewrite" invocation added in
+a87a6f3c98e (commit: move post-rewrite code to libgit, 2017-11-17)
+here in sequencer.c unconverted.
+
+Here we can pass in a file's via the "in" file descriptor, in that
+case we don't have a file, but will need to write_in_full() to an "in"
+provide by the API. Support for that will be added to the hook API in
+the future, but we're not there yet.
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 18 ++++--------------
+ 1 file changed, 4 insertions(+), 14 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index 3e4a1972897..d8d59d05dd4 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -4834,8 +4834,7 @@ static int pick_commits(struct repository *r,
+ 		if (!stat(rebase_path_rewritten_list(), &st) &&
+ 				st.st_size > 0) {
+ 			struct child_process child = CHILD_PROCESS_INIT;
+-			const char *post_rewrite_hook =
+-				find_hook("post-rewrite");
++			struct run_hooks_opt hook_opt = RUN_HOOKS_OPT_INIT;
+ 
+ 			child.in = open(rebase_path_rewritten_list(), O_RDONLY);
+ 			child.git_cmd = 1;
+@@ -4845,18 +4844,9 @@ static int pick_commits(struct repository *r,
+ 			/* we don't care if this copying failed */
+ 			run_command(&child);
+ 
+-			if (post_rewrite_hook) {
+-				struct child_process hook = CHILD_PROCESS_INIT;
+-
+-				hook.in = open(rebase_path_rewritten_list(),
+-					O_RDONLY);
+-				hook.stdout_to_stderr = 1;
+-				hook.trace2_hook_name = "post-rewrite";
+-				strvec_push(&hook.args, post_rewrite_hook);
+-				strvec_push(&hook.args, "rebase");
+-				/* we don't care if this hook failed */
+-				run_command(&hook);
+-			}
++			hook_opt.path_to_stdin = rebase_path_rewritten_list();
++			strvec_push(&hook_opt.args, "rebase");
++			run_hooks_opt("post-rewrite", &hook_opt);
+ 		}
+ 		apply_autostash(rebase_path_autostash());
+ 
+-- 
+2.39.1.1397.g8c8c074958d
+

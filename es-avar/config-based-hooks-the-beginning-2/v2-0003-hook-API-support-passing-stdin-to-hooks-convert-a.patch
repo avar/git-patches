@@ -1,0 +1,98 @@
+From 3d3dd6b900a490b6b89af1aaecf98d787ec37205 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.5-3d3dd6b900a-20230203T104319Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20230203T104319Z-avarab@gmail.com>
+References: <cover-v2-0.5-00000000000-20230203T104319Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:28 -0700
+Subject: [PATCH v2 3/5] hook API: support passing stdin to hooks, convert am's
+ 'post-rewrite'
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Convert the invocation of the 'post-rewrite' hook run by 'git am' to
+use the hook.h library. To do this we need to add a "path_to_stdin"
+member to "struct run_hooks_opt".
+
+In our API this is supported by asking for a file path, rather
+than by reading stdin. Reading directly from stdin would involve caching
+the entire stdin (to memory or to disk) once the hook API is made to
+support "jobs" larger than 1, along with support for executing N hooks
+at a time (i.e. the upcoming config-based hooks).
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/am.c | 20 ++++----------------
+ hook.c       |  5 +++++
+ hook.h       |  5 +++++
+ 3 files changed, 14 insertions(+), 16 deletions(-)
+
+diff --git a/builtin/am.c b/builtin/am.c
+index 82a41cbfc4e..8be91617fef 100644
+--- a/builtin/am.c
++++ b/builtin/am.c
+@@ -495,24 +495,12 @@ static int run_applypatch_msg_hook(struct am_state *state)
+  */
+ static int run_post_rewrite_hook(const struct am_state *state)
+ {
+-	struct child_process cp = CHILD_PROCESS_INIT;
+-	const char *hook = find_hook("post-rewrite");
+-	int ret;
+-
+-	if (!hook)
+-		return 0;
++	struct run_hooks_opt opt = RUN_HOOKS_OPT_INIT;
+ 
+-	strvec_push(&cp.args, hook);
+-	strvec_push(&cp.args, "rebase");
++	strvec_push(&opt.args, "rebase");
++	opt.path_to_stdin = am_path(state, "rewritten");
+ 
+-	cp.in = xopen(am_path(state, "rewritten"), O_RDONLY);
+-	cp.stdout_to_stderr = 1;
+-	cp.trace2_hook_name = "post-rewrite";
+-
+-	ret = run_command(&cp);
+-
+-	close(cp.in);
+-	return ret;
++	return run_hooks_opt("post-rewrite", &opt);
+ }
+ 
+ /**
+diff --git a/hook.c b/hook.c
+index a4fa1031f28..1a848318634 100644
+--- a/hook.c
++++ b/hook.c
+@@ -55,6 +55,11 @@ static int pick_next_hook(struct child_process *cp,
+ 
+ 	cp->no_stdin = 1;
+ 	strvec_pushv(&cp->env, hook_cb->options->env.v);
++	/* reopen the file for stdin; run_command closes it. */
++	if (hook_cb->options->path_to_stdin) {
++		cp->no_stdin = 0;
++		cp->in = xopen(hook_cb->options->path_to_stdin, O_RDONLY);
++	}
+ 	cp->stdout_to_stderr = 1;
+ 	cp->trace2_hook_name = hook_cb->hook_name;
+ 	cp->dir = hook_cb->options->dir;
+diff --git a/hook.h b/hook.h
+index 4258b13da0d..19ab9a5806e 100644
+--- a/hook.h
++++ b/hook.h
+@@ -30,6 +30,11 @@ struct run_hooks_opt
+ 	 * was invoked.
+ 	 */
+ 	int *invoked_hook;
++
++	/**
++	 * Path to file which should be piped to stdin for each hook.
++	 */
++	const char *path_to_stdin;
+ };
+ 
+ #define RUN_HOOKS_OPT_INIT { \
+-- 
+2.39.1.1397.g8c8c074958d
+
