@@ -1,0 +1,56 @@
+From 496bc2c46cea1345e203db4bc02ed37286b738c0 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-02.19-496bc2c46ce-20230206T230142Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-00.19-00000000000-20230206T230141Z-avarab@gmail.com>
+References: <cover-v6-00.19-00000000000-20230202T094704Z-avarab@gmail.com>
+	<cover-v7-00.19-00000000000-20230206T230141Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Wed, 14 Dec 2022 15:15:27 +0100
+Subject: [PATCH v7 02/19] bundle.c: don't leak the "args" in the "struct
+ child_process"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a leak that's been here since 7366096de9d (bundle API: change
+"flags" to be "extra_index_pack_args", 2021-09-05). If we can't verify
+the bundle, we didn't call child_process_clear() to clear the "args".
+
+But rather than adding an additional child_process_clear() call, let's
+verify the bundle before we start preparing the process we're going to
+spawn. If we fail to verify, we don't need to push anything to the
+child_process "args".
+
+Helped-by: Elijah Newren <newren@gmail.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ bundle.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/bundle.c b/bundle.c
+index 4ef7256aa11..9ebb10a8f72 100644
+--- a/bundle.c
++++ b/bundle.c
+@@ -627,6 +627,10 @@ int unbundle(struct repository *r, struct bundle_header *header,
+ 	     enum verify_bundle_flags flags)
+ {
+ 	struct child_process ip = CHILD_PROCESS_INIT;
++
++	if (verify_bundle(r, header, flags))
++		return -1;
++
+ 	strvec_pushl(&ip.args, "index-pack", "--fix-thin", "--stdin", NULL);
+ 
+ 	/* If there is a filter, then we need to create the promisor pack. */
+@@ -638,8 +642,6 @@ int unbundle(struct repository *r, struct bundle_header *header,
+ 		strvec_clear(extra_index_pack_args);
+ 	}
+ 
+-	if (verify_bundle(r, header, flags))
+-		return -1;
+ 	ip.in = bundle_fd;
+ 	ip.no_stdout = 1;
+ 	ip.git_cmd = 1;
+-- 
+2.39.1.1425.gac85d95d48c
+
