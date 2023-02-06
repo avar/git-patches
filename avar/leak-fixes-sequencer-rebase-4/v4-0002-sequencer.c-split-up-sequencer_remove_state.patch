@@ -1,0 +1,72 @@
+From b0c9da95ca1dd773365d27544c6797dda83b1d8b Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v4-2.8-b0c9da95ca1-20230206T190341Z-avarab@gmail.com>
+In-Reply-To: <cover-v4-0.8-00000000000-20230206T190341Z-avarab@gmail.com>
+References: <patch-v3-7.8-ee8262ab22a-20230118T160600Z-avarab@gmail.com>
+	<cover-v4-0.8-00000000000-20230206T190341Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 19 Aug 2022 13:37:57 +0200
+Subject: [PATCH v4 2/8] sequencer.c: split up sequencer_remove_state()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Split off the free()-ing in sequencer_remove_state() into a utility
+function, which will be adjusted and called independent of the other
+code in sequencer_remove_state() in a subsequent commit.
+
+The only functional change here is changing the "int" to a "size_t",
+which is the correct type, as "xopts_nr" is a "size_t".
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ sequencer.c | 23 ++++++++++++++---------
+ 1 file changed, 14 insertions(+), 9 deletions(-)
+
+diff --git a/sequencer.c b/sequencer.c
+index 3e4a1972897..b6392b43204 100644
+--- a/sequencer.c
++++ b/sequencer.c
+@@ -351,10 +351,22 @@ static const char *gpg_sign_opt_quoted(struct replay_opts *opts)
+ 	return buf.buf;
+ }
+ 
++static void replay_opts_release(struct replay_opts *opts)
++{
++	free(opts->gpg_sign);
++	free(opts->reflog_action);
++	free(opts->default_strategy);
++	free(opts->strategy);
++	for (size_t i = 0; i < opts->xopts_nr; i++)
++		free(opts->xopts[i]);
++	free(opts->xopts);
++	strbuf_release(&opts->current_fixups);
++}
++
+ int sequencer_remove_state(struct replay_opts *opts)
+ {
+ 	struct strbuf buf = STRBUF_INIT;
+-	int i, ret = 0;
++	int ret = 0;
+ 
+ 	if (is_rebase_i(opts) &&
+ 	    strbuf_read_file(&buf, rebase_path_refs_to_delete(), 0) > 0) {
+@@ -373,14 +385,7 @@ int sequencer_remove_state(struct replay_opts *opts)
+ 		}
+ 	}
+ 
+-	free(opts->gpg_sign);
+-	free(opts->reflog_action);
+-	free(opts->default_strategy);
+-	free(opts->strategy);
+-	for (i = 0; i < opts->xopts_nr; i++)
+-		free(opts->xopts[i]);
+-	free(opts->xopts);
+-	strbuf_release(&opts->current_fixups);
++	replay_opts_release(opts);
+ 
+ 	strbuf_reset(&buf);
+ 	strbuf_addstr(&buf, get_dir(opts));
+-- 
+2.39.1.1425.ge02fe682bd8
+

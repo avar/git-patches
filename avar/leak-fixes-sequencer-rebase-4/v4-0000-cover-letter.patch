@@ -1,0 +1,145 @@
+From 6ab2edcc135f993a49ab60312b0bce64e27a67ef Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v4-0.8-00000000000-20230206T190341Z-avarab@gmail.com>
+In-Reply-To: <patch-v3-7.8-ee8262ab22a-20230118T160600Z-avarab@gmail.com>
+References: <patch-v3-7.8-ee8262ab22a-20230118T160600Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Mon, 6 Feb 2023 20:03:41 +0100
+Subject: [PATCH v4 0/8] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (8):
+  rebase: use "cleanup" pattern in do_interactive_rebase()
+  sequencer.c: split up sequencer_remove_state()
+  sequencer API users: fix get_replay_opts() leaks
+  builtin/revert.c: move free-ing of "revs" to replay_opts_release()
+  builtin/rebase.c: fix "options.onto_name" leak
+  sequencer.c: always free() the "msgbuf" in do_pick_commit()
+  builtin/rebase.c: free() "options.strategy_opts"
+  commit.c: free() revs.commit in get_fork_point()
+
+ builtin/rebase.c                       | 22 ++++++++------
+ builtin/revert.c                       |  8 ++---
+ commit.c                               |  1 +
+ sequencer.c                            | 42 ++++++++++++++++----------
+ sequencer.h                            |  1 +
+ t/t3405-rebase-malformed.sh            |  1 +
+ t/t3412-rebase-root.sh                 |  1 +
+ t/t3416-rebase-onto-threedots.sh       |  1 +
+ t/t3419-rebase-patch-id.sh             |  1 +
+ t/t3423-rebase-reword.sh               |  1 +
+ t/t3425-rebase-topology-merges.sh      |  2 ++
+ t/t3431-rebase-fork-point.sh           |  1 +
+ t/t3432-rebase-fast-forward.sh         |  1 +
+ t/t3437-rebase-fixup-options.sh        |  1 +
+ t/t3438-rebase-broken-files.sh         |  2 ++
+ t/t3501-revert-cherry-pick.sh          |  1 +
+ t/t3502-cherry-pick-merge.sh           |  1 +
+ t/t3503-cherry-pick-root.sh            |  1 +
+ t/t3506-cherry-pick-ff.sh              |  1 +
+ t/t3511-cherry-pick-x.sh               |  1 +
+ t/t7402-submodule-rebase.sh            |  1 +
+ t/t9106-git-svn-commit-diff-clobber.sh |  1 -
+ t/t9164-git-svn-dcommit-concurrent.sh  |  1 -
+ 23 files changed, 61 insertions(+), 33 deletions(-)
+
+Range-diff against v3:
+1:  b223429df33 ! 1:  029fc5f4b8c rebase: use "cleanup" pattern in do_interactive_rebase()
+    @@ Commit message
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## builtin/rebase.c ##
+    -@@ builtin/rebase.c: static void split_exec_commands(const char *cmd, struct string_list *commands)
+    +@@ builtin/rebase.c: static int init_basic_state(struct replay_opts *opts, const char *head_name,
+      
+      static int do_interactive_rebase(struct rebase_options *opts, unsigned flags)
+      {
+    @@ builtin/rebase.c: static int do_interactive_rebase(struct rebase_options *opts,
+      	}
+      
+     +cleanup:
+    - 	string_list_clear(&commands, 0);
+      	free(revisions);
+      	free(shortrevisions);
+    + 	todo_list_release(&todo_list);
+2:  00c7f04363f = 2:  b0c9da95ca1 sequencer.c: split up sequencer_remove_state()
+3:  e4a96898a68 ! 3:  dbac0501424 rebase & sequencer API: fix get_replay_opts() leak in "rebase"
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    rebase & sequencer API: fix get_replay_opts() leak in "rebase"
+    +    sequencer API users: fix get_replay_opts() leaks
+     
+    -    Make the recently added replay_opts_release() function non-static and
+    -    use it for freeing the "struct replay_opts" constructed by the
+    -    get_replay_opts() function in "builtin/rebase.c". See [1] for the
+    -    initial addition of get_replay_opts().
+    +    Make the replay_opts_release() function added in the preceding commit
+    +    non-static, and use it for freeing the "struct replay_opts"
+    +    constructed for "rebase" and "revert".
+     
+         To safely call our new replay_opts_release() we'll need to stop
+         calling it in sequencer_remove_state(), and instead call it where we
+    @@ Commit message
+         previously called sequencer_remove_state() would be a hassle.
+     
+         Using a FREE_AND_NULL() pattern would also work, as it would be safe
+    -    replay_opts_release() repeatedly, but let's fix this properly instead,
+    -    by having the owner of the data free() it.
+    -
+    -    See [2] for the initial implementation of "sequencer_remove_state()",
+    -    which assumed that it should be removing the full (including on-disk)
+    -    rebase state as a one-off.
+    -
+    -    1. 73fdc535d26 (rebase -i: use struct rebase_options to parse args,
+    -       2019-04-17)
+    -    2. 26ae337be11 (revert: Introduce --reset to remove sequencer state,
+    -       2011-08-04)
+    +    to call replay_opts_release() repeatedly. But let's fix this properly
+    +    instead, by having the owner of the data free() it.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    @@ builtin/rebase.c: static int do_interactive_rebase(struct rebase_options *opts,
+      
+      cleanup:
+     +	replay_opts_release(&replay);
+    - 	string_list_clear(&commands, 0);
+      	free(revisions);
+      	free(shortrevisions);
+    + 	todo_list_release(&todo_list);
+     @@ builtin/rebase.c: static int run_sequencer_rebase(struct rebase_options *opts)
+      		struct replay_opts replay_opts = get_replay_opts(opts);
+      
+4:  9f72cc6e46b = 4:  6b29d7d00c2 builtin/revert.c: move free-ing of "revs" to replay_opts_release()
+5:  3d5c3152f69 ! 5:  f9c4d17fe70 builtin/rebase.c: fix "options.onto_name" leak
+    @@ builtin/rebase.c: int cmd_rebase(int argc, const char **argv, const char *prefix
+      	strbuf_release(&options.git_format_patch_opt);
+      	free(squash_onto_name);
+     +	free(keep_base_onto_name);
+    - 	string_list_clear(&exec, 0);
+      	string_list_clear(&strategy_options, 0);
+      	return !!ret;
+    + }
+     
+      ## t/t3416-rebase-onto-threedots.sh ##
+     @@ t/t3416-rebase-onto-threedots.sh: test_description='git rebase --onto A...B'
+6:  c07dc006c6d = 6:  5c2870ed2e6 sequencer.c: always free() the "msgbuf" in do_pick_commit()
+7:  ee8262ab22a ! 7:  07ab875c3e2 builtin/rebase.c: free() "options.strategy_opts"
+    @@ Commit message
+      ## builtin/rebase.c ##
+     @@ builtin/rebase.c: int cmd_rebase(int argc, const char **argv, const char *prefix)
+      	free(options.gpg_sign_opt);
+    - 	free(options.cmd);
+    + 	string_list_clear(&options.exec, 0);
+      	free(options.strategy);
+     +	free(options.strategy_opts);
+      	strbuf_release(&options.git_format_patch_opt);
+8:  84343ea6bf6 = 8:  6ab2edcc135 commit.c: free() revs.commit in get_fork_point()
+-- 
+2.39.1.1425.ge02fe682bd8
+
