@@ -1,0 +1,184 @@
+From 9299f22cc2c30aa013651cb1e7b4474571079d7d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-2.3-9299f22cc2c-20230206T225639Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.3-00000000000-20230206T225639Z-avarab@gmail.com>
+References: <cover-0.3-00000000000-20230203T125859Z-avarab@gmail.com>
+	<cover-v2-0.3-00000000000-20230206T225639Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 16 Jan 2023 15:08:23 +0100
+Subject: [PATCH v2 2/3] add API: remove run_add_interactive() wrapper function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Now that the Perl "git-add--interactive" has gone away in the
+preceding commit we don't need to pass along our desire for a mode as
+a string, and can instead directly use the "enum add_p_mode", see
+d2a233cb8b9 (built-in add -p: prepare for patch modes other than
+"stage", 2019-12-21) for its introduction.
+
+As a result of that the run_add_interactive() function would become a
+trivial wrapper which would only run run_add_i() if a 0 (or now,
+"NULL") "patch_mode" was provided. Let's instead remove it, and have
+the one callsite that wanted the "NULL" case (interactive_add())
+handle it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/add.c      | 31 ++++---------------------------
+ builtin/checkout.c | 12 +++++++-----
+ builtin/reset.c    |  4 +++-
+ builtin/stash.c    |  3 ++-
+ commit.h           |  2 --
+ 5 files changed, 16 insertions(+), 36 deletions(-)
+
+diff --git a/builtin/add.c b/builtin/add.c
+index 9f5b6e26a02..61dd386d109 100644
+--- a/builtin/add.c
++++ b/builtin/add.c
+@@ -238,30 +238,6 @@ static int refresh(int verbose, const struct pathspec *pathspec)
+ 	return ret;
+ }
+ 
+-int run_add_interactive(const char *revision, const char *patch_mode,
+-			const struct pathspec *pathspec)
+-{
+-	enum add_p_mode mode;
+-
+-	if (!patch_mode)
+-		return !!run_add_i(the_repository, pathspec);
+-
+-	if (!strcmp(patch_mode, "--patch"))
+-		mode = ADD_P_ADD;
+-	else if (!strcmp(patch_mode, "--patch=stash"))
+-		mode = ADD_P_STASH;
+-	else if (!strcmp(patch_mode, "--patch=reset"))
+-		mode = ADD_P_RESET;
+-	else if (!strcmp(patch_mode, "--patch=checkout"))
+-		mode = ADD_P_CHECKOUT;
+-	else if (!strcmp(patch_mode, "--patch=worktree"))
+-		mode = ADD_P_WORKTREE;
+-	else
+-		die("'%s' not supported", patch_mode);
+-
+-	return !!run_add_p(the_repository, mode, revision, pathspec);
+-}
+-
+ int interactive_add(const char **argv, const char *prefix, int patch)
+ {
+ 	struct pathspec pathspec;
+@@ -277,9 +253,10 @@ int interactive_add(const char **argv, const char *prefix, int patch)
+ 		       PATHSPEC_PREFIX_ORIGIN,
+ 		       prefix, argv);
+ 
+-	return run_add_interactive(NULL,
+-				   patch ? "--patch" : NULL,
+-				   &pathspec);
++	if (patch)
++		return !!run_add_p(the_repository, ADD_P_ADD, NULL, &pathspec);
++	else
++		return !!run_add_i(the_repository, &pathspec);
+ }
+ 
+ static int edit_patch(int argc, const char **argv, const char *prefix)
+diff --git a/builtin/checkout.c b/builtin/checkout.c
+index 5963e1b74b8..a5155cf55c1 100644
+--- a/builtin/checkout.c
++++ b/builtin/checkout.c
+@@ -29,6 +29,7 @@
+ #include "xdiff-interface.h"
+ #include "entry.h"
+ #include "parallel-checkout.h"
++#include "add-interactive.h"
+ 
+ static const char * const checkout_usage[] = {
+ 	N_("git checkout [<options>] <branch>"),
+@@ -499,7 +500,7 @@ static int checkout_paths(const struct checkout_opts *opts,
+ 		    "--merge", "--conflict", "--staged");
+ 
+ 	if (opts->patch_mode) {
+-		const char *patch_mode;
++		enum add_p_mode patch_mode;
+ 		const char *rev = new_branch_info->name;
+ 		char rev_oid[GIT_MAX_HEXSZ + 1];
+ 
+@@ -517,15 +518,16 @@ static int checkout_paths(const struct checkout_opts *opts,
+ 			rev = oid_to_hex_r(rev_oid, &new_branch_info->commit->object.oid);
+ 
+ 		if (opts->checkout_index && opts->checkout_worktree)
+-			patch_mode = "--patch=checkout";
++			patch_mode = ADD_P_CHECKOUT;
+ 		else if (opts->checkout_index && !opts->checkout_worktree)
+-			patch_mode = "--patch=reset";
++			patch_mode = ADD_P_RESET;
+ 		else if (!opts->checkout_index && opts->checkout_worktree)
+-			patch_mode = "--patch=worktree";
++			patch_mode = ADD_P_WORKTREE;
+ 		else
+ 			BUG("either flag must have been set, worktree=%d, index=%d",
+ 			    opts->checkout_worktree, opts->checkout_index);
+-		return run_add_interactive(rev, patch_mode, &opts->pathspec);
++		return !!run_add_p(the_repository, patch_mode, rev,
++				   &opts->pathspec);
+ 	}
+ 
+ 	repo_hold_locked_index(the_repository, &lock_file, LOCK_DIE_ON_ERROR);
+diff --git a/builtin/reset.c b/builtin/reset.c
+index fea20a9ba0b..4b59aa9aeae 100644
+--- a/builtin/reset.c
++++ b/builtin/reset.c
+@@ -26,6 +26,7 @@
+ #include "submodule.h"
+ #include "submodule-config.h"
+ #include "dir.h"
++#include "add-interactive.h"
+ 
+ #define REFRESH_INDEX_DELAY_WARNING_IN_MS (2 * 1000)
+ 
+@@ -390,7 +391,8 @@ int cmd_reset(int argc, const char **argv, const char *prefix)
+ 		if (reset_type != NONE)
+ 			die(_("options '%s' and '%s' cannot be used together"), "--patch", "--{hard,mixed,soft}");
+ 		trace2_cmd_mode("patch-interactive");
+-		return run_add_interactive(rev, "--patch=reset", &pathspec);
++		return !!run_add_p(the_repository, ADD_P_RESET, rev,
++				   &pathspec);
+ 	}
+ 
+ 	/* git reset tree [--] paths... can be used to
+diff --git a/builtin/stash.c b/builtin/stash.c
+index 839569a9803..9fcd2e5d993 100644
+--- a/builtin/stash.c
++++ b/builtin/stash.c
+@@ -18,6 +18,7 @@
+ #include "diffcore.h"
+ #include "exec-cmd.h"
+ #include "reflog.h"
++#include "add-interactive.h"
+ 
+ #define INCLUDE_ALL_FILES 2
+ 
+@@ -1229,7 +1230,7 @@ static int stash_patch(struct stash_info *info, const struct pathspec *ps,
+ 	old_index_env = xstrdup_or_null(getenv(INDEX_ENVIRONMENT));
+ 	setenv(INDEX_ENVIRONMENT, the_repository->index_file, 1);
+ 
+-	ret = run_add_interactive(NULL, "--patch=stash", ps);
++	ret = !!run_add_p(the_repository, ADD_P_STASH, NULL, ps);
+ 
+ 	the_repository->index_file = old_repo_index_file;
+ 	if (old_index_env && *old_index_env)
+diff --git a/commit.h b/commit.h
+index fa39202fa6b..cc2c5da7bdb 100644
+--- a/commit.h
++++ b/commit.h
+@@ -274,8 +274,6 @@ struct ref;
+ int for_each_commit_graft(each_commit_graft_fn, void *);
+ 
+ int interactive_add(const char **argv, const char *prefix, int patch);
+-int run_add_interactive(const char *revision, const char *patch_mode,
+-			const struct pathspec *pathspec);
+ 
+ struct commit_extra_header {
+ 	struct commit_extra_header *next;
+-- 
+2.39.1.1425.gac85d95d48c
+
