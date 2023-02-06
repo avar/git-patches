@@ -1,0 +1,118 @@
+From 55abdbef49fffff7a0784ec6df5ec5b643de1565 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v5-5.6-55abdbef49f-20230206T224200Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-0.6-00000000000-20230206T224200Z-avarab@gmail.com>
+References: <cover-v4-0.6-00000000000-20221219T101240Z-avarab@gmail.com>
+	<cover-v5-0.6-00000000000-20230206T224200Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 2 Dec 2022 10:49:54 +0100
+Subject: [PATCH v5 5/6] tests: don't lose "git" exit codes in "! ( git ... |
+ grep )"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Change tests that would lose the "git" exit code via a negation
+pattern to:
+
+- In the case of "t0055-beyond-symlinks.sh" compare against the
+  expected output instead.
+
+  We could use the same pattern as in the "t3700-add.sh" below, doing
+  so would have the advantage that if we added an earlier test we
+  wouldn't need to adjust the "expect" output.
+
+  But as "t0055-beyond-symlinks.sh" is a small and focused test (less
+  than 40 lines in total) let's use "test_cmp" instead.
+
+- For "t3700-add.sh" use "sed -n" to print the expected "bad" part,
+  and use "test_must_be_empty" to assert that it's not there. If we used
+  "grep" we'd get a non-zero exit code.
+
+  We could use "test_expect_code 1 grep", but this is more consistent
+  with existing patterns in the test suite.
+
+  We can also remove a repeated invocation of "git ls-files" for the
+  last test that's being modified in that file, and search the
+  existing "files" output instead.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t0055-beyond-symlinks.sh | 14 ++++++++++++--
+ t/t3700-add.sh             | 18 +++++++++++++-----
+ 2 files changed, 25 insertions(+), 7 deletions(-)
+
+diff --git a/t/t0055-beyond-symlinks.sh b/t/t0055-beyond-symlinks.sh
+index 6bada370225..c3eb1158ef9 100755
+--- a/t/t0055-beyond-symlinks.sh
++++ b/t/t0055-beyond-symlinks.sh
+@@ -15,12 +15,22 @@ test_expect_success SYMLINKS setup '
+ 
+ test_expect_success SYMLINKS 'update-index --add beyond symlinks' '
+ 	test_must_fail git update-index --add c/d &&
+-	! ( git ls-files | grep c/d )
++	cat >expect <<-\EOF &&
++	a
++	b/d
++	EOF
++	git ls-files >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success SYMLINKS 'add beyond symlinks' '
+ 	test_must_fail git add c/d &&
+-	! ( git ls-files | grep c/d )
++	cat >expect <<-\EOF &&
++	a
++	b/d
++	EOF
++	git ls-files >actual &&
++	test_cmp expect actual
+ '
+ 
+ test_done
+diff --git a/t/t3700-add.sh b/t/t3700-add.sh
+index 51afbd7b24a..82dd768944f 100755
+--- a/t/t3700-add.sh
++++ b/t/t3700-add.sh
+@@ -106,24 +106,32 @@ test_expect_success '.gitignore test setup' '
+ 
+ test_expect_success '.gitignore is honored' '
+ 	git add . &&
+-	! (git ls-files | grep "\\.ig")
++	git ls-files >files &&
++	sed -n "/\\.ig/p" <files >actual &&
++	test_must_be_empty actual
+ '
+ 
+ test_expect_success 'error out when attempting to add ignored ones without -f' '
+ 	test_must_fail git add a.?? &&
+-	! (git ls-files | grep "\\.ig")
++	git ls-files >files &&
++	sed -n "/\\.ig/p" <files >actual &&
++	test_must_be_empty actual
+ '
+ 
+ test_expect_success 'error out when attempting to add ignored ones without -f' '
+ 	test_must_fail git add d.?? &&
+-	! (git ls-files | grep "\\.ig")
++	git ls-files >files &&
++	sed -n "/\\.ig/p" <files >actual &&
++	test_must_be_empty actual
+ '
+ 
+ test_expect_success 'error out when attempting to add ignored ones but add others' '
+ 	touch a.if &&
+ 	test_must_fail git add a.?? &&
+-	! (git ls-files | grep "\\.ig") &&
+-	(git ls-files | grep a.if)
++	git ls-files >files &&
++	sed -n "/\\.ig/p" <files >actual &&
++	test_must_be_empty actual &&
++	grep a.if files
+ '
+ 
+ test_expect_success 'add ignored ones with -f' '
+-- 
+2.39.1.1425.gac85d95d48c
+
