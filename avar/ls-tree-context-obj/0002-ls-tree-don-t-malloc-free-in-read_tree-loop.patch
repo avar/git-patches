@@ -1,0 +1,157 @@
+From 479c92a018db793d37cfa5d38722b0e3dae99e58 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-2.2-479c92a018d-20230207T085836Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20230207T085836Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20230207T085836Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 3 Feb 2023 19:58:14 +0100
+Subject: [PATCH 2/2] ls-tree: don't malloc()/free() in read_tree() loop
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Because there wasn't a context object such as the one introduced in
+the preceding commit the "--format" facility introduced in [1] is
+quite malloc()/free()-inefficient. E.g. this will free() for every
+line printed:
+
+	git ls-tree -r --format="path:%(path)" HEAD
+
+Let's instead pass down a scratch "struct strbuf" which can be re-used
+to avoid the allocation churn. For show_tree_fmt() we need to
+strbuf_reset() it ourselves, but in the case of the relative_path()
+that function itself does that for us.
+
+With "valgrind --tool=memcheck" on a git.git checkout running the
+above command changes the summary from:
+
+	HEAP SUMMARY:
+		in use at exit: 4,165,281 bytes in 23,161 blocks
+		total heap usage: 36,535 allocs, 13,374 frees, 8,464,323 bytes allocated
+
+To:
+
+	[...]
+		in use at exit: 4,165,464 bytes in 23,162 blocks
+		total heap usage: 28,695 allocs, 5,533 frees, 8,143,204 bytes allocated
+
+So the total memory use is practically the same, but we've cut down a
+lot on the number of allocations and frees.
+
+See also [2] for a previous (but orthogonal) effort to optimize this
+code to reduce allocations.
+
+1. 455923e0a15 (ls-tree: introduce "--format" option, 2022-03-23)
+2. c388fcda994 (ls-tree: remove dead store and strbuf for
+   quote_c_style(), 2023-01-14)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-tree.c | 37 ++++++++++++++++++++-----------------
+ 1 file changed, 20 insertions(+), 17 deletions(-)
+
+diff --git a/builtin/ls-tree.c b/builtin/ls-tree.c
+index ed77f0a0263..158920e4cc4 100644
+--- a/builtin/ls-tree.c
++++ b/builtin/ls-tree.c
+@@ -54,8 +54,16 @@ struct ls_tree_options {
+ 
+ struct ls_tree {
+ 	struct ls_tree_options *options;
++	struct strbuf sb;
+ };
+-#define LS_TREE_INIT { 0 }
++#define LS_TREE_INIT { \
++	.sb = STRBUF_INIT, \
++}
++
++static void ls_tree_release(struct ls_tree *lst)
++{
++	strbuf_release(&lst->sb);
++}
+ 
+ struct show_tree_data {
+ 	struct ls_tree *lst;
+@@ -100,14 +108,12 @@ static size_t expand_show_tree(struct strbuf *sb, const char *start,
+ 	} else if (skip_prefix(start, "(path)", &p)) {
+ 		const char *name = data->base->buf;
+ 		const char *prefix = options->chomp_prefix ? options->ls_tree_prefix : NULL;
+-		struct strbuf sbuf = STRBUF_INIT;
+ 		size_t baselen = data->base->len;
+ 
+ 		strbuf_addstr(data->base, data->pathname);
+-		name = relative_path(data->base->buf, prefix, &sbuf);
++		name = relative_path(data->base->buf, prefix, &lst->sb);
+ 		quote_c_style(name, sb, NULL, 0);
+ 		strbuf_setlen(data->base, baselen);
+-		strbuf_release(&sbuf);
+ 	} else {
+ 		errlen = (unsigned long)len;
+ 		die(_("bad ls-tree format: %%%.*s"), errlen, start);
+@@ -152,7 +158,7 @@ static int show_tree_fmt(const struct object_id *oid, struct strbuf *base,
+ 	struct ls_tree *lst = context;
+ 	struct ls_tree_options *options = lst->options;
+ 	int recurse = 0;
+-	struct strbuf sb = STRBUF_INIT;
++	struct strbuf *sb = &lst->sb;
+ 	enum object_type type = object_type(mode);
+ 	struct show_tree_data cb_data = {
+ 		.lst = lst,
+@@ -170,10 +176,10 @@ static int show_tree_fmt(const struct object_id *oid, struct strbuf *base,
+ 	if (type == OBJ_BLOB && (options->ls_options & LS_TREE_ONLY))
+ 		return 0;
+ 
+-	strbuf_expand(&sb, options->format, expand_show_tree, &cb_data);
+-	strbuf_addch(&sb, options->null_termination ? '\0' : '\n');
+-	fwrite(sb.buf, sb.len, 1, stdout);
+-	strbuf_release(&sb);
++	strbuf_reset(sb);
++	strbuf_expand(sb, options->format, expand_show_tree, &cb_data);
++	strbuf_addch(sb, options->null_termination ? '\0' : '\n');
++	fwrite(sb->buf, sb->len, 1, stdout);
+ 	return recurse;
+ }
+ 
+@@ -208,13 +214,11 @@ static void show_tree_common_default_long(struct ls_tree *lst,
+ 	strbuf_addstr(base, pathname);
+ 
+ 	if (options->null_termination) {
+-		struct strbuf sb = STRBUF_INIT;
+-		const char *name = relative_path(base->buf, prefix, &sb);
++		struct strbuf *sb = &lst->sb;
++		const char *name = relative_path(base->buf, prefix, sb);
+ 
+ 		fputs(name, stdout);
+ 		fputc('\0', stdout);
+-
+-		strbuf_release(&sb);
+ 	} else {
+ 		write_name_quoted_relative(base->buf, prefix, stdout, '\n');
+ 	}
+@@ -293,13 +297,11 @@ static int show_tree_name_only(const struct object_id *oid, struct strbuf *base,
+ 	prefix = options->chomp_prefix ? options->ls_tree_prefix : NULL;
+ 	strbuf_addstr(base, pathname);
+ 	if (options->null_termination) {
+-		struct strbuf sb = STRBUF_INIT;
+-		const char *name = relative_path(base->buf, prefix, &sb);
++		struct strbuf *sb = &lst->sb;
++		const char *name = relative_path(base->buf, prefix, sb);
+ 
+ 		fputs(name, stdout);
+ 		fputc('\0', stdout);
+-
+-		strbuf_release(&sb);
+ 	} else {
+ 		write_name_quoted_relative(base->buf, prefix, stdout, '\n');
+ 	}
+@@ -486,6 +488,7 @@ int cmd_ls_tree(int argc, const char **argv, const char *prefix)
+ 
+ 	lst.options = &options;
+ 	ret = !!read_tree(the_repository, tree, &options.pathspec, fn, &lst);
++	ls_tree_release(&lst);
+ 	clear_pathspec(&options.pathspec);
+ 	return ret;
+ }
+-- 
+2.39.1.1425.gac85d95d48c
+

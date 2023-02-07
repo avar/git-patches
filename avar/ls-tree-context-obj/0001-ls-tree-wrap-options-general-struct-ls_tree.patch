@@ -1,0 +1,178 @@
+From c0f3b378f7e395cc1ece08d9a9e59b8455d946ad Mon Sep 17 00:00:00 2001
+Message-Id: <patch-1.2-c0f3b378f7e-20230207T085836Z-avarab@gmail.com>
+In-Reply-To: <cover-0.2-00000000000-20230207T085836Z-avarab@gmail.com>
+References: <cover-0.2-00000000000-20230207T085836Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Fri, 3 Feb 2023 19:45:45 +0100
+Subject: [PATCH 1/2] ls-tree: wrap "options" general "struct ls_tree"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In 030a3d5d9e4 (ls-tree: use a "struct options", 2023-01-12) a "struct
+ls_tree_options" was introduced to hold the various options given to
+"ls-tree".
+
+It would also be nice to have some place to put various other
+no-option data, e.g. to save ourselves memory allocations by having
+throwaway "struct strbuf" members that would survive through the whole
+read_tree() iteration.
+
+Let's provide that with a new "struct ls_tree". For now it's only a
+wrapper for the previous "struct ls_tree_options", making this a
+refactoring-only change. In the subsequent commit we'll start carrying
+around non-option state in it.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/ls-tree.c | 40 +++++++++++++++++++++++++++-------------
+ 1 file changed, 27 insertions(+), 13 deletions(-)
+
+diff --git a/builtin/ls-tree.c b/builtin/ls-tree.c
+index 8cc8c995df9..ed77f0a0263 100644
+--- a/builtin/ls-tree.c
++++ b/builtin/ls-tree.c
+@@ -52,8 +52,13 @@ struct ls_tree_options {
+ 	const char *format;
+ };
+ 
+-struct show_tree_data {
++struct ls_tree {
+ 	struct ls_tree_options *options;
++};
++#define LS_TREE_INIT { 0 }
++
++struct show_tree_data {
++	struct ls_tree *lst;
+ 	unsigned mode;
+ 	enum object_type type;
+ 	const struct object_id *oid;
+@@ -65,7 +70,8 @@ static size_t expand_show_tree(struct strbuf *sb, const char *start,
+ 			       void *context)
+ {
+ 	struct show_tree_data *data = context;
+-	struct ls_tree_options *options = data->options;
++	struct ls_tree *lst = data->lst;
++	struct ls_tree_options *options = lst->options;
+ 	const char *end;
+ 	const char *p;
+ 	unsigned int errlen;
+@@ -143,12 +149,13 @@ static int show_recursive(struct ls_tree_options *options, const char *base,
+ static int show_tree_fmt(const struct object_id *oid, struct strbuf *base,
+ 			 const char *pathname, unsigned mode, void *context)
+ {
+-	struct ls_tree_options *options = context;
++	struct ls_tree *lst = context;
++	struct ls_tree_options *options = lst->options;
+ 	int recurse = 0;
+ 	struct strbuf sb = STRBUF_INIT;
+ 	enum object_type type = object_type(mode);
+ 	struct show_tree_data cb_data = {
+-		.options = options,
++		.lst = lst,
+ 		.mode = mode,
+ 		.type = type,
+ 		.oid = oid,
+@@ -190,11 +197,12 @@ static int show_tree_common(struct ls_tree_options *options, int *recurse,
+ 	return ret;
+ }
+ 
+-static void show_tree_common_default_long(struct ls_tree_options *options,
++static void show_tree_common_default_long(struct ls_tree *lst,
+ 					  struct strbuf *base,
+ 					  const char *pathname,
+ 					  const size_t baselen)
+ {
++	const struct ls_tree_options *options = lst->options;
+ 	const char *prefix = options->chomp_prefix ? options->ls_tree_prefix : NULL;
+ 
+ 	strbuf_addstr(base, pathname);
+@@ -218,7 +226,8 @@ static int show_tree_default(const struct object_id *oid, struct strbuf *base,
+ 			     const char *pathname, unsigned mode,
+ 			     void *context)
+ {
+-	struct ls_tree_options *options = context;
++	struct ls_tree *lst = context;
++	struct ls_tree_options *options = lst->options;
+ 	int early;
+ 	int recurse;
+ 	enum object_type type = object_type(mode);
+@@ -229,7 +238,7 @@ static int show_tree_default(const struct object_id *oid, struct strbuf *base,
+ 
+ 	printf("%06o %s %s\t", mode, type_name(object_type(mode)),
+ 	       find_unique_abbrev(oid, options->abbrev));
+-	show_tree_common_default_long(options, base, pathname, base->len);
++	show_tree_common_default_long(context, base, pathname, base->len);
+ 	return recurse;
+ }
+ 
+@@ -237,7 +246,8 @@ static int show_tree_long(const struct object_id *oid, struct strbuf *base,
+ 			  const char *pathname, unsigned mode,
+ 			  void *context)
+ {
+-	struct ls_tree_options *options = context;
++	struct ls_tree *lst = context;
++	struct ls_tree_options *options = lst->options;
+ 	int early;
+ 	int recurse;
+ 	char size_text[24];
+@@ -260,7 +270,7 @@ static int show_tree_long(const struct object_id *oid, struct strbuf *base,
+ 
+ 	printf("%06o %s %s %7s\t", mode, type_name(type),
+ 	       find_unique_abbrev(oid, options->abbrev), size_text);
+-	show_tree_common_default_long(options, base, pathname, base->len);
++	show_tree_common_default_long(context, base, pathname, base->len);
+ 	return recurse;
+ }
+ 
+@@ -268,7 +278,8 @@ static int show_tree_name_only(const struct object_id *oid, struct strbuf *base,
+ 			       const char *pathname, unsigned mode,
+ 			       void *context)
+ {
+-	struct ls_tree_options *options = context;
++	struct ls_tree *lst = context;
++	struct ls_tree_options *options = lst->options;
+ 	int early;
+ 	int recurse;
+ 	const size_t baselen = base->len;
+@@ -300,7 +311,8 @@ static int show_tree_object(const struct object_id *oid, struct strbuf *base,
+ 			    const char *pathname, unsigned mode,
+ 			    void *context)
+ {
+-	struct ls_tree_options *options = context;
++	struct ls_tree *lst = context;
++	struct ls_tree_options *options = lst->options;
+ 	int early;
+ 	int recurse;
+ 	enum object_type type = object_type(mode);
+@@ -353,7 +365,7 @@ static struct ls_tree_cmdmode_to_fmt ls_tree_cmdmode_format[] = {
+ 	{
+ 		.mode = MODE_OBJECT_ONLY,
+ 		.fmt = "%(objectname)",
+-		.fn = show_tree_object
++		.fn = show_tree_object,
+ 	},
+ 	{
+ 		/* fallback */
+@@ -370,6 +382,7 @@ int cmd_ls_tree(int argc, const char **argv, const char *prefix)
+ 	enum ls_tree_cmdmode cmdmode = MODE_DEFAULT;
+ 	int null_termination = 0;
+ 	struct ls_tree_options options = { 0 };
++	struct ls_tree lst = LS_TREE_INIT;
+ 	const struct option ls_tree_options[] = {
+ 		OPT_BIT('d', NULL, &options.ls_options, N_("only show trees"),
+ 			LS_TREE_ONLY),
+@@ -471,7 +484,8 @@ int cmd_ls_tree(int argc, const char **argv, const char *prefix)
+ 		break;
+ 	}
+ 
+-	ret = !!read_tree(the_repository, tree, &options.pathspec, fn, &options);
++	lst.options = &options;
++	ret = !!read_tree(the_repository, tree, &options.pathspec, fn, &lst);
+ 	clear_pathspec(&options.pathspec);
+ 	return ret;
+ }
+-- 
+2.39.1.1425.gac85d95d48c
+
