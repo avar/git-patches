@@ -1,0 +1,108 @@
+From b4e02f411940f0d6cf7df298b3f44fc345704fca Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.5-b4e02f41194-20230208T191924Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.5-00000000000-20230208T191924Z-avarab@gmail.com>
+References: <cover-0.5-00000000000-20230123T170550Z-avarab@gmail.com>
+	<cover-v2-0.5-00000000000-20230208T191924Z-avarab@gmail.com>
+From: Emily Shaffer <emilyshaffer@google.com>
+Date: Wed, 26 May 2021 17:08:28 -0700
+Subject: [PATCH v2 5/5] hook: support a --to-stdin=<path> option
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Expose the "path_to_stdin" API added in the preceding commit in the
+"git hook run" command.
+
+For now we won't be using this command interface outside of the tests,
+but exposing this functionality makes it easier to test the hook
+API. The plan is to use this to extend the "sendemail-validate"
+hook[1][2].
+
+1. https://lore.kernel.org/git/ad152e25-4061-9955-d3e6-a2c8b1bd24e7@amd.com
+2. https://lore.kernel.org/git/20230120012459.920932-1-michael.strawbridge@amd.com
+
+Signed-off-by: Emily Shaffer <emilyshaffer@google.com>
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ Documentation/git-hook.txt |  7 ++++++-
+ builtin/hook.c             |  4 +++-
+ t/t1800-hook.sh            | 18 ++++++++++++++++++
+ 3 files changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/git-hook.txt b/Documentation/git-hook.txt
+index 77c3a8ad909..3407f3c2c07 100644
+--- a/Documentation/git-hook.txt
++++ b/Documentation/git-hook.txt
+@@ -8,7 +8,7 @@ git-hook - Run git hooks
+ SYNOPSIS
+ --------
+ [verse]
+-'git hook' run [--ignore-missing] <hook-name> [-- <hook-args>]
++'git hook' run [--ignore-missing] [--to-stdin=<path>] <hook-name> [-- <hook-args>]
+ 
+ DESCRIPTION
+ -----------
+@@ -31,6 +31,11 @@ linkgit:githooks[5] for arguments hooks might expect (if any).
+ OPTIONS
+ -------
+ 
++--to-stdin::
++	For "run"; Specify a file which will be streamed into the
++	hook's stdin. The hook will receive the entire file from
++	beginning to EOF.
++
+ --ignore-missing::
+ 	Ignore any missing hook by quietly returning zero. Used for
+ 	tools that want to do a blind one-shot run of a hook that may
+diff --git a/builtin/hook.c b/builtin/hook.c
+index b6530d189ad..f95b7965c58 100644
+--- a/builtin/hook.c
++++ b/builtin/hook.c
+@@ -7,7 +7,7 @@
+ #include "strvec.h"
+ 
+ #define BUILTIN_HOOK_RUN_USAGE \
+-	N_("git hook run [--ignore-missing] <hook-name> [-- <hook-args>]")
++	N_("git hook run [--ignore-missing] [--to-stdin=<path>] <hook-name> [-- <hook-args>]")
+ 
+ static const char * const builtin_hook_usage[] = {
+ 	BUILTIN_HOOK_RUN_USAGE,
+@@ -28,6 +28,8 @@ static int run(int argc, const char **argv, const char *prefix)
+ 	struct option run_options[] = {
+ 		OPT_BOOL(0, "ignore-missing", &ignore_missing,
+ 			 N_("silently ignore missing requested <hook-name>")),
++		OPT_STRING(0, "to-stdin", &opt.path_to_stdin, N_("path"),
++			   N_("file to read into hooks' stdin")),
+ 		OPT_END(),
+ 	};
+ 	int ret;
+diff --git a/t/t1800-hook.sh b/t/t1800-hook.sh
+index 2ef3579fa7c..3506f627b6c 100755
+--- a/t/t1800-hook.sh
++++ b/t/t1800-hook.sh
+@@ -177,4 +177,22 @@ test_expect_success 'git hook run a hook with a bad shebang' '
+ 	test_cmp expect actual
+ '
+ 
++test_expect_success 'stdin to hooks' '
++	write_script .git/hooks/test-hook <<-\EOF &&
++	echo BEGIN stdin
++	cat
++	echo END stdin
++	EOF
++
++	cat >expect <<-EOF &&
++	BEGIN stdin
++	hello
++	END stdin
++	EOF
++
++	echo hello >input &&
++	git hook run --to-stdin=input test-hook 2>actual &&
++	test_cmp expect actual
++'
++
+ test_done
+-- 
+2.39.1.1475.gc2542cdc5ef
+
