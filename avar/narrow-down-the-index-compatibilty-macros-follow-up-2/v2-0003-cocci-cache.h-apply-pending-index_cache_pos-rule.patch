@@ -1,0 +1,132 @@
+From 3e9d97dbff25ba7ee4086f4bc7ef77ec74ec5f0d Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-3.6-3e9d97dbff2-20230210T102114Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20230210T102114Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20221215T095335Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20230210T102114Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Nov 2022 11:14:03 +0100
+Subject: [PATCH v2 3/6] cocci & cache.h: apply pending "index_cache_pos" rule
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Apply the rule added in [1] to change "cache_name_pos" to
+"index_name_pos", which allows us to get rid of another
+"USE_THE_INDEX_COMPATIBILITY_MACROS" macro.
+
+The replacement of "USE_THE_INDEX_COMPATIBILITY_MACROS" here with
+"USE_THE_INDEX_VARIABLE" is a manual change on top, now that these
+files only use "&the_index", and don't need any compatibility
+macros (or functions).
+
+1. 0e6550a2c63 (cocci: add a index-compatibility.pending.cocci,
+   2022-11-19)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/mv.c                                         | 8 +++++---
+ builtin/update-index.c                               | 4 ++--
+ cache.h                                              | 1 -
+ contrib/coccinelle/index-compatibility.cocci         | 3 +++
+ contrib/coccinelle/index-compatibility.pending.cocci | 3 ---
+ 5 files changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/builtin/mv.c b/builtin/mv.c
+index 19790ce38fa..edd7b931fdb 100644
+--- a/builtin/mv.c
++++ b/builtin/mv.c
+@@ -3,7 +3,7 @@
+  *
+  * Copyright (C) 2006 Johannes Schindelin
+  */
+-#define USE_THE_INDEX_COMPATIBILITY_MACROS
++#define USE_THE_INDEX_VARIABLE
+ #include "builtin.h"
+ #include "config.h"
+ #include "pathspec.h"
+@@ -489,7 +489,8 @@ int cmd_mv(int argc, const char **argv, const char *prefix)
+ 			if ((mode & SPARSE) &&
+ 			    path_in_sparse_checkout(dst, &the_index)) {
+ 				/* from out-of-cone to in-cone */
+-				int dst_pos = cache_name_pos(dst, strlen(dst));
++				int dst_pos = index_name_pos(&the_index, dst,
++							     strlen(dst));
+ 				struct cache_entry *dst_ce = the_index.cache[dst_pos];
+ 
+ 				dst_ce->ce_flags &= ~CE_SKIP_WORKTREE;
+@@ -500,7 +501,8 @@ int cmd_mv(int argc, const char **argv, const char *prefix)
+ 				   !(mode & SPARSE) &&
+ 				   !path_in_sparse_checkout(dst, &the_index)) {
+ 				/* from in-cone to out-of-cone */
+-				int dst_pos = cache_name_pos(dst, strlen(dst));
++				int dst_pos = index_name_pos(&the_index, dst,
++							     strlen(dst));
+ 				struct cache_entry *dst_ce = the_index.cache[dst_pos];
+ 
+ 				/*
+diff --git a/builtin/update-index.c b/builtin/update-index.c
+index 82d5902cc8b..bf38885d546 100644
+--- a/builtin/update-index.c
++++ b/builtin/update-index.c
+@@ -3,7 +3,7 @@
+  *
+  * Copyright (C) Linus Torvalds, 2005
+  */
+-#define USE_THE_INDEX_COMPATIBILITY_MACROS
++#define USE_THE_INDEX_VARIABLE
+ #include "cache.h"
+ #include "bulk-checkin.h"
+ #include "config.h"
+@@ -381,7 +381,7 @@ static int process_path(const char *path, struct stat *st, int stat_errno)
+ 	if (has_symlink_leading_path(path, len))
+ 		return error("'%s' is beyond a symbolic link", path);
+ 
+-	pos = cache_name_pos(path, len);
++	pos = index_name_pos(&the_index, path, len);
+ 	ce = pos < 0 ? NULL : the_index.cache[pos];
+ 	if (ce && ce_skip_worktree(ce)) {
+ 		/*
+diff --git a/cache.h b/cache.h
+index b0bbecf35ef..c44aef1af7c 100644
+--- a/cache.h
++++ b/cache.h
+@@ -456,7 +456,6 @@ extern struct index_state the_index;
+ #ifdef USE_THE_INDEX_COMPATIBILITY_MACROS
+ #define read_cache() repo_read_index(the_repository)
+ #define discard_cache() discard_index(&the_index)
+-#define cache_name_pos(name, namelen) index_name_pos(&the_index,(name),(namelen))
+ #endif
+ #endif
+ #endif
+diff --git a/contrib/coccinelle/index-compatibility.cocci b/contrib/coccinelle/index-compatibility.cocci
+index 028ff53354a..1d37546fdbd 100644
+--- a/contrib/coccinelle/index-compatibility.cocci
++++ b/contrib/coccinelle/index-compatibility.cocci
+@@ -91,6 +91,9 @@ identifier ACT = active_cache_tree;
+ |
+ - resolve_undo_clear
+ + resolve_undo_clear_index
++|
++- cache_name_pos
+++ index_name_pos
+ )
+   (
+ + &the_index,
+diff --git a/contrib/coccinelle/index-compatibility.pending.cocci b/contrib/coccinelle/index-compatibility.pending.cocci
+index 01f875d0060..ecf3b45deca 100644
+--- a/contrib/coccinelle/index-compatibility.pending.cocci
++++ b/contrib/coccinelle/index-compatibility.pending.cocci
+@@ -15,9 +15,6 @@
+ (
+ - discard_cache
+ + discard_index
+-|
+-- cache_name_pos
+-+ index_name_pos
+ )
+   (
+ + &the_index,
+-- 
+2.39.1.1475.gc2542cdc5ef
+

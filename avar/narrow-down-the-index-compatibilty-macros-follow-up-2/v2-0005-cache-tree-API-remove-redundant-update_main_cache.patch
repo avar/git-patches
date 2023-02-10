@@ -1,0 +1,118 @@
+From ab8794da29c911be036d3eeb2dd3ebe634d8e9de Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v2-5.6-ab8794da29c-20230210T102114Z-avarab@gmail.com>
+In-Reply-To: <cover-v2-0.6-00000000000-20230210T102114Z-avarab@gmail.com>
+References: <cover-0.6-00000000000-20221215T095335Z-avarab@gmail.com>
+	<cover-v2-0.6-00000000000-20230210T102114Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Mon, 28 Nov 2022 10:37:46 +0100
+Subject: [PATCH v2 5/6] cache-tree API: remove redundant
+ update_main_cache_tree()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Remove the redundant update_main_cache_tree() function, and make its
+users use cache_tree_update() instead.
+
+The behavior of populating the "the_index.cache_tree" if it wasn't
+present already was needed when this function was introduced in [1],
+but it hasn't been needed since [2]; The "cache_tree_update()" will
+now lazy-allocate, so there's no need for the wrapper.
+
+1. 996277c5206 (Refactor cache_tree_update idiom from commit,
+   2011-12-06)
+2. fb0882648e0 (cache-tree: clean up cache_tree_update(), 2021-01-23)
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/commit.c                             | 10 +++++-----
+ cache-tree.h                                 | 10 ----------
+ contrib/coccinelle/index-compatibility.cocci |  3 +++
+ 3 files changed, 8 insertions(+), 15 deletions(-)
+
+diff --git a/builtin/commit.c b/builtin/commit.c
+index 57a95123dff..31fbbd73d16 100644
+--- a/builtin/commit.c
++++ b/builtin/commit.c
+@@ -414,7 +414,7 @@ static const char *prepare_index(const char **argv, const char *prefix,
+ 		discard_index(&the_index);
+ 		read_index_from(&the_index, get_lock_file_path(&index_lock),
+ 				get_git_dir());
+-		if (update_main_cache_tree(WRITE_TREE_SILENT) == 0) {
++		if (cache_tree_update(&the_index, WRITE_TREE_SILENT) == 0) {
+ 			if (reopen_lock_file(&index_lock) < 0)
+ 				die(_("unable to write index file"));
+ 			if (write_locked_index(&the_index, &index_lock, 0))
+@@ -444,7 +444,7 @@ static const char *prepare_index(const char **argv, const char *prefix,
+ 				       LOCK_DIE_ON_ERROR);
+ 		add_files_to_cache(also ? prefix : NULL, &pathspec, 0);
+ 		refresh_cache_or_die(refresh_flags);
+-		update_main_cache_tree(WRITE_TREE_SILENT);
++		cache_tree_update(&the_index, WRITE_TREE_SILENT);
+ 		if (write_locked_index(&the_index, &index_lock, 0))
+ 			die(_("unable to write new_index file"));
+ 		commit_style = COMMIT_NORMAL;
+@@ -467,7 +467,7 @@ static const char *prepare_index(const char **argv, const char *prefix,
+ 		refresh_cache_or_die(refresh_flags);
+ 		if (the_index.cache_changed
+ 		    || !cache_tree_fully_valid(the_index.cache_tree))
+-			update_main_cache_tree(WRITE_TREE_SILENT);
++			cache_tree_update(&the_index, WRITE_TREE_SILENT);
+ 		if (write_locked_index(&the_index, &index_lock,
+ 				       COMMIT_LOCK | SKIP_IF_UNCHANGED))
+ 			die(_("unable to write new_index file"));
+@@ -516,7 +516,7 @@ static const char *prepare_index(const char **argv, const char *prefix,
+ 	repo_hold_locked_index(the_repository, &index_lock, LOCK_DIE_ON_ERROR);
+ 	add_remove_files(&partial);
+ 	refresh_index(&the_index, REFRESH_QUIET, NULL, NULL, NULL);
+-	update_main_cache_tree(WRITE_TREE_SILENT);
++	cache_tree_update(&the_index, WRITE_TREE_SILENT);
+ 	if (write_locked_index(&the_index, &index_lock, 0))
+ 		die(_("unable to write new_index file"));
+ 
+@@ -1079,7 +1079,7 @@ static int prepare_to_commit(const char *index_file, const char *prefix,
+ 	}
+ 	read_index_from(&the_index, index_file, get_git_dir());
+ 
+-	if (update_main_cache_tree(0)) {
++	if (cache_tree_update(&the_index, 0)) {
+ 		error(_("Error building trees"));
+ 		return 0;
+ 	}
+diff --git a/cache-tree.h b/cache-tree.h
+index 84890c9ff32..bd97caa07b0 100644
+--- a/cache-tree.h
++++ b/cache-tree.h
+@@ -53,14 +53,4 @@ int write_index_as_tree(struct object_id *oid, struct index_state *index_state,
+ void prime_cache_tree(struct repository *, struct index_state *, struct tree *);
+ 
+ int cache_tree_matches_traversal(struct cache_tree *, struct name_entry *ent, struct traverse_info *info);
+-
+-#ifdef USE_THE_INDEX_COMPATIBILITY_MACROS
+-static inline int update_main_cache_tree(int flags)
+-{
+-	if (!the_index.cache_tree)
+-		the_index.cache_tree = cache_tree();
+-	return cache_tree_update(&the_index, flags);
+-}
+-#endif
+-
+ #endif
+diff --git a/contrib/coccinelle/index-compatibility.cocci b/contrib/coccinelle/index-compatibility.cocci
+index e245d805dcd..9fca870162d 100644
+--- a/contrib/coccinelle/index-compatibility.cocci
++++ b/contrib/coccinelle/index-compatibility.cocci
+@@ -94,6 +94,9 @@ identifier ACT = active_cache_tree;
+ |
+ - cache_name_pos
+ + index_name_pos
++|
++- update_main_cache_tree
+++ cache_tree_update
+ )
+   (
+ + &the_index,
+-- 
+2.39.1.1475.gc2542cdc5ef
+
