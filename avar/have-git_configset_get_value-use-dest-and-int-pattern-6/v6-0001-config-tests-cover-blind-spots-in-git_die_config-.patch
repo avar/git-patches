@@ -1,0 +1,123 @@
+From 43fdb0cf50c772704eede8eb965dd970755db85e Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v6-01.11-43fdb0cf50c-20230307T175532Z-avarab@gmail.com>
+In-Reply-To: <cover-v6-00.11-00000000000-20230307T175532Z-avarab@gmail.com>
+References: <cover-v5-00.10-00000000000-20230207T154000Z-avarab@gmail.com>
+	<cover-v6-00.11-00000000000-20230307T175532Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Nov 2022 10:26:01 +0100
+Subject: [PATCH v6 01/11] config tests: cover blind spots in git_die_config()
+ tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+There were no tests checking for the output of the git_die_config()
+function in the config API, added in 5a80e97c827 (config: add
+`git_die_config()` to the config-set API, 2014-08-07). We only tested
+"test_must_fail", but didn't assert the output.
+
+We need tests for this because a subsequent commit will alter the
+return value of git_config_get_value_multi(), which is used to get the
+config values in the git_die_config() function. This test coverage
+helps to build confidence in that subsequent change.
+
+These tests cover different interactions with git_die_config():
+
+- The "notes.mergeStrategy" test in
+  "t/t3309-notes-merge-auto-resolve.sh" is a case where a function
+  outside of config.c (git_config_get_notes_strategy()) calls
+  git_die_config().
+
+- The "gc.pruneExpire" test in "t5304-prune.sh" is a case where
+  git_config_get_expiry() calls git_die_config(), covering a different
+  "type" than the "string" test for "notes.mergeStrategy".
+
+- The "fetch.negotiationAlgorithm" test in
+  "t/t5552-skipping-fetch-negotiator.sh" is a case where
+  git_config_get_string*() calls git_die_config().
+
+We also cover both the "from command-line config" and "in file..at
+line" cases here.
+
+The clobbering of existing ".git/config" files here is so that we're
+not implicitly testing the line count of the default config.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ t/t3309-notes-merge-auto-resolve.sh  |  7 ++++++-
+ t/t5304-prune.sh                     | 12 ++++++++++--
+ t/t5552-skipping-fetch-negotiator.sh | 16 ++++++++++++++++
+ 3 files changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/t/t3309-notes-merge-auto-resolve.sh b/t/t3309-notes-merge-auto-resolve.sh
+index 141d3e4ca4d..9bd5dbf341f 100755
+--- a/t/t3309-notes-merge-auto-resolve.sh
++++ b/t/t3309-notes-merge-auto-resolve.sh
+@@ -360,7 +360,12 @@ test_expect_success 'merge z into y with invalid strategy => Fail/No changes' '
+ 
+ test_expect_success 'merge z into y with invalid configuration option => Fail/No changes' '
+ 	git config core.notesRef refs/notes/y &&
+-	test_must_fail git -c notes.mergeStrategy="foo" notes merge z &&
++	cat >expect <<-\EOF &&
++	error: unknown notes merge strategy foo
++	fatal: unable to parse '\''notes.mergeStrategy'\'' from command-line config
++	EOF
++	test_must_fail git -c notes.mergeStrategy="foo" notes merge z 2>actual &&
++	test_cmp expect actual &&
+ 	# Verify no changes (y)
+ 	verify_notes y y
+ '
+diff --git a/t/t5304-prune.sh b/t/t5304-prune.sh
+index d65a5f94b4b..5500dd08426 100755
+--- a/t/t5304-prune.sh
++++ b/t/t5304-prune.sh
+@@ -72,8 +72,16 @@ test_expect_success 'gc: implicit prune --expire' '
+ '
+ 
+ test_expect_success 'gc: refuse to start with invalid gc.pruneExpire' '
+-	git config gc.pruneExpire invalid &&
+-	test_must_fail git gc
++	test_when_finished "rm -rf repo" &&
++	git init repo &&
++	>repo/.git/config &&
++	git -C repo config gc.pruneExpire invalid &&
++	cat >expect <<-\EOF &&
++	error: Invalid gc.pruneexpire: '\''invalid'\''
++	fatal: bad config variable '\''gc.pruneexpire'\'' in file '\''.git/config'\'' at line 2
++	EOF
++	test_must_fail git -C repo gc 2>actual &&
++	test_cmp expect actual
+ '
+ 
+ test_expect_success 'gc: start with ok gc.pruneExpire' '
+diff --git a/t/t5552-skipping-fetch-negotiator.sh b/t/t5552-skipping-fetch-negotiator.sh
+index 165427d57e5..b55a9f65e6b 100755
+--- a/t/t5552-skipping-fetch-negotiator.sh
++++ b/t/t5552-skipping-fetch-negotiator.sh
+@@ -3,6 +3,22 @@
+ test_description='test skipping fetch negotiator'
+ . ./test-lib.sh
+ 
++test_expect_success 'fetch.negotiationalgorithm config' '
++	test_when_finished "rm -rf repo" &&
++	git init repo &&
++	cat >repo/.git/config <<-\EOF &&
++	[fetch]
++	negotiationAlgorithm
++	EOF
++	cat >expect <<-\EOF &&
++	error: missing value for '\''fetch.negotiationalgorithm'\''
++	fatal: bad config variable '\''fetch.negotiationalgorithm'\'' in file '\''.git/config'\'' at line 2
++	EOF
++	test_expect_code 128 git -C repo fetch >out 2>actual &&
++	test_must_be_empty out &&
++	test_cmp expect actual
++'
++
+ have_sent () {
+ 	while test "$#" -ne 0
+ 	do
+-- 
+2.40.0.rc1.1034.g5867a1b10c5
+

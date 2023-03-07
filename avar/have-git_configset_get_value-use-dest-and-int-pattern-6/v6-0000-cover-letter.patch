@@ -1,0 +1,400 @@
+From a2c59ffbaa58075f990456d921fd7890a1dc9ca4 Mon Sep 17 00:00:00 2001
+Message-Id: <cover-v6-00.11-00000000000-20230307T175532Z-avarab@gmail.com>
+In-Reply-To: <cover-v5-00.10-00000000000-20230207T154000Z-avarab@gmail.com>
+References: <cover-v5-00.10-00000000000-20230207T154000Z-avarab@gmail.com>
+From: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+Date: Tue, 7 Mar 2023 18:55:32 +0100
+Subject: [PATCH v6 00/11] *** SUBJECT HERE ***
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+*** BLURB HERE ***
+
+Ævar Arnfjörð Bjarmason (11):
+  config tests: cover blind spots in git_die_config() tests
+  config tests: add "NULL" tests for *_get_value_multi()
+  config.h docs: git_config_get_string() never returns -1
+  config.h docs: de-duplicate & clarify wrapper relationships
+  config API: add and use a "git_config_get()" family of functions
+  versioncmp.c: refactor config reading next commit
+  config API: have *_multi() return an "int" and take a "dest"
+  for-each-repo: error on bad --config
+  config API users: test for *_get_value_multi() segfaults
+  config API: add "string" version of *_value_multi(), fix segfaults
+  for-each-repo: with bad config, don't conflate <path> and <cmd>
+
+ builtin/for-each-repo.c              |  14 ++--
+ builtin/gc.c                         |  15 ++--
+ builtin/log.c                        |   6 +-
+ builtin/submodule--helper.c          |   7 +-
+ builtin/worktree.c                   |   3 +-
+ config.c                             | 109 ++++++++++++++++++++++-----
+ config.h                             |  94 +++++++++++++++++------
+ pack-bitmap.c                        |   6 +-
+ submodule.c                          |   3 +-
+ t/helper/test-config.c               |  28 ++++++-
+ t/t0068-for-each-repo.sh             |  19 +++++
+ t/t1308-config-set.sh                | 108 +++++++++++++++++++++++++-
+ t/t3309-notes-merge-auto-resolve.sh  |   7 +-
+ t/t4202-log.sh                       |  15 ++++
+ t/t5304-prune.sh                     |  12 ++-
+ t/t5310-pack-bitmaps.sh              |  20 +++++
+ t/t5552-skipping-fetch-negotiator.sh |  16 ++++
+ t/t7004-tag.sh                       |  17 +++++
+ t/t7413-submodule-is-active.sh       |  16 ++++
+ t/t7900-maintenance.sh               |  38 ++++++++++
+ versioncmp.c                         |  22 ++++--
+ 21 files changed, 489 insertions(+), 86 deletions(-)
+
+Range-diff against v5:
+ 1:  cefc4188984 =  1:  43fdb0cf50c config tests: cover blind spots in git_die_config() tests
+ 2:  91a44456327 =  2:  4b0799090c9 config tests: add "NULL" tests for *_get_value_multi()
+ -:  ----------- >  3:  3ade5f5022c config.h docs: git_config_get_string() never returns -1
+ 6:  b515ff13f9b !  4:  cf26e96ac28 config API: don't lose the git_*get*() return values
+    @@ Metadata
+     Author: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+      ## Commit message ##
+    -    config API: don't lose the git_*get*() return values
+    +    config.h docs: de-duplicate & clarify wrapper relationships
+     
+    -    Since a preceding commit which added the "git_config_get()" family of
+    -    functions, and the preceding commit where *_multi() started returning
+    -    an "int" we've finally been able to ferry up non-zero return values,
+    -    rather than having negative return values normalized to a "return 1"
+    -    along the way.
+    +    As noted here the git_config_get_*() functions are wrapper for the
+    +    corresponding repo_config_get_*() functions, which are mostly
+    +    pass-through wrappers for the underlying git_configset_get_*()
+    +    functions.
+     
+    -    In practice this doesn't matter to existing callers. They're either
+    -    ignoring these return values and relying on us to only populate "dest"
+    -    if we'd return 0, or normalizing non-zero return values with "!".
+    +    Given that the structure of this documentation is quite odd, and a
+    +    result of incremental additions over time. The repo_config_get_*()
+    +    functions were added after the git_config_get_*().
+     
+    -    Even if they weren't normalizing them we'll only return non-zero
+    -    negative values in those cases where the config key itself is bad,
+    -    which excludes the vast majority of our callers, as they hardcode a
+    -    valued configuration key as a fixed string in the C sources.
+    +    It would be more logical to have all the documentation discuss the
+    +    underlying API, note which variants are simple wrappers, and which are
+    +    wrappers that add extra validation.
+     
+    -    So this change is expected to do nothing for now, but is really here
+    -    for our own sanity. It's much harder to reason about an API that's
+    -    losing return values in some cases, and coercing them in others. If
+    -    there isn't a compelling reason to do otherwise we should let the
+    -    caller decide if they care about the distinction between bad keys and
+    -    non-existence.
+    +    This takes a small step in that direction, as a subsequent commit will
+    +    need to add variant of these functions. When we do that we'll no
+    +    longer need to duplicate that documentation, which we'd be
+    +    structurally constrained to do before this change.
+     
+         Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+     
+    - ## config.c ##
+    -@@ config.c: int git_configset_get(struct config_set *cs, const char *key)
+    - int git_configset_get_string(struct config_set *cs, const char *key, char **dest)
+    - {
+    - 	const char *value;
+    --	if (!git_configset_get_value(cs, key, &value))
+    --		return git_config_string((const char **)dest, key, value);
+    --	else
+    --		return 1;
+    -+	int ret;
+    -+
+    -+	if ((ret = git_configset_get_value(cs, key, &value)))
+    -+		return ret;
+    -+	return git_config_string((const char **)dest, key, value);
+    - }
+    - 
+    - static int git_configset_get_string_tmp(struct config_set *cs, const char *key,
+    - 					const char **dest)
+    - {
+    - 	const char *value;
+    --	if (!git_configset_get_value(cs, key, &value)) {
+    --		if (!value)
+    --			return config_error_nonbool(key);
+    --		*dest = value;
+    --		return 0;
+    --	} else {
+    --		return 1;
+    --	}
+    -+	int ret;
+    -+
+    -+	if ((ret = git_configset_get_value(cs, key, &value)))
+    -+		return ret;
+    -+	if (!value)
+    -+		return config_error_nonbool(key);
+    -+	*dest = value;
+    -+	return 0;
+    - }
+    - 
+    - int git_configset_get_int(struct config_set *cs, const char *key, int *dest)
+    - {
+    - 	const char *value;
+    --	if (!git_configset_get_value(cs, key, &value)) {
+    --		*dest = git_config_int(key, value);
+    --		return 0;
+    --	} else
+    --		return 1;
+    -+	int ret;
+    -+
+    -+	if ((ret = git_configset_get_value(cs, key, &value)))
+    -+		return ret;
+    -+	*dest = git_config_int(key, value);
+    -+	return 0;
+    - }
+    - 
+    - int git_configset_get_ulong(struct config_set *cs, const char *key, unsigned long *dest)
+    - {
+    - 	const char *value;
+    --	if (!git_configset_get_value(cs, key, &value)) {
+    --		*dest = git_config_ulong(key, value);
+    --		return 0;
+    --	} else
+    --		return 1;
+    -+	int ret;
+    -+
+    -+	if ((ret = git_configset_get_value(cs, key, &value)))
+    -+		return ret;
+    -+	*dest = git_config_ulong(key, value);
+    -+	return 0;
+    - }
+    - 
+    - int git_configset_get_bool(struct config_set *cs, const char *key, int *dest)
+    - {
+    - 	const char *value;
+    --	if (!git_configset_get_value(cs, key, &value)) {
+    --		*dest = git_config_bool(key, value);
+    --		return 0;
+    --	} else
+    --		return 1;
+    -+	int ret;
+    -+
+    -+	if ((ret = git_configset_get_value(cs, key, &value)))
+    -+		return ret;
+    -+	*dest = git_config_bool(key, value);
+    -+	return 0;
+    - }
+    - 
+    - int git_configset_get_bool_or_int(struct config_set *cs, const char *key,
+    - 				int *is_bool, int *dest)
+    - {
+    - 	const char *value;
+    --	if (!git_configset_get_value(cs, key, &value)) {
+    --		*dest = git_config_bool_or_int(key, value, is_bool);
+    --		return 0;
+    --	} else
+    --		return 1;
+    -+	int ret;
+    -+
+    -+	if ((ret = git_configset_get_value(cs, key, &value)))
+    -+		return ret;
+    -+	*dest = git_config_bool_or_int(key, value, is_bool);
+    -+	return 0;
+    - }
+    - 
+    - int git_configset_get_maybe_bool(struct config_set *cs, const char *key, int *dest)
+    - {
+    - 	const char *value;
+    --	if (!git_configset_get_value(cs, key, &value)) {
+    --		*dest = git_parse_maybe_bool(value);
+    --		if (*dest == -1)
+    --			return -1;
+    --		return 0;
+    --	} else
+    --		return 1;
+    -+	int ret;
+    -+
+    -+	if ((ret = git_configset_get_value(cs, key, &value)))
+    -+		return ret;
+    -+	*dest = git_parse_maybe_bool(value);
+    -+	if (*dest == -1)
+    -+		return -1;
+    -+	return 0;
+    - }
+    - 
+    - int git_configset_get_pathname(struct config_set *cs, const char *key, const char **dest)
+    - {
+    - 	const char *value;
+    --	if (!git_configset_get_value(cs, key, &value))
+    --		return git_config_pathname(dest, key, value);
+    --	else
+    --		return 1;
+    -+	int ret;
+    -+
+    -+	if ((ret = git_configset_get_value(cs, key, &value)))
+    -+		return ret;
+    -+	return git_config_pathname(dest, key, value);
+    - }
+    - 
+    - /* Functions use to read configuration from a repository */
+    -@@ config.c: int git_config_get_expiry_in_days(const char *key, timestamp_t *expiry, timestam
+    - 	const char *expiry_string;
+    - 	intmax_t days;
+    - 	timestamp_t when;
+    -+	int ret;
+    - 
+    --	if (git_config_get_string_tmp(key, &expiry_string))
+    --		return 1; /* no such thing */
+    -+	if ((ret = git_config_get_string_tmp(key, &expiry_string)))
+    -+		/* no such thing, or git_config_parse_key() failure etc. */
+    -+		return ret;
+    - 
+    - 	if (git_parse_signed(expiry_string, &days, maximum_signed_value_of_type(int))) {
+    - 		const int scale = 86400;
+    -@@ config.c: int git_config_get_max_percent_split_change(void)
+    - int git_config_get_index_threads(int *dest)
+    - {
+    - 	int is_bool, val;
+    -+	int ret;
+    - 
+    - 	val = git_env_ulong("GIT_TEST_INDEX_THREADS", 0);
+    - 	if (val) {
+    -@@ config.c: int git_config_get_index_threads(int *dest)
+    - 		return 0;
+    - 	}
+    - 
+    --	if (!git_config_get_bool_or_int("index.threads", &is_bool, &val)) {
+    --		if (is_bool)
+    --			*dest = val ? 0 : 1;
+    --		else
+    --			*dest = val;
+    --		return 0;
+    --	}
+    --
+    --	return 1;
+    -+	if ((ret = git_config_get_bool_or_int("index.threads", &is_bool,
+    -+					      &val)))
+    -+		return ret;
+    -+	if (is_bool)
+    -+		*dest = val ? 0 : 1;
+    -+	else
+    -+		*dest = val;
+    -+	return 0;
+    - }
+    - 
+    - NORETURN
+    -
+      ## config.h ##
+    -@@ config.h: int git_configset_get_value_multi(struct config_set *cs, const char *key,
+    +@@ config.h: const struct string_list *git_configset_get_value_multi(struct config_set *cs, c
+       */
+      void git_configset_clear(struct config_set *cs);
+      
+     -/*
+     +/**
+       * These functions return 1 if not found, and 0 if found, leaving the found
+    -- * value in the 'dest' pointer.
+    -+ * value in the 'dest' pointer. On error a negative value is returned.
+    +  * value in the 'dest' pointer.
+     + *
+     + * The functions that return a single value (i.e. not
+     + * *_get_*multi*()) will return the highest-priority value for the
+    @@ config.h: int git_configset_get_value_multi(struct config_set *cs, const char *k
+     + * multiple values the last value found.
+       */
+      
+    - RESULT_MUST_BE_USED
+    - int git_configset_get(struct config_set *cs, const char *key);
+    - 
+      /*
+     - * Finds the highest-priority value for the configuration variable `key`
+     - * and config set `cs`, stores the pointer to it in `value` and returns 0.
+    @@ config.h: int git_configset_get_value_multi(struct config_set *cs, const char *k
+       */
+      int git_configset_get_value(struct config_set *cs, const char *key, const char **dest);
+      
+    +@@ config.h: void git_protected_config(config_fn_t fn, void *data);
+    +  * manner, the config API provides two functions `git_config_get_value`
+    +  * and `git_config_get_value_multi`. They both read values from an internal
+    +  * cache generated previously from reading the config files.
+    +- */
+    +-
+    +-/**
+    +- * Finds the highest-priority value for the configuration variable `key`,
+    +- * stores the pointer to it in `value` and returns 0. When the
+    +- * configuration variable `key` is not found, returns 1 without touching
+    +- * `value`. The caller should not free or modify `value`, as it is owned
+    +- * by the cache.
+    ++ *
+    ++ * The git_config_get_*() functions are wrappers for the corresponding
+    ++ * repo_config_get_*() functions, which in turn wrap the corresponding
+    ++ * git_configset_get_*() functions.
+    ++ *
+    ++ * The non-configset variants might impose extra validation, see
+    ++ * e.g. repo_config_get_string() and repo_config_get_string_tmp().
+    +  */
+    + int git_config_get_value(const char *key, const char **value);
+    + 
+ 3:  4a73151abde !  5:  5a96961d0d6 config API: add and use a "git_config_get()" family of functions
+    @@ config.c: void git_config_clear(void)
+     
+      ## config.h ##
+     @@ config.h: void git_configset_clear(struct config_set *cs);
+    -  * value in the 'dest' pointer.
+    +  * multiple values the last value found.
+       */
+      
+     +RESULT_MUST_BE_USED
+     +int git_configset_get(struct config_set *cs, const char *key);
+     +
+      /*
+    -  * Finds the highest-priority value for the configuration variable `key`
+    -  * and config set `cs`, stores the pointer to it in `value` and returns 0.
+    +  * The caller should not free or modify `value`, as it is owned by the
+    +  * cache.
+     @@ config.h: int git_configset_get_pathname(struct config_set *cs, const char *key, const cha
+      /* Functions for reading a repository's config */
+      struct repository;
+    @@ config.h: int git_configset_get_pathname(struct config_set *cs, const char *key,
+      			  const char *key, const char **value);
+      const struct string_list *repo_config_get_value_multi(struct repository *repo,
+     @@ config.h: void git_protected_config(config_fn_t fn, void *data);
+    -  * manner, the config API provides two functions `git_config_get_value`
+    -  * and `git_config_get_value_multi`. They both read values from an internal
+    -  * cache generated previously from reading the config files.
+    -+ *
+    -+ * For those git_config_get*() functions that aren't documented,
+    -+ * consult the corresponding repo_config_get*() function's
+    -+ * documentation.
+    +  * The non-configset variants might impose extra validation, see
+    +  * e.g. repo_config_get_string() and repo_config_get_string_tmp().
+       */
+    - 
+    ++
+     +RESULT_MUST_BE_USED
+     +int git_config_get(const char *key);
+     +
+    + int git_config_get_value(const char *key, const char **value);
+    + 
+      /**
+    -  * Finds the highest-priority value for the configuration variable `key`,
+    -  * stores the pointer to it in `value` and returns 0. When the
+     
+      ## t/helper/test-config.c ##
+     @@
+ 4:  382a77ca69e =  6:  cc00d49c24d versioncmp.c: refactor config reading next commit
+ 5:  8f17bf8150c !  7:  99e6252f645 config API: have *_multi() return an "int" and take a "dest"
+    @@ config.c: void git_die_config(const char *key, const char *err, ...)
+      }
+     
+      ## config.h ##
+    -@@ config.h: int git_configset_add_parameters(struct config_set *cs);
+    +@@ config.h: int git_configset_add_file(struct config_set *cs, const char *filename);
+      /**
+       * Finds and returns the value list, sorted in order of increasing priority
+       * for the configuration variable `key` and config set `cs`. When the
+ 7:  8a83c30ea78 =  8:  0a1baebc9cb for-each-repo: error on bad --config
+ 8:  d9abc78c2be =  9:  bbc8078f837 config API users: test for *_get_value_multi() segfaults
+ 9:  65fa91e7ce7 = 10:  97a5daeebcc config API: add "string" version of *_value_multi(), fix segfaults
+10:  4db3c6d0ed9 = 11:  a2c59ffbaa5 for-each-repo: with bad config, don't conflate <path> and <cmd>
+-- 
+2.40.0.rc1.1034.g5867a1b10c5
+
