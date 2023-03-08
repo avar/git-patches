@@ -1,0 +1,123 @@
+From 6791e1f6f85b50a2dceeaf3ca9dd6f9c9ee39776 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-9.9-6791e1f6f85-20230308T090513Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-0.9-00000000000-20230308T090513Z-avarab@gmail.com>
+References: <cover-v6-0.9-00000000000-20230307T180516Z-avarab@gmail.com>
+	<cover-v7-0.9-00000000000-20230308T090513Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Thu, 29 Sep 2022 11:03:16 +0200
+Subject: [PATCH v7 9/9] for-each-repo: with bad config, don't conflate <path>
+ and <cmd>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Fix a logic error in 4950b2a2b5c (for-each-repo: run subcommands on
+configured repos, 2020-09-11). Due to assuming that elements returned
+from the repo_config_get_value_multi() call wouldn't be "NULL" we'd
+conflate the <path> and <command> part of the argument list when
+running commands.
+
+As noted in the preceding commit the fix is to move to a safer
+"*_string_multi()" version of the *_multi() API. This change is
+separated from the rest because those all segfaulted. In this change
+we ended up with different behavior.
+
+When using the "--config=<config>" form we take each element of the
+list as a path to a repository. E.g. with a configuration like:
+
+	[repo] list = /some/repo
+
+We would, with this command:
+
+	git for-each-repo --config=repo.list status builtin
+
+Run a "git status" in /some/repo, as:
+
+	git -C /some/repo status builtin
+
+I.e. ask "status" to report on the "builtin" directory. But since a
+configuration such as this would result in a "struct string_list *"
+with one element, whose "string" member is "NULL":
+
+	[repo] list
+
+We would, when constructing our command-line in
+"builtin/for-each-repo.c"...
+
+	strvec_pushl(&child.args, "-C", path, NULL);
+	for (i = 0; i < argc; i++)
+		strvec_push(&child.args, argv[i]);
+
+...have that "path" be "NULL", and as strvec_pushl() stops when it
+sees NULL we'd end with the first "argv" element as the argument to
+the "-C" option, e.g.:
+
+	git -C status builtin
+
+I.e. we'd run the command "builtin" in the "status" directory.
+
+In another context this might be an interesting security
+vulnerability, but I think that this amounts to a nothingburger on
+that front.
+
+A hypothetical attacker would need to be able to write config for the
+victim to run, if they're able to do that there's more interesting
+attack vectors. See the "safe.directory" facility added in
+8d1a7448206 (setup.c: create `safe.bareRepository`, 2022-07-14).
+
+An even more unlikely possibility would be an attacker able to
+generate the config used for "for-each-repo --config=<key>", but
+nothing else (e.g. an automated system producing that list).
+
+Even in that case the attack vector is limited to the user running
+commands whose name matches a directory that's interesting to the
+attacker (e.g. a "log" directory in a repository). The second
+argument (if any) of the command is likely to make git die without
+doing anything interesting (e.g. "-p" to "log", there being no "-p"
+built-in command to run).
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ builtin/for-each-repo.c  |  2 +-
+ t/t0068-for-each-repo.sh | 13 +++++++++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/builtin/for-each-repo.c b/builtin/for-each-repo.c
+index 224164addb3..ce8f7a99086 100644
+--- a/builtin/for-each-repo.c
++++ b/builtin/for-each-repo.c
+@@ -46,7 +46,7 @@ int cmd_for_each_repo(int argc, const char **argv, const char *prefix)
+ 	if (!config_key)
+ 		die(_("missing --config=<config>"));
+ 
+-	err = repo_config_get_value_multi(the_repository, config_key, &values);
++	err = repo_config_get_string_multi(the_repository, config_key, &values);
+ 	if (err < 0)
+ 		usage_msg_optf(_("got bad config --config=%s"),
+ 			       for_each_repo_usage, options, config_key);
+diff --git a/t/t0068-for-each-repo.sh b/t/t0068-for-each-repo.sh
+index 6b51e00da0e..4b90b74d5d5 100755
+--- a/t/t0068-for-each-repo.sh
++++ b/t/t0068-for-each-repo.sh
+@@ -46,4 +46,17 @@ test_expect_success 'error on bad config keys' '
+ 	test_expect_code 129 git for-each-repo --config="'\''.b"
+ '
+ 
++test_expect_success 'error on NULL value for config keys' '
++	cat >>.git/config <<-\EOF &&
++	[empty]
++		key
++	EOF
++	cat >expect <<-\EOF &&
++	error: missing value for '\''empty.key'\''
++	EOF
++	test_expect_code 129 git for-each-repo --config=empty.key 2>actual.raw &&
++	grep ^error actual.raw >actual &&
++	test_cmp expect actual
++'
++
+ test_done
+-- 
+2.40.0.rc1.1034.g5867a1b10c5
+

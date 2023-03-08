@@ -1,0 +1,72 @@
+From 3a5a323cd914f3635443e6c8db8ffdd1bf828457 Mon Sep 17 00:00:00 2001
+Message-Id: <patch-v7-4.9-3a5a323cd91-20230308T090513Z-avarab@gmail.com>
+In-Reply-To: <cover-v7-0.9-00000000000-20230308T090513Z-avarab@gmail.com>
+References: <cover-v6-0.9-00000000000-20230307T180516Z-avarab@gmail.com>
+	<cover-v7-0.9-00000000000-20230308T090513Z-avarab@gmail.com>
+From: =?UTF-8?q?=C3=86var=20Arnfj=C3=B6r=C3=B0=20Bjarmason?=
+ <avarab@gmail.com>
+Date: Tue, 1 Nov 2022 11:04:31 +0100
+Subject: [PATCH v7 4/9] versioncmp.c: refactor config reading next commit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Refactor the reading of the versionSort.suffix and
+versionSort.prereleaseSuffix configuration variables to stay within
+the bounds of our CodingGuidelines when it comes to line length, and
+to avoid repeating ourselves.
+
+Renaming "deprecated_prereleases" to "oldl" doesn't help us to avoid
+line wrapping now, but it will in a subsequent commit.
+
+Let's also split out the names of the config variables into variables
+of our own, and refactor the nested if/else to avoid indenting it, and
+the existing bracing style issue.
+
+This all helps with the subsequent commit, where we'll need to start
+checking different git_config_get_value_multi() return value. See
+c026557a373 (versioncmp: generalize version sort suffix reordering,
+2016-12-08) for the original implementation of most of this.
+
+Moving the "initialized = 1" assignment allows us to move some of this
+to the variable declarations in the subsequent commit.
+
+Signed-off-by: Ævar Arnfjörð Bjarmason <avarab@gmail.com>
+---
+ versioncmp.c | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/versioncmp.c b/versioncmp.c
+index 069ee94a4d7..323f5d35ea8 100644
+--- a/versioncmp.c
++++ b/versioncmp.c
+@@ -160,15 +160,18 @@ int versioncmp(const char *s1, const char *s2)
+ 	}
+ 
+ 	if (!initialized) {
+-		const struct string_list *deprecated_prereleases;
++		const char *const newk = "versionsort.suffix";
++		const char *const oldk = "versionsort.prereleasesuffix";
++		const struct string_list *oldl;
++
++		prereleases = git_config_get_value_multi(newk);
++		oldl = git_config_get_value_multi(oldk);
++		if (prereleases && oldl)
++			warning("ignoring %s because %s is set", oldk, newk);
++		else if (!prereleases)
++			prereleases = oldl;
++
+ 		initialized = 1;
+-		prereleases = git_config_get_value_multi("versionsort.suffix");
+-		deprecated_prereleases = git_config_get_value_multi("versionsort.prereleasesuffix");
+-		if (prereleases) {
+-			if (deprecated_prereleases)
+-				warning("ignoring versionsort.prereleasesuffix because versionsort.suffix is set");
+-		} else
+-			prereleases = deprecated_prereleases;
+ 	}
+ 	if (prereleases && swap_prereleases(s1, s2, (const char *) p1 - s1 - 1,
+ 					    &diff))
+-- 
+2.40.0.rc1.1034.g5867a1b10c5
+
